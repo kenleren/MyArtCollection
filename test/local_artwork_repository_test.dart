@@ -74,13 +74,37 @@ void main() {
       ArtworkFieldSource.aiSuggested,
     );
     expect(
+      reloaded.field(ArtworkFieldKeys.title)?.source.label,
+      'AI-suggested',
+    );
+    expect(
       reloaded.field(ArtworkFieldKeys.artist)?.source,
       ArtworkFieldSource.userConfirmed,
+    );
+    expect(
+      reloaded.field(ArtworkFieldKeys.artist)?.source.label,
+      'user-confirmed',
     );
     expect(
       reloaded.field(ArtworkFieldKeys.artist)?.lastConfirmedAt,
       DateTime.utc(2026, 7, 4, 8, 4).toLocal(),
     );
+
+    final rawDatabase = await databaseFactoryFfi.openDatabase(databasePath);
+    addTearDown(rawDatabase.close);
+
+    final sourceRows = await rawDatabase.query(
+      'artwork_fields',
+      columns: ['field_key', 'source_state'],
+      where: 'artwork_id = ?',
+      whereArgs: ['artwork-001'],
+      orderBy: 'field_key ASC',
+    );
+
+    expect(sourceRows, [
+      {'field_key': ArtworkFieldKeys.artist, 'source_state': 'user-confirmed'},
+      {'field_key': ArtworkFieldKeys.title, 'source_state': 'AI-suggested'},
+    ]);
   });
 
   test('updates, lists, and deletes artwork records', () async {
@@ -102,6 +126,10 @@ void main() {
     );
 
     await repository.upsert(updated);
+    await repository.close();
+    repository = LocalArtworkRepository.forDatabase(
+      await LocalArtworkRepository.openAt(databasePath),
+    );
 
     final listed = await repository.list();
     expect(listed, hasLength(1));

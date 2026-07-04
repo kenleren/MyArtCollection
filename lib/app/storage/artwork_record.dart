@@ -18,9 +18,9 @@ enum ArtworkRecordState {
 
 enum ArtworkFieldSource {
   aiSuggested('AI-suggested'),
-  userConfirmed('User confirmed'),
-  documentExtracted('Document-extracted'),
-  unknown('Unknown');
+  userConfirmed('user-confirmed'),
+  documentExtracted('document-extracted'),
+  unknown('unknown');
 
   const ArtworkFieldSource(this.label);
 
@@ -28,7 +28,7 @@ enum ArtworkFieldSource {
 
   static ArtworkFieldSource fromStorage(String value) {
     return ArtworkFieldSource.values.firstWhere(
-      (source) => source.name == value,
+      (source) => source.label == value,
       orElse: () => ArtworkFieldSource.unknown,
     );
   }

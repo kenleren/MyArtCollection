@@ -138,7 +138,7 @@ class LocalArtworkRepository {
       'artwork_id': artworkId,
       'field_key': entry.key,
       'value': field.value,
-      'source_state': field.source.name,
+      'source_state': field.source.label,
       'source_note': field.note,
       'last_confirmed_at': field.lastConfirmedAt?.toUtc().toIso8601String(),
     };
