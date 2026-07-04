@@ -1,0 +1,22 @@
+{
+  "@@locale": "sv",
+  "appTitle": "MyArtCollection",
+  "collectionTab": "Samling",
+  "incompleteTab": "Ofullstaendig",
+  "reportsTab": "Rapporter",
+  "settingsTab": "Instaellningar",
+  "addArtworkAction": "Laegg till konstverk",
+  "takePhotoAction": "Ta foto",
+  "importPhotoAction": "Importera foto",
+  "attachDocumentAction": "Bifoga dokument",
+  "aiSuggestedLabel": "AI-foerslag",
+  "userConfirmedLabel": "Bekraeftat av dig",
+  "documentExtractedLabel": "Haemtat fraan dokument",
+  "unknownLabel": "Okaent",
+  "comparableSourceSignalsTitle": "Jaemfoerbara kaellsignaler",
+  "sourceLine": "Kaella: {source}",
+  "citationLine": "Referens: {url}",
+  "comparableAmountLine": "Jaemfoerbart belopp: {amount}",
+  "signalDateLine": "Signaldatum: {date}",
+  "userProvidedInsuranceValueLine": "Foersaekringsvaerde angivet av dig: {value}."
+}

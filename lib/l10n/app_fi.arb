@@ -1,0 +1,22 @@
+{
+  "@@locale": "fi",
+  "appTitle": "MyArtCollection",
+  "collectionTab": "Kokoelma",
+  "incompleteTab": "Keskeneraiset",
+  "reportsTab": "Raportit",
+  "settingsTab": "Asetukset",
+  "addArtworkAction": "Lisaa teos",
+  "takePhotoAction": "Ota kuva",
+  "importPhotoAction": "Tuo kuva",
+  "attachDocumentAction": "Liita asiakirja",
+  "aiSuggestedLabel": "AI-ehdotus",
+  "userConfirmedLabel": "Sinun vahvistama",
+  "documentExtractedLabel": "Poimittu asiakirjasta",
+  "unknownLabel": "Tuntematon",
+  "comparableSourceSignalsTitle": "Vertailtavat lahdesignaalit",
+  "sourceLine": "Lahde: {source}",
+  "citationLine": "Viite: {url}",
+  "comparableAmountLine": "Vertailusumma: {amount}",
+  "signalDateLine": "Signaalin paiva: {date}",
+  "userProvidedInsuranceValueLine": "Kayttajan antama vakuutusarvo: {value}."
+}

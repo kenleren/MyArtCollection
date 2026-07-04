@@ -70,6 +70,50 @@ void main() {
     expect(find.textContaining('appraise value'), findsNothing);
   });
 
+  testWidgets('collection shell localizes supported mobile locales', (
+    WidgetTester tester,
+  ) async {
+    tester.view.physicalSize = const Size(393, 852);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(() {
+      tester.view.resetPhysicalSize();
+      tester.view.resetDevicePixelRatio();
+    });
+
+    final expectedLabels = <Locale, List<String>>{
+      const Locale('en'): ['Collection', 'Incomplete', 'Reports', 'Settings'],
+      const Locale('nb'): [
+        'Samling',
+        'Ufullstendig',
+        'Rapporter',
+        'Innstillinger',
+      ],
+      const Locale('de'): [
+        'Sammlung',
+        'Unvollstaendig',
+        'Berichte',
+        'Einstellungen',
+      ],
+      const Locale('fr'): ['Collection', 'Incomplet', 'Rapports', 'Reglages'],
+    };
+
+    for (final entry in expectedLabels.entries) {
+      await tester.pumpWidget(
+        MyArtCollectionApp(
+          initialRoute: AppRoutes.collection,
+          locale: entry.key,
+        ),
+      );
+      await pumpReady(tester);
+
+      for (final label in entry.value) {
+        expect(find.text(label), findsWidgets);
+      }
+
+      await tester.pumpWidget(const SizedBox.shrink());
+    }
+  });
+
   testWidgets('first artwork prototype reaches report and export preview', (
     WidgetTester tester,
   ) async {
@@ -1073,7 +1117,7 @@ void main() {
       findsOneWidget,
     );
     expect(
-      find.textContaining('Comparable amount: USD 2200-2800'),
+      find.textContaining('Comparable amount: USD 2,200-2,800'),
       findsOneWidget,
     );
     expect(find.textContaining('Signal date: 2025-05-01'), findsOneWidget);

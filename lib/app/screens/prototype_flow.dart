@@ -1,10 +1,11 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
-
+import '../../l10n/app_localizations.dart';
 import '../app_dependencies.dart';
 import '../app_routes.dart';
 import '../intake/artwork_intake_service.dart';
+import '../localization/app_currency_formatter.dart';
 import '../prototype/prototype_artwork.dart';
 import '../research/online_research_service.dart';
 import '../storage/ai_research_record.dart';
@@ -146,6 +147,7 @@ class _CollectionHomeContent extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
     return ListView(
       padding: const EdgeInsets.all(20),
       children: [
@@ -165,7 +167,7 @@ class _CollectionHomeContent extends StatelessWidget {
           ],
           PrimaryActionButton(
             icon: Icons.add_a_photo_outlined,
-            label: 'Add artwork',
+            label: l10n.addArtworkAction,
             routeName: AppRoutes.collectionAdd,
           ),
           const SizedBox(height: 12),
@@ -321,8 +323,9 @@ class AddArtworkScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
     return PrototypeScreenFrame(
-      title: 'Add artwork',
+      title: l10n.addArtworkAction,
       subtitle: 'Start a new private record',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -333,19 +336,19 @@ class AddArtworkScreen extends StatelessWidget {
           const SizedBox(height: 16),
           PrimaryActionButton(
             icon: Icons.photo_camera_outlined,
-            label: 'Take photo',
+            label: l10n.takePhotoAction,
             routeName: AppRoutes.capture,
           ),
           const SizedBox(height: 12),
           SecondaryActionButton(
             icon: Icons.photo_library_outlined,
-            label: 'Import photo',
+            label: l10n.importPhotoAction,
             routeName: AppRoutes.import,
           ),
           const SizedBox(height: 12),
           SecondaryActionButton(
             icon: Icons.attach_file,
-            label: 'Attach document',
+            label: l10n.attachDocumentAction,
             routeName: AppRoutes.artworkDocuments(prototypeArtwork.id),
           ),
           const SizedBox(height: 20),
@@ -1738,6 +1741,7 @@ class _ComparableSignalsPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
     if (signals.isEmpty) {
       return const SizedBox.shrink();
     }
@@ -1750,7 +1754,7 @@ class _ComparableSignalsPanel extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'Comparable source signals',
+            l10n.comparableSourceSignalsTitle,
             style: Theme.of(context).textTheme.titleMedium,
           ),
           const SizedBox(height: 6),
@@ -1776,11 +1780,19 @@ class _ComparableSignalCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
+    final locale = Localizations.localeOf(context);
     final kind = _effectiveComparableKind(signal, sourceHits);
     final sourceName = _comparableSourceName(signal, sourceHits, kind);
     final citationUrl = _comparableCitationUrl(signal, sourceHits, kind);
-    final amountText = _comparableAmountText(signal, sourceHits, kind);
-    final dateText = _comparableDateText(signal.signalDate, kind);
+    final amountText = _comparableAmountText(
+      signal,
+      sourceHits,
+      kind,
+      locale,
+      l10n,
+    );
+    final dateText = _comparableDateText(signal.signalDate, kind, l10n);
     final caveat = _comparableCaveatText(signal, kind);
 
     return DecoratedBox(
@@ -1801,12 +1813,12 @@ class _ComparableSignalCard extends StatelessWidget {
             const SizedBox(height: 8),
             _StatusLine(
               icon: Icons.source_outlined,
-              text: 'Source: $sourceName',
+              text: l10n.sourceLine(sourceName),
             ),
             if (citationUrl != null)
               _StatusLine(
                 icon: Icons.link_outlined,
-                text: 'Citation: $citationUrl',
+                text: l10n.citationLine(citationUrl),
               ),
             if (amountText != null)
               _StatusLine(icon: Icons.price_check_outlined, text: amountText),
@@ -1861,6 +1873,8 @@ String? _comparableAmountText(
   ComparableValueSignal signal,
   List<ResearchSourceHit> sourceHits,
   ComparableValueKind kind,
+  Locale locale,
+  AppLocalizations l10n,
 ) {
   if (!kind.canDisplayAmount) {
     return null;
@@ -1870,26 +1884,29 @@ String? _comparableAmountText(
     return null;
   }
 
-  final currency = signal.currency;
-  final low = signal.amountLow;
-  final high = signal.amountHigh;
-
-  if (low == null && high == null) {
+  final amount = AppCurrencyFormatter.comparableAmount(
+    locale: locale,
+    currencyCode: signal.currency,
+    amountLow: signal.amountLow,
+    amountHigh: signal.amountHigh,
+  );
+  if (amount.isEmpty) {
     return null;
   }
-
-  final prefix = currency == null ? '' : '$currency ';
-  if (low != null && high != null) {
-    return 'Comparable amount: $prefix$low-$high';
-  }
-  return 'Comparable amount: $prefix${low ?? high}';
+  return l10n.comparableAmountLine(amount);
 }
 
-String? _comparableDateText(DateTime? date, ComparableValueKind kind) {
+String? _comparableDateText(
+  DateTime? date,
+  ComparableValueKind kind,
+  AppLocalizations l10n,
+) {
   if (date == null || !kind.canDisplayAmount) {
     return null;
   }
-  return 'Signal date: ${date.year}-${_twoDigits(date.month)}-${_twoDigits(date.day)}';
+  return l10n.signalDateLine(
+    '${date.year}-${_twoDigits(date.month)}-${_twoDigits(date.day)}',
+  );
 }
 
 String _comparableCaveatText(
@@ -2460,7 +2477,7 @@ class _SourceBadge extends StatelessWidget {
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
         child: Text(
-          source.label,
+          _localizedSourceLabel(context, source),
           style: Theme.of(
             context,
           ).textTheme.labelSmall?.copyWith(color: colors.foreground),
@@ -2468,6 +2485,16 @@ class _SourceBadge extends StatelessWidget {
       ),
     );
   }
+}
+
+String _localizedSourceLabel(BuildContext context, PrototypeSource source) {
+  final l10n = AppLocalizations.of(context);
+  return switch (source) {
+    PrototypeSource.aiSuggested => l10n.aiSuggestedLabel,
+    PrototypeSource.userConfirmed => l10n.userConfirmedLabel,
+    PrototypeSource.documentExtracted => l10n.documentExtractedLabel,
+    PrototypeSource.unknown => l10n.unknownLabel,
+  };
 }
 
 class _BadgeColors {
@@ -2754,6 +2781,7 @@ class _ReportSummary extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
     return _Panel(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -2775,8 +2803,9 @@ class _ReportSummary extends StatelessWidget {
           ),
           _StatusLine(
             icon: Icons.price_check_outlined,
-            text:
-                'User-provided insurance value: ${artwork.insuranceValue.value}.',
+            text: l10n.userProvidedInsuranceValueLine(
+              artwork.insuranceValue.value,
+            ),
           ),
         ],
       ),

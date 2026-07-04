@@ -1,0 +1,22 @@
+{
+  "@@locale": "da",
+  "appTitle": "MyArtCollection",
+  "collectionTab": "Samling",
+  "incompleteTab": "Ufuldstaendig",
+  "reportsTab": "Rapporter",
+  "settingsTab": "Indstillinger",
+  "addArtworkAction": "Tilfoej kunstvaerk",
+  "takePhotoAction": "Tag foto",
+  "importPhotoAction": "Importer foto",
+  "attachDocumentAction": "Vedhaeft dokument",
+  "aiSuggestedLabel": "AI-forslag",
+  "userConfirmedLabel": "Bekraeftet af dig",
+  "documentExtractedLabel": "Hentet fra dokument",
+  "unknownLabel": "Ukendt",
+  "comparableSourceSignalsTitle": "Sammenlignelige kildesignaler",
+  "sourceLine": "Kilde: {source}",
+  "citationLine": "Reference: {url}",
+  "comparableAmountLine": "Sammenligneligt beloeb: {amount}",
+  "signalDateLine": "Signaldato: {date}",
+  "userProvidedInsuranceValueLine": "Forsikringsvaerdi angivet af dig: {value}."
+}

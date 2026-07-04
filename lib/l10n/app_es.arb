@@ -1,0 +1,22 @@
+{
+  "@@locale": "es",
+  "appTitle": "MyArtCollection",
+  "collectionTab": "Coleccion",
+  "incompleteTab": "Incompleto",
+  "reportsTab": "Informes",
+  "settingsTab": "Ajustes",
+  "addArtworkAction": "Anadir obra",
+  "takePhotoAction": "Tomar foto",
+  "importPhotoAction": "Importar foto",
+  "attachDocumentAction": "Adjuntar documento",
+  "aiSuggestedLabel": "Sugerido por IA",
+  "userConfirmedLabel": "Confirmado por ti",
+  "documentExtractedLabel": "Extraido del documento",
+  "unknownLabel": "Desconocido",
+  "comparableSourceSignalsTitle": "Senales comparables con fuente",
+  "sourceLine": "Fuente: {source}",
+  "citationLine": "Cita: {url}",
+  "comparableAmountLine": "Importe comparable: {amount}",
+  "signalDateLine": "Fecha de senal: {date}",
+  "userProvidedInsuranceValueLine": "Valor de seguro indicado por ti: {value}."
+}

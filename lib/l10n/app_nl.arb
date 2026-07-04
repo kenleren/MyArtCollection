@@ -1,0 +1,22 @@
+{
+  "@@locale": "nl",
+  "appTitle": "MyArtCollection",
+  "collectionTab": "Collectie",
+  "incompleteTab": "Onvolledig",
+  "reportsTab": "Rapporten",
+  "settingsTab": "Instellingen",
+  "addArtworkAction": "Kunstwerk toevoegen",
+  "takePhotoAction": "Foto maken",
+  "importPhotoAction": "Foto importeren",
+  "attachDocumentAction": "Document toevoegen",
+  "aiSuggestedLabel": "AI-suggestie",
+  "userConfirmedLabel": "Door jou bevestigd",
+  "documentExtractedLabel": "Uit document gehaald",
+  "unknownLabel": "Onbekend",
+  "comparableSourceSignalsTitle": "Vergelijkbare bronsignalen",
+  "sourceLine": "Bron: {source}",
+  "citationLine": "Citaat: {url}",
+  "comparableAmountLine": "Vergelijkbaar bedrag: {amount}",
+  "signalDateLine": "Signaaldatum: {date}",
+  "userProvidedInsuranceValueLine": "Door jou opgegeven verzekeringswaarde: {value}."
+}

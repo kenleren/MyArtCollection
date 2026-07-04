@@ -1,0 +1,22 @@
+{
+  "@@locale": "de",
+  "appTitle": "MyArtCollection",
+  "collectionTab": "Sammlung",
+  "incompleteTab": "Unvollstaendig",
+  "reportsTab": "Berichte",
+  "settingsTab": "Einstellungen",
+  "addArtworkAction": "Kunstwerk hinzufuegen",
+  "takePhotoAction": "Foto aufnehmen",
+  "importPhotoAction": "Foto importieren",
+  "attachDocumentAction": "Dokument anhaengen",
+  "aiSuggestedLabel": "KI-Vorschlag",
+  "userConfirmedLabel": "Von dir bestaetigt",
+  "documentExtractedLabel": "Aus Dokument uebernommen",
+  "unknownLabel": "Unbekannt",
+  "comparableSourceSignalsTitle": "Vergleichbare Quellensignale",
+  "sourceLine": "Quelle: {source}",
+  "citationLine": "Zitat: {url}",
+  "comparableAmountLine": "Vergleichsbetrag: {amount}",
+  "signalDateLine": "Signaldatum: {date}",
+  "userProvidedInsuranceValueLine": "Von dir angegebener Versicherungswert: {value}."
+}

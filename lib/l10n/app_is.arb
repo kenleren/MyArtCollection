@@ -1,0 +1,22 @@
+{
+  "@@locale": "is",
+  "appTitle": "MyArtCollection",
+  "collectionTab": "Safn",
+  "incompleteTab": "Oklara",
+  "reportsTab": "Skyrslur",
+  "settingsTab": "Stillingar",
+  "addArtworkAction": "Baeta vid verki",
+  "takePhotoAction": "Taka mynd",
+  "importPhotoAction": "Flytja inn mynd",
+  "attachDocumentAction": "Hengja vid skjal",
+  "aiSuggestedLabel": "AI-tillaga",
+  "userConfirmedLabel": "Stadfest af ther",
+  "documentExtractedLabel": "Sott ur skjali",
+  "unknownLabel": "Othekkt",
+  "comparableSourceSignalsTitle": "Samanburdarmerki ur heimildum",
+  "sourceLine": "Heimild: {source}",
+  "citationLine": "Tilvisun: {url}",
+  "comparableAmountLine": "Samanburdarupphaed: {amount}",
+  "signalDateLine": "Dagsetning merkis: {date}",
+  "userProvidedInsuranceValueLine": "Tryggingarverd gefid upp af ther: {value}."
+}

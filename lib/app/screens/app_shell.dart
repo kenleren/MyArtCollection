@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../l10n/app_localizations.dart';
 import '../app_routes.dart';
 import 'prototype_flow.dart';
 
@@ -8,62 +9,65 @@ class AppShell extends StatelessWidget {
 
   final String currentRoute;
 
-  static const _tabs = <_ShellTab>[
-    _ShellTab(
-      label: 'Collection',
-      route: AppRoutes.collection,
-      icon: Icons.collections_bookmark_outlined,
-      title: 'Collection',
-    ),
-    _ShellTab(
-      label: 'Incomplete',
-      route: AppRoutes.collectionIncomplete,
-      icon: Icons.rule_folder_outlined,
-      title: 'Incomplete',
-    ),
-    _ShellTab(
-      label: 'Reports',
-      route: AppRoutes.collectionReport,
-      icon: Icons.description_outlined,
-      title: 'Reports',
-    ),
-    _ShellTab(
-      label: 'Settings',
-      route: AppRoutes.collectionSettings,
-      icon: Icons.settings_outlined,
-      title: 'Settings',
-    ),
-  ];
+  List<_ShellTab> _tabs(AppLocalizations l10n) {
+    return [
+      _ShellTab(
+        label: l10n.collectionTab,
+        route: AppRoutes.collection,
+        icon: Icons.collections_bookmark_outlined,
+        title: l10n.collectionTab,
+      ),
+      _ShellTab(
+        label: l10n.incompleteTab,
+        route: AppRoutes.collectionIncomplete,
+        icon: Icons.rule_folder_outlined,
+        title: l10n.incompleteTab,
+      ),
+      _ShellTab(
+        label: l10n.reportsTab,
+        route: AppRoutes.collectionReport,
+        icon: Icons.description_outlined,
+        title: l10n.reportsTab,
+      ),
+      _ShellTab(
+        label: l10n.settingsTab,
+        route: AppRoutes.collectionSettings,
+        icon: Icons.settings_outlined,
+        title: l10n.settingsTab,
+      ),
+    ];
+  }
 
   @override
   Widget build(BuildContext context) {
-    final activeTab = _activeTab;
+    final tabs = _tabs(AppLocalizations.of(context));
+    final activeTab = _activeTab(tabs);
 
     return Scaffold(
       appBar: AppBar(title: Text(activeTab.title)),
       body: SafeArea(child: _ShellBody(currentRoute: currentRoute)),
       bottomNavigationBar: NavigationBar(
-        selectedIndex: _tabs.indexOf(activeTab),
+        selectedIndex: tabs.indexOf(activeTab),
         onDestinationSelected: (index) {
-          if (_tabs[index].route != currentRoute) {
-            Navigator.pushReplacementNamed(context, _tabs[index].route);
+          if (tabs[index].route != currentRoute) {
+            Navigator.pushReplacementNamed(context, tabs[index].route);
           }
         },
         destinations: [
-          for (final tab in _tabs)
+          for (final tab in tabs)
             NavigationDestination(icon: Icon(tab.icon), label: tab.label),
         ],
       ),
     );
   }
 
-  _ShellTab get _activeTab {
-    return _tabs.firstWhere(
+  _ShellTab _activeTab(List<_ShellTab> tabs) {
+    return tabs.firstWhere(
       (tab) =>
           tab.route == currentRoute ||
           (tab.route == AppRoutes.collectionSettings &&
               currentRoute == AppRoutes.settings),
-      orElse: () => _tabs.first,
+      orElse: () => tabs.first,
     );
   }
 }
