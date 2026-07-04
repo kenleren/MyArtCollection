@@ -56,6 +56,17 @@ void main() {
     expect(find.text('Add artwork'), findsWidgets);
     expect(find.text('Take photo'), findsOneWidget);
     expect(find.text('Import photo'), findsOneWidget);
+    expect(find.byKey(const ValueKey('evidence-photo-guide')), findsOneWidget);
+    expect(find.text('Evidence photo checklist'), findsOneWidget);
+    expect(find.textContaining('signature or maker marks'), findsOneWidget);
+    expect(find.textContaining('70/250'), findsOneWidget);
+    expect(find.textContaining('Back, frame, label'), findsOneWidget);
+    expect(
+      find.textContaining('do not confirm attribution or value'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('prove authenticity'), findsNothing);
+    expect(find.textContaining('appraise value'), findsNothing);
   });
 
   testWidgets('first artwork prototype reaches report and export preview', (
@@ -132,6 +143,9 @@ void main() {
       find.textContaining('No interrupted import was available.'),
       findsOneWidget,
     );
+    expect(find.text('Evidence photo checklist'), findsOneWidget);
+    expect(find.textContaining('prints or lithographs'), findsOneWidget);
+    expect(find.textContaining('Receipts, certificates'), findsOneWidget);
     expect(find.text('Choose from system picker'), findsOneWidget);
   });
 
@@ -312,6 +326,9 @@ void main() {
     await tester.pump();
 
     expect(find.text('Draft review'), findsWidgets);
+    expect(find.text('Add evidence photos next'), findsOneWidget);
+    expect(find.textContaining('better clues'), findsOneWidget);
+    expect(find.textContaining('signature or maker marks'), findsOneWidget);
     expect(find.text('Private AI draft'), findsOneWidget);
     expect(find.textContaining('has not run for this photo'), findsOneWidget);
     expect(find.text('Photo Preview Artwork'), findsOneWidget);

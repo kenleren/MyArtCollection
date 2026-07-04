@@ -329,6 +329,8 @@ class AddArtworkScreen extends StatelessWidget {
         children: [
           const _ProgressStrip(activeIndex: 0),
           const SizedBox(height: 20),
+          const _EvidencePhotoGuide(),
+          const SizedBox(height: 16),
           PrimaryActionButton(
             icon: Icons.photo_camera_outlined,
             label: 'Take photo',
@@ -397,6 +399,10 @@ class _CaptureImportScreenState extends State<CaptureImportScreen> {
             attachmentStore: AppDependencyScope.of(context).attachmentStore,
           ),
           const SizedBox(height: 12),
+          if (_result == null) ...[
+            const _EvidencePhotoGuide(),
+            const SizedBox(height: 12),
+          ],
           const _StatusPanel(
             icon: Icons.error_outline,
             title: 'Upload-failure state',
@@ -530,6 +536,8 @@ class _StaticCaptureImportScreen extends StatelessWidget {
         children: [
           const _ArtworkHero(),
           const SizedBox(height: 16),
+          const _EvidencePhotoGuide(),
+          const SizedBox(height: 12),
           _StatusPanel(
             icon: isImport ? Icons.file_upload_outlined : Icons.camera_alt,
             title: isImport ? 'Photo imported' : 'Photo captured',
@@ -620,6 +628,8 @@ class _DraftReviewScreenState extends State<DraftReviewScreen> {
           const _ProgressStrip(activeIndex: 1),
           const SizedBox(height: 16),
           _PrimaryImageForArtwork(artworkId: widget.artwork.id),
+          const SizedBox(height: 16),
+          const _EvidencePhotoGuide(isFollowUp: true),
           const SizedBox(height: 16),
           _AiDraftStatusPanel(isBusy: false, draftJob: widget.aiDraftJob),
           const SizedBox(height: 16),
@@ -1188,6 +1198,98 @@ class _AiDraftStatusPanel extends StatelessWidget {
       'AI-suggested only. Confirm before using in a record.',
     ];
     return parts.join(' ');
+  }
+}
+
+class _EvidencePhotoGuide extends StatelessWidget {
+  const _EvidencePhotoGuide({this.isFollowUp = false});
+
+  final bool isFollowUp;
+
+  @override
+  Widget build(BuildContext context) {
+    return _Panel(
+      child: Column(
+        key: const ValueKey('evidence-photo-guide'),
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Icon(Icons.fact_check_outlined),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      isFollowUp
+                          ? 'Add evidence photos next'
+                          : 'Evidence photo checklist',
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      isFollowUp
+                          ? 'Add close-ups and back photos when research needs better clues.'
+                          : 'Photograph the clues that help document the record before research.',
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          const _EvidenceGuideItem(
+            icon: Icons.crop_free_outlined,
+            text:
+                'Full front image, plus close-ups of the signature or maker marks.',
+          ),
+          const _EvidenceGuideItem(
+            icon: Icons.tag_outlined,
+            text: 'Edition number for prints or lithographs, such as 70/250.',
+          ),
+          const _EvidenceGuideItem(
+            icon: Icons.flip_to_back_outlined,
+            text: 'Back, frame, label, sticker, stamp, and hanging hardware.',
+          ),
+          const _EvidenceGuideItem(
+            icon: Icons.straighten_outlined,
+            text: 'Dimensions, medium/material, condition, and frame details.',
+          ),
+          const _EvidenceGuideItem(
+            icon: Icons.description_outlined,
+            text: 'Receipts, certificates, gallery, auction, or estate papers.',
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            'These details support a private record and later research; they do not confirm attribution or value.',
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _EvidenceGuideItem extends StatelessWidget {
+  const _EvidenceGuideItem({required this.icon, required this.text});
+
+  final IconData icon;
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, size: 20),
+          const SizedBox(width: 10),
+          Expanded(child: Text(text)),
+        ],
+      ),
+    );
   }
 }
 
