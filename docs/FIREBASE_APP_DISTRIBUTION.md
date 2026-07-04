@@ -32,6 +32,9 @@ flutter build apk --debug
 Do not commit `google-services.json`, service-account JSON, Firebase tokens, or
 tester email lists.
 
+See [Secret Hygiene](SECRET_HYGIENE.md) for the repository guardrail, ignored
+legacy `/google/` boundary, and Firebase service-account rotation gate.
+
 ## Upload
 
 Install the Firebase CLI if needed:

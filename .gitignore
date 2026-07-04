@@ -50,5 +50,13 @@ app.*.map.json
 /google/
 /google-services.json
 /android/app/google-services.json
+/GoogleService-Info.plist
+/ios/Runner/GoogleService-Info.plist
 /.env.firebase
+/.firebase-token*
+/*firebase-token*
+/*tester-list*
+/*tester-email*
+/tester-lists/
+/tester-emails/
 /*.service-account.json

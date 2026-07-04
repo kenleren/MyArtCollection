@@ -1,0 +1,29 @@
+title = "MyArtCollection secret scanning"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "firebase-service-account-json"
+description = "Google/Firebase service-account JSON marker"
+regex = '''"type"\s*:\s*"service_account"'''
+keywords = [
+  "service_account",
+]
+
+[[rules]]
+id = "firebase-service-account-private-key"
+description = "Google/Firebase service-account private key field"
+regex = '''"private_key"\s*:\s*"-----BEGIN PRIVATE KEY-----'''
+keywords = [
+  "private_key",
+  "BEGIN PRIVATE KEY",
+]
+
+[[rules]]
+id = "firebase-refresh-token-json"
+description = "Firebase CLI or Google OAuth refresh token JSON field"
+regex = '''"refresh_token"\s*:\s*"[^"]{20,}"'''
+keywords = [
+  "refresh_token",
+]
