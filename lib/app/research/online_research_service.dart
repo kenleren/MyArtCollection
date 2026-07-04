@@ -21,18 +21,28 @@ abstract class OnlineResearchClient {
 }
 
 class OnlineResearchService {
-  const OnlineResearchService({
+  OnlineResearchService({
     required LocalArtworkRepository repository,
     required OnlineResearchClient client,
-  }) : this._(repository, client);
+    ProfessionalSourceAllowlist? allowlist,
+  }) : this._(
+         repository,
+         client,
+         allowlist ?? ProfessionalSourceAllowlist.initial(),
+       );
 
-  const OnlineResearchService._(this._repository, this._client);
+  OnlineResearchService._(this._repository, this._client, this._allowlist);
 
   final LocalArtworkRepository _repository;
   final OnlineResearchClient _client;
+  final ProfessionalSourceAllowlist _allowlist;
 
   Future<ResearchJob> runResearch(OnlineResearchRequest request) async {
-    final job = await _client.research(request);
+    final job = _TrustedResearchResponse(
+      request: request,
+      job: await _client.research(request),
+      allowlist: _allowlist,
+    ).sanitize();
     await _repository.upsertResearchJob(job);
     return job;
   }
@@ -81,10 +91,7 @@ class ProfessionalSourceAllowlist {
     final uri = Uri.tryParse(url.trim());
     final scheme = uri?.scheme.toLowerCase();
     final host = uri?.host.toLowerCase();
-    if (uri == null ||
-        host == null ||
-        host.isEmpty ||
-        (scheme != 'https' && scheme != 'http')) {
+    if (uri == null || host == null || host.isEmpty || scheme != 'https') {
       return null;
     }
 
@@ -119,6 +126,294 @@ class DisallowedResearchSourceException implements Exception {
   @override
   String toString() => 'Disallowed professional research source: $url';
 }
+
+class InvalidResearchResponseException implements Exception {
+  const InvalidResearchResponseException(this.message);
+
+  final String message;
+
+  @override
+  String toString() => 'Invalid online research response: $message';
+}
+
+class _TrustedResearchResponse {
+  _TrustedResearchResponse({
+    required this.request,
+    required this.job,
+    required this.allowlist,
+  });
+
+  final OnlineResearchRequest request;
+  final ResearchJob job;
+  final ProfessionalSourceAllowlist allowlist;
+
+  ResearchJob sanitize() {
+    if (job.artworkId != request.artworkId) {
+      throw InvalidResearchResponseException(
+        'response artwork id ${job.artworkId} does not match request '
+        '${request.artworkId}',
+      );
+    }
+
+    final sourceHitsById = <String, ResearchSourceHit>{};
+    final sanitizedSourceHits = <ResearchSourceHit>[];
+    for (final sourceHit in job.sourceHits) {
+      if (sourceHit.researchJobId != job.id) {
+        throw InvalidResearchResponseException(
+          'source ${sourceHit.id} belongs to another research job',
+        );
+      }
+      if (sourceHitsById.containsKey(sourceHit.id)) {
+        throw InvalidResearchResponseException(
+          'duplicate source hit id ${sourceHit.id}',
+        );
+      }
+
+      final source = _requireAllowedSource(sourceHit.sourceUrl);
+      final imageUrl = sourceHit.imageUrl;
+      if (imageUrl != null && !_isAllowedUrl(imageUrl)) {
+        throw DisallowedResearchSourceException(imageUrl);
+      }
+
+      final sanitized = ResearchSourceHit(
+        id: sourceHit.id,
+        researchJobId: sourceHit.researchJobId,
+        sourceName: source.name,
+        sourceType: source.type,
+        confidence: sourceHit.confidence,
+        sourceUrl: sourceHit.sourceUrl!.trim(),
+        objectId: _sanitizeNullableEvidenceText(sourceHit.objectId),
+        title: _sanitizeNullableEvidenceText(sourceHit.title),
+        artist: _sanitizeNullableEvidenceText(sourceHit.artist),
+        dateText: _sanitizeNullableEvidenceText(sourceHit.dateText),
+        medium: _sanitizeNullableEvidenceText(sourceHit.medium),
+        dimensions: _sanitizeNullableEvidenceText(sourceHit.dimensions),
+        imageUrl: imageUrl?.trim(),
+        matchReason: _sanitizeNullableEvidenceText(sourceHit.matchReason),
+        rawSnippet: _sanitizeNullableEvidenceText(sourceHit.rawSnippet),
+      );
+      sourceHitsById[sanitized.id] = sanitized;
+      sanitizedSourceHits.add(sanitized);
+    }
+
+    final sanitizedCandidates = <CandidateAttribution>[];
+    for (final candidate in job.candidateAttributions) {
+      if (candidate.researchJobId != job.id) {
+        throw InvalidResearchResponseException(
+          'candidate ${candidate.id} belongs to another research job',
+        );
+      }
+      final sourceHitId = candidate.sourceHitId;
+      if (sourceHitId == null || !sourceHitsById.containsKey(sourceHitId)) {
+        throw InvalidResearchResponseException(
+          'candidate ${candidate.id} is not linked to validated source evidence',
+        );
+      }
+      sanitizedCandidates.add(
+        CandidateAttribution(
+          id: candidate.id,
+          researchJobId: candidate.researchJobId,
+          sourceHitId: sourceHitId,
+          title: _sanitizeNullableEvidenceText(candidate.title),
+          artist: _sanitizeNullableEvidenceText(candidate.artist),
+          year: _sanitizeNullableEvidenceText(candidate.year),
+          medium: _sanitizeNullableEvidenceText(candidate.medium),
+          confidence: candidate.confidence,
+          matchReason: _sanitizeRequiredEvidenceText(candidate.matchReason),
+          fieldSources: candidate.fieldSources,
+        ),
+      );
+    }
+
+    final sanitizedSignals = <ComparableValueSignal>[];
+    for (final signal in job.comparableValueSignals) {
+      if (signal.researchJobId != job.id) {
+        throw InvalidResearchResponseException(
+          'comparable signal ${signal.id} belongs to another research job',
+        );
+      }
+      sanitizedSignals.add(_sanitizeComparableSignal(signal, sourceHitsById));
+    }
+
+    return ResearchJob(
+      id: job.id,
+      artworkId: job.artworkId,
+      status: job.status,
+      createdAt: job.createdAt,
+      updatedAt: job.updatedAt,
+      completedAt: job.completedAt,
+      consentSummary: job.consentSummary,
+      querySummary: job.querySummary,
+      provider: job.provider,
+      errorMessage: job.errorMessage,
+      sourceHits: sanitizedSourceHits,
+      candidateAttributions: sanitizedCandidates,
+      comparableValueSignals: sanitizedSignals,
+    );
+  }
+
+  ComparableValueSignal _sanitizeComparableSignal(
+    ComparableValueSignal signal,
+    Map<String, ResearchSourceHit> sourceHitsById,
+  ) {
+    if (signal.kind == ComparableValueKind.noReliableComparable) {
+      return ComparableValueSignal(
+        id: signal.id,
+        researchJobId: signal.researchJobId,
+        kind: ComparableValueKind.noReliableComparable,
+        label: ComparableValueKind.noReliableComparable.displayLabel,
+        sourceName: 'Professional-source search',
+        caveat: _sanitizeComparableCaveat(
+          signal.caveat,
+          ComparableValueKind.noReliableComparable,
+        ),
+      );
+    }
+
+    final sourceHitId = signal.sourceHitId;
+    if (sourceHitId == null || !sourceHitsById.containsKey(sourceHitId)) {
+      throw InvalidResearchResponseException(
+        'comparable signal ${signal.id} is not linked to validated source '
+        'evidence',
+      );
+    }
+
+    final sourceHit = sourceHitsById[sourceHitId]!;
+    final sourceUrl = signal.sourceUrl?.trim();
+    if (sourceUrl != null && sourceUrl != sourceHit.sourceUrl) {
+      throw InvalidResearchResponseException(
+        'comparable signal ${signal.id} citation does not match its source',
+      );
+    }
+    if (signal.kind == ComparableValueKind.userProvidedInsuranceValue) {
+      throw InvalidResearchResponseException(
+        'online research cannot provide user-entered insurance values',
+      );
+    }
+
+    final hasAmount =
+        _hasText(signal.amountLow) ||
+        _hasText(signal.amountHigh) ||
+        _hasText(signal.currency);
+    if (sourceHit.sourceType != ResearchSourceType.auctionHouse &&
+        (signal.kind.canDisplayAmount || hasAmount)) {
+      throw InvalidResearchResponseException(
+        'comparable signal ${signal.id} carries market data without an '
+        'auction source',
+      );
+    }
+
+    return ComparableValueSignal(
+      id: signal.id,
+      researchJobId: signal.researchJobId,
+      sourceHitId: sourceHitId,
+      kind: signal.kind,
+      label: signal.kind.displayLabel,
+      sourceName: sourceHit.sourceName,
+      sourceUrl: sourceHit.sourceUrl,
+      amountLow: _sanitizeNullableEvidenceText(signal.amountLow),
+      amountHigh: _sanitizeNullableEvidenceText(signal.amountHigh),
+      currency: _sanitizeNullableEvidenceText(signal.currency),
+      signalDate: signal.signalDate,
+      caveat: _sanitizeComparableCaveat(signal.caveat, signal.kind),
+    );
+  }
+
+  ProfessionalSource _requireAllowedSource(String? url) {
+    final source = allowlist.sourceForUrl(url);
+    if (source == null) {
+      throw DisallowedResearchSourceException(url ?? '');
+    }
+    return source;
+  }
+
+  bool _isAllowedUrl(String url) => allowlist.sourceForUrl(url) != null;
+}
+
+String _sanitizeComparableCaveat(String text, ComparableValueKind kind) {
+  final sanitized = _sanitizeRequiredEvidenceText(text);
+  if (sanitized == _unsafeEvidenceTextReplacement) {
+    return switch (kind) {
+      ComparableValueKind.noReliableComparable =>
+        'No source-backed comparable was available for this draft.',
+      ComparableValueKind.publicEstimate ||
+      ComparableValueKind.comparableSaleSignal ||
+      ComparableValueKind.userProvidedInsuranceValue =>
+        'Comparable data may not apply to this artwork; confirm with an expert.',
+    };
+  }
+  return sanitized;
+}
+
+String? _sanitizeNullableEvidenceText(String? text) {
+  if (text == null) {
+    return null;
+  }
+  final normalized = _normalizeEvidenceText(text);
+  if (normalized.isEmpty) {
+    return null;
+  }
+  if (_containsUnsafeResearchText(normalized)) {
+    return null;
+  }
+  return _capEvidenceText(normalized);
+}
+
+String _sanitizeRequiredEvidenceText(String text) {
+  final normalized = _normalizeEvidenceText(text);
+  if (normalized.isEmpty || _containsUnsafeResearchText(normalized)) {
+    return _unsafeEvidenceTextReplacement;
+  }
+  return _capEvidenceText(normalized);
+}
+
+String _normalizeEvidenceText(String text) {
+  return text.replaceAll(RegExp(r'\s+'), ' ').trim();
+}
+
+String _capEvidenceText(String text) {
+  const maxLength = 220;
+  if (text.length <= maxLength) {
+    return text;
+  }
+  return '${text.substring(0, maxLength - 3).trimRight()}...';
+}
+
+bool _containsUnsafeResearchText(String text) {
+  final normalized = text.toLowerCase();
+  const blockedFragments = [
+    'ignore previous',
+    'ignore all previous',
+    'system prompt',
+    'developer message',
+    'developer instruction',
+    'prompt injection',
+    'reveal secrets',
+    'override instructions',
+    'do not follow',
+    'you are chatgpt',
+    'market value',
+    'appraised at',
+    'certified value',
+    'authentic value',
+    'guaranteed authentic',
+    'confirmed authentic',
+    'proves authenticity',
+    'authenticity is confirmed',
+    'definitely authentic',
+  ];
+  if (blockedFragments.any(normalized.contains)) {
+    return true;
+  }
+  return RegExp(
+    r'\b(worth|valuation|appraisal|valued\s+at|authenticity)\b',
+  ).hasMatch(normalized);
+}
+
+bool _hasText(String? value) => value != null && value.trim().isNotEmpty;
+
+const _unsafeEvidenceTextReplacement =
+    'Source text removed because it contained unsupported claims.';
 
 class FixtureProfessionalSourceResearchClient implements OnlineResearchClient {
   FixtureProfessionalSourceResearchClient({
