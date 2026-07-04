@@ -167,8 +167,8 @@ class ArtworkIntakeService {
       fields: const {
         ArtworkFieldKeys.title: ArtworkFieldValue(
           value: 'Untitled artwork',
-          source: ArtworkFieldSource.aiSuggested,
-          note: 'Draft title placeholder. Confirm or edit after review.',
+          source: ArtworkFieldSource.unknown,
+          note: 'Local draft placeholder. Confirm or edit after review.',
         ),
         ArtworkFieldKeys.artist: ArtworkFieldValue(
           value: 'Unknown',
@@ -177,7 +177,7 @@ class ArtworkIntakeService {
         ),
         ArtworkFieldKeys.conditionNotes: ArtworkFieldValue(
           value: 'Needs review',
-          source: ArtworkFieldSource.aiSuggested,
+          source: ArtworkFieldSource.unknown,
           note: 'Review the image before using this in a report.',
         ),
       },

@@ -173,6 +173,7 @@ void main() {
     expect(find.text('Photo imported'), findsOneWidget);
     expect(find.text('On-device AI unavailable'), findsOneWidget);
     expect(find.textContaining('No photo was sent online'), findsOneWidget);
+    expect(find.text('Review draft'), findsOneWidget);
     expect(
       find.byKey(const ValueKey('primary-artwork-image-preview')),
       findsOneWidget,
@@ -310,7 +311,7 @@ void main() {
     );
     await tester.pump();
 
-    expect(find.text('AI draft review'), findsWidgets);
+    expect(find.text('Draft review'), findsWidgets);
     expect(find.text('Private AI draft'), findsOneWidget);
     expect(find.textContaining('has not run for this photo'), findsOneWidget);
     expect(find.text('Photo Preview Artwork'), findsOneWidget);
@@ -318,9 +319,10 @@ void main() {
       find.byKey(const ValueKey('primary-artwork-image-preview')),
       findsOneWidget,
     );
-    expect(find.text('AI-suggested'), findsWidgets);
+    expect(find.text('AI-suggested'), findsNothing);
+    expect(find.text('Unknown'), findsWidgets);
 
-    await tapVisible(tester, find.text('Confirm suggested fields'));
+    await tapVisible(tester, find.text('Continue review'));
     await pumpLiveData(tester);
     await tester.runAsync(
       () async => Future<void>.delayed(const Duration(milliseconds: 500)),
@@ -387,7 +389,7 @@ void main() {
     await tapVisible(tester, find.text('Resume draft'));
     await pumpLiveData(tester);
 
-    expect(find.text('AI draft review'), findsWidgets);
+    expect(find.text('Draft review'), findsWidgets);
     expect(
       find.byKey(const ValueKey('primary-artwork-image-placeholder')),
       findsOneWidget,
@@ -588,9 +590,10 @@ void main() {
     );
     await tester.pump();
 
-    expect(find.text('AI draft review'), findsWidgets);
-    expect(find.text('Possible values. Please confirm.'), findsOneWidget);
-    expect(find.text('AI-suggested'), findsWidgets);
+    expect(find.text('Draft review'), findsWidgets);
+    expect(find.text('Local draft. Please confirm.'), findsOneWidget);
+    expect(find.text('AI-suggested'), findsNothing);
+    expect(find.text('Unknown'), findsWidgets);
     expect(find.text('Verified by you'), findsNothing);
   });
 
@@ -768,7 +771,7 @@ ArtworkRecord _artworkRecord({
   required String id,
   required String title,
   required ArtworkRecordState state,
-  ArtworkFieldSource source = ArtworkFieldSource.aiSuggested,
+  ArtworkFieldSource source = ArtworkFieldSource.unknown,
   Set<String> missingFieldKeys = const {},
 }) {
   final now = DateTime.utc(2026, 7, 4, 12);

@@ -140,11 +140,16 @@ class _ArtworkRouteScreenState extends State<_ArtworkRouteScreen> {
       future: _routeData,
       builder: (context, snapshot) {
         final routeData =
-            snapshot.data ?? const ArtworkRouteData(artwork: prototypeArtwork);
+            snapshot.data ??
+            const ArtworkRouteData(
+              artwork: prototypeArtwork,
+              isAiDraftReview: true,
+            );
         final artwork = routeData.artwork;
         return switch (widget.suffix) {
           'draft' => DraftReviewScreen(
             artwork: artwork,
+            isAiDraftReview: routeData.isAiDraftReview,
             aiDraftJob: routeData.latestAiDraftJob,
           ),
           'documents' => DocumentsScreen(artwork: artwork),

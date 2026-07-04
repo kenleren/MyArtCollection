@@ -74,7 +74,7 @@ void main() {
       );
       expect(
         result.record.field(ArtworkFieldKeys.title)?.source,
-        ArtworkFieldSource.aiSuggested,
+        ArtworkFieldSource.unknown,
       );
 
       final reloaded = await repository.get(result.record.id);

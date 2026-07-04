@@ -421,7 +421,9 @@ class _CaptureImportScreenState extends State<CaptureImportScreen> {
           ] else ...[
             PrimaryActionButton(
               icon: Icons.rate_review_outlined,
-              label: 'Review AI draft',
+              label: _aiDraftJob?.status == AiDraftJobStatus.completed
+                  ? 'Review AI draft'
+                  : 'Review draft',
               routeName: AppRoutes.artworkDraft(_result!.record.id),
             ),
             const SizedBox(height: 12),
@@ -553,9 +555,15 @@ class _StaticCaptureImportScreen extends StatelessWidget {
 }
 
 class DraftReviewScreen extends StatelessWidget {
-  const DraftReviewScreen({super.key, required this.artwork, this.aiDraftJob});
+  const DraftReviewScreen({
+    super.key,
+    required this.artwork,
+    required this.isAiDraftReview,
+    this.aiDraftJob,
+  });
 
   final PrototypeArtwork artwork;
+  final bool isAiDraftReview;
   final AiDraftJob? aiDraftJob;
 
   @override
@@ -569,10 +577,11 @@ class DraftReviewScreen extends StatelessWidget {
       artwork.location,
       artwork.condition,
     ];
-
     return PrototypeScreenFrame(
-      title: 'AI draft review',
-      subtitle: 'Possible values. Please confirm.',
+      title: isAiDraftReview ? 'AI draft review' : 'Draft review',
+      subtitle: isAiDraftReview
+          ? 'Possible values. Please confirm.'
+          : 'Local draft. Please confirm.',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -588,7 +597,9 @@ class DraftReviewScreen extends StatelessWidget {
           ],
           PrimaryActionButton(
             icon: Icons.check_circle_outline,
-            label: 'Confirm suggested fields',
+            label: isAiDraftReview
+                ? 'Confirm suggested fields'
+                : 'Continue review',
             routeName: AppRoutes.artworkDetails(artwork.id),
           ),
           const SizedBox(height: 12),
@@ -1890,9 +1901,14 @@ const _coreFieldKeys = [
 ];
 
 class ArtworkRouteData {
-  const ArtworkRouteData({required this.artwork, this.latestAiDraftJob});
+  const ArtworkRouteData({
+    required this.artwork,
+    required this.isAiDraftReview,
+    this.latestAiDraftJob,
+  });
 
   final PrototypeArtwork artwork;
+  final bool isAiDraftReview;
   final AiDraftJob? latestAiDraftJob;
 }
 
@@ -1905,7 +1921,10 @@ Future<ArtworkRouteData> artworkDataForRoute(
       ? null
       : await dependencies.artworkRepository.get(artworkId);
   if (record == null) {
-    return const ArtworkRouteData(artwork: prototypeArtwork);
+    return const ArtworkRouteData(
+      artwork: prototypeArtwork,
+      isAiDraftReview: true,
+    );
   }
 
   final attachments = await dependencies!.artworkRepository
@@ -1914,6 +1933,9 @@ Future<ArtworkRouteData> artworkDataForRoute(
       .aiDraftJobsForArtwork(record.id);
   return ArtworkRouteData(
     artwork: prototypeArtworkFromRecord(record, attachments: attachments),
+    isAiDraftReview:
+        aiDraftJobs.isNotEmpty &&
+        aiDraftJobs.first.status == AiDraftJobStatus.completed,
     latestAiDraftJob: aiDraftJobs.isEmpty ? null : aiDraftJobs.first,
   );
 }
