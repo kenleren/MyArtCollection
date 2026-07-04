@@ -139,12 +139,15 @@ class _ArtworkRouteScreenState extends State<_ArtworkRouteScreen> {
     return FutureBuilder<ArtworkRouteData>(
       future: _routeData,
       builder: (context, snapshot) {
-        final routeData =
-            snapshot.data ??
-            const ArtworkRouteData(
-              artwork: prototypeArtwork,
-              isAiDraftReview: true,
-            );
+        if (!snapshot.hasData) {
+          return const PrototypeScreenFrame(
+            title: 'Loading artwork',
+            subtitle: 'Opening local record',
+            child: Center(child: CircularProgressIndicator()),
+          );
+        }
+
+        final routeData = snapshot.requireData;
         final artwork = routeData.artwork;
         return switch (widget.suffix) {
           'draft' => DraftReviewScreen(

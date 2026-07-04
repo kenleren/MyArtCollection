@@ -33,6 +33,12 @@ The user goal is not automatic authentication or appraisal. The useful job is:
   models, but it is heavier than the ML Kit Prompt API for this MVP.
 - On-device AI cannot search live websites by itself. Internet research needs a
   network service or API layer.
+- A user's consumer Google AI Pro / Gemini subscription should not be treated
+  as the app's compute entitlement for MyArtCollection. It raises access or
+  usage limits inside Google's Gemini surfaces, while Gemini API usage is
+  managed through API keys, tiers, billing, and Google Cloud projects. Treat
+  bring-your-own-key as a possible advanced/admin option later, not the default
+  MVP path.
 - OpenAI's Responses API supports web search as a tool, but broad web search is
   too loose for this product unless it is constrained by allowlist, source
   classification, citations, and post-processing.
@@ -40,6 +46,9 @@ The user goal is not automatic authentication or appraisal. The useful job is:
   default because Google states that it stopped serving traffic on January 8,
   2025. Treat it as historical context only and evaluate Vertex AI Search /
   Agent Search or source-specific APIs instead.
+- Firebase App Distribution is suitable for Android beta delivery to trusted
+  testers, but it should be treated as a distribution layer before any broader
+  Firebase data-platform decision.
 - Professional public collection APIs exist for museum and cultural heritage
   metadata, including The Met Collection API, Art Institute of Chicago API,
   Harvard Art Museums API, and Europeana APIs.
@@ -49,10 +58,13 @@ References:
 - https://developer.android.com/ai/gemini-nano
 - https://developers.google.com/ml-kit/genai
 - https://developers.google.com/ml-kit/genai/prompt/android
+- https://one.google.com/about/google-ai-plans/
+- https://ai.google.dev/gemini-api/docs/billing
 - https://developers.google.com/edge
 - https://developers.openai.com/api/docs/guides/tools-web-search
 - https://developers.google.com/custom-search/v1/site_restricted_api
 - https://docs.cloud.google.com/generative-ai-app-builder/docs/migrate-from-cse
+- https://firebase.google.com/docs/app-distribution
 - https://metmuseum.github.io/
 - https://api.artic.edu/
 - https://harvardartmuseums.org/collections/api
@@ -74,6 +86,11 @@ Use a hybrid architecture:
 This is the safest path because it keeps the private first pass local, avoids
 shipping API keys in the mobile app, lets us enforce source allowlists centrally,
 and gives us room to add licensing or paid source providers later.
+
+For distribution, use Firebase App Distribution for Android beta delivery. Keep
+Firebase as the tester distribution and crash-feedback layer first; add Firebase
+Auth, Firestore, Storage, or Functions only behind explicit local-first/privacy
+decisions so the app does not drift into cloud-first record storage by accident.
 
 ## Non-Goals
 

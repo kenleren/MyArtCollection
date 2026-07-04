@@ -338,6 +338,49 @@ void main() {
     expect(find.text('Primary image fixture'), findsNothing);
   });
 
+  testWidgets('local draft route first frame is neutral while loading', (
+    WidgetTester tester,
+  ) async {
+    final testDependencies = await tester.runAsync(
+      () async => _LiveDependencyFixture.create(),
+    );
+    final fixture = testDependencies!;
+    addTearDown(() async {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.runAsync(fixture.dispose);
+    });
+
+    await tester.runAsync(() async {
+      await fixture.repository.upsert(
+        _artworkRecord(
+          id: 'neutral-loading-draft',
+          title: 'Neutral Loading Draft',
+          state: ArtworkRecordState.needsReview,
+          missingFieldKeys: {ArtworkFieldKeys.artist},
+        ),
+      );
+    });
+
+    await tester.pumpWidget(
+      MyArtCollectionApp(
+        initialRoute: AppRoutes.artworkDraft('neutral-loading-draft'),
+        dependencies: fixture.dependencies,
+      ),
+    );
+
+    expect(find.text('Loading artwork'), findsWidgets);
+    expect(find.text('Opening local record'), findsOneWidget);
+    expect(find.text('AI draft review'), findsNothing);
+    expect(find.text('AI-suggested'), findsNothing);
+
+    await pumpLiveData(tester);
+
+    expect(find.text('Draft review'), findsWidgets);
+    expect(find.text('Local draft. Please confirm.'), findsOneWidget);
+    expect(find.text('Neutral Loading Draft'), findsWidgets);
+    expect(find.text('AI-suggested'), findsNothing);
+  });
+
   testWidgets('missing primary image fallback does not leak storage paths', (
     WidgetTester tester,
   ) async {
