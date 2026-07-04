@@ -5,8 +5,8 @@
 MyArtCollection needs to move from fixture-backed AI language to a real
 AI-assisted intake loop. The feature should help a collector identify candidate
 artist, title, year, medium, subject, and source-backed comparable value signals
-from a photo and optional user notes, while preserving the product rule that AI
-suggests and the user confirms.
+from a photo and optional local user notes, while preserving the product rule
+that AI suggests and the user confirms.
 
 The user goal is not automatic authentication or appraisal. The useful job is:
 
@@ -159,12 +159,14 @@ Monetization guardrails:
 
 - The default import path may run on-device AI when supported.
 - Online research must require a visible user action such as `Research online`.
-- Before the first online research request, the UI must explain what leaves the
-  device:
-  - selected image or derived thumbnail,
-  - user-entered notes,
-  - on-device visual summary,
-  - current draft fields.
+- For v1 broker payload minimization, `docs/AI_BROKER_PAYLOAD_AND_TELEMETRY_SPEC.md`
+  is the authoritative override for what may leave the device.
+- Before the first online research request, the UI must explain the v1 broker
+  payload in that spec:
+  - selected image derivative,
+  - only allowlisted structured hint fields after sanitization and mapping,
+  - no raw notes, no free-text draft summaries, and no broad current-draft
+    export.
 - The user must be able to skip online research and still create a record.
 - The app must not send the entire local collection for one-artwork research.
 - Store research job metadata locally with source URLs and timestamps.
@@ -284,11 +286,13 @@ Endpoints:
 
 Input:
 
-- artwork draft id,
-- user-approved image payload or derived image representation,
-- on-device summary,
-- user-entered notes,
-- locale/currency preferences.
+- a dedicated broker request DTO defined by
+  `docs/AI_BROKER_PAYLOAD_AND_TELEMETRY_SPEC.md`,
+- no raw `artwork draft id`, `user-entered notes`, `consentSummary`, or
+  `querySummary` fields in the v1 network payload,
+- user-approved image derivative and allowlisted structured hints only,
+- locale/currency preferences through the broker's allowed client-context
+  fields.
 
 Output:
 

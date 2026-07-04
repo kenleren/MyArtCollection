@@ -163,6 +163,21 @@ Decision:
 3. Require strict broker-side schema validation and strict source allowlist
    validation before any result is stored locally or shown in UI.
 
+### Authoritative v1 override
+
+This document is the authoritative v1 payload-minimization override for online
+artwork research. Any broader wording in
+[AI Artwork Research Spec](AI_ART_RESEARCH_SPEC.md) about sending user-entered
+notes, on-device summaries, or the current draft does not authorize those
+fields to leave the device in v1 unless they are first mapped into the narrow
+allowlist defined below.
+
+The broker request/response DTOs must stay separate from the current local
+`OnlineResearchRequest`. Do not reuse local fields such as `artworkId`,
+`consentSummary`, or `querySummary` as network payload fields. The app must map
+between the local model and the broker envelope explicitly at the device
+boundary.
+
 ### Why this is the right first contract
 
 - It narrows what leaves the device more aggressively than the broader
@@ -187,6 +202,14 @@ notes by default.
 
 The app-facing broker request should be a dedicated network envelope, not the
 same object as the local `OnlineResearchRequest`.
+
+The dedicated envelope is mandatory in v1:
+
+- no raw local artwork identifier may traverse the broker boundary,
+- no serialized `consentSummary` or `querySummary` text may traverse the broker
+  boundary,
+- only the explicit top-level fields and subfields in this section may leave
+  the device.
 
 Required top-level fields:
 
@@ -233,25 +256,36 @@ Disallowed image inputs:
 
 Allowed `draft_hints` fields are optional and must be omitted when empty:
 
-- `title_hint`
-- `artist_hint`
-- `year_hint`
-- `medium_hint`
-- `dimensions_hint`
-- `signature_text_hint`
-- `visual_summary_hint`
-- `search_terms` as a short list of locally derived tokens
+| Field | Allowed provenance only | Max length | Allowed characters and sanitizer rules |
+| --- | --- | --- | --- |
+| `title_hint` | User-edited title field for the same artwork only | 120 chars | Letters, digits, spaces, and `.,'&:/()-`; trim, collapse repeated spaces, remove control chars/newlines |
+| `artist_hint` | User-edited artist field for the same artwork only | 120 chars | Letters, digits, spaces, and `.,'&:/()-`; trim, collapse repeated spaces, remove control chars/newlines |
+| `year_hint` | User-edited year/date field for the same artwork only | 32 chars | Digits, spaces, and `./-?`; trim and remove control chars/newlines |
+| `medium_hint` | User-edited medium field for the same artwork or normalized on-device medium classification from the selected image only | 80 chars | Letters, digits, spaces, and `.,'&:/()-`; trim, collapse repeated spaces, remove control chars/newlines |
+| `dimensions_hint` | Structured dimensions fields for the same artwork only | 64 chars | Digits, spaces, unit letters, and `x./-`; normalize whitespace and remove control chars/newlines |
+| `signature_text_hint` | On-device transcription from a user-selected visible signature or mark crop only | 80 chars | Letters, digits, spaces, and `.,'&:/()-`; trim, collapse repeated spaces, remove control chars/newlines |
+| `visual_summary_hint` | On-device summary derived from the selected artwork image only | 160 chars | Letters, digits, spaces, and `.,'&:/()-`; must be a short sentence fragment, trimmed and newline-free |
+| `search_terms` | Up to 8 locally derived token-like terms assembled from the allowed fields above plus on-device visual analysis of the selected image only | 32 chars per term, 128 chars total | Letters, digits, spaces, and `.,'&:/()-`; each term must be trimmed, newline-free, and omitted if it becomes empty after sanitization |
 
 Rules:
 
-- Each hint must be capped to a short fixed length.
 - Hints must describe only the single artwork under review.
-- `search_terms` must be token-like phrases, not raw copied notes.
-- `visual_summary_hint` should be an on-device summary, not raw user prose.
+- Allowed provenance is restrictive, not illustrative. If a value cannot be
+  proven to come from the listed source, omit it.
+- Do not partially preserve disallowed strings. If sanitization would require
+  retaining ambiguous fragments from banned content, omit the field instead.
+- Reject or omit any hint containing URLs, email addresses, phone numbers,
+  filesystem paths, markup, or disallowed characters.
+- No v1 hint may be populated from raw notes, free-text current-draft summary
+  fields, OCR text, document text, clipboard pastes from documents, or any
+  other unstructured text source.
+- `signature_text_hint`, `visual_summary_hint`, and `search_terms` have an
+  explicit v1 ban on note text, OCR text, and document text as source input.
 
 Explicitly banned from `draft_hints`:
 
 - raw notes,
+- free-text current-draft summaries,
 - provenance notes,
 - purchase/sale/insurance values,
 - location names,
@@ -371,7 +405,6 @@ Allowed `kind` values:
 
 - `public_estimate`
 - `comparable_sale_signal`
-- `user_provided_insurance_value`
 - `no_reliable_comparable`
 
 Rules:
@@ -382,6 +415,9 @@ Rules:
   review before amounts may be surfaced.
 - The response must include caveat text that the comparable may not apply to the
   user's artwork.
+- `user_provided_insurance_value` is client-local only. It must not traverse
+  the broker request, broker response, provider payload, or any log/telemetry
+  surface in v1.
 - Disallowed labels remain:
   - `market value`
   - `worth`
@@ -449,6 +485,46 @@ Allowed fields:
 - one-way-derived identifiers only:
   - `quota_subject_v1`
   - `request_fingerprint_v1`
+
+### Derived identifier rules
+
+`quota_subject_v1` and `request_fingerprint_v1` are secret-keyed derived
+identifiers, not raw hashes.
+
+Rules for both identifiers:
+
+- Use HMAC-SHA-256 or an equivalent keyed MAC with a broker-held secret that is
+  unavailable to the mobile app, provider, and log readers.
+- Use separate keys per identifier purpose and per deployment environment.
+- Include a fixed scope prefix such as `quota_subject_v1|...` or
+  `request_fingerprint_v1|...` in the canonical MAC input.
+- Unsalted hashes, reversible encodings, or direct hashes of raw request
+  content are forbidden.
+- Never derive either identifier directly from raw image bytes, raw image
+  crops, free-text hints, notes, OCR text, prompt text, or source URLs.
+- Neither identifier may be reused as a provider input, a user-visible ID, or a
+  Firebase user property.
+
+`quota_subject_v1` requirements:
+
+- Derive only from the broker-internal quota principal defined by the auth/quota
+  path plus a narrow scope string for environment and rotation window.
+- Scope is quota accounting only inside one environment.
+- Rotate the HMAC key at least every 30 days.
+- Keep prior-key overlap no longer than 7 days.
+- TTL must not exceed the 30-day broker telemetry retention window.
+
+`request_fingerprint_v1` requirements:
+
+- Derive only from a canonical replay/telemetry-dedupe tuple composed of
+  request metadata such as `request_id`, `consent_scope`,
+  `requested_source_profile`, image-size bucket, and hint-presence bitmap.
+- Do not include raw hint values, raw image bytes, local artwork IDs, or free
+  text in the canonical tuple.
+- Scope is replay detection and telemetry dedupe only inside one environment.
+- Rotate the HMAC key at least daily.
+- Keep prior-key overlap no longer than 24 hours.
+- TTL must not exceed 24 hours.
 
 ### Explicitly banned log and telemetry fields
 
@@ -566,12 +642,14 @@ following:
 7. Response parsing rejects non-allowlisted source URLs and deceptive hosts.
 8. Comparable values are withheld unless the source type and policy allow them.
 9. Broker logs contain only fixed event names, fixed reason codes, buckets, and
-   derived identifiers.
-10. Firebase/Crashlytics wrappers prove that prompts, images, source URLs,
+   scoped HMAC-derived identifiers.
+10. `quota_subject_v1` and `request_fingerprint_v1` are proven not to use
+    unsalted hashes, raw image bytes, source URLs, or free-text hint inputs.
+11. Firebase/Crashlytics wrappers prove that prompts, images, source URLs,
     query text, and citation text are not sent.
-11. Failure paths do not leak payload content into exceptions, logs, or
+12. Failure paths do not leak payload content into exceptions, logs, or
     telemetry.
-12. Temp files and in-memory buffers are deleted or dropped after completion.
+13. Temp files and in-memory buffers are deleted or dropped after completion.
 
 Recommended future test packs:
 
@@ -619,9 +697,8 @@ Recommended future test packs:
    or should operators enforce a shorter window?
 4. Should the first source profile be `museum_only` until auction-house rights
    review is accepted, even if comparable-value output then stays mostly empty?
-5. Should broker request/response DTOs intentionally diverge from the current
-   local `OnlineResearchRequest` and `ResearchJob` shapes now, or should the app
-   add explicit mapping types at the broker boundary?
+5. Which layer should own the mandatory explicit mapping between the local
+   `OnlineResearchRequest`/`ResearchJob` shapes and the separate broker DTOs?
 
 ## Recommendation summary
 
