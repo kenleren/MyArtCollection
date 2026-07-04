@@ -320,6 +320,82 @@ void main() {
     expect(await repository.getResearchJob(job.id), isNull);
   });
 
+  test('service rejects orphan comparable signals', () async {
+    final job = _researchJob(
+      comparableValueSignals: const [
+        ComparableValueSignal(
+          id: 'value-1',
+          researchJobId: 'research-artwork-001',
+          sourceHitId: 'missing-source',
+          kind: ComparableValueKind.comparableSaleSignal,
+          label: 'Comparable sale signal',
+          sourceName: 'Example Auction Results',
+          sourceUrl: 'https://www.metmuseum.org/art/collection/search/437133',
+          caveat: 'Comparable data may not apply to this artwork.',
+        ),
+      ],
+    );
+
+    await _expectServiceRejects(repository, job);
+    expect(await repository.getResearchJob(job.id), isNull);
+  });
+
+  test(
+    'service rejects comparable citations that differ from source',
+    () async {
+      final job = _researchJob(
+        sourceHits: const [
+          ResearchSourceHit(
+            id: 'source-1',
+            researchJobId: 'research-artwork-001',
+            sourceName: 'Example Auction Results',
+            sourceType: ResearchSourceType.auctionHouse,
+            confidence: ResearchConfidence.possible,
+            sourceUrl: 'https://auction.example/lot/123',
+          ),
+        ],
+        comparableValueSignals: const [
+          ComparableValueSignal(
+            id: 'value-1',
+            researchJobId: 'research-artwork-001',
+            sourceHitId: 'source-1',
+            kind: ComparableValueKind.comparableSaleSignal,
+            label: 'Comparable sale signal',
+            sourceName: 'Example Auction Results',
+            sourceUrl: 'https://auction.example/lot/other',
+            amountLow: '1000',
+            amountHigh: '1500',
+            currency: 'USD',
+            caveat: 'Comparable data may not apply to this artwork.',
+          ),
+        ],
+      );
+      final service = OnlineResearchService(
+        repository: repository,
+        allowlist: const ProfessionalSourceAllowlist([
+          ProfessionalSource(
+            host: 'auction.example',
+            name: 'Example Auction Results',
+            type: ResearchSourceType.auctionHouse,
+          ),
+        ]),
+        client: _FakeResearchClient(job),
+      );
+
+      await expectLater(
+        service.runResearch(
+          const OnlineResearchRequest(
+            artworkId: 'artwork-001',
+            consentSummary: 'User approved research.',
+            querySummary: 'mismatched comparable citation',
+          ),
+        ),
+        throwsA(isA<InvalidResearchResponseException>()),
+      );
+      expect(await repository.getResearchJob(job.id), isNull);
+    },
+  );
+
   test('service sanitizes poisoned source prose before persistence', () async {
     final job = _researchJob(
       sourceHits: [
