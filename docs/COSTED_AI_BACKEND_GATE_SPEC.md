@@ -11,7 +11,9 @@ Review rework evidence: [issue comment](https://github.com/kenleren/MyArtCollect
 MyArtCollection needs a hard decision gate before any paid AI or backend path is
 implemented. The repo already wants a thin server-side AI broker, but #42
 exists because paid backend work changes privacy, abuse, deployment, and cost
-risk immediately.
+risk immediately. The owner preference after the first review pass is to use
+OpenAI/ChatGPT web research as the preferred model path, with `gpt-5.4` as the
+default art-research model and high reasoning by default.
 
 The decision is not just "which model?". The decision is:
 
@@ -41,6 +43,19 @@ The decision is not just "which model?". The decision is:
 
 - Cloud Functions deployment requires Blaze: Firebase says to "upgrade your
   project to the pay-as-you-go Blaze pricing plan" before deploying functions.
+- OpenAI recommends the Responses API with the hosted `web_search` tool for new
+  web search integrations. The tool can return citations, complete source
+  lists, domain filters, live-access controls, and image results.
+- OpenAI web search supports agentic search with reasoning models. OpenAI's
+  docs describe higher reasoning as better suited to complex, multi-step web
+  research, but with longer latency and higher cost.
+- OpenAI web search domain filtering supports allowlists or blocklists of up to
+  100 domains, which fits this repo's professional-source-only art research
+  constraint.
+- OpenAI's current docs identify `gpt-5.5` as the latest model and recommend it
+  for new web-search integrations, but this repo chooses `gpt-5.4` as the MVP
+  default by product decision. `gpt-5.5` remains a later benchmark/escalation
+  candidate, not the MVP baseline.
 - Firebase AI Logic is a direct-from-app SDK path: its get-started guide says
   it makes Gemini API calls "directly from your app", and its App Check guide
   says direct mobile/web calls are vulnerable to abuse by unauthorized clients.
@@ -87,6 +102,9 @@ Primary sources:
 - Firebase AI Logic quotas: <https://firebase.google.com/docs/ai-logic/quotas>
 - Firebase AI Logic monitoring: <https://firebase.google.com/docs/ai-logic/monitoring>
 - Cloud Functions runtime controls: <https://firebase.google.com/docs/functions/manage-functions>
+- OpenAI latest model guidance: <https://developers.openai.com/api/docs/guides/latest-model.md>
+- OpenAI tools guide: <https://developers.openai.com/api/docs/guides/tools>
+- OpenAI web search guide: <https://developers.openai.com/api/docs/guides/tools-web-search>
 - Gemini API billing: <https://ai.google.dev/gemini-api/docs/billing>
 - Gemini API pricing: <https://ai.google.dev/gemini-api/docs/pricing>
 - Gemini API rate limits: <https://ai.google.dev/gemini-api/docs/rate-limits>
@@ -110,6 +128,9 @@ Primary sources:
   third-party data sources.
 - No reuse of a user's Google AI Plus / Google AI Pro / Gemini consumer
   subscription as the app's backend spend model.
+- No reuse of a user's ChatGPT Plus / Pro / Team / Enterprise subscription as
+  the app's backend spend model unless OpenAI later ships an explicit app
+  entitlement path and a separate spec approves it.
 
 ## Requirements
 
@@ -120,6 +141,12 @@ Any approved paid AI/backend implementation must satisfy all of the following:
 - No direct mobile AI calls by default.
 - Paid AI/backend traffic runs in a dedicated paid backend project, separate
   from Firebase App Distribution / crash-triage concerns.
+- Default paid research provider is OpenAI via a server-side broker using the
+  Responses API with hosted web search, not direct calls from Flutter.
+- Default paid research model is `gpt-5.4` with high reasoning for art
+  identification/research jobs. Lower reasoning is allowed only for explicitly
+  classified quick lookups; higher or newer models require measured quality and
+  cost evidence before becoming the default.
 - User action is explicit before any image, notes, or draft data leave the
   device.
 - Backend logs and telemetry exclude artwork content, prompts, responses,
@@ -133,6 +160,11 @@ Any approved paid AI/backend implementation must satisfy all of the following:
 - Named human billing ownership and deployment ownership exist before rollout.
 - Product copy sells workflow and professional-source evidence, not certainty.
 - No "unlimited research" promise before measured per-job cost exists.
+- Hosted web search must be constrained to an allowlist of professional art,
+  museum, gallery, auction, artist-estate, catalogue raisonne, institution, or
+  other approved source domains before any paid research job can run.
+- Citations and source metadata must be preserved and shown to the user for any
+  researched claim.
 - Redteam review and deployment-manager review are required before any paid
   backend is released beyond tightly controlled beta.
 
@@ -140,10 +172,11 @@ Any approved paid AI/backend implementation must satisfy all of the following:
 
 The following are not recommendations. They are release blockers before any
 paid backend implementation, Blaze enablement, live Firebase Functions broker,
-Gemini API billing, provider call, or external-source automation can be started:
+provider API billing, provider call, or external-source automation can be
+started:
 
 - [#48](https://github.com/kenleren/MyArtCollection/issues/48): paid AI
-  backend approval and billing topology decision record.
+  backend approval, provider choice, and billing topology decision record.
 - [#49](https://github.com/kenleren/MyArtCollection/issues/49): kill-switch,
   rollback, monitoring, alerting, and deployment evidence runbook.
 - [#50](https://github.com/kenleren/MyArtCollection/issues/50): broker auth,
@@ -163,9 +196,10 @@ paid AI/backend work remains stopped.
 | Option | Summary | Pros | Cons | Gate outcome |
 | --- | --- | --- | --- | --- |
 | A. Firebase AI Logic directly from app | Use Firebase AI Logic client SDKs in Flutter/mobile | Fastest path, Firebase App Check support, Firebase-managed client SDK | Conflicts with current architecture and #42 rule because calls are direct from app; default Firebase AI Logic quota is high; still creates paid client attack surface | Reject by default |
-| B. Thin server broker on Firebase Functions 2nd gen using Gemini Developer API | App sends minimal payload to broker; broker calls Gemini Developer API | Best match for repo architecture; lower-friction cost profile for interactive MVP use; easy to keep secrets server-side; simpler than Vertex for MVP | Requires Blaze; spend caps are not the only control because project and billing-account caps are experimental and can overrun during latency; no enterprise residency guarantees | Recommended first paid path, but only after gate approval |
-| C. Thin server broker on Firebase Functions 2nd gen using Vertex / Gemini Enterprise Agent Platform | Same broker pattern, but provider is Vertex/Agent Platform | Better org-level governance, regional endpoint choice, richer GCP controls, can use some Google Cloud credits | More platform complexity; interactive pricing is not simpler; global endpoint does not guarantee residency; overkill for MVP beta | Defer unless separate human need for governance/residency outweighs complexity |
-| D. Do not build paid backend yet | Hold all paid AI/backend work until monetization and operations are clearer | Lowest risk, no billing exposure, no new privacy surface | Delays AI research feature work | Correct stance until this gate is accepted |
+| B. Thin server broker on Firebase Functions 2nd gen using OpenAI Responses API with hosted web search | App sends minimal payload to broker; broker calls OpenAI `gpt-5.4` with high reasoning and hosted `web_search` constrained by professional-source allowlists | Best match for owner preference and repo architecture; stronger fit for grounded search, citations, source lists, domain filters, image search, structured outputs, and model reasoning controls; secrets remain server-side | Requires paid OpenAI API account/project controls and measured per-job cost; hosted web search/source behavior and provider data handling must be reviewed; long research can be slower and costlier | Recommended first paid path, but only after gate approval |
+| C. Thin server broker on Firebase Functions 2nd gen using Gemini Developer API | Same broker pattern, but provider is Gemini Developer API | Keeps a Google-only stack and may be useful as a later provider fallback | No longer owner-preferred default; requires Gemini billing controls; spend caps are not the only control because project and billing-account caps are experimental and can overrun during latency; no enterprise residency guarantees | Defer as alternate provider |
+| D. Thin server broker on Firebase Functions 2nd gen using Vertex / Gemini Enterprise Agent Platform | Same broker pattern, but provider is Vertex/Agent Platform | Better org-level governance, regional endpoint choice, richer GCP controls, can use some Google Cloud credits | More platform complexity; interactive pricing is not simpler; global endpoint does not guarantee residency; overkill for MVP beta | Defer unless separate human need for governance/residency outweighs complexity |
+| E. Do not build paid backend yet | Hold all paid AI/backend work until monetization and operations are clearer | Lowest risk, no billing exposure, no new privacy surface | Delays AI research feature work | Correct stance until this gate is accepted |
 
 ## Recommended approach
 
@@ -173,19 +207,50 @@ Decision:
 
 1. Do not implement any paid AI/backend workflow until this spec is accepted.
 2. When accepted, approve only Option B as the first paid path:
-   Firebase Functions 2nd gen broker, server-side Gemini Developer API, no
-   Firebase AI Logic direct client integration.
-3. Keep Vertex/Agent Platform as a later escalation path, not the starting
-   point.
+   Firebase Functions 2nd gen broker, server-side OpenAI Responses API,
+   `gpt-5.4`, high reasoning, hosted `web_search`, structured output, and
+   professional-source allowlists.
+3. Keep Gemini Developer API, Vertex, and Gemini Enterprise Agent Platform as
+   later provider alternatives, not the starting point.
 
 ### Why this is the recommended first path
 
 - It matches the existing repo architecture and privacy posture.
 - It avoids shipping secrets or a paid API surface directly in the app.
-- Current official pricing and setup constraints make Gemini Developer API
-  Flash-Lite / Flash the lower-friction interactive starting point.
+- OpenAI web search provides the exact research controls this product needs:
+  citations, complete source lists, domain allowlists, image search, live-access
+  control, longer reasoning research, and structured response orchestration.
 - It preserves room to add allowlisted professional-source lookups, schema
-  validation, retention controls, and monetization later.
+  validation, retention controls, monetization, and alternate provider
+  benchmarks later.
+
+### Default model and search configuration
+
+- Provider: OpenAI.
+- API: Responses API.
+- Model: `gpt-5.4` by product decision.
+- Reasoning: high by default for artwork identification and source-backed art
+  research. Use `xhigh` only for explicitly approved expensive deep-research
+  runs after measured beta economics exist.
+- Tooling: hosted `web_search`, not generic unrestricted browsing.
+- Search controls:
+  - `filters.allowed_domains` must be configured for approved professional art
+    domains before live beta,
+  - `blocked_domains` must include obvious low-trust/community sources such as
+    forums, Q&A sites, generic mirrors, and social platforms unless a later
+    source-specific review approves them,
+  - `include` must request source metadata when available,
+  - citations must be stored with the draft and visible in the UI,
+  - `tool_choice` must require search for any answer presented as researched,
+  - image search may be used only to support visual comparison and must not be
+    presented as proof of attribution, authenticity, or value.
+- Output: structured fields with uncertainty, citation bindings, and
+  "needs human confirmation" status for title, artist, year, medium,
+  dimensions, provenance, and rough comparable-value hints.
+- Cost controls: cap search context, returned-token budget, number of source
+  opens, background/deep-research use, and repeated retries per artwork.
+- Fallback: if OpenAI provider controls fail closed, the app must return a
+  local/manual draft state rather than silently using another provider.
 
 ### Mandatory architecture guardrails
 
@@ -205,17 +270,23 @@ Decision:
   configure both project-level Gemini spend caps and billing-account-level
   controls, and still treat them as supplementary because spend caps are
   experimental and can overrun during processing latency.
-- Record whether Gemini API billing is Prepay or Postpay before rollout. If
-  Postpay is chosen, the `USD 25/month` ceiling is a policy ceiling, not a hard
-  technical stop, unless separate quota and shutdown controls enforce it.
+- Record the paid provider billing model before rollout. For OpenAI, #48 must
+  name the OpenAI project/account owner, budget/quota limits, API key custody,
+  usage alerts, and whether billing/project limits make the `USD 25/month`
+  ceiling a hard or policy-only control. For Gemini fallback, #48 must record
+  whether Gemini API billing is Prepay or Postpay before rollout. If any
+  provider path is policy-only, separate quota and shutdown controls must
+  enforce the ceiling.
 - Broker-only architecture:
   - app -> broker,
-  - broker -> Gemini API,
-  - broker -> allowlisted professional/public sources,
+  - broker -> OpenAI Responses API,
+  - OpenAI hosted web search -> allowlisted professional/public sources,
   - broker -> app with structured citations and uncertainty.
 - No generic direct model access from Flutter.
 - No Google Search grounding in the first paid rollout. Start with
   allowlisted professional/public sources and free/public collection APIs first.
+- No provider fallback is allowed at runtime unless the provider is explicitly
+  approved in #48 and covered by #50-#52.
 
 ### Approval record required before any paid work
 
@@ -226,7 +297,9 @@ No paid backend task may start until #48 records all of the following:
 - explicit approval or rejection of Blaze for the beta paid backend project,
 - approved Firebase/GCP project ids or final placeholders,
 - approved billing account topology,
-- approved Prepay or Postpay Gemini API billing posture,
+- approved OpenAI project/account and API-key custody posture,
+- approved fallback-provider billing posture if any fallback provider is
+  enabled,
 - approved monthly policy ceiling,
 - accepted deployment-manager review,
 - accepted redteam/privacy review when the decision changes data boundaries.
@@ -265,8 +338,12 @@ Rationale:
 - Gemini API project-level spend cap configured for the AI backend project when
   available, plus billing-account-level caps or alerts according to the chosen
   billing topology.
+- OpenAI project/account usage limits, alerts, and API-key custody controls
+  configured according to #48 before any paid OpenAI call is reachable.
 - Quota alerts for the broker project and any Gemini-related quotas in Cloud
   Monitoring.
+- Quota alerts for OpenAI request count, token use, web-search tool calls,
+  search context budget, error rates, and model/provider failures.
 - Server-side breaker before client-side controls: the broker must be able to
   reject paid research requests at the server before calling a provider, even
   if a stale app build still shows the research entry point.
@@ -274,7 +351,7 @@ Rationale:
   1. set server-side breaker to reject all paid research traffic,
   2. set product/Remote Config flag `online_research_enabled=false`,
   3. disable or deny the broker route/function,
-  4. disable, rotate, or revoke provider credentials/API keys,
+  4. disable, rotate, or revoke OpenAI/provider credentials/API keys,
   5. lower provider quotas where possible,
   6. disable billing on the dedicated paid backend project only as a last
      resort.
@@ -343,6 +420,9 @@ Before a paid beta is exposed to any tester, #49 must define and verify:
 - Zero Data Retention eligibility and tradeoffs must be recorded in #52 before
   rollout. If ZDR is unavailable, the decision record must state why the
   provider retention behavior is acceptable for beta collector content.
+- OpenAI data handling, model training/evals storage settings, prompt cache
+  retention, web-search source/result retention, and ZDR compatibility must be
+  documented in #52 before live collector content is sent through OpenAI.
 - Google Search grounding remains banned for first paid rollout unless a later
   reviewed spec accepts its provider storage and citation behavior. Do not add
   grounding as an implementation detail under this issue.
@@ -383,6 +463,27 @@ Inference from those sources:
 - A future bring-your-own-API-key admin feature is a separate decision and is
   out of scope for MVP/default behavior.
 
+### Explicit answer: can a user's ChatGPT subscription be used by the app?
+
+No, not as the default architecture for MyArtCollection.
+
+Evidence-backed reason:
+
+- The OpenAI API docs describe API requests, model choice, hosted tools, and web
+  search as API/project-backed integrations configured by the application.
+- OpenAI's web search docs describe Responses API hosted `web_search` as a tool
+  configured in the API request, with model, reasoning, sources, and pricing
+  controls attached to that API integration.
+
+Inference from those sources:
+
+- A user's ChatGPT Plus / Pro / Team / Enterprise subscription is not an
+  app-side API billing entitlement for this repo unless OpenAI provides an
+  explicit future user-granted entitlement path and #48/#52 approve it.
+- A future bring-your-own-OpenAI-key or user-connected OpenAI account feature is
+  a separate product, privacy, support, and abuse-control decision and is out of
+  scope for MVP/default behavior.
+
 ## Risks and mitigations
 
 | Risk | Why it matters | Mitigation |
@@ -406,8 +507,10 @@ This issue is decision-ready when all of the following are true:
 - The default architecture decision is clear: no direct mobile AI calls, no
   client secrets, broker-only if approved.
 - The first approved paid path is clear: Firebase Functions 2nd gen broker +
-  Gemini Developer API.
+  OpenAI Responses API + `gpt-5.4` high reasoning + hosted web search.
 - The default rejected path is clear: Firebase AI Logic direct client use.
+- Gemini Developer API and Vertex/Gemini Enterprise Agent Platform are clear
+  alternate/deferred provider paths, not the owner-preferred default.
 - A dedicated paid backend project requirement is documented.
 - A monthly cost ceiling is documented.
 - Gemini project-level and billing-account-level cap behavior, plus Prepay or
@@ -421,17 +524,21 @@ This issue is decision-ready when all of the following are true:
   topology blocker.
 - Provider data-handling, log-sharing/training, ZDR, and grounding tradeoff
   blockers are documented.
+- OpenAI web-search controls are documented: professional-domain allowlist,
+  citations, source metadata, high reasoning default, and deep-research cost
+  limits.
 - Linked follow-up issues exist for the hard blockers before implementation.
 - The monetization posture is documented as workflow/evidence, not certainty.
 - The answer about user Gemini subscriptions is explicit and evidence-backed.
+- The answer about user ChatGPT subscriptions is explicit and evidence-backed.
 - Redteam review and deployment-manager review are listed as required gates.
 
 ## Task breakdown
 
 1. [#48](https://github.com/kenleren/MyArtCollection/issues/48): create the
-   dedicated paid backend approval, environment, and billing topology decision
-   record. Required review: `codex-deployment-manager`, plus human owner
-   decision copied into GitHub.
+   dedicated paid backend approval, provider choice, environment, and billing
+   topology decision record. Required review: `codex-deployment-manager`, plus
+   human owner decision copied into GitHub.
 2. [#49](https://github.com/kenleren/MyArtCollection/issues/49): prepare
    deployment gates, kill-switch/rollback runbook, monitoring, alerting, and
    budget/quota evidence. Required review: `codex-deployment-manager`.
@@ -452,10 +559,15 @@ This issue is decision-ready when all of the following are true:
 ## Open human decisions
 
 - Approve or reject paid AI/backend work for beta after this gate.
+- Confirm OpenAI as the first paid research provider, with `gpt-5.4` and high
+  reasoning as the MVP default.
 - Confirm whether the AI backend gets its own billing account, or only its own
   project.
 - Confirm the named human billing owner and deployment owner.
-- Confirm Prepay or Postpay for Gemini API billing.
+- Confirm OpenAI project/account owner, API-key custody, usage limits, and alert
+  recipients.
+- Confirm Prepay or Postpay for Gemini API billing only if Gemini is later
+  enabled as a fallback or alternate provider.
 - Confirm whether the initial monthly ceiling stays at `USD 25` or is adjusted.
 - Confirm whether internal beta research is invite-only or broader.
 - Confirm when monetized research should start, and what the first non-free cap
