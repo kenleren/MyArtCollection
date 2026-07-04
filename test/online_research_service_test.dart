@@ -157,44 +157,56 @@ void main() {
     );
   });
 
-  test('mobile code does not contain embedded AI or search secrets', () async {
-    final repoRoot = Directory.current;
-    final scannedFiles = <File>[
-      ..._filesUnder(Directory(p.join(repoRoot.path, 'lib'))),
-      ..._filesUnder(Directory(p.join(repoRoot.path, 'android'))),
-      ..._filesUnder(Directory(p.join(repoRoot.path, 'ios'))),
-    ];
-    final forbidden = RegExp(
-      r'(AIza[0-9A-Za-z_-]{20,}|sk-[0-9A-Za-z_-]{20,}|'
-      r'OPENAI_API_KEY|GEMINI_API_KEY|GOOGLE_API_KEY|'
-      r'CUSTOM_SEARCH_KEY|SEARCH_API_KEY)',
-    );
+  test(
+    'mobile source and config do not contain embedded AI or search secrets',
+    () async {
+      final repoRoot = Directory.current;
+      final scannedFiles = <File>[
+        ..._mobileFilesUnder(Directory(p.join(repoRoot.path, 'lib'))),
+        ..._mobileFilesUnder(Directory(p.join(repoRoot.path, 'android'))),
+        ..._mobileFilesUnder(Directory(p.join(repoRoot.path, 'ios'))),
+      ];
+      final forbidden = RegExp(
+        r'(AIza[0-9A-Za-z_-]{20,}|sk-[0-9A-Za-z_-]{20,}|'
+        r'OPENAI_API_KEY|GEMINI_API_KEY|GOOGLE_API_KEY|'
+        r'CUSTOM_SEARCH_KEY|SEARCH_API_KEY)',
+      );
 
-    for (final file in scannedFiles) {
-      if (!await file.exists()) {
-        continue;
+      for (final file in scannedFiles) {
+        if (!await file.exists()) {
+          continue;
+        }
+        final content = await file.readAsString();
+        expect(content, isNot(contains(forbidden)), reason: file.path);
       }
-      final content = await file.readAsString();
-      expect(content, isNot(contains(forbidden)), reason: file.path);
-    }
-  });
+    },
+  );
 }
 
-Iterable<File> _filesUnder(Directory directory) sync* {
+Iterable<File> _mobileFilesUnder(Directory directory) sync* {
   if (!directory.existsSync()) {
     return;
   }
   for (final entity in directory.listSync(recursive: true)) {
-    if (entity is File &&
-        (entity.path.endsWith('.dart') ||
-            entity.path.endsWith('.kt') ||
-            entity.path.endsWith('.swift') ||
-            entity.path.endsWith('.xml') ||
-            entity.path.endsWith('.gradle') ||
-            entity.path.endsWith('.kts'))) {
+    if (entity is File && _isMobileSourceOrConfig(entity.path)) {
       yield entity;
     }
   }
+}
+
+bool _isMobileSourceOrConfig(String path) {
+  const extensions = [
+    '.dart',
+    '.gradle',
+    '.kts',
+    '.kt',
+    '.plist',
+    '.properties',
+    '.swift',
+    '.xcconfig',
+    '.xml',
+  ];
+  return extensions.any(path.endsWith);
 }
 
 ArtworkRecord _record(String id) {
