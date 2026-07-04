@@ -60,6 +60,10 @@ flutter build ios --simulator --debug --no-codesign
 If no simulator or emulator is booted, use `flutter emulators` and your local
 device tooling to start one before `flutter run`.
 
+Android beta distribution is documented in
+[Firebase App Distribution](docs/FIREBASE_APP_DISTRIBUTION.md). Firebase is the
+tester delivery layer only; local-first artwork storage remains unchanged.
+
 Primary audience:
 
 - Hobby collectors with roughly 10 to 200 artworks

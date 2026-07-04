@@ -43,3 +43,11 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Firebase local credentials/config used for beta distribution.
+/.firebase/
+/firebase-debug.log
+/google-services.json
+/android/app/google-services.json
+/.env.firebase
+/*.service-account.json
