@@ -8,6 +8,7 @@ import 'package:my_art_collection/app/app.dart';
 import 'package:my_art_collection/app/app_dependencies.dart';
 import 'package:my_art_collection/app/app_routes.dart';
 import 'package:my_art_collection/app/intake/artwork_image_picker.dart';
+import 'package:my_art_collection/app/startup_route.dart';
 import 'package:my_art_collection/app/storage/artwork_record.dart';
 import 'package:my_art_collection/app/storage/attachment_record.dart';
 import 'package:my_art_collection/app/storage/local_artwork_repository.dart';
@@ -216,6 +217,52 @@ void main() {
     expect(find.textContaining('incomplete queue items'), findsOneWidget);
   });
 
+  testWidgets('cold start opens collection when local records exist', (
+    WidgetTester tester,
+  ) async {
+    final testDependencies = await tester.runAsync(
+      () async => _LiveDependencyFixture.create(),
+    );
+    final fixture = testDependencies!;
+    addTearDown(() async {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.runAsync(fixture.dispose);
+    });
+
+    final emptyRoute = await tester.runAsync(
+      () => initialRouteForRepository(fixture.repository),
+    );
+    expect(emptyRoute, AppRoutes.splash);
+
+    await tester.runAsync(() async {
+      await fixture.repository.upsert(
+        _artworkRecord(
+          id: 'cold-start-local-record',
+          title: 'Cold Start Local Record',
+          state: ArtworkRecordState.needsReview,
+        ),
+      );
+      await fixture.reopenRepository();
+    });
+
+    final existingRecordsRoute = await tester.runAsync(
+      () => initialRouteForRepository(fixture.repository),
+    );
+    expect(existingRecordsRoute, AppRoutes.collection);
+
+    await tester.pumpWidget(
+      MyArtCollectionApp(
+        initialRoute: existingRecordsRoute!,
+        dependencies: fixture.dependencies,
+      ),
+    );
+    await pumpLiveData(tester);
+
+    expect(find.text('Collection'), findsWidgets);
+    expect(find.text('Cold Start Local Record'), findsOneWidget);
+    expect(find.text('Private artwork records'), findsNothing);
+  });
+
   testWidgets('collection and draft show local primary image preview', (
     WidgetTester tester,
   ) async {
@@ -267,6 +314,21 @@ void main() {
       findsOneWidget,
     );
     expect(find.text('AI-suggested'), findsWidgets);
+
+    await tapVisible(tester, find.text('Confirm suggested fields'));
+    await pumpLiveData(tester);
+    await tester.runAsync(
+      () async => Future<void>.delayed(const Duration(milliseconds: 500)),
+    );
+    await tester.pump();
+
+    expect(find.text('Verified by you'), findsWidgets);
+    expect(find.text('Photo Preview Artwork'), findsWidgets);
+    expect(
+      find.byKey(const ValueKey('primary-artwork-image-preview')),
+      findsOneWidget,
+    );
+    expect(find.text('Primary image fixture'), findsNothing);
   });
 
   testWidgets('missing primary image fallback does not leak storage paths', (

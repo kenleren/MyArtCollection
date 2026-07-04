@@ -596,7 +596,7 @@ class ArtworkDetailsScreen extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const _ArtworkHero(),
+          _PrimaryImageForArtwork(artworkId: artwork.id),
           const SizedBox(height: 16),
           const _CompletenessPanel(),
           const SizedBox(height: 16),
@@ -1072,7 +1072,7 @@ class _ArtworkHero extends StatelessWidget {
             const Positioned(
               left: 14,
               bottom: 12,
-              child: _MiniLabel(text: 'Primary image fixture'),
+              child: _MiniLabel(text: 'Example artwork image'),
             ),
           ],
         ),
