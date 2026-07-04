@@ -403,7 +403,7 @@ class _CaptureImportScreenState extends State<CaptureImportScreen> {
       ).createIntakeService().recoverLostImage();
       if (recovered == null) {
         throw const ArtworkIntakeException(
-          ArtworkIntakeFailure.cancelled,
+          ArtworkIntakeFailure.sourceUnavailable,
           'No interrupted import was available.',
         );
       }

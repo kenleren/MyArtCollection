@@ -1,9 +1,23 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:my_art_collection/app/app.dart';
+import 'package:my_art_collection/app/app_dependencies.dart';
 import 'package:my_art_collection/app/app_routes.dart';
+import 'package:my_art_collection/app/intake/artwork_image_picker.dart';
+import 'package:my_art_collection/app/storage/local_artwork_repository.dart';
+import 'package:my_art_collection/app/storage/local_attachment_store.dart';
+import 'package:path/path.dart' as p;
+import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 void main() {
+  setUpAll(() {
+    sqfliteFfiInit();
+    databaseFactory = databaseFactoryFfi;
+  });
+
   testWidgets('intro screen shows brand once and value heading once', (
     WidgetTester tester,
   ) async {
@@ -86,6 +100,33 @@ void main() {
     expect(find.text('User-provided insurance values only.'), findsOneWidget);
   });
 
+  testWidgets('live import flow shows failed recovery state', (
+    WidgetTester tester,
+  ) async {
+    final testDependencies = await tester.runAsync(
+      () async => _LiveDependencyFixture.create(),
+    );
+    final fixture = testDependencies!;
+    addTearDown(fixture.dispose);
+
+    await tester.pumpWidget(
+      MyArtCollectionApp(
+        initialRoute: AppRoutes.import,
+        dependencies: fixture.dependencies,
+      ),
+    );
+    await pumpReady(tester);
+
+    await tapVisible(tester, find.text('Recover interrupted import'));
+
+    expect(find.text('Import needs attention'), findsOneWidget);
+    expect(
+      find.textContaining('No interrupted import was available.'),
+      findsOneWidget,
+    );
+    expect(find.text('Choose from system picker'), findsOneWidget);
+  });
+
   testWidgets('settings shell routes render the settings tab', (
     WidgetTester tester,
   ) async {
@@ -111,4 +152,51 @@ Future<void> tapVisible(WidgetTester tester, Finder finder) async {
 Future<void> pumpReady(WidgetTester tester) async {
   await tester.pump();
   await tester.pump(const Duration(milliseconds: 400));
+}
+
+class _NoLostImagePicker implements ArtworkImagePicker {
+  @override
+  Future<XFile?> pick(ArtworkImagePickMode mode) async => null;
+
+  @override
+  Future<XFile?> retrieveLostImage() async => null;
+}
+
+class _LiveDependencyFixture {
+  const _LiveDependencyFixture({
+    required this.tempDir,
+    required this.repository,
+    required this.dependencies,
+  });
+
+  final Directory tempDir;
+  final LocalArtworkRepository repository;
+  final AppDependencies dependencies;
+
+  static Future<_LiveDependencyFixture> create() async {
+    final tempDir = await Directory.systemTemp.createTemp(
+      'my_art_collection_widget_test_',
+    );
+    final repository = LocalArtworkRepository.forDatabase(
+      await LocalArtworkRepository.openAt(p.join(tempDir.path, 'records.db')),
+    );
+    final attachmentStore = await LocalAttachmentStore.openAt(
+      Directory(p.join(tempDir.path, 'private_files')),
+    );
+
+    return _LiveDependencyFixture(
+      tempDir: tempDir,
+      repository: repository,
+      dependencies: AppDependencies(
+        artworkRepository: repository,
+        attachmentStore: attachmentStore,
+        imagePicker: _NoLostImagePicker(),
+      ),
+    );
+  }
+
+  Future<void> dispose() async {
+    await repository.close();
+    await tempDir.delete(recursive: true);
+  }
 }
