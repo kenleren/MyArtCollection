@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
 
+import '../app_dependencies.dart';
 import '../app_routes.dart';
+import '../intake/artwork_intake_service.dart';
 import '../prototype/prototype_artwork.dart';
+import '../storage/artwork_record.dart';
 
 class PrototypeIntroScreen extends StatelessWidget {
   const PrototypeIntroScreen({super.key});
@@ -97,11 +100,48 @@ class PrototypePrivacyScreen extends StatelessWidget {
   }
 }
 
-class CollectionHomeScreen extends StatelessWidget {
+class CollectionHomeScreen extends StatefulWidget {
   const CollectionHomeScreen({super.key});
 
   @override
+  State<CollectionHomeScreen> createState() => _CollectionHomeScreenState();
+}
+
+class _CollectionHomeScreenState extends State<CollectionHomeScreen> {
+  Future<List<ArtworkRecord>>? _records;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final dependencies = _maybeDependencies(context);
+    _records ??= dependencies?.artworkRepository.list();
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final dependencies = _maybeDependencies(context);
+    if (dependencies != null) {
+      return FutureBuilder<List<ArtworkRecord>>(
+        future: _records,
+        builder: (context, snapshot) {
+          return _CollectionHomeContent(records: snapshot.data ?? const []);
+        },
+      );
+    }
+
+    return const _CollectionHomeContent(records: []);
+  }
+}
+
+class _CollectionHomeContent extends StatelessWidget {
+  const _CollectionHomeContent({required this.records});
+
+  final List<ArtworkRecord> records;
+
+  @override
+  Widget build(BuildContext context) {
+    final latestRecord = records.isEmpty ? null : records.first;
+
     return ListView(
       padding: const EdgeInsets.all(20),
       children: [
@@ -112,7 +152,10 @@ class CollectionHomeScreen extends StatelessWidget {
         const SizedBox(height: 16),
         const _LimitHint(),
         const SizedBox(height: 16),
-        const _EmptyCollectionPanel(),
+        if (latestRecord == null)
+          const _EmptyCollectionPanel()
+        else
+          _LatestDraftPanel(record: latestRecord),
         const SizedBox(height: 88),
       ],
     );
@@ -269,8 +312,137 @@ class AddArtworkScreen extends StatelessWidget {
   }
 }
 
-class CaptureImportScreen extends StatelessWidget {
+class CaptureImportScreen extends StatefulWidget {
   const CaptureImportScreen({super.key, required this.mode});
+
+  final String mode;
+
+  @override
+  State<CaptureImportScreen> createState() => _CaptureImportScreenState();
+}
+
+class _CaptureImportScreenState extends State<CaptureImportScreen> {
+  ArtworkIntakeResult? _result;
+  ArtworkIntakeException? _failure;
+  bool _isBusy = false;
+
+  bool get _isImport => widget.mode == 'import';
+
+  @override
+  Widget build(BuildContext context) {
+    if (_maybeDependencies(context) == null) {
+      return _StaticCaptureImportScreen(mode: widget.mode);
+    }
+
+    return PrototypeScreenFrame(
+      title: _isImport ? 'Import photo' : 'Take photo',
+      subtitle: 'Primary artwork image',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const _ArtworkHero(),
+          const SizedBox(height: 16),
+          _IntakeStatePanel(
+            isImport: _isImport,
+            isBusy: _isBusy,
+            result: _result,
+            failure: _failure,
+          ),
+          const SizedBox(height: 12),
+          const _StatusPanel(
+            icon: Icons.error_outline,
+            title: 'Upload-failure state',
+            body:
+                'Retry is available when a document or image upload cannot finish.',
+          ),
+          const SizedBox(height: 20),
+          if (_result == null) ...[
+            _ActionButton(
+              icon: _isImport
+                  ? Icons.photo_library_outlined
+                  : Icons.photo_camera_outlined,
+              label: _isImport ? 'Choose from system picker' : 'Open camera',
+              onPressed: _isBusy ? null : _runIntake,
+            ),
+            const SizedBox(height: 12),
+            _ActionButton(
+              icon: Icons.restore_outlined,
+              label: 'Recover interrupted import',
+              onPressed: _isBusy ? null : _recoverLostImage,
+              isPrimary: false,
+            ),
+          ] else ...[
+            PrimaryActionButton(
+              icon: Icons.rate_review_outlined,
+              label: 'Review AI draft',
+              routeName: AppRoutes.artworkDraft(_result!.record.id),
+            ),
+            const SizedBox(height: 12),
+            SecondaryActionButton(
+              icon: Icons.collections_bookmark_outlined,
+              label: 'Back to collection',
+              routeName: AppRoutes.collection,
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Future<void> _runIntake() async {
+    await _withBusyState(() async {
+      final service = AppDependencyScope.of(context).createIntakeService();
+      return _isImport ? service.importImage() : service.captureImage();
+    });
+  }
+
+  Future<void> _recoverLostImage() async {
+    await _withBusyState(() async {
+      final recovered = await AppDependencyScope.of(
+        context,
+      ).createIntakeService().recoverLostImage();
+      if (recovered == null) {
+        throw const ArtworkIntakeException(
+          ArtworkIntakeFailure.cancelled,
+          'No interrupted import was available.',
+        );
+      }
+      return recovered;
+    });
+  }
+
+  Future<void> _withBusyState(
+    Future<ArtworkIntakeResult> Function() action,
+  ) async {
+    setState(() {
+      _isBusy = true;
+      _failure = null;
+    });
+
+    try {
+      final result = await action();
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _result = result;
+        _failure = null;
+      });
+    } on ArtworkIntakeException catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() => _failure = error);
+    } finally {
+      if (mounted) {
+        setState(() => _isBusy = false);
+      }
+    }
+  }
+}
+
+class _StaticCaptureImportScreen extends StatelessWidget {
+  const _StaticCaptureImportScreen({required this.mode});
 
   final String mode;
 
@@ -659,6 +831,105 @@ class DocumentTile extends StatelessWidget {
   }
 }
 
+class _IntakeStatePanel extends StatelessWidget {
+  const _IntakeStatePanel({
+    required this.isImport,
+    required this.isBusy,
+    required this.result,
+    required this.failure,
+  });
+
+  final bool isImport;
+  final bool isBusy;
+  final ArtworkIntakeResult? result;
+  final ArtworkIntakeException? failure;
+
+  @override
+  Widget build(BuildContext context) {
+    if (isBusy) {
+      return const _StatusPanel(
+        icon: Icons.hourglass_top,
+        title: 'Opening private intake',
+        body:
+            'Use the system picker or camera. The app stores only your chosen file.',
+      );
+    }
+
+    final result = this.result;
+    if (result != null) {
+      return _StatusPanel(
+        icon: result.wasRecovered
+            ? Icons.restore_outlined
+            : isImport
+            ? Icons.file_upload_outlined
+            : Icons.camera_alt,
+        title: result.wasRecovered
+            ? 'Interrupted import recovered'
+            : isImport
+            ? 'Photo imported'
+            : 'Photo captured',
+        body:
+            'Draft created locally. Return from Collection to keep reviewing this record after restart.',
+      );
+    }
+
+    final failure = this.failure;
+    if (failure != null) {
+      return _StatusPanel(
+        icon: failure.failure == ArtworkIntakeFailure.cancelled
+            ? Icons.cancel_outlined
+            : Icons.error_outline,
+        title: failure.failure == ArtworkIntakeFailure.cancelled
+            ? 'Import cancelled'
+            : 'Import needs attention',
+        body:
+            '${failure.message} Retry when ready; no broad photo-library access is required for import.',
+      );
+    }
+
+    return _StatusPanel(
+      icon: isImport
+          ? Icons.photo_library_outlined
+          : Icons.photo_camera_outlined,
+      title: isImport ? 'Use system photo picker' : 'Use camera',
+      body:
+          'Choose one artwork image. The app copies only that file into private storage.',
+    );
+  }
+}
+
+class _ActionButton extends StatelessWidget {
+  const _ActionButton({
+    required this.icon,
+    required this.label,
+    required this.onPressed,
+    this.isPrimary = true,
+  });
+
+  final IconData icon;
+  final String label;
+  final VoidCallback? onPressed;
+  final bool isPrimary;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: double.infinity,
+      child: isPrimary
+          ? FilledButton.icon(
+              onPressed: onPressed,
+              icon: Icon(icon),
+              label: Text(label),
+            )
+          : OutlinedButton.icon(
+              onPressed: onPressed,
+              icon: Icon(icon),
+              label: Text(label),
+            ),
+    );
+  }
+}
+
 class PrimaryActionButton extends StatelessWidget {
   const PrimaryActionButton({
     super.key,
@@ -976,6 +1247,47 @@ class _EmptyCollectionPanel extends StatelessWidget {
   }
 }
 
+class _LatestDraftPanel extends StatelessWidget {
+  const _LatestDraftPanel({required this.record});
+
+  final ArtworkRecord record;
+
+  @override
+  Widget build(BuildContext context) {
+    final title =
+        record.field(ArtworkFieldKeys.title)?.value ?? 'Untitled artwork';
+    final routeName = record.recordState == ArtworkRecordState.verifiedByYou
+        ? AppRoutes.artworkDetails(record.id)
+        : AppRoutes.artworkDraft(record.id);
+
+    return _Panel(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(title, style: Theme.of(context).textTheme.titleMedium),
+          const SizedBox(height: 6),
+          Text(record.recordState.label),
+          const SizedBox(height: 8),
+          const _StatusLine(
+            icon: Icons.photo_library_outlined,
+            text: 'Primary image saved in app-private storage.',
+          ),
+          const _StatusLine(
+            icon: Icons.restore_outlined,
+            text: 'Resume this draft after navigation or app restart.',
+          ),
+          const SizedBox(height: 12),
+          PrimaryActionButton(
+            icon: Icons.rate_review_outlined,
+            label: 'Resume draft',
+            routeName: routeName,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _CompletenessPanel extends StatelessWidget {
   const _CompletenessPanel();
 
@@ -1074,6 +1386,103 @@ class _StatusPanel extends StatelessWidget {
       ),
     );
   }
+}
+
+AppDependencies? _maybeDependencies(BuildContext context) {
+  return context
+      .dependOnInheritedWidgetOfExactType<AppDependencyScope>()
+      ?.dependencies;
+}
+
+Future<PrototypeArtwork> artworkForRoute(
+  BuildContext context,
+  String artworkId,
+) async {
+  final dependencies = _maybeDependencies(context);
+  final record = dependencies == null
+      ? null
+      : await dependencies.artworkRepository.get(artworkId);
+  return record == null ? prototypeArtwork : prototypeArtworkFromRecord(record);
+}
+
+PrototypeArtwork prototypeArtworkFromRecord(ArtworkRecord record) {
+  final title = _field(
+    record,
+    key: ArtworkFieldKeys.title,
+    label: 'Title',
+    fallback: 'Untitled artwork',
+  );
+  return PrototypeArtwork(
+    id: record.id,
+    title: title,
+    artist: _field(
+      record,
+      key: ArtworkFieldKeys.artist,
+      label: 'Artist',
+      fallback: 'Unknown',
+    ),
+    year: _field(
+      record,
+      key: ArtworkFieldKeys.year,
+      label: 'Year',
+      fallback: 'Could not determine',
+    ),
+    medium: _field(
+      record,
+      key: ArtworkFieldKeys.medium,
+      label: 'Medium',
+      fallback: 'Needs review',
+    ),
+    dimensions: _field(
+      record,
+      key: ArtworkFieldKeys.dimensions,
+      label: 'Dimensions',
+      fallback: 'Needs review',
+    ),
+    location: _field(
+      record,
+      key: ArtworkFieldKeys.currentLocation,
+      label: 'Current location',
+      fallback: 'Needs review',
+    ),
+    insuranceValue: _field(
+      record,
+      key: ArtworkFieldKeys.insuranceValue,
+      label: 'User-provided insurance value',
+      fallback: 'Not set',
+    ),
+    condition: _field(
+      record,
+      key: ArtworkFieldKeys.conditionNotes,
+      label: 'Condition notes',
+      fallback: 'Needs review',
+    ),
+    documents: const [],
+  );
+}
+
+PrototypeField _field(
+  ArtworkRecord record, {
+  required String key,
+  required String label,
+  required String fallback,
+}) {
+  final value = record.field(key);
+  return PrototypeField(
+    label: label,
+    value: value?.value ?? fallback,
+    source: _prototypeSource(value?.source ?? ArtworkFieldSource.unknown),
+    note: value?.note ?? 'Confirm this field before using it in a report.',
+  );
+}
+
+PrototypeSource _prototypeSource(ArtworkFieldSource source) {
+  return switch (source) {
+    ArtworkFieldSource.aiSuggested => PrototypeSource.aiSuggested,
+    ArtworkFieldSource.userConfirmed => PrototypeSource.userConfirmed,
+    ArtworkFieldSource.documentExtracted => PrototypeSource.documentExtracted,
+    ArtworkFieldSource.unknown => PrototypeSource.unknown,
+  };
 }
 
 class _AttentionRow extends StatelessWidget {

@@ -10,7 +10,7 @@ void main() {
     await tester.pumpWidget(
       const MyArtCollectionApp(initialRoute: AppRoutes.splash),
     );
-    await tester.pumpAndSettle();
+    await pumpReady(tester);
 
     expect(find.text('MyArtCollection'), findsOneWidget);
     expect(find.text('Private artwork records'), findsOneWidget);
@@ -23,7 +23,7 @@ void main() {
     await tester.pumpWidget(
       const MyArtCollectionApp(initialRoute: AppRoutes.collection),
     );
-    await tester.pumpAndSettle();
+    await pumpReady(tester);
 
     expect(find.text('Collection'), findsWidgets);
     expect(find.text('Incomplete'), findsOneWidget);
@@ -45,7 +45,7 @@ void main() {
     await tester.pumpWidget(
       const MyArtCollectionApp(initialRoute: AppRoutes.collection),
     );
-    await tester.pumpAndSettle();
+    await pumpReady(tester);
 
     await tapVisible(tester, find.widgetWithText(FilledButton, 'Add artwork'));
     await tapVisible(tester, find.text('Import photo'));
@@ -70,7 +70,10 @@ void main() {
     expect(find.text('Attach document placeholder'), findsOneWidget);
     expect(find.text('Missing-file state'), findsOneWidget);
 
-    await tapVisible(tester, find.text('Report preview'));
+    await tapVisible(
+      tester,
+      find.widgetWithText(OutlinedButton, 'Report preview').last,
+    );
     expect(find.text('Generate an insurance-ready PDF'), findsWidgets);
     expect(
       find.text('User-provided insurance value: USD 2,400.'),
@@ -88,7 +91,7 @@ void main() {
   ) async {
     for (final route in [AppRoutes.collectionSettings, AppRoutes.settings]) {
       await tester.pumpWidget(MyArtCollectionApp(initialRoute: route));
-      await tester.pumpAndSettle();
+      await pumpReady(tester);
 
       expect(find.text('Settings'), findsWidgets);
       expect(find.text('Privacy and storage'), findsWidgets);
@@ -100,7 +103,12 @@ void main() {
 
 Future<void> tapVisible(WidgetTester tester, Finder finder) async {
   await tester.ensureVisible(finder);
-  await tester.pumpAndSettle();
+  await tester.pump();
   await tester.tap(finder);
-  await tester.pumpAndSettle();
+  await pumpReady(tester);
+}
+
+Future<void> pumpReady(WidgetTester tester) async {
+  await tester.pump();
+  await tester.pump(const Duration(milliseconds: 400));
 }

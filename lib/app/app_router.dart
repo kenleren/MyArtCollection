@@ -75,33 +75,33 @@ class AppRouter {
       return null;
     }
 
+    final artworkId = segments[1];
     final suffix = segments.length > 2 ? segments.sublist(2).join('/') : '';
-    final artwork = prototypeArtwork;
 
     return switch (suffix) {
       '' => _page(
         settings: settings,
-        child: ArtworkDetailsScreen(artwork: artwork),
+        child: _ArtworkRouteScreen(artworkId: artworkId, suffix: 'details'),
       ),
       'draft' => _page(
         settings: settings,
-        child: DraftReviewScreen(artwork: artwork),
+        child: _ArtworkRouteScreen(artworkId: artworkId, suffix: suffix),
       ),
       'details' => _page(
         settings: settings,
-        child: ArtworkDetailsScreen(artwork: artwork),
+        child: _ArtworkRouteScreen(artworkId: artworkId, suffix: suffix),
       ),
       'documents' => _page(
         settings: settings,
-        child: DocumentsScreen(artwork: artwork),
+        child: _ArtworkRouteScreen(artworkId: artworkId, suffix: suffix),
       ),
       'report-preview' => _page(
         settings: settings,
-        child: ReportPreviewScreen(artwork: artwork),
+        child: _ArtworkRouteScreen(artworkId: artworkId, suffix: suffix),
       ),
       'export' => _page(
         settings: settings,
-        child: ExportPreviewScreen(artwork: artwork),
+        child: _ArtworkRouteScreen(artworkId: artworkId, suffix: suffix),
       ),
       _ => null,
     };
@@ -112,5 +112,42 @@ class AppRouter {
     required Widget child,
   }) {
     return MaterialPageRoute<void>(settings: settings, builder: (_) => child);
+  }
+}
+
+class _ArtworkRouteScreen extends StatefulWidget {
+  const _ArtworkRouteScreen({required this.artworkId, required this.suffix});
+
+  final String artworkId;
+  final String suffix;
+
+  @override
+  State<_ArtworkRouteScreen> createState() => _ArtworkRouteScreenState();
+}
+
+class _ArtworkRouteScreenState extends State<_ArtworkRouteScreen> {
+  Future<PrototypeArtwork>? _artwork;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _artwork ??= artworkForRoute(context, widget.artworkId);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<PrototypeArtwork>(
+      future: _artwork,
+      builder: (context, snapshot) {
+        final artwork = snapshot.data ?? prototypeArtwork;
+        return switch (widget.suffix) {
+          'draft' => DraftReviewScreen(artwork: artwork),
+          'documents' => DocumentsScreen(artwork: artwork),
+          'report-preview' => ReportPreviewScreen(artwork: artwork),
+          'export' => ExportPreviewScreen(artwork: artwork),
+          _ => ArtworkDetailsScreen(artwork: artwork),
+        };
+      },
+    );
   }
 }
