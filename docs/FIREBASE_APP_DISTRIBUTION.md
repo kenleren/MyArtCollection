@@ -4,6 +4,10 @@ Firebase App Distribution is the beta delivery layer for Android tester APKs.
 It does not change MyArtCollection's local-first artwork storage model and does
 not imply Firebase Auth, Firestore, Storage, Analytics, or Crashlytics.
 
+Telemetry guardrails for Crashlytics, Remote Config, Analytics, and Performance
+Monitoring are documented in
+[Firebase Telemetry Privacy Policy](FIREBASE_TELEMETRY_POLICY.md).
+
 ## Android App
 
 - Android package id: `com.kenleren.my_art_collection`

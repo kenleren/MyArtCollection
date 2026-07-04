@@ -87,6 +87,7 @@ Primary job:
 - [Local Storage Spec](docs/LOCAL_STORAGE_SPEC.md)
 - [Mobile Information Architecture](docs/MOBILE_IA.md)
 - [Artwork Record Schema](docs/ARTWORK_RECORD_SCHEMA.md)
+- [Firebase Telemetry Privacy Policy](docs/FIREBASE_TELEMETRY_POLICY.md)
 - [MVP Task Breakdown](docs/MVP_TASKS.md)
 - [ADR 0001: Local-First Flutter With Google Drive Backup](docs/adr/0001-local-first-flutter-google-drive.md)
 
