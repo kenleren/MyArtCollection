@@ -36,9 +36,10 @@ The user goal is not automatic authentication or appraisal. The useful job is:
 - OpenAI's Responses API supports web search as a tool, but broad web search is
   too loose for this product unless it is constrained by allowlist, source
   classification, citations, and post-processing.
-- Google's Custom Search Site Restricted JSON API can restrict search to 10 or
-  fewer sites. Google also points site-restricted search users toward Agent
-  Search / Vertex AI Search for richer controlled search deployments.
+- Google's Custom Search Site Restricted JSON API is no longer a suitable new
+  default because Google states that it stopped serving traffic on January 8,
+  2025. Treat it as historical context only and evaluate Vertex AI Search /
+  Agent Search or source-specific APIs instead.
 - Professional public collection APIs exist for museum and cultural heritage
   metadata, including The Met Collection API, Art Institute of Chicago API,
   Harvard Art Museums API, and Europeana APIs.
