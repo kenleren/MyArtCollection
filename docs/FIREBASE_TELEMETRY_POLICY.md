@@ -7,8 +7,8 @@ storage model and prevents artwork metadata from leaking into operational logs.
 ## Status
 
 - Firebase App Distribution is allowed for Android beta delivery.
-- Crashlytics may be added for internal beta crash triage after this policy is
-  accepted and implemented.
+- Crashlytics is allowed for Android internal beta crash triage only when an
+  explicit internal-beta build flag enables it.
 - Remote Config may be added for non-sensitive beta kill switches after this
   policy is accepted and implemented.
 - Analytics and Performance Monitoring remain deferred until a separate issue
@@ -80,6 +80,22 @@ synthetic title, path, token, source URL, and research query are not sent.
 
 Crashlytics collection must be disabled by default for debug/local development
 and must remain off in beta until tester/user disclosure is in place.
+
+Current Android implementation:
+
+- Runtime collection is disabled unless the app is a release-mode build and
+  `--dart-define=MY_ART_COLLECTION_INTERNAL_BETA_CRASHLYTICS=true` is present.
+- Android manifest defaults set Crashlytics collection to `false`.
+- Firebase initialization is skipped when collection is off, so local/debug
+  builds do not require `google-services.json`.
+- Crashlytics SDK calls are isolated to `lib/app/telemetry/crash_telemetry.dart`.
+- The facade records only fixed sanitized error categories:
+  `flutter_framework_error`, `platform_dispatcher_error`, and
+  `dart_zone_error`.
+- No Crashlytics custom keys or custom logs are currently allowed.
+- Deliberate setup crashes require both internal beta Crashlytics enablement and
+  `--dart-define=MY_ART_COLLECTION_CRASHLYTICS_TEST_CRASH=true`; this path is
+  for one-off human verification only and is not reachable from normal app UI.
 
 ## Allowed Remote Config Data
 

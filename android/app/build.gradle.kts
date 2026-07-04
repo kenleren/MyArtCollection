@@ -4,6 +4,20 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
+val enableFirebaseAndroid =
+    providers.environmentVariable("MY_ART_COLLECTION_FIREBASE_ANDROID")
+        .map { it.equals("true", ignoreCase = true) }
+        .getOrElse(false)
+val googleServicesConfig = file("google-services.json")
+
+if (enableFirebaseAndroid) {
+    require(googleServicesConfig.isFile) {
+        "MY_ART_COLLECTION_FIREBASE_ANDROID=true requires android/app/google-services.json"
+    }
+    apply(plugin = "com.google.gms.google-services")
+    apply(plugin = "com.google.firebase.crashlytics")
+}
+
 android {
     namespace = "com.kenleren.my_art_collection"
     compileSdk = flutter.compileSdkVersion
@@ -23,6 +37,7 @@ android {
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+        manifestPlaceholders["crashlyticsCollectionEnabled"] = "false"
     }
 
     buildTypes {

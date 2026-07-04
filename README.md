@@ -62,9 +62,10 @@ device tooling to start one before `flutter run`.
 
 Android beta distribution is documented in
 [Firebase App Distribution](docs/FIREBASE_APP_DISTRIBUTION.md). Firebase is the
-tester delivery layer only; local-first artwork storage remains unchanged.
-Credential handling and repository secret scanning are documented in
-[Secret Hygiene](docs/SECRET_HYGIENE.md).
+tester delivery layer by default. Crashlytics can be enabled only for Android
+internal beta crash triage with an explicit release build flag; local/debug
+collection remains off. Credential handling and repository secret scanning are
+documented in [Secret Hygiene](docs/SECRET_HYGIENE.md).
 
 Primary audience:
 
