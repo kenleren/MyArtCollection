@@ -21,6 +21,7 @@ Required fields:
 
 - `artwork_id`
 - `record_state`
+- `lifecycle_status`
 - `title`
 - `artist`
 - `primary_image`
@@ -123,6 +124,37 @@ Attachment rules:
 
 ## Completeness And Record States
 
+### Lifecycle Status
+
+Lifecycle status records what happened to the physical artwork. It is separate
+from record completeness and provenance labels.
+
+Permitted `lifecycle_status` values:
+
+- `active`
+- `sold`
+- `lost`
+- `stolen`
+- `removed`
+
+Status meaning:
+
+- `active` means the artwork is treated as a current holding.
+- `sold` means the artwork is retained in records but no longer owned.
+- `lost` means the artwork is retained in records but cannot currently be found.
+- `stolen` means the artwork is retained in records and marked stolen by the user.
+- `removed` means the artwork is retained locally but removed from current holdings.
+
+Rules:
+
+- Existing or missing lifecycle values default to `active`.
+- Lifecycle status must not be inferred from AI suggestions.
+- Lifecycle status must not replace `record_state`; sold, lost, stolen, and
+  removed records can still preserve their prior completeness state.
+- User-facing remove/delete actions should be explicit and confirmed. The MVP
+  uses `removed` as a soft-delete state and does not physically delete rows or
+  attachments from this UI.
+
 ### Record States
 
 - `Draft`
@@ -166,6 +198,7 @@ Missing document logic:
 
 - `artwork_id` must be unique.
 - `record_state` must be one of the documented states.
+- `lifecycle_status` must be one of the documented lifecycle statuses.
 - `title` cannot be empty once the record reaches review.
 - `artist` cannot be empty once the record reaches review, unless explicitly marked unknown.
 - `primary_image` is required for the first usable artwork record.

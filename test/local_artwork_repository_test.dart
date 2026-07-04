@@ -68,6 +68,7 @@ void main() {
 
     expect(reloaded, isNotNull);
     expect(reloaded!.recordState, ArtworkRecordState.needsReview);
+    expect(reloaded.lifecycleStatus, ArtworkLifecycleStatus.active);
     expect(reloaded.primaryImageAttachmentId, 'attachment-primary');
     expect(
       reloaded.field(ArtworkFieldKeys.title)?.source,
@@ -134,6 +135,7 @@ void main() {
     final listed = await repository.list();
     expect(listed, hasLength(1));
     expect(listed.single.recordState, ArtworkRecordState.verifiedByYou);
+    expect(listed.single.lifecycleStatus, ArtworkLifecycleStatus.active);
     expect(
       listed.single.field(ArtworkFieldKeys.title)?.value,
       'Harbor at dusk',
@@ -147,6 +149,35 @@ void main() {
 
     expect(await repository.get('artwork-001'), isNull);
     expect(await repository.list(), isEmpty);
+  });
+
+  test('persists lifecycle status changes across repository reloads', () async {
+    final original = _record('artwork-lifecycle', title: 'Lifecycle artwork');
+    await repository.create(original);
+
+    for (final status in [
+      ArtworkLifecycleStatus.sold,
+      ArtworkLifecycleStatus.lost,
+      ArtworkLifecycleStatus.stolen,
+      ArtworkLifecycleStatus.removed,
+      ArtworkLifecycleStatus.active,
+    ]) {
+      final current = await repository.get('artwork-lifecycle');
+      await repository.upsert(
+        current!.copyWith(
+          lifecycleStatus: status,
+          updatedAt: DateTime.utc(2026, 7, 4, 10),
+        ),
+      );
+
+      final reloaded = await reloadAndGet('artwork-lifecycle');
+      expect(reloaded, isNotNull);
+      expect(reloaded!.lifecycleStatus, status);
+      expect(
+        reloaded.field(ArtworkFieldKeys.title)?.value,
+        'Lifecycle artwork',
+      );
+    }
   });
 
   test('upgrades v1 databases without losing artwork records', () async {
@@ -182,6 +213,7 @@ void main() {
     final reloaded = await repository.get('legacy-artwork-001');
     expect(reloaded, isNotNull);
     expect(reloaded!.recordState, ArtworkRecordState.needsReview);
+    expect(reloaded.lifecycleStatus, ArtworkLifecycleStatus.active);
     expect(
       reloaded.field(ArtworkFieldKeys.title)?.value,
       'Legacy Interior Study',
@@ -199,6 +231,51 @@ void main() {
       ['attachments'],
     );
     expect(attachmentTables, hasLength(1));
+
+    final artworkRows = await rawDatabase.query(
+      'artworks',
+      columns: ['lifecycle_status'],
+      where: 'artwork_id = ?',
+      whereArgs: ['legacy-artwork-001'],
+    );
+    expect(artworkRows.single['lifecycle_status'], 'active');
+  });
+
+  test('upgrades v3 databases with active lifecycle defaults', () async {
+    await repository.close();
+    await databaseFactoryFfi.deleteDatabase(databasePath);
+
+    final legacyDatabase = await databaseFactoryFfi.openDatabase(
+      databasePath,
+      options: OpenDatabaseOptions(version: 3, onCreate: _createV3Schema),
+    );
+
+    await legacyDatabase.insert('artworks', {
+      'artwork_id': 'legacy-v3-artwork',
+      'record_state': 'verifiedByYou',
+      'primary_image_attachment_id': null,
+      'created_at': DateTime.utc(2026, 7, 4, 8).toIso8601String(),
+      'updated_at': DateTime.utc(2026, 7, 4, 8, 5).toIso8601String(),
+    });
+    await legacyDatabase.insert('artwork_fields', {
+      'artwork_id': 'legacy-v3-artwork',
+      'field_key': ArtworkFieldKeys.title,
+      'value': 'Legacy V3 Artwork',
+      'source_state': 'user-confirmed',
+      'source_note': 'Seeded by the v3 schema.',
+      'last_confirmed_at': DateTime.utc(2026, 7, 4, 8).toIso8601String(),
+    });
+    await legacyDatabase.close();
+
+    repository = LocalArtworkRepository.forDatabase(
+      await LocalArtworkRepository.openAt(databasePath),
+    );
+
+    final reloaded = await repository.get('legacy-v3-artwork');
+    expect(reloaded, isNotNull);
+    expect(reloaded!.recordState, ArtworkRecordState.verifiedByYou);
+    expect(reloaded.lifecycleStatus, ArtworkLifecycleStatus.active);
+    expect(reloaded.field(ArtworkFieldKeys.title)?.value, 'Legacy V3 Artwork');
   });
 }
 
@@ -254,4 +331,145 @@ Future<void> _createV1Schema(Database db, int version) async {
   await db.execute(
     'CREATE INDEX artwork_fields_artwork_idx ON artwork_fields (artwork_id)',
   );
+}
+
+Future<void> _createV3Schema(Database db, int version) async {
+  await _createV1Schema(db, version);
+
+  await db.execute('''
+    CREATE TABLE attachments (
+      attachment_id TEXT PRIMARY KEY,
+      artwork_id TEXT NOT NULL,
+      attachment_type TEXT NOT NULL,
+      file_name TEXT NOT NULL,
+      mime_type TEXT NOT NULL,
+      file_size_bytes INTEGER NOT NULL,
+      imported_at TEXT NOT NULL,
+      captured_at TEXT,
+      source_state TEXT NOT NULL,
+      relative_path TEXT NOT NULL,
+      checksum TEXT NOT NULL,
+      extraction_summary TEXT,
+      notes TEXT,
+      FOREIGN KEY (artwork_id)
+        REFERENCES artworks (artwork_id)
+        ON DELETE CASCADE
+    )
+  ''');
+
+  await db.execute(
+    'CREATE INDEX attachments_artwork_idx ON attachments (artwork_id)',
+  );
+
+  await db.execute('''
+    CREATE TABLE ai_draft_jobs (
+      draft_job_id TEXT PRIMARY KEY,
+      artwork_id TEXT NOT NULL,
+      primary_image_attachment_id TEXT,
+      status TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      completed_at TEXT,
+      device_model TEXT,
+      prompt_version TEXT,
+      visual_summary TEXT,
+      signature_notes TEXT,
+      subject_matter TEXT,
+      medium_hint TEXT,
+      style_period_hint TEXT,
+      condition_notes TEXT,
+      search_terms_json TEXT NOT NULL,
+      error_message TEXT,
+      FOREIGN KEY (artwork_id)
+        REFERENCES artworks (artwork_id)
+        ON DELETE CASCADE
+    )
+  ''');
+
+  await db.execute(
+    'CREATE INDEX ai_draft_jobs_artwork_idx ON ai_draft_jobs (artwork_id)',
+  );
+
+  await db.execute('''
+    CREATE TABLE research_jobs (
+      research_job_id TEXT PRIMARY KEY,
+      artwork_id TEXT NOT NULL,
+      status TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      completed_at TEXT,
+      consent_summary TEXT NOT NULL,
+      query_summary TEXT,
+      provider TEXT,
+      error_message TEXT,
+      FOREIGN KEY (artwork_id)
+        REFERENCES artworks (artwork_id)
+        ON DELETE CASCADE
+    )
+  ''');
+
+  await db.execute(
+    'CREATE INDEX research_jobs_artwork_idx ON research_jobs (artwork_id)',
+  );
+
+  await db.execute('''
+    CREATE TABLE research_source_hits (
+      source_hit_id TEXT PRIMARY KEY,
+      research_job_id TEXT NOT NULL,
+      source_name TEXT NOT NULL,
+      source_type TEXT NOT NULL,
+      confidence TEXT NOT NULL,
+      source_url TEXT,
+      object_id TEXT,
+      title TEXT,
+      artist TEXT,
+      date_text TEXT,
+      medium TEXT,
+      dimensions TEXT,
+      image_url TEXT,
+      match_reason TEXT,
+      raw_snippet TEXT,
+      FOREIGN KEY (research_job_id)
+        REFERENCES research_jobs (research_job_id)
+        ON DELETE CASCADE
+    )
+  ''');
+
+  await db.execute('''
+    CREATE TABLE candidate_attributions (
+      candidate_id TEXT PRIMARY KEY,
+      research_job_id TEXT NOT NULL,
+      source_hit_id TEXT,
+      title TEXT,
+      artist TEXT,
+      year TEXT,
+      medium TEXT,
+      confidence TEXT NOT NULL,
+      match_reason TEXT NOT NULL,
+      field_sources_json TEXT NOT NULL,
+      FOREIGN KEY (research_job_id)
+        REFERENCES research_jobs (research_job_id)
+        ON DELETE CASCADE
+    )
+  ''');
+
+  await db.execute('''
+    CREATE TABLE comparable_value_signals (
+      signal_id TEXT PRIMARY KEY,
+      research_job_id TEXT NOT NULL,
+      source_hit_id TEXT,
+      kind TEXT NOT NULL,
+      label TEXT NOT NULL,
+      source_name TEXT NOT NULL,
+      source_url TEXT,
+      amount_low TEXT,
+      amount_high TEXT,
+      currency TEXT,
+      signal_date TEXT,
+      caveat TEXT NOT NULL,
+      FOREIGN KEY (research_job_id)
+        REFERENCES research_jobs (research_job_id)
+        ON DELETE CASCADE
+    )
+  ''');
 }

@@ -16,6 +16,26 @@ enum ArtworkRecordState {
   }
 }
 
+enum ArtworkLifecycleStatus {
+  active('active', 'Active'),
+  sold('sold', 'Sold'),
+  lost('lost', 'Lost'),
+  stolen('stolen', 'Stolen'),
+  removed('removed', 'Removed');
+
+  const ArtworkLifecycleStatus(this.storageValue, this.label);
+
+  final String storageValue;
+  final String label;
+
+  static ArtworkLifecycleStatus fromStorage(String? value) {
+    return ArtworkLifecycleStatus.values.firstWhere(
+      (status) => status.storageValue == value,
+      orElse: () => ArtworkLifecycleStatus.active,
+    );
+  }
+}
+
 enum ArtworkFieldSource {
   aiSuggested('AI-suggested'),
   userConfirmed('user-confirmed'),
@@ -69,11 +89,13 @@ class ArtworkRecord {
     required this.createdAt,
     required this.updatedAt,
     required this.fields,
+    this.lifecycleStatus = ArtworkLifecycleStatus.active,
     this.primaryImageAttachmentId,
   });
 
   final String id;
   final ArtworkRecordState recordState;
+  final ArtworkLifecycleStatus lifecycleStatus;
   final DateTime createdAt;
   final DateTime updatedAt;
   final String? primaryImageAttachmentId;
@@ -83,6 +105,7 @@ class ArtworkRecord {
 
   ArtworkRecord copyWith({
     ArtworkRecordState? recordState,
+    ArtworkLifecycleStatus? lifecycleStatus,
     DateTime? updatedAt,
     String? primaryImageAttachmentId,
     Map<String, ArtworkFieldValue>? fields,
@@ -90,6 +113,7 @@ class ArtworkRecord {
     return ArtworkRecord(
       id: id,
       recordState: recordState ?? this.recordState,
+      lifecycleStatus: lifecycleStatus ?? this.lifecycleStatus,
       createdAt: createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
       primaryImageAttachmentId:

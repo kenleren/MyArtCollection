@@ -761,13 +761,30 @@ bool _usefulResearchTerm(String value) {
       normalized != 'untitled artwork';
 }
 
-class ArtworkDetailsScreen extends StatelessWidget {
+class ArtworkDetailsScreen extends StatefulWidget {
   const ArtworkDetailsScreen({super.key, required this.artwork});
 
   final PrototypeArtwork artwork;
 
   @override
+  State<ArtworkDetailsScreen> createState() => _ArtworkDetailsScreenState();
+}
+
+class _ArtworkDetailsScreenState extends State<ArtworkDetailsScreen> {
+  Future<ArtworkRecord?>? _recordFuture;
+  ArtworkLifecycleStatus? _localLifecycleStatus;
+  bool _isUpdatingLifecycle = false;
+  String? _lifecycleError;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _recordFuture ??= _loadRecord();
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final artwork = widget.artwork;
     final confirmedFields = [
       artwork.title,
       artwork.artist,
@@ -786,6 +803,22 @@ class ArtworkDetailsScreen extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           _PrimaryImageForArtwork(artworkId: artwork.id),
+          const SizedBox(height: 16),
+          FutureBuilder<ArtworkRecord?>(
+            future: _recordFuture,
+            builder: (context, snapshot) {
+              final status =
+                  _localLifecycleStatus ??
+                  snapshot.data?.lifecycleStatus ??
+                  ArtworkLifecycleStatus.active;
+              return _LifecycleStatusPanel(
+                status: status,
+                isUpdating: _isUpdatingLifecycle,
+                errorMessage: _lifecycleError,
+                onSetStatus: _setLifecycleStatus,
+              );
+            },
+          ),
           const SizedBox(height: 16),
           _CompletenessPanel(fields: confirmedFields),
           const SizedBox(height: 16),
@@ -813,6 +846,82 @@ class ArtworkDetailsScreen extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  Future<ArtworkRecord?> _loadRecord() async {
+    final dependencies = _maybeDependencies(context);
+    if (dependencies == null) {
+      return null;
+    }
+    return dependencies.artworkRepository.get(widget.artwork.id);
+  }
+
+  Future<void> _setLifecycleStatus(ArtworkLifecycleStatus status) async {
+    if (status == ArtworkLifecycleStatus.removed) {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (context) {
+          return AlertDialog(
+            title: const Text('Remove from current holdings?'),
+            content: const Text(
+              'The local record and files stay on this device, but the artwork is marked removed and no longer treated as a current holding.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text('Mark removed'),
+              ),
+            ],
+          );
+        },
+      );
+      if (confirmed != true) {
+        return;
+      }
+      if (!mounted) {
+        return;
+      }
+    }
+
+    setState(() {
+      _isUpdatingLifecycle = true;
+      _lifecycleError = null;
+    });
+
+    try {
+      final dependencies = AppDependencyScope.of(context);
+      final record = await dependencies.artworkRepository.get(
+        widget.artwork.id,
+      );
+      if (record == null) {
+        throw StateError('Record not found');
+      }
+      final updatedRecord = record.copyWith(
+        lifecycleStatus: status,
+        updatedAt: DateTime.now().toUtc(),
+      );
+      await dependencies.artworkRepository.upsert(updatedRecord);
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _localLifecycleStatus = status;
+        _isUpdatingLifecycle = false;
+        _recordFuture = Future.value(updatedRecord);
+      });
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _isUpdatingLifecycle = false;
+        _lifecycleError = error.toString();
+      });
+    }
   }
 }
 
@@ -2647,6 +2756,7 @@ class _CollectionRecordPanel extends StatelessWidget {
     final routeName = _reviewSafeRoute(record);
     final supportingCount = summary.supportingAttachmentCount;
     final incompleteCount = summary.incompleteItems.length;
+    final lifecycleStatus = record.lifecycleStatus;
 
     return _Panel(
       child: Column(
@@ -2654,7 +2764,14 @@ class _CollectionRecordPanel extends StatelessWidget {
         children: [
           Text(title, style: Theme.of(context).textTheme.titleMedium),
           const SizedBox(height: 6),
-          Text(record.recordState.label),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              _RecordStateBadge(label: record.recordState.label),
+              _LifecycleBadge(status: lifecycleStatus),
+            ],
+          ),
           const SizedBox(height: 8),
           _PrimaryArtworkImagePreview(
             file: summary.primaryImageFile,
@@ -2681,6 +2798,12 @@ class _CollectionRecordPanel extends StatelessWidget {
                 ? 'No incomplete queue items for this record.'
                 : '$incompleteCount incomplete queue item${incompleteCount == 1 ? '' : 's'} ${incompleteCount == 1 ? 'needs' : 'need'} attention.',
           ),
+          if (lifecycleStatus != ArtworkLifecycleStatus.active)
+            _StatusLine(
+              icon: Icons.inventory_2_outlined,
+              text:
+                  'Marked ${lifecycleStatus.label.toLowerCase()}; retained in the local record.',
+            ),
           const SizedBox(height: 12),
           PrimaryActionButton(
             icon: Icons.rate_review_outlined,
@@ -2693,6 +2816,199 @@ class _CollectionRecordPanel extends StatelessWidget {
       ),
     );
   }
+}
+
+class _RecordStateBadge extends StatelessWidget {
+  const _RecordStateBadge({required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: colors.secondaryContainer,
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        child: Text(
+          label,
+          style: Theme.of(
+            context,
+          ).textTheme.labelMedium?.copyWith(color: colors.onSecondaryContainer),
+        ),
+      ),
+    );
+  }
+}
+
+class _LifecycleBadge extends StatelessWidget {
+  const _LifecycleBadge({required this.status});
+
+  final ArtworkLifecycleStatus status;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = _lifecycleColors(context, status);
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: colors.background,
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        child: Text(
+          status.label,
+          style: Theme.of(context).textTheme.labelMedium?.copyWith(
+            color: colors.foreground,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _LifecycleStatusPanel extends StatelessWidget {
+  const _LifecycleStatusPanel({
+    required this.status,
+    required this.isUpdating,
+    required this.onSetStatus,
+    this.errorMessage,
+  });
+
+  final ArtworkLifecycleStatus status;
+  final bool isUpdating;
+  final String? errorMessage;
+  final ValueChanged<ArtworkLifecycleStatus> onSetStatus;
+
+  @override
+  Widget build(BuildContext context) {
+    return _Panel(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.inventory_2_outlined),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  'Lifecycle status',
+                  style: Theme.of(context).textTheme.titleSmall,
+                ),
+              ),
+              _LifecycleBadge(status: status),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Text(_lifecycleDescription(status)),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              for (final option in ArtworkLifecycleStatus.values)
+                _LifecycleActionChip(
+                  status: option,
+                  selected: option == status,
+                  enabled: !isUpdating,
+                  onSelected: () => onSetStatus(option),
+                ),
+            ],
+          ),
+          if (errorMessage != null) ...[
+            const SizedBox(height: 10),
+            Text(
+              'Could not update lifecycle status: $errorMessage',
+              style: TextStyle(color: Theme.of(context).colorScheme.error),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _LifecycleActionChip extends StatelessWidget {
+  const _LifecycleActionChip({
+    required this.status,
+    required this.selected,
+    required this.enabled,
+    required this.onSelected,
+  });
+
+  final ArtworkLifecycleStatus status;
+  final bool selected;
+  final bool enabled;
+  final VoidCallback onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    final isRemove = status == ArtworkLifecycleStatus.removed;
+    return ActionChip(
+      avatar: Icon(
+        _lifecycleIcon(status),
+        size: 18,
+        color: isRemove ? Theme.of(context).colorScheme.error : null,
+      ),
+      label: Text(status.label),
+      onPressed: !enabled || selected ? null : onSelected,
+      side: selected
+          ? BorderSide(color: Theme.of(context).colorScheme.primary)
+          : null,
+    );
+  }
+}
+
+({Color background, Color foreground}) _lifecycleColors(
+  BuildContext context,
+  ArtworkLifecycleStatus status,
+) {
+  final colors = Theme.of(context).colorScheme;
+  return switch (status) {
+    ArtworkLifecycleStatus.active => (
+      background: colors.primaryContainer,
+      foreground: colors.onPrimaryContainer,
+    ),
+    ArtworkLifecycleStatus.sold => (
+      background: colors.tertiaryContainer,
+      foreground: colors.onTertiaryContainer,
+    ),
+    ArtworkLifecycleStatus.lost ||
+    ArtworkLifecycleStatus.stolen ||
+    ArtworkLifecycleStatus.removed => (
+      background: colors.errorContainer,
+      foreground: colors.onErrorContainer,
+    ),
+  };
+}
+
+IconData _lifecycleIcon(ArtworkLifecycleStatus status) {
+  return switch (status) {
+    ArtworkLifecycleStatus.active => Icons.check_circle_outline,
+    ArtworkLifecycleStatus.sold => Icons.sell_outlined,
+    ArtworkLifecycleStatus.lost => Icons.search_off_outlined,
+    ArtworkLifecycleStatus.stolen => Icons.report_gmailerrorred_outlined,
+    ArtworkLifecycleStatus.removed => Icons.remove_circle_outline,
+  };
+}
+
+String _lifecycleDescription(ArtworkLifecycleStatus status) {
+  return switch (status) {
+    ArtworkLifecycleStatus.active =>
+      'This artwork is treated as a current holding.',
+    ArtworkLifecycleStatus.sold =>
+      'This artwork is retained in your records but marked sold.',
+    ArtworkLifecycleStatus.lost =>
+      'This artwork is retained in your records but marked lost.',
+    ArtworkLifecycleStatus.stolen =>
+      'This artwork is retained in your records but marked stolen.',
+    ArtworkLifecycleStatus.removed =>
+      'This artwork is retained locally but removed from current holdings.',
+  };
 }
 
 class _LocalArtworkSummary {
@@ -2931,6 +3247,24 @@ List<_IncompleteItem> _incompleteItems(
   final items = <_IncompleteItem>[];
   final title =
       record.field(ArtworkFieldKeys.title)?.value ?? 'Untitled artwork';
+
+  if (record.lifecycleStatus != ArtworkLifecycleStatus.active) {
+    if (record.lifecycleStatus != ArtworkLifecycleStatus.removed) {
+      items.add(
+        _IncompleteItem(
+          icon: _lifecycleIcon(record.lifecycleStatus),
+          title:
+              '$title is marked ${record.lifecycleStatus.label.toLowerCase()}',
+          body:
+              'This record is retained locally but is not treated as a current incomplete holding.',
+          actionLabel: 'Open record',
+          routeName: AppRoutes.artworkDetails(record.id),
+        ),
+      );
+    }
+    return items;
+  }
+
   final reviewCount = _fieldsNeedingReview(record).length;
   final missingCount = _missingCoreFields(record).length;
   final supportingCount = attachments
@@ -2992,6 +3326,10 @@ List<ArtworkFieldValue> _fieldsNeedingReview(ArtworkRecord record) {
 }
 
 String _reviewSafeRoute(ArtworkRecord record) {
+  if (record.lifecycleStatus != ArtworkLifecycleStatus.active) {
+    return AppRoutes.artworkDetails(record.id);
+  }
+
   if (record.recordState == ArtworkRecordState.verifiedByYou &&
       _fieldsNeedingReview(record).isEmpty) {
     return AppRoutes.artworkDetails(record.id);

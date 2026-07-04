@@ -15,7 +15,7 @@ class LocalArtworkRepository {
   final Database _database;
 
   static const _databaseName = 'my_art_collection.db';
-  static const _schemaVersion = 3;
+  static const _schemaVersion = 4;
 
   static Future<LocalArtworkRepository> open() async {
     final directory = await getApplicationDocumentsDirectory();
@@ -38,6 +38,7 @@ class LocalArtworkRepository {
       CREATE TABLE artworks (
         artwork_id TEXT PRIMARY KEY,
         record_state TEXT NOT NULL,
+        lifecycle_status TEXT NOT NULL DEFAULT 'active',
         primary_image_attachment_id TEXT,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
@@ -77,6 +78,11 @@ class LocalArtworkRepository {
     }
     if (oldVersion < 3) {
       await _createAiResearchSchema(db);
+    }
+    if (oldVersion < 4) {
+      await db.execute(
+        "ALTER TABLE artworks ADD COLUMN lifecycle_status TEXT NOT NULL DEFAULT 'active'",
+      );
     }
   }
 
@@ -455,6 +461,7 @@ class LocalArtworkRepository {
     return {
       'artwork_id': record.id,
       'record_state': record.recordState.name,
+      'lifecycle_status': record.lifecycleStatus.storageValue,
       'primary_image_attachment_id': record.primaryImageAttachmentId,
       'created_at': record.createdAt.toUtc().toIso8601String(),
       'updated_at': record.updatedAt.toUtc().toIso8601String(),
@@ -616,6 +623,9 @@ class LocalArtworkRepository {
       id: row['artwork_id'] as String,
       recordState: ArtworkRecordState.fromStorage(
         row['record_state'] as String,
+      ),
+      lifecycleStatus: ArtworkLifecycleStatus.fromStorage(
+        row['lifecycle_status'] as String?,
       ),
       createdAt: _parseRequiredDate(row['created_at'] as String),
       updatedAt: _parseRequiredDate(row['updated_at'] as String),

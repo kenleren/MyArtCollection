@@ -702,6 +702,178 @@ void main() {
     expect(find.text('Verified by you'), findsNothing);
   });
 
+  testWidgets(
+    'lifecycle controls persist non-active statuses and soft remove',
+    (WidgetTester tester) async {
+      final testDependencies = await tester.runAsync(
+        () async => _LiveDependencyFixture.create(),
+      );
+      final fixture = testDependencies!;
+      addTearDown(() async {
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.runAsync(fixture.dispose);
+      });
+
+      await tester.runAsync(() async {
+        await fixture.repository.upsert(
+          _artworkRecord(
+            id: 'lifecycle-ui',
+            title: 'Lifecycle UI Artwork',
+            state: ArtworkRecordState.verifiedByYou,
+            source: ArtworkFieldSource.userConfirmed,
+          ),
+        );
+        await fixture.repository.addAttachment(
+          _attachmentRecord(
+            id: 'lifecycle-receipt',
+            artworkId: 'lifecycle-ui',
+            type: AttachmentType.receipt,
+          ),
+        );
+      });
+
+      await tester.pumpWidget(
+        MyArtCollectionApp(
+          initialRoute: AppRoutes.collection,
+          dependencies: fixture.dependencies,
+        ),
+      );
+      await pumpLiveData(tester);
+
+      expect(find.text('Lifecycle UI Artwork'), findsOneWidget);
+      expect(find.text('Active'), findsOneWidget);
+
+      await tapVisible(tester, find.text('Open record'));
+      await pumpLiveData(tester);
+
+      expect(find.text('Lifecycle status'), findsOneWidget);
+      expect(
+        find.text('This artwork is treated as a current holding.'),
+        findsOneWidget,
+      );
+
+      await tapVisible(tester, find.text('Sold'));
+      await pumpLiveData(tester);
+      expect(
+        find.text('This artwork is retained in your records but marked sold.'),
+        findsOneWidget,
+      );
+
+      ArtworkRecord? saved = await tester.runAsync<ArtworkRecord?>(
+        () => fixture.repository.get('lifecycle-ui'),
+      );
+      expect(saved?.lifecycleStatus, ArtworkLifecycleStatus.sold);
+
+      await tapVisible(tester, find.text('Lost'));
+      await pumpLiveData(tester);
+      saved = await tester.runAsync<ArtworkRecord?>(
+        () => fixture.repository.get('lifecycle-ui'),
+      );
+      expect(saved?.lifecycleStatus, ArtworkLifecycleStatus.lost);
+
+      await tapVisible(tester, find.text('Stolen'));
+      await pumpLiveData(tester);
+      saved = await tester.runAsync<ArtworkRecord?>(
+        () => fixture.repository.get('lifecycle-ui'),
+      );
+      expect(saved?.lifecycleStatus, ArtworkLifecycleStatus.stolen);
+
+      await tapVisible(tester, find.text('Removed'));
+      expect(find.text('Remove from current holdings?'), findsOneWidget);
+      await tester.tap(find.text('Cancel'));
+      await pumpReady(tester);
+      saved = await tester.runAsync<ArtworkRecord?>(
+        () => fixture.repository.get('lifecycle-ui'),
+      );
+      expect(saved?.lifecycleStatus, ArtworkLifecycleStatus.stolen);
+
+      await tapVisible(tester, find.text('Removed'));
+      expect(find.text('Remove from current holdings?'), findsOneWidget);
+      await tester.tap(find.text('Mark removed'));
+      await pumpLiveData(tester);
+
+      saved = await tester.runAsync<ArtworkRecord?>(
+        () => fixture.repository.get('lifecycle-ui'),
+      );
+      expect(saved?.lifecycleStatus, ArtworkLifecycleStatus.removed);
+
+      await tester.runAsync(fixture.reopenRepository);
+      saved = await tester.runAsync<ArtworkRecord?>(
+        () => fixture.repository.get('lifecycle-ui'),
+      );
+      expect(saved?.lifecycleStatus, ArtworkLifecycleStatus.removed);
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+      await tester.pumpWidget(
+        MyArtCollectionApp(
+          initialRoute: AppRoutes.collection,
+          dependencies: fixture.dependencies,
+        ),
+      );
+      await pumpLiveData(tester);
+
+      expect(find.text('Lifecycle UI Artwork'), findsOneWidget);
+      expect(find.text('Removed'), findsOneWidget);
+      expect(
+        find.textContaining('Marked removed; retained in the local record.'),
+        findsOneWidget,
+      );
+    },
+  );
+
+  testWidgets('incomplete queue separates non-active lifecycle records', (
+    WidgetTester tester,
+  ) async {
+    final testDependencies = await tester.runAsync(
+      () async => _LiveDependencyFixture.create(),
+    );
+    final fixture = testDependencies!;
+    addTearDown(() async {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.runAsync(fixture.dispose);
+    });
+
+    await tester.runAsync(() async {
+      await fixture.repository.upsert(
+        _artworkRecord(
+          id: 'sold-incomplete',
+          title: 'Sold Incomplete Artwork',
+          state: ArtworkRecordState.needsReview,
+          lifecycleStatus: ArtworkLifecycleStatus.sold,
+        ),
+      );
+      await fixture.repository.upsert(
+        _artworkRecord(
+          id: 'removed-incomplete',
+          title: 'Removed Incomplete Artwork',
+          state: ArtworkRecordState.needsReview,
+          lifecycleStatus: ArtworkLifecycleStatus.removed,
+        ),
+      );
+    });
+
+    await tester.pumpWidget(
+      MyArtCollectionApp(
+        initialRoute: AppRoutes.collectionIncomplete,
+        dependencies: fixture.dependencies,
+      ),
+    );
+    await pumpLiveData(tester);
+
+    expect(find.text('Sold Incomplete Artwork is marked sold'), findsOneWidget);
+    expect(
+      find.textContaining('not treated as a current incomplete holding'),
+      findsOneWidget,
+    );
+    expect(find.text('Sold Incomplete Artwork needs review'), findsNothing);
+    expect(
+      find.text('Sold Incomplete Artwork needs supporting documents'),
+      findsNothing,
+    );
+    expect(find.textContaining('Removed Incomplete Artwork'), findsNothing);
+  });
+
   testWidgets('manual edits persist as user-confirmed local fields', (
     WidgetTester tester,
   ) async {
@@ -1386,6 +1558,7 @@ ArtworkRecord _artworkRecord({
   required String id,
   required String title,
   required ArtworkRecordState state,
+  ArtworkLifecycleStatus lifecycleStatus = ArtworkLifecycleStatus.active,
   ArtworkFieldSource source = ArtworkFieldSource.unknown,
   Set<String> missingFieldKeys = const {},
 }) {
@@ -1393,6 +1566,7 @@ ArtworkRecord _artworkRecord({
   return ArtworkRecord(
     id: id,
     recordState: state,
+    lifecycleStatus: lifecycleStatus,
     primaryImageAttachmentId: 'primary-$id',
     createdAt: now,
     updatedAt: now,

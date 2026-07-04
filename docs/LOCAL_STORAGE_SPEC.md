@@ -41,6 +41,7 @@ Suggested fields:
 - `created_at`
 - `updated_at`
 - `record_state`
+- `lifecycle_status` for active, sold, lost, stolen, or removed holdings
 - core descriptive fields used by the schema
 - attachment counts or summary flags that help list views
 
@@ -190,6 +191,8 @@ Required assumptions:
 - SQLite schema version is recorded.
 - Migration steps are explicit and ordered.
 - The prototype should tolerate additive schema changes.
+- Existing records should default additive lifecycle/status columns to safe
+  current-state values such as `active`.
 - Downgrades and production-grade migration guarantees are out of scope for this issue.
 
 Testing assumptions for later implementation:
