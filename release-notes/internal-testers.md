@@ -1,0 +1,1 @@
+Internal beta release: Firebase-enabled release build with Remote Config and Crashlytics gates enabled. Local-first artwork records remain private by default. No production AI provider calls are enabled.
