@@ -383,8 +383,6 @@ class _CaptureImportScreenState extends State<CaptureImportScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const _ArtworkHero(),
-          const SizedBox(height: 16),
           _IntakeStatePanel(
             isImport: _isImport,
             isBusy: _isBusy,
