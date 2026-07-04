@@ -8,6 +8,7 @@ import 'package:my_art_collection/app/ai/on_device_ai_draft_service.dart';
 import 'package:my_art_collection/app/app.dart';
 import 'package:my_art_collection/app/app_dependencies.dart';
 import 'package:my_art_collection/app/app_routes.dart';
+import 'package:my_art_collection/app/config/app_feature_flags.dart';
 import 'package:my_art_collection/app/intake/artwork_image_picker.dart';
 import 'package:my_art_collection/app/startup_route.dart';
 import 'package:my_art_collection/app/storage/ai_research_record.dart';
@@ -1049,7 +1050,7 @@ void main() {
     );
   });
 
-  testWidgets('online research requires consent and shows cited candidates', (
+  testWidgets('online research stays hidden by default', (
     WidgetTester tester,
   ) async {
     final testDependencies = await tester.runAsync(
@@ -1075,6 +1076,44 @@ void main() {
       MyArtCollectionApp(
         initialRoute: AppRoutes.artworkDraft('research-draft'),
         dependencies: fixture.dependencies,
+      ),
+    );
+    await pumpLiveData(tester);
+
+    expect(find.text('Research online'), findsNothing);
+    expect(find.text('Research consent'), findsNothing);
+    expect(find.text('Source-backed candidates'), findsNothing);
+    expect(find.text('Professional-source research disabled'), findsOneWidget);
+  });
+
+  testWidgets('online research requires consent and shows cited candidates', (
+    WidgetTester tester,
+  ) async {
+    final testDependencies = await tester.runAsync(
+      () async => _LiveDependencyFixture.create(),
+    );
+    final fixture = testDependencies!;
+    addTearDown(() async {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.runAsync(fixture.dispose);
+    });
+
+    await tester.runAsync(() async {
+      await fixture.repository.upsert(
+        _artworkRecord(
+          id: 'research-draft',
+          title: 'Interior Study',
+          state: ArtworkRecordState.needsReview,
+        ),
+      );
+    });
+
+    await tester.pumpWidget(
+      MyArtCollectionApp(
+        initialRoute: AppRoutes.artworkDraft('research-draft'),
+        dependencies: fixture.dependenciesWithFlags(
+          featureFlags: const AppFeatureFlags(onlineResearchEnabled: true),
+        ),
       ),
     );
     await pumpLiveData(tester);
@@ -1446,10 +1485,18 @@ class _LiveDependencyFixture {
   }
 
   AppDependencies dependenciesWithPicker(ArtworkImagePicker imagePicker) {
+    return dependenciesWithFlags(imagePicker: imagePicker);
+  }
+
+  AppDependencies dependenciesWithFlags({
+    ArtworkImagePicker? imagePicker,
+    AppFeatureFlags featureFlags = const AppFeatureFlags(),
+  }) {
     return AppDependencies(
       artworkRepository: repository,
       attachmentStore: attachmentStore,
-      imagePicker: imagePicker,
+      imagePicker: imagePicker ?? _NoLostImagePicker(),
+      featureFlags: featureFlags,
       onDeviceAiDraftProvider: onDeviceAiDraftProvider,
     );
   }

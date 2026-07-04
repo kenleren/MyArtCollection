@@ -24,6 +24,7 @@ val enableFirebaseAndroid =
 val firebaseAndroidDartDefineEnabled = dartDefineEnabled("MY_ART_COLLECTION_FIREBASE_ANDROID")
 val crashlyticsDartDefineEnabled =
     dartDefineEnabled("MY_ART_COLLECTION_INTERNAL_BETA_CRASHLYTICS")
+val remoteConfigDartDefineEnabled = dartDefineEnabled("MY_ART_COLLECTION_REMOTE_CONFIG")
 val googleServicesConfig = file("google-services.json")
 
 if (crashlyticsDartDefineEnabled && !enableFirebaseAndroid) {
@@ -36,6 +37,20 @@ if (crashlyticsDartDefineEnabled && !enableFirebaseAndroid) {
 if (crashlyticsDartDefineEnabled && !firebaseAndroidDartDefineEnabled) {
     throw GradleException(
         "MY_ART_COLLECTION_INTERNAL_BETA_CRASHLYTICS=true requires " +
+            "--dart-define=MY_ART_COLLECTION_FIREBASE_ANDROID=true",
+    )
+}
+
+if (remoteConfigDartDefineEnabled && !enableFirebaseAndroid) {
+    throw GradleException(
+        "MY_ART_COLLECTION_REMOTE_CONFIG=true requires " +
+            "MY_ART_COLLECTION_FIREBASE_ANDROID=true in the Gradle environment",
+    )
+}
+
+if (remoteConfigDartDefineEnabled && !firebaseAndroidDartDefineEnabled) {
+    throw GradleException(
+        "MY_ART_COLLECTION_REMOTE_CONFIG=true requires " +
             "--dart-define=MY_ART_COLLECTION_FIREBASE_ANDROID=true",
     )
 }

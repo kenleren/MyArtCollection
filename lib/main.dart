@@ -6,6 +6,7 @@ import 'package:flutter/widgets.dart';
 import 'app/app.dart';
 import 'app/app_dependencies.dart';
 import 'app/ai/on_device_ai_draft_service.dart';
+import 'app/config/app_feature_flags.dart';
 import 'app/intake/artwork_image_picker.dart';
 import 'app/startup_route.dart';
 import 'app/storage/local_artwork_repository.dart';
@@ -29,10 +30,12 @@ Future<void> main() async {
     SystemArtworkImagePicker.configurePlatformPicker();
 
     final artworkRepository = await LocalArtworkRepository.open();
+    final featureFlags = await const AppFeatureFlagService().load();
     final dependencies = AppDependencies(
       artworkRepository: artworkRepository,
       attachmentStore: await LocalAttachmentStore.open(),
       imagePicker: SystemArtworkImagePicker(),
+      featureFlags: featureFlags,
       onDeviceAiDraftProvider: MethodChannelOnDeviceAiDraftProvider(),
     );
 

@@ -639,16 +639,19 @@ class _DraftReviewScreenState extends State<DraftReviewScreen> {
           _OnlineResearchPanel(
             artwork: widget.artwork,
             researchJob: _researchJob,
-            showConsent: _showResearchConsent,
+            showConsent: _showResearchConsent && _isOnlineResearchEnabled,
             isBusy: _isResearchBusy,
             error: _researchError,
+            isEnabled: _isOnlineResearchEnabled,
             acceptedFieldKeys: _acceptedResearchFieldKeys,
             rejectedFieldKeys: _rejectedResearchFieldKeys,
-            onStart: _canRunResearch
+            onStart: _isOnlineResearchEnabled
                 ? () => setState(() => _showResearchConsent = true)
                 : null,
             onCancelConsent: () => setState(() => _showResearchConsent = false),
-            onConfirmConsent: _canRunResearch ? _runOnlineResearch : null,
+            onConfirmConsent: _isOnlineResearchEnabled
+                ? _runOnlineResearch
+                : null,
             onAcceptField: _acceptResearchField,
             onRejectField: _rejectResearchField,
           ),
@@ -681,9 +684,16 @@ class _DraftReviewScreenState extends State<DraftReviewScreen> {
     );
   }
 
-  bool get _canRunResearch => _maybeDependencies(context) != null;
+  bool get _isOnlineResearchEnabled {
+    final dependencies = _maybeDependencies(context);
+    return dependencies?.featureFlags.onlineResearchEnabled ?? false;
+  }
 
   Future<void> _runOnlineResearch() async {
+    if (!_isOnlineResearchEnabled) {
+      return;
+    }
+
     setState(() {
       _isResearchBusy = true;
       _researchError = null;
@@ -1610,6 +1620,7 @@ class _OnlineResearchPanel extends StatelessWidget {
     required this.showConsent,
     required this.isBusy,
     required this.error,
+    required this.isEnabled,
     required this.acceptedFieldKeys,
     required this.rejectedFieldKeys,
     required this.onStart,
@@ -1624,6 +1635,7 @@ class _OnlineResearchPanel extends StatelessWidget {
   final bool showConsent;
   final bool isBusy;
   final Object? error;
+  final bool isEnabled;
   final Set<String> acceptedFieldKeys;
   final Set<String> rejectedFieldKeys;
   final VoidCallback? onStart;
@@ -1634,6 +1646,27 @@ class _OnlineResearchPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final researchJob = this.researchJob;
+
+    if (!isEnabled) {
+      if (researchJob != null) {
+        return _ResearchResultsPanel(
+          researchJob: researchJob,
+          acceptedFieldKeys: acceptedFieldKeys,
+          rejectedFieldKeys: rejectedFieldKeys,
+          onAcceptField: onAcceptField,
+          onRejectField: onRejectField,
+        );
+      }
+
+      return const _StatusPanel(
+        icon: Icons.travel_explore_outlined,
+        title: 'Professional-source research disabled',
+        body:
+            'This build hides online research. Keep the local draft and use documents or manual review.',
+      );
+    }
+
     if (showConsent) {
       return _ResearchConsentPanel(
         isBusy: isBusy,
@@ -1642,7 +1675,6 @@ class _OnlineResearchPanel extends StatelessWidget {
       );
     }
 
-    final researchJob = this.researchJob;
     if (researchJob != null) {
       return _ResearchResultsPanel(
         researchJob: researchJob,

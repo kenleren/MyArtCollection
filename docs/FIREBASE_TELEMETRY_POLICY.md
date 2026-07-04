@@ -114,6 +114,19 @@ that bypasses consent, platform review, local-first storage rules, or app-store
 privacy declarations.
 
 The app must keep safe local defaults for every Remote Config key.
+Runtime fetches are disabled unless the app is an Android release build with
+both `--dart-define=MY_ART_COLLECTION_FIREBASE_ANDROID=true` and
+`--dart-define=MY_ART_COLLECTION_REMOTE_CONFIG=true` present. Otherwise the app
+uses local defaults only.
+
+Current allowlist:
+
+| Key | Type | Default | Allowed use | Banned sensitive data classes |
+| --- | --- | --- | --- | --- |
+| `online_research_enabled` | `bool` | `false` | Gate the professional-source research CTA, consent panel, and start path. | Artwork titles, artist names, current locations, acquisition or sale amounts, seller or buyer names, gallery or auction-house names, document filenames, image or attachment paths, checksums, user notes, provenance notes, free-text prompts, research queries, source URLs, citations, tester emails, service-account paths, tokens, API keys, or any per-user decision. |
+
+Only add new keys after updating this table, proving the default is safe, and
+confirming the new value class does not carry sensitive data.
 
 ## Analytics Policy
 

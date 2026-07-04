@@ -1,6 +1,7 @@
 import 'package:flutter/widgets.dart';
 
 import 'ai/on_device_ai_draft_service.dart';
+import 'config/app_feature_flags.dart';
 import 'intake/artwork_image_picker.dart';
 import 'intake/artwork_intake_service.dart';
 import 'research/online_research_service.dart';
@@ -12,6 +13,7 @@ class AppDependencies {
     required this.artworkRepository,
     required this.attachmentStore,
     required this.imagePicker,
+    this.featureFlags = const AppFeatureFlags(),
     this.onDeviceAiDraftProvider = const DisabledOnDeviceAiDraftProvider(),
     this.onlineResearchClient,
   });
@@ -19,6 +21,7 @@ class AppDependencies {
   final LocalArtworkRepository artworkRepository;
   final LocalAttachmentStore attachmentStore;
   final ArtworkImagePicker imagePicker;
+  final AppFeatureFlags featureFlags;
   final OnDeviceAiDraftProvider onDeviceAiDraftProvider;
   final OnlineResearchClient? onlineResearchClient;
 

@@ -10,6 +10,14 @@ Telemetry guardrails for Crashlytics, Remote Config, Analytics, and Performance
 Monitoring are documented in
 [Firebase Telemetry Privacy Policy](FIREBASE_TELEMETRY_POLICY.md).
 
+Remote Config is used only for app-owned, non-sensitive behavior flags such as
+`online_research_enabled`. Local and debug builds keep the local default when
+Firebase configuration is absent or fetches fail.
+Remote Config fetches are enabled only for Android release builds with both
+`MY_ART_COLLECTION_FIREBASE_ANDROID=true` and
+`MY_ART_COLLECTION_REMOTE_CONFIG=true` Dart defines, plus the matching Gradle
+environment gate.
+
 ## Android App
 
 - Android package id: `com.kenleren.my_art_collection`
@@ -27,6 +35,7 @@ flutter build apk --debug
 MY_ART_COLLECTION_FIREBASE_ANDROID=true \
 flutter build apk --release \
   --dart-define=MY_ART_COLLECTION_FIREBASE_ANDROID=true \
+  --dart-define=MY_ART_COLLECTION_REMOTE_CONFIG=true \
   --dart-define=MY_ART_COLLECTION_INTERNAL_BETA_CRASHLYTICS=true
 ```
 
@@ -56,6 +65,9 @@ also requires `--dart-define=MY_ART_COLLECTION_FIREBASE_ANDROID=true` and
 `--dart-define=MY_ART_COLLECTION_INTERNAL_BETA_CRASHLYTICS=true`. That paired
 opt-in path requires `android/app/google-services.json`. Debug/local builds do
 not read or use that file and keep Crashlytics collection disabled by default.
+Remote Config uses the same Firebase Android gate plus
+`--dart-define=MY_ART_COLLECTION_REMOTE_CONFIG=true`; otherwise it returns local
+defaults without fetching.
 
 ## Crashlytics Internal Beta
 
@@ -115,6 +127,7 @@ Build and upload:
 MY_ART_COLLECTION_FIREBASE_ANDROID=true \
 flutter build apk --release \
   --dart-define=MY_ART_COLLECTION_FIREBASE_ANDROID=true \
+  --dart-define=MY_ART_COLLECTION_REMOTE_CONFIG=true \
   --dart-define=MY_ART_COLLECTION_INTERNAL_BETA_CRASHLYTICS=true
 
 FIREBASE_APP_ID="1:example:android:example" \
