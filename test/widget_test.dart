@@ -7,6 +7,8 @@ import 'package:my_art_collection/app/app.dart';
 import 'package:my_art_collection/app/app_dependencies.dart';
 import 'package:my_art_collection/app/app_routes.dart';
 import 'package:my_art_collection/app/intake/artwork_image_picker.dart';
+import 'package:my_art_collection/app/storage/artwork_record.dart';
+import 'package:my_art_collection/app/storage/attachment_record.dart';
 import 'package:my_art_collection/app/storage/local_artwork_repository.dart';
 import 'package:my_art_collection/app/storage/local_attachment_store.dart';
 import 'package:path/path.dart' as p;
@@ -107,7 +109,10 @@ void main() {
       () async => _LiveDependencyFixture.create(),
     );
     final fixture = testDependencies!;
-    addTearDown(fixture.dispose);
+    addTearDown(() async {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.runAsync(fixture.dispose);
+    });
 
     await tester.pumpWidget(
       MyArtCollectionApp(
@@ -125,6 +130,137 @@ void main() {
       findsOneWidget,
     );
     expect(find.text('Choose from system picker'), findsOneWidget);
+  });
+
+  testWidgets('collection lists local record after repository reload', (
+    WidgetTester tester,
+  ) async {
+    final testDependencies = await tester.runAsync(
+      () async => _LiveDependencyFixture.create(),
+    );
+    final fixture = testDependencies!;
+    addTearDown(() async {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.runAsync(fixture.dispose);
+    });
+
+    await tester.runAsync(() async {
+      await fixture.repository.upsert(
+        _artworkRecord(
+          id: 'local-001',
+          title: 'Reloaded Local Artwork',
+          state: ArtworkRecordState.needsReview,
+        ),
+      );
+      await fixture.reopenRepository();
+    });
+
+    await tester.pumpWidget(
+      MyArtCollectionApp(
+        initialRoute: AppRoutes.collection,
+        dependencies: fixture.dependencies,
+      ),
+    );
+    await pumpLiveData(tester);
+
+    expect(find.text('Reloaded Local Artwork'), findsOneWidget);
+    expect(find.text('Needs review'), findsOneWidget);
+    expect(find.text('No artworks yet'), findsNothing);
+    expect(find.textContaining('incomplete queue items'), findsOneWidget);
+  });
+
+  testWidgets('incomplete queue derives from local fields and documents', (
+    WidgetTester tester,
+  ) async {
+    final testDependencies = await tester.runAsync(
+      () async => _LiveDependencyFixture.create(),
+    );
+    final fixture = testDependencies!;
+    addTearDown(() async {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.runAsync(fixture.dispose);
+    });
+
+    await tester.runAsync(() async {
+      await fixture.repository.upsert(
+        _artworkRecord(
+          id: 'local-incomplete',
+          title: 'Needs Local Review',
+          state: ArtworkRecordState.needsReview,
+        ),
+      );
+      await fixture.repository.upsert(
+        _artworkRecord(
+          id: 'local-complete',
+          title: 'Complete Local Record',
+          state: ArtworkRecordState.verifiedByYou,
+          source: ArtworkFieldSource.userConfirmed,
+        ),
+      );
+      await fixture.repository.addAttachment(
+        _attachmentRecord(
+          id: 'receipt-001',
+          artworkId: 'local-complete',
+          type: AttachmentType.receipt,
+        ),
+      );
+    });
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+    await tester.pumpWidget(
+      MyArtCollectionApp(
+        initialRoute: AppRoutes.collectionIncomplete,
+        dependencies: fixture.dependencies,
+      ),
+    );
+    await pumpLiveData(tester);
+
+    expect(find.text('Needs Local Review needs review'), findsOneWidget);
+    expect(
+      find.text('Needs Local Review needs supporting documents'),
+      findsOneWidget,
+    );
+    expect(find.text('Complete Local Record needs review'), findsNothing);
+    expect(
+      find.text('Complete Local Record needs supporting documents'),
+      findsNothing,
+    );
+
+    await tester.runAsync(() async {
+      await fixture.repository.upsert(
+        _artworkRecord(
+          id: 'local-incomplete',
+          title: 'Needs Local Review',
+          state: ArtworkRecordState.verifiedByYou,
+          source: ArtworkFieldSource.userConfirmed,
+        ),
+      );
+      await fixture.repository.addAttachment(
+        _attachmentRecord(
+          id: 'receipt-002',
+          artworkId: 'local-incomplete',
+          type: AttachmentType.receipt,
+        ),
+      );
+    });
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+    await tester.pumpWidget(
+      MyArtCollectionApp(
+        initialRoute: AppRoutes.collectionIncomplete,
+        dependencies: fixture.dependencies,
+      ),
+    );
+    await pumpLiveData(tester);
+
+    expect(find.text('Needs Local Review needs review'), findsNothing);
+    expect(
+      find.text('Needs Local Review needs supporting documents'),
+      findsNothing,
+    );
+    expect(find.text('No incomplete records'), findsOneWidget);
   });
 
   testWidgets('settings shell routes render the settings tab', (
@@ -154,6 +290,15 @@ Future<void> pumpReady(WidgetTester tester) async {
   await tester.pump(const Duration(milliseconds: 400));
 }
 
+Future<void> pumpLiveData(WidgetTester tester) async {
+  await tester.pump();
+  await tester.runAsync(
+    () async => Future<void>.delayed(const Duration(milliseconds: 100)),
+  );
+  await tester.pump();
+  await tester.pump(const Duration(milliseconds: 400));
+}
+
 class _NoLostImagePicker implements ArtworkImagePicker {
   @override
   Future<XFile?> pick(ArtworkImagePickMode mode) async => null;
@@ -163,15 +308,23 @@ class _NoLostImagePicker implements ArtworkImagePicker {
 }
 
 class _LiveDependencyFixture {
-  const _LiveDependencyFixture({
+  _LiveDependencyFixture({
     required this.tempDir,
     required this.repository,
-    required this.dependencies,
+    required this.attachmentStore,
   });
 
   final Directory tempDir;
-  final LocalArtworkRepository repository;
-  final AppDependencies dependencies;
+  LocalArtworkRepository repository;
+  final LocalAttachmentStore attachmentStore;
+
+  AppDependencies get dependencies {
+    return AppDependencies(
+      artworkRepository: repository,
+      attachmentStore: attachmentStore,
+      imagePicker: _NoLostImagePicker(),
+    );
+  }
 
   static Future<_LiveDependencyFixture> create() async {
     final tempDir = await Directory.systemTemp.createTemp(
@@ -187,11 +340,14 @@ class _LiveDependencyFixture {
     return _LiveDependencyFixture(
       tempDir: tempDir,
       repository: repository,
-      dependencies: AppDependencies(
-        artworkRepository: repository,
-        attachmentStore: attachmentStore,
-        imagePicker: _NoLostImagePicker(),
-      ),
+      attachmentStore: attachmentStore,
+    );
+  }
+
+  Future<void> reopenRepository() async {
+    await repository.close();
+    repository = LocalArtworkRepository.forDatabase(
+      await LocalArtworkRepository.openAt(p.join(tempDir.path, 'records.db')),
     );
   }
 
@@ -200,3 +356,63 @@ class _LiveDependencyFixture {
     await tempDir.delete(recursive: true);
   }
 }
+
+ArtworkRecord _artworkRecord({
+  required String id,
+  required String title,
+  required ArtworkRecordState state,
+  ArtworkFieldSource source = ArtworkFieldSource.aiSuggested,
+}) {
+  final now = DateTime.utc(2026, 7, 4, 12);
+  return ArtworkRecord(
+    id: id,
+    recordState: state,
+    primaryImageAttachmentId: 'primary-$id',
+    createdAt: now,
+    updatedAt: now,
+    fields: {
+      for (final entry in _testFieldValues.entries)
+        entry.key: ArtworkFieldValue(
+          value: entry.key == ArtworkFieldKeys.title ? title : entry.value,
+          source: source,
+          note: source == ArtworkFieldSource.userConfirmed
+              ? 'Confirmed in test fixture.'
+              : 'Needs confirmation in test fixture.',
+          lastConfirmedAt: source == ArtworkFieldSource.userConfirmed
+              ? now
+              : null,
+        ),
+    },
+  );
+}
+
+AttachmentRecord _attachmentRecord({
+  required String id,
+  required String artworkId,
+  required AttachmentType type,
+}) {
+  return AttachmentRecord(
+    id: id,
+    artworkId: artworkId,
+    type: type,
+    fileName: '$id.pdf',
+    mimeType: 'application/pdf',
+    fileSizeBytes: 12,
+    importedAt: DateTime.utc(2026, 7, 4, 12),
+    source: ArtworkFieldSource.userConfirmed,
+    relativePath: 'attachments/$id.pdf',
+    checksum: 'checksum-$id',
+    notes: 'Supporting document fixture.',
+  );
+}
+
+const _testFieldValues = {
+  ArtworkFieldKeys.title: 'Fixture title',
+  ArtworkFieldKeys.artist: 'Fixture artist',
+  ArtworkFieldKeys.year: '2026',
+  ArtworkFieldKeys.medium: 'Oil on canvas',
+  ArtworkFieldKeys.dimensions: '40 x 50 cm',
+  ArtworkFieldKeys.currentLocation: 'Studio wall',
+  ArtworkFieldKeys.insuranceValue: 'USD 100',
+  ArtworkFieldKeys.conditionNotes: 'Good condition',
+};

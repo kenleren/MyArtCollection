@@ -42,14 +42,6 @@ class AppShell extends StatelessWidget {
     return Scaffold(
       appBar: AppBar(title: Text(activeTab.title)),
       body: SafeArea(child: _ShellBody(currentRoute: currentRoute)),
-      floatingActionButton: currentRoute == AppRoutes.settings
-          ? null
-          : FloatingActionButton.extended(
-              onPressed: () =>
-                  Navigator.pushNamed(context, AppRoutes.collectionAdd),
-              icon: const Icon(Icons.add_a_photo_outlined),
-              label: const Text('Add artwork'),
-            ),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _tabs.indexOf(activeTab),
         onDestinationSelected: (index) {

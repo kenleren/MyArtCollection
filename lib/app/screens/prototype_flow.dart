@@ -4,6 +4,7 @@ import '../app_dependencies.dart';
 import '../app_routes.dart';
 import '../intake/artwork_intake_service.dart';
 import '../prototype/prototype_artwork.dart';
+import '../storage/attachment_record.dart';
 import '../storage/artwork_record.dart';
 
 class PrototypeIntroScreen extends StatelessWidget {
@@ -108,20 +109,20 @@ class CollectionHomeScreen extends StatefulWidget {
 }
 
 class _CollectionHomeScreenState extends State<CollectionHomeScreen> {
-  Future<List<ArtworkRecord>>? _records;
+  Future<List<_LocalArtworkSummary>>? _records;
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
     final dependencies = _maybeDependencies(context);
-    _records ??= dependencies?.artworkRepository.list();
+    _records ??= dependencies == null ? null : _loadLocalArtwork(dependencies);
   }
 
   @override
   Widget build(BuildContext context) {
     final dependencies = _maybeDependencies(context);
     if (dependencies != null) {
-      return FutureBuilder<List<ArtworkRecord>>(
+      return FutureBuilder<List<_LocalArtworkSummary>>(
         future: _records,
         builder: (context, snapshot) {
           return _CollectionHomeContent(records: snapshot.data ?? const []);
@@ -136,12 +137,10 @@ class _CollectionHomeScreenState extends State<CollectionHomeScreen> {
 class _CollectionHomeContent extends StatelessWidget {
   const _CollectionHomeContent({required this.records});
 
-  final List<ArtworkRecord> records;
+  final List<_LocalArtworkSummary> records;
 
   @override
   Widget build(BuildContext context) {
-    final latestRecord = records.isEmpty ? null : records.first;
-
     return ListView(
       padding: const EdgeInsets.all(20),
       children: [
@@ -152,21 +151,70 @@ class _CollectionHomeContent extends StatelessWidget {
         const SizedBox(height: 16),
         const _LimitHint(),
         const SizedBox(height: 16),
-        if (latestRecord == null)
+        if (records.isEmpty)
           const _EmptyCollectionPanel()
-        else
-          _LatestDraftPanel(record: latestRecord),
-        const SizedBox(height: 88),
+        else ...[
+          for (final summary in records) ...[
+            _CollectionRecordPanel(summary: summary),
+            const SizedBox(height: 12),
+          ],
+          PrimaryActionButton(
+            icon: Icons.add_a_photo_outlined,
+            label: 'Add artwork',
+            routeName: AppRoutes.collectionAdd,
+          ),
+          const SizedBox(height: 12),
+        ],
+        const SizedBox(height: 32),
       ],
     );
   }
 }
 
-class IncompleteQueueScreen extends StatelessWidget {
+class IncompleteQueueScreen extends StatefulWidget {
   const IncompleteQueueScreen({super.key});
 
   @override
+  State<IncompleteQueueScreen> createState() => _IncompleteQueueScreenState();
+}
+
+class _IncompleteQueueScreenState extends State<IncompleteQueueScreen> {
+  Future<List<_LocalArtworkSummary>>? _records;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final dependencies = _maybeDependencies(context);
+    _records ??= dependencies == null ? null : _loadLocalArtwork(dependencies);
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final dependencies = _maybeDependencies(context);
+    if (dependencies != null) {
+      return FutureBuilder<List<_LocalArtworkSummary>>(
+        future: _records,
+        builder: (context, snapshot) {
+          return _IncompleteQueueContent(records: snapshot.data ?? const []);
+        },
+      );
+    }
+
+    return const _IncompleteQueueContent(records: []);
+  }
+}
+
+class _IncompleteQueueContent extends StatelessWidget {
+  const _IncompleteQueueContent({required this.records});
+
+  final List<_LocalArtworkSummary> records;
+
+  @override
+  Widget build(BuildContext context) {
+    final items = records
+        .expand((summary) => summary.incompleteItems)
+        .toList(growable: false);
+
     return ListView(
       padding: const EdgeInsets.all(20),
       children: [
@@ -175,32 +223,24 @@ class IncompleteQueueScreen extends StatelessWidget {
           subtitle: 'Records that need attention',
         ),
         const SizedBox(height: 16),
-        _AttentionRow(
-          icon: Icons.rate_review_outlined,
-          title: 'AI draft needs review',
-          body:
-              '4 fields are still AI-suggested or unknown. Please confirm before report export.',
-          actionLabel: 'Review draft',
-          routeName: AppRoutes.artworkDraft(prototypeArtwork.id),
-        ),
-        const SizedBox(height: 12),
-        _AttentionRow(
-          icon: Icons.attach_file,
-          title: 'Supporting documents',
-          body:
-              'No document is required to continue. Add receipt or provenance notes when available.',
-          actionLabel: 'Attach documents',
-          routeName: AppRoutes.artworkDocuments(prototypeArtwork.id),
-        ),
-        const SizedBox(height: 12),
-        _AttentionRow(
-          icon: Icons.wifi_off_outlined,
-          title: 'Offline draft saved locally',
-          body:
-              'If upload is interrupted, the draft remains recoverable on this device.',
-          actionLabel: 'Open record',
-          routeName: AppRoutes.artwork(prototypeArtwork.id),
-        ),
+        if (items.isEmpty)
+          const _StatusPanel(
+            icon: Icons.check_circle_outline,
+            title: 'No incomplete records',
+            body:
+                'Local records with confirmed fields and supporting attachments will stay out of this queue.',
+          )
+        else
+          for (final item in items) ...[
+            _AttentionRow(
+              icon: item.icon,
+              title: item.title,
+              body: item.body,
+              actionLabel: item.actionLabel,
+              routeName: item.routeName,
+            ),
+            const SizedBox(height: 12),
+          ],
       ],
     );
   }
@@ -1247,18 +1287,21 @@ class _EmptyCollectionPanel extends StatelessWidget {
   }
 }
 
-class _LatestDraftPanel extends StatelessWidget {
-  const _LatestDraftPanel({required this.record});
+class _CollectionRecordPanel extends StatelessWidget {
+  const _CollectionRecordPanel({required this.summary});
 
-  final ArtworkRecord record;
+  final _LocalArtworkSummary summary;
 
   @override
   Widget build(BuildContext context) {
+    final record = summary.record;
     final title =
         record.field(ArtworkFieldKeys.title)?.value ?? 'Untitled artwork';
     final routeName = record.recordState == ArtworkRecordState.verifiedByYou
         ? AppRoutes.artworkDetails(record.id)
         : AppRoutes.artworkDraft(record.id);
+    final supportingCount = summary.supportingAttachmentCount;
+    final incompleteCount = summary.incompleteItems.length;
 
     return _Panel(
       child: Column(
@@ -1268,24 +1311,72 @@ class _LatestDraftPanel extends StatelessWidget {
           const SizedBox(height: 6),
           Text(record.recordState.label),
           const SizedBox(height: 8),
-          const _StatusLine(
+          _StatusLine(
             icon: Icons.photo_library_outlined,
-            text: 'Primary image saved in app-private storage.',
+            text: record.primaryImageAttachmentId == null
+                ? 'Primary image is not attached yet.'
+                : 'Primary image saved in app-private storage.',
           ),
-          const _StatusLine(
-            icon: Icons.restore_outlined,
-            text: 'Resume this draft after navigation or app restart.',
+          _StatusLine(
+            icon: Icons.attach_file,
+            text: supportingCount == 0
+                ? 'No supporting documents attached yet.'
+                : '$supportingCount supporting document${supportingCount == 1 ? '' : 's'} attached.',
+          ),
+          _StatusLine(
+            icon: incompleteCount == 0
+                ? Icons.check_circle_outline
+                : Icons.rule_folder_outlined,
+            text: incompleteCount == 0
+                ? 'No incomplete queue items for this record.'
+                : '$incompleteCount incomplete queue item${incompleteCount == 1 ? '' : 's'} need attention.',
           ),
           const SizedBox(height: 12),
           PrimaryActionButton(
             icon: Icons.rate_review_outlined,
-            label: 'Resume draft',
+            label: record.recordState == ArtworkRecordState.verifiedByYou
+                ? 'Open record'
+                : 'Resume draft',
             routeName: routeName,
           ),
         ],
       ),
     );
   }
+}
+
+class _LocalArtworkSummary {
+  const _LocalArtworkSummary({
+    required this.record,
+    required this.attachments,
+    required this.incompleteItems,
+  });
+
+  final ArtworkRecord record;
+  final List<AttachmentRecord> attachments;
+  final List<_IncompleteItem> incompleteItems;
+
+  int get supportingAttachmentCount {
+    return attachments
+        .where((attachment) => attachment.type != AttachmentType.photo)
+        .length;
+  }
+}
+
+class _IncompleteItem {
+  const _IncompleteItem({
+    required this.icon,
+    required this.title,
+    required this.body,
+    required this.actionLabel,
+    required this.routeName,
+  });
+
+  final IconData icon;
+  final String title;
+  final String body;
+  final String actionLabel;
+  final String routeName;
 }
 
 class _CompletenessPanel extends StatelessWidget {
@@ -1394,6 +1485,117 @@ AppDependencies? _maybeDependencies(BuildContext context) {
       ?.dependencies;
 }
 
+Future<List<_LocalArtworkSummary>> _loadLocalArtwork(
+  AppDependencies dependencies,
+) async {
+  final records = await dependencies.artworkRepository.list();
+  final summaries = <_LocalArtworkSummary>[];
+
+  for (final record in records) {
+    final attachments = await dependencies.artworkRepository
+        .attachmentsForArtwork(record.id);
+    summaries.add(
+      _LocalArtworkSummary(
+        record: record,
+        attachments: attachments,
+        incompleteItems: _incompleteItems(record, attachments),
+      ),
+    );
+  }
+
+  return summaries;
+}
+
+List<_IncompleteItem> _incompleteItems(
+  ArtworkRecord record,
+  List<AttachmentRecord> attachments,
+) {
+  final items = <_IncompleteItem>[];
+  final title =
+      record.field(ArtworkFieldKeys.title)?.value ?? 'Untitled artwork';
+  final reviewCount = _fieldsNeedingReview(record).length;
+  final missingCount = _missingCoreFields(record).length;
+  final supportingCount = attachments
+      .where((attachment) => attachment.type != AttachmentType.photo)
+      .length;
+
+  if (record.recordState != ArtworkRecordState.verifiedByYou ||
+      reviewCount > 0) {
+    items.add(
+      _IncompleteItem(
+        icon: Icons.rate_review_outlined,
+        title: '$title needs review',
+        body: reviewCount == 0
+            ? 'Record state still needs review before export.'
+            : '$reviewCount field${reviewCount == 1 ? '' : 's'} still need user confirmation before export.',
+        actionLabel: 'Review draft',
+        routeName: AppRoutes.artworkDraft(record.id),
+      ),
+    );
+  }
+
+  if (missingCount > 0) {
+    items.add(
+      _IncompleteItem(
+        icon: Icons.edit_note_outlined,
+        title: '$title has missing values',
+        body:
+            '$missingCount core field${missingCount == 1 ? '' : 's'} need a value before this record is complete.',
+        actionLabel: 'Open record',
+        routeName: AppRoutes.artwork(record.id),
+      ),
+    );
+  }
+
+  if (record.recordState == ArtworkRecordState.missingDocuments ||
+      supportingCount == 0) {
+    items.add(
+      _IncompleteItem(
+        icon: Icons.attach_file,
+        title: '$title needs supporting documents',
+        body: supportingCount == 0
+            ? 'Add a receipt, certificate, appraisal, auction record, or provenance note when available.'
+            : '$supportingCount supporting document${supportingCount == 1 ? '' : 's'} attached; review the document completeness state.',
+        actionLabel: 'Attach documents',
+        routeName: AppRoutes.artworkDocuments(record.id),
+      ),
+    );
+  }
+
+  return items;
+}
+
+List<ArtworkFieldValue> _fieldsNeedingReview(ArtworkRecord record) {
+  return _coreFieldKeys
+      .map(record.field)
+      .whereType<ArtworkFieldValue>()
+      .where((field) => field.source != ArtworkFieldSource.userConfirmed)
+      .toList(growable: false);
+}
+
+List<String> _missingCoreFields(ArtworkRecord record) {
+  return _coreFieldKeys
+      .where((key) {
+        final field = record.field(key);
+        final value = field?.value.trim();
+        return value == null ||
+            value.isEmpty ||
+            field?.source == ArtworkFieldSource.unknown;
+      })
+      .toList(growable: false);
+}
+
+const _coreFieldKeys = [
+  ArtworkFieldKeys.title,
+  ArtworkFieldKeys.artist,
+  ArtworkFieldKeys.year,
+  ArtworkFieldKeys.medium,
+  ArtworkFieldKeys.dimensions,
+  ArtworkFieldKeys.currentLocation,
+  ArtworkFieldKeys.insuranceValue,
+  ArtworkFieldKeys.conditionNotes,
+];
+
 Future<PrototypeArtwork> artworkForRoute(
   BuildContext context,
   String artworkId,
@@ -1402,10 +1604,19 @@ Future<PrototypeArtwork> artworkForRoute(
   final record = dependencies == null
       ? null
       : await dependencies.artworkRepository.get(artworkId);
-  return record == null ? prototypeArtwork : prototypeArtworkFromRecord(record);
+  if (record == null) {
+    return prototypeArtwork;
+  }
+
+  final attachments = await dependencies!.artworkRepository
+      .attachmentsForArtwork(record.id);
+  return prototypeArtworkFromRecord(record, attachments: attachments);
 }
 
-PrototypeArtwork prototypeArtworkFromRecord(ArtworkRecord record) {
+PrototypeArtwork prototypeArtworkFromRecord(
+  ArtworkRecord record, {
+  List<AttachmentRecord> attachments = const [],
+}) {
   final title = _field(
     record,
     key: ArtworkFieldKeys.title,
@@ -1457,7 +1668,10 @@ PrototypeArtwork prototypeArtworkFromRecord(ArtworkRecord record) {
       label: 'Condition notes',
       fallback: 'Needs review',
     ),
-    documents: const [],
+    documents: attachments
+        .where((attachment) => attachment.type != AttachmentType.photo)
+        .map(_documentFromAttachment)
+        .toList(growable: false),
   );
 }
 
@@ -1482,6 +1696,27 @@ PrototypeSource _prototypeSource(ArtworkFieldSource source) {
     ArtworkFieldSource.userConfirmed => PrototypeSource.userConfirmed,
     ArtworkFieldSource.documentExtracted => PrototypeSource.documentExtracted,
     ArtworkFieldSource.unknown => PrototypeSource.unknown,
+  };
+}
+
+PrototypeDocument _documentFromAttachment(AttachmentRecord attachment) {
+  return PrototypeDocument(
+    type: _attachmentTypeLabel(attachment.type),
+    fileName: attachment.fileName,
+    source: _prototypeSource(attachment.source),
+    note: attachment.notes ?? 'Stored as app-private attachment metadata.',
+  );
+}
+
+String _attachmentTypeLabel(AttachmentType type) {
+  return switch (type) {
+    AttachmentType.photo => 'Photo',
+    AttachmentType.receipt => 'Receipt',
+    AttachmentType.certificate => 'Certificate',
+    AttachmentType.appraisal => 'Appraisal',
+    AttachmentType.auctionRecord => 'Auction record',
+    AttachmentType.provenanceNote => 'Provenance note',
+    AttachmentType.otherSupportingDocument => 'Supporting document',
   };
 }
 
