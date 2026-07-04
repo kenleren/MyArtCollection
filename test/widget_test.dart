@@ -693,16 +693,21 @@ void main() {
     await pumpLiveData(tester);
 
     expect(find.text('Source-backed candidates'), findsOneWidget);
+    expect(
+      find.textContaining('2 professional-source citations found'),
+      findsOneWidget,
+    );
     expect(find.textContaining('The Met Collection'), findsOneWidget);
     expect(find.textContaining('https://www.metmuseum.org/'), findsOneWidget);
     expect(find.text('AI-suggested'), findsWidgets);
 
     await tapVisible(tester, find.text('Accept suggestion').first);
-    expect(find.text('Accepted for review'), findsWidgets);
+    expect(find.text('Accepted for review'), findsOneWidget);
     expect(find.text('AI-suggested'), findsWidgets);
 
     await tapVisible(tester, find.text('Reject').first);
-    expect(find.text('Rejected for this draft'), findsWidgets);
+    expect(find.text('Rejected for this draft'), findsOneWidget);
+    expect(find.text('Accepted for review'), findsNothing);
     expect(find.text('AI-suggested'), findsWidgets);
 
     final jobs = await tester.runAsync(

@@ -578,8 +578,8 @@ class _DraftReviewScreenState extends State<DraftReviewScreen> {
   Object? _researchError;
   bool _showResearchConsent = false;
   bool _isResearchBusy = false;
-  final Set<String> _acceptedResearchFields = {};
-  final Set<String> _rejectedResearchFields = {};
+  final Set<String> _acceptedResearchFieldKeys = {};
+  final Set<String> _rejectedResearchFieldKeys = {};
 
   @override
   void initState() {
@@ -592,8 +592,8 @@ class _DraftReviewScreenState extends State<DraftReviewScreen> {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.initialResearchJob?.id != widget.initialResearchJob?.id) {
       _researchJob = widget.initialResearchJob;
-      _acceptedResearchFields.clear();
-      _rejectedResearchFields.clear();
+      _acceptedResearchFieldKeys.clear();
+      _rejectedResearchFieldKeys.clear();
       _researchError = null;
     }
   }
@@ -629,8 +629,8 @@ class _DraftReviewScreenState extends State<DraftReviewScreen> {
             showConsent: _showResearchConsent,
             isBusy: _isResearchBusy,
             error: _researchError,
-            acceptedFieldLabels: _acceptedResearchFields,
-            rejectedFieldLabels: _rejectedResearchFields,
+            acceptedFieldKeys: _acceptedResearchFieldKeys,
+            rejectedFieldKeys: _rejectedResearchFieldKeys,
             onStart: _canRunResearch
                 ? () => setState(() => _showResearchConsent = true)
                 : null,
@@ -701,17 +701,17 @@ class _DraftReviewScreenState extends State<DraftReviewScreen> {
     }
   }
 
-  void _acceptResearchField(String label) {
+  void _acceptResearchField(String fieldKey) {
     setState(() {
-      _acceptedResearchFields.add(label);
-      _rejectedResearchFields.remove(label);
+      _acceptedResearchFieldKeys.add(fieldKey);
+      _rejectedResearchFieldKeys.remove(fieldKey);
     });
   }
 
-  void _rejectResearchField(String label) {
+  void _rejectResearchField(String fieldKey) {
     setState(() {
-      _rejectedResearchFields.add(label);
-      _acceptedResearchFields.remove(label);
+      _rejectedResearchFieldKeys.add(fieldKey);
+      _acceptedResearchFieldKeys.remove(fieldKey);
     });
   }
 }
@@ -1198,8 +1198,8 @@ class _OnlineResearchPanel extends StatelessWidget {
     required this.showConsent,
     required this.isBusy,
     required this.error,
-    required this.acceptedFieldLabels,
-    required this.rejectedFieldLabels,
+    required this.acceptedFieldKeys,
+    required this.rejectedFieldKeys,
     required this.onStart,
     required this.onCancelConsent,
     required this.onConfirmConsent,
@@ -1212,8 +1212,8 @@ class _OnlineResearchPanel extends StatelessWidget {
   final bool showConsent;
   final bool isBusy;
   final Object? error;
-  final Set<String> acceptedFieldLabels;
-  final Set<String> rejectedFieldLabels;
+  final Set<String> acceptedFieldKeys;
+  final Set<String> rejectedFieldKeys;
   final VoidCallback? onStart;
   final VoidCallback onCancelConsent;
   final VoidCallback? onConfirmConsent;
@@ -1234,8 +1234,8 @@ class _OnlineResearchPanel extends StatelessWidget {
     if (researchJob != null) {
       return _ResearchResultsPanel(
         researchJob: researchJob,
-        acceptedFieldLabels: acceptedFieldLabels,
-        rejectedFieldLabels: rejectedFieldLabels,
+        acceptedFieldKeys: acceptedFieldKeys,
+        rejectedFieldKeys: rejectedFieldKeys,
         onAcceptField: onAcceptField,
         onRejectField: onRejectField,
       );
@@ -1352,15 +1352,15 @@ class _ResearchConsentPanel extends StatelessWidget {
 class _ResearchResultsPanel extends StatelessWidget {
   const _ResearchResultsPanel({
     required this.researchJob,
-    required this.acceptedFieldLabels,
-    required this.rejectedFieldLabels,
+    required this.acceptedFieldKeys,
+    required this.rejectedFieldKeys,
     required this.onAcceptField,
     required this.onRejectField,
   });
 
   final ResearchJob researchJob;
-  final Set<String> acceptedFieldLabels;
-  final Set<String> rejectedFieldLabels;
+  final Set<String> acceptedFieldKeys;
+  final Set<String> rejectedFieldKeys;
   final ValueChanged<String> onAcceptField;
   final ValueChanged<String> onRejectField;
 
@@ -1375,6 +1375,9 @@ class _ResearchResultsPanel extends StatelessWidget {
       );
     }
 
+    final citationCount = researchJob.sourceHits.length;
+    final citationWord = citationCount == 1 ? 'citation' : 'citations';
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1382,15 +1385,15 @@ class _ResearchResultsPanel extends StatelessWidget {
           icon: Icons.travel_explore,
           title: 'Source-backed candidates',
           body:
-              '${researchJob.sourceHits.length} professional-source citation found. Review before confirming any field.',
+              '$citationCount professional-source $citationWord found. Review before confirming any field.',
         ),
         const SizedBox(height: 12),
         for (final candidate in researchJob.candidateAttributions) ...[
           _CandidateCitationCard(
             candidate: candidate,
             sourceHit: _sourceForCandidate(candidate),
-            acceptedFieldLabels: acceptedFieldLabels,
-            rejectedFieldLabels: rejectedFieldLabels,
+            acceptedFieldKeys: acceptedFieldKeys,
+            rejectedFieldKeys: rejectedFieldKeys,
             onAcceptField: onAcceptField,
             onRejectField: onRejectField,
           ),
@@ -1414,16 +1417,16 @@ class _CandidateCitationCard extends StatelessWidget {
   const _CandidateCitationCard({
     required this.candidate,
     required this.sourceHit,
-    required this.acceptedFieldLabels,
-    required this.rejectedFieldLabels,
+    required this.acceptedFieldKeys,
+    required this.rejectedFieldKeys,
     required this.onAcceptField,
     required this.onRejectField,
   });
 
   final CandidateAttribution candidate;
   final ResearchSourceHit? sourceHit;
-  final Set<String> acceptedFieldLabels;
-  final Set<String> rejectedFieldLabels;
+  final Set<String> acceptedFieldKeys;
+  final Set<String> rejectedFieldKeys;
   final ValueChanged<String> onAcceptField;
   final ValueChanged<String> onRejectField;
 
@@ -1432,13 +1435,29 @@ class _CandidateCitationCard extends StatelessWidget {
     final sourceHit = this.sourceHit;
     final fields = [
       if (candidate.title != null)
-        _CandidateFieldSuggestion(label: 'Title', value: candidate.title!),
+        _CandidateFieldSuggestion(
+          key: _candidateFieldKey(candidate, 'title'),
+          label: 'Title',
+          value: candidate.title!,
+        ),
       if (candidate.artist != null)
-        _CandidateFieldSuggestion(label: 'Artist', value: candidate.artist!),
+        _CandidateFieldSuggestion(
+          key: _candidateFieldKey(candidate, 'artist'),
+          label: 'Artist',
+          value: candidate.artist!,
+        ),
       if (candidate.year != null)
-        _CandidateFieldSuggestion(label: 'Year', value: candidate.year!),
+        _CandidateFieldSuggestion(
+          key: _candidateFieldKey(candidate, 'year'),
+          label: 'Year',
+          value: candidate.year!,
+        ),
       if (candidate.medium != null)
-        _CandidateFieldSuggestion(label: 'Medium', value: candidate.medium!),
+        _CandidateFieldSuggestion(
+          key: _candidateFieldKey(candidate, 'medium'),
+          label: 'Medium',
+          value: candidate.medium!,
+        ),
     ];
 
     return _Panel(
@@ -1469,10 +1488,10 @@ class _CandidateCitationCard extends StatelessWidget {
           for (final field in fields) ...[
             _CandidateFieldRow(
               suggestion: field,
-              accepted: acceptedFieldLabels.contains(field.label),
-              rejected: rejectedFieldLabels.contains(field.label),
-              onAccept: () => onAcceptField(field.label),
-              onReject: () => onRejectField(field.label),
+              accepted: acceptedFieldKeys.contains(field.key),
+              rejected: rejectedFieldKeys.contains(field.key),
+              onAccept: () => onAcceptField(field.key),
+              onReject: () => onRejectField(field.key),
             ),
             const SizedBox(height: 10),
           ],
@@ -1482,9 +1501,18 @@ class _CandidateCitationCard extends StatelessWidget {
   }
 }
 
-class _CandidateFieldSuggestion {
-  const _CandidateFieldSuggestion({required this.label, required this.value});
+String _candidateFieldKey(CandidateAttribution candidate, String fieldKey) {
+  return '${candidate.id}:$fieldKey';
+}
 
+class _CandidateFieldSuggestion {
+  const _CandidateFieldSuggestion({
+    required this.key,
+    required this.label,
+    required this.value,
+  });
+
+  final String key;
   final String label;
   final String value;
 }
