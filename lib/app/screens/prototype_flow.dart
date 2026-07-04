@@ -1297,9 +1297,7 @@ class _CollectionRecordPanel extends StatelessWidget {
     final record = summary.record;
     final title =
         record.field(ArtworkFieldKeys.title)?.value ?? 'Untitled artwork';
-    final routeName = record.recordState == ArtworkRecordState.verifiedByYou
-        ? AppRoutes.artworkDetails(record.id)
-        : AppRoutes.artworkDraft(record.id);
+    final routeName = _reviewSafeRoute(record);
     final supportingCount = summary.supportingAttachmentCount;
     final incompleteCount = summary.incompleteItems.length;
 
@@ -1334,7 +1332,7 @@ class _CollectionRecordPanel extends StatelessWidget {
           const SizedBox(height: 12),
           PrimaryActionButton(
             icon: Icons.rate_review_outlined,
-            label: record.recordState == ArtworkRecordState.verifiedByYou
+            label: routeName == AppRoutes.artworkDetails(record.id)
                 ? 'Open record'
                 : 'Resume draft',
             routeName: routeName,
@@ -1542,7 +1540,7 @@ List<_IncompleteItem> _incompleteItems(
         body:
             '$missingCount core field${missingCount == 1 ? '' : 's'} need a value before this record is complete.',
         actionLabel: 'Open record',
-        routeName: AppRoutes.artwork(record.id),
+        routeName: _reviewSafeRoute(record),
       ),
     );
   }
@@ -1571,6 +1569,15 @@ List<ArtworkFieldValue> _fieldsNeedingReview(ArtworkRecord record) {
       .whereType<ArtworkFieldValue>()
       .where((field) => field.source != ArtworkFieldSource.userConfirmed)
       .toList(growable: false);
+}
+
+String _reviewSafeRoute(ArtworkRecord record) {
+  if (record.recordState == ArtworkRecordState.verifiedByYou &&
+      _fieldsNeedingReview(record).isEmpty) {
+    return AppRoutes.artworkDetails(record.id);
+  }
+
+  return AppRoutes.artworkDraft(record.id);
 }
 
 List<String> _missingCoreFields(ArtworkRecord record) {

@@ -263,6 +263,48 @@ void main() {
     expect(find.text('No incomplete records'), findsOneWidget);
   });
 
+  testWidgets('incomplete missing-values action preserves draft provenance', (
+    WidgetTester tester,
+  ) async {
+    final testDependencies = await tester.runAsync(
+      () async => _LiveDependencyFixture.create(),
+    );
+    final fixture = testDependencies!;
+    addTearDown(() async {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.runAsync(fixture.dispose);
+    });
+
+    await tester.runAsync(() async {
+      await fixture.repository.upsert(
+        _artworkRecord(
+          id: 'local-draft-route',
+          title: 'Draft Route Artwork',
+          state: ArtworkRecordState.needsReview,
+          missingFieldKeys: {ArtworkFieldKeys.artist},
+        ),
+      );
+    });
+
+    await tester.pumpWidget(
+      MyArtCollectionApp(
+        initialRoute: AppRoutes.collectionIncomplete,
+        dependencies: fixture.dependencies,
+      ),
+    );
+    await pumpLiveData(tester);
+
+    expect(find.text('Draft Route Artwork has missing values'), findsOneWidget);
+
+    await tester.tap(find.text('Open record'));
+    await pumpReady(tester);
+
+    expect(find.text('AI draft review'), findsWidgets);
+    expect(find.text('Possible values. Please confirm.'), findsOneWidget);
+    expect(find.text('AI-suggested'), findsWidgets);
+    expect(find.text('Verified by you'), findsNothing);
+  });
+
   testWidgets('settings shell routes render the settings tab', (
     WidgetTester tester,
   ) async {
@@ -362,6 +404,7 @@ ArtworkRecord _artworkRecord({
   required String title,
   required ArtworkRecordState state,
   ArtworkFieldSource source = ArtworkFieldSource.aiSuggested,
+  Set<String> missingFieldKeys = const {},
 }) {
   final now = DateTime.utc(2026, 7, 4, 12);
   return ArtworkRecord(
@@ -372,16 +415,17 @@ ArtworkRecord _artworkRecord({
     updatedAt: now,
     fields: {
       for (final entry in _testFieldValues.entries)
-        entry.key: ArtworkFieldValue(
-          value: entry.key == ArtworkFieldKeys.title ? title : entry.value,
-          source: source,
-          note: source == ArtworkFieldSource.userConfirmed
-              ? 'Confirmed in test fixture.'
-              : 'Needs confirmation in test fixture.',
-          lastConfirmedAt: source == ArtworkFieldSource.userConfirmed
-              ? now
-              : null,
-        ),
+        if (!missingFieldKeys.contains(entry.key))
+          entry.key: ArtworkFieldValue(
+            value: entry.key == ArtworkFieldKeys.title ? title : entry.value,
+            source: source,
+            note: source == ArtworkFieldSource.userConfirmed
+                ? 'Confirmed in test fixture.'
+                : 'Needs confirmation in test fixture.',
+            lastConfirmedAt: source == ArtworkFieldSource.userConfirmed
+                ? now
+                : null,
+          ),
     },
   );
 }
