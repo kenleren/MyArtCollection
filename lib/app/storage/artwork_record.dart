@@ -60,24 +60,32 @@ class ArtworkFieldValue {
     required this.source,
     required this.note,
     this.lastConfirmedAt,
+    this.moneyAmount,
+    this.moneyCurrencyCode,
   });
 
   final String value;
   final ArtworkFieldSource source;
   final String note;
   final DateTime? lastConfirmedAt;
+  final String? moneyAmount;
+  final String? moneyCurrencyCode;
 
   ArtworkFieldValue copyWith({
     String? value,
     ArtworkFieldSource? source,
     String? note,
     DateTime? lastConfirmedAt,
+    String? moneyAmount,
+    String? moneyCurrencyCode,
   }) {
     return ArtworkFieldValue(
       value: value ?? this.value,
       source: source ?? this.source,
       note: note ?? this.note,
       lastConfirmedAt: lastConfirmedAt ?? this.lastConfirmedAt,
+      moneyAmount: moneyAmount ?? this.moneyAmount,
+      moneyCurrencyCode: moneyCurrencyCode ?? this.moneyCurrencyCode,
     );
   }
 }
@@ -129,6 +137,7 @@ abstract final class ArtworkFieldKeys {
   static const year = 'year';
   static const medium = 'medium';
   static const dimensions = 'dimensions';
+  static const purchasePrice = 'purchase_price';
   static const currentLocation = 'current_location';
   static const insuranceValue = 'insurance_value';
   static const conditionNotes = 'condition_notes';

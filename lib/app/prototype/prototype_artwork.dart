@@ -6,6 +6,7 @@ class PrototypeArtwork {
     required this.year,
     required this.medium,
     required this.dimensions,
+    required this.purchasePrice,
     required this.location,
     required this.insuranceValue,
     required this.condition,
@@ -18,6 +19,7 @@ class PrototypeArtwork {
   final PrototypeField year;
   final PrototypeField medium;
   final PrototypeField dimensions;
+  final PrototypeField purchasePrice;
   final PrototypeField location;
   final PrototypeField insuranceValue;
   final PrototypeField condition;
@@ -94,6 +96,12 @@ const prototypeArtwork = PrototypeArtwork(
     value: '60 x 80 cm',
     source: PrototypeSource.documentExtracted,
     note: 'Looks extracted from attached receipt.',
+  ),
+  purchasePrice: PrototypeField(
+    label: 'Purchase price',
+    value: 'USD 1,800',
+    source: PrototypeSource.documentExtracted,
+    note: 'Receipt amount recorded for your private archive.',
   ),
   location: PrototypeField(
     label: 'Current location',

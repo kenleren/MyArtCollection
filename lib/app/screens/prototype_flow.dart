@@ -795,7 +795,7 @@ class _ArtworkDetailsScreenState extends State<ArtworkDetailsScreen> {
   @override
   Widget build(BuildContext context) {
     final artwork = widget.artwork;
-    final confirmedFields = [
+    final completenessFields = [
       artwork.title,
       artwork.artist,
       artwork.year,
@@ -804,6 +804,11 @@ class _ArtworkDetailsScreenState extends State<ArtworkDetailsScreen> {
       artwork.location,
       artwork.insuranceValue,
       artwork.condition,
+    ];
+    final displayedFields = [
+      ...completenessFields.take(5),
+      artwork.purchasePrice,
+      ...completenessFields.skip(5),
     ];
 
     return PrototypeScreenFrame(
@@ -830,9 +835,9 @@ class _ArtworkDetailsScreenState extends State<ArtworkDetailsScreen> {
             },
           ),
           const SizedBox(height: 16),
-          _CompletenessPanel(fields: confirmedFields),
+          _CompletenessPanel(fields: completenessFields),
           const SizedBox(height: 16),
-          for (final field in confirmedFields) ...[
+          for (final field in displayedFields) ...[
             FieldSourceTile(field: field),
             const SizedBox(height: 10),
           ],
@@ -949,6 +954,14 @@ class _ArtworkEditScreenState extends State<ArtworkEditScreen> {
     for (final field in _editableArtworkFields)
       field.key: TextEditingController(),
   };
+  final Map<String, TextEditingController> _moneyAmountControllers = {
+    for (final field in _editableArtworkFields)
+      if (field.usesStructuredMoney) field.key: TextEditingController(),
+  };
+  final Map<String, TextEditingController> _moneyCurrencyControllers = {
+    for (final field in _editableArtworkFields)
+      if (field.usesStructuredMoney) field.key: TextEditingController(),
+  };
   Future<ArtworkRecord?>? _recordFuture;
   String? _seededArtworkId;
   bool _isSaving = false;
@@ -963,6 +976,12 @@ class _ArtworkEditScreenState extends State<ArtworkEditScreen> {
   @override
   void dispose() {
     for (final controller in _controllers.values) {
+      controller.dispose();
+    }
+    for (final controller in _moneyAmountControllers.values) {
+      controller.dispose();
+    }
+    for (final controller in _moneyCurrencyControllers.values) {
       controller.dispose();
     }
     super.dispose();
@@ -1027,6 +1046,43 @@ class _ArtworkEditScreenState extends State<ArtworkEditScreen> {
                     helperText: field.helperText,
                   ),
                 ),
+                if (field.usesStructuredMoney) ...[
+                  const SizedBox(height: 10),
+                  Row(
+                    children: [
+                      Expanded(
+                        flex: 2,
+                        child: TextField(
+                          key: ValueKey('artwork-edit-${field.key}-amount'),
+                          controller: _moneyAmountControllers[field.key],
+                          textInputAction: TextInputAction.next,
+                          keyboardType: const TextInputType.numberWithOptions(
+                            decimal: true,
+                          ),
+                          decoration: const InputDecoration(
+                            border: OutlineInputBorder(),
+                            labelText: 'Amount',
+                            helperText: 'Numbers only, no currency symbol.',
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: TextField(
+                          key: ValueKey('artwork-edit-${field.key}-currency'),
+                          controller: _moneyCurrencyControllers[field.key],
+                          textInputAction: TextInputAction.next,
+                          textCapitalization: TextCapitalization.characters,
+                          decoration: const InputDecoration(
+                            border: OutlineInputBorder(),
+                            labelText: 'Currency',
+                            helperText: 'USD, EUR, NOK.',
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
                 const SizedBox(height: 14),
               ],
               if (_errorMessage != null) ...[
@@ -1075,7 +1131,13 @@ class _ArtworkEditScreenState extends State<ArtworkEditScreen> {
     }
     _seededArtworkId = record.id;
     for (final field in _editableArtworkFields) {
-      _controllers[field.key]!.text = record.field(field.key)?.value ?? '';
+      final value = record.field(field.key);
+      _controllers[field.key]!.text = value?.value ?? '';
+      if (field.usesStructuredMoney) {
+        _moneyAmountControllers[field.key]!.text = value?.moneyAmount ?? '';
+        _moneyCurrencyControllers[field.key]!.text =
+            value?.moneyCurrencyCode ?? '';
+      }
     }
   }
 
@@ -1089,9 +1151,37 @@ class _ArtworkEditScreenState extends State<ArtworkEditScreen> {
       final dependencies = AppDependencyScope.of(context);
       final now = DateTime.now().toUtc();
       final fields = Map<String, ArtworkFieldValue>.of(record.fields);
+      final locale = Localizations.maybeLocaleOf(context) ?? const Locale('en');
 
       for (final field in _editableArtworkFields) {
-        final value = _controllers[field.key]!.text.trim();
+        final rawValue = _controllers[field.key]!.text.trim();
+        final normalizedAmount = field.usesStructuredMoney
+            ? _normalizeMoneyAmount(_moneyAmountControllers[field.key]!.text)
+            : null;
+        final normalizedCurrency = field.usesStructuredMoney
+            ? _normalizeCurrencyCode(_moneyCurrencyControllers[field.key]!.text)
+            : null;
+
+        if (field.usesStructuredMoney &&
+            ((normalizedAmount == null) != (normalizedCurrency == null))) {
+          throw StateError(
+            '${field.label} needs both a structured amount and an ISO currency code.',
+          );
+        }
+
+        final value = rawValue.isNotEmpty
+            ? rawValue
+            : (field.usesStructuredMoney &&
+                  normalizedAmount != null &&
+                  normalizedCurrency != null)
+            ? AppCurrencyFormatter.displayMoneyValue(
+                locale: locale,
+                rawValue: '',
+                amount: normalizedAmount,
+                currencyCode: normalizedCurrency,
+              )
+            : '';
+
         if (value.isEmpty) {
           fields.remove(field.key);
           continue;
@@ -1102,6 +1192,8 @@ class _ArtworkEditScreenState extends State<ArtworkEditScreen> {
           source: ArtworkFieldSource.userConfirmed,
           note: 'Edited and confirmed by you.',
           lastConfirmedAt: now,
+          moneyAmount: normalizedAmount,
+          moneyCurrencyCode: normalizedCurrency,
         );
       }
 
@@ -1127,7 +1219,7 @@ class _ArtworkEditScreenState extends State<ArtworkEditScreen> {
       }
       setState(() {
         _isSaving = false;
-        _errorMessage = error.toString();
+        _errorMessage = _userFacingEditError(error);
       });
     }
   }
@@ -3150,6 +3242,10 @@ class _ReportSummary extends StatelessWidget {
             text: 'Attached documents are listed as supporting records.',
           ),
           _StatusLine(
+            icon: Icons.receipt_long_outlined,
+            text: 'Purchase price: ${artwork.purchasePrice.value}.',
+          ),
+          _StatusLine(
             icon: Icons.price_check_outlined,
             text: l10n.userProvidedInsuranceValueLine(
               artwork.insuranceValue.value,
@@ -3420,6 +3516,12 @@ const _editableArtworkFields = [
     helperText: 'Include units, for example 60 x 80 cm.',
   ),
   _EditableArtworkField(
+    key: ArtworkFieldKeys.purchasePrice,
+    label: 'Purchase price',
+    helperText: 'Keep legacy text or add a structured amount and ISO currency.',
+    usesStructuredMoney: true,
+  ),
+  _EditableArtworkField(
     key: ArtworkFieldKeys.currentLocation,
     label: 'Current location',
     helperText: 'Private location label for your own records.',
@@ -3427,8 +3529,9 @@ const _editableArtworkFields = [
   _EditableArtworkField(
     key: ArtworkFieldKeys.insuranceValue,
     label: 'User-provided insurance value',
-    helperText: 'Your own value note only; not an appraisal.',
+    helperText: 'Keep legacy text or add a structured amount and ISO currency.',
     keyboardType: TextInputType.text,
+    usesStructuredMoney: true,
   ),
   _EditableArtworkField(
     key: ArtworkFieldKeys.conditionNotes,
@@ -3445,6 +3548,7 @@ class _EditableArtworkField {
     required this.helperText,
     this.keyboardType = TextInputType.text,
     this.maxLines = 1,
+    this.usesStructuredMoney = false,
   });
 
   final String key;
@@ -3452,6 +3556,7 @@ class _EditableArtworkField {
   final String helperText;
   final TextInputType keyboardType;
   final int maxLines;
+  final bool usesStructuredMoney;
 }
 
 bool _hasCompleteConfirmedCoreFields(Map<String, ArtworkFieldValue> fields) {
@@ -3481,6 +3586,7 @@ Future<ArtworkRouteData> artworkDataForRoute(
   BuildContext context,
   String artworkId,
 ) async {
+  final locale = Localizations.maybeLocaleOf(context) ?? const Locale('en');
   final dependencies = _maybeDependencies(context);
   final record = dependencies == null
       ? null
@@ -3499,7 +3605,11 @@ Future<ArtworkRouteData> artworkDataForRoute(
   final researchJobs = await dependencies.artworkRepository
       .researchJobsForArtwork(record.id);
   return ArtworkRouteData(
-    artwork: prototypeArtworkFromRecord(record, attachments: attachments),
+    artwork: prototypeArtworkFromRecord(
+      record,
+      attachments: attachments,
+      locale: locale,
+    ),
     isAiDraftReview:
         aiDraftJobs.isNotEmpty &&
         aiDraftJobs.first.status == AiDraftJobStatus.completed,
@@ -3511,6 +3621,7 @@ Future<ArtworkRouteData> artworkDataForRoute(
 PrototypeArtwork prototypeArtworkFromRecord(
   ArtworkRecord record, {
   List<AttachmentRecord> attachments = const [],
+  Locale locale = const Locale('en'),
 }) {
   final title = _field(
     record,
@@ -3545,6 +3656,13 @@ PrototypeArtwork prototypeArtworkFromRecord(
       label: 'Dimensions',
       fallback: 'Needs review',
     ),
+    purchasePrice: _field(
+      record,
+      key: ArtworkFieldKeys.purchasePrice,
+      label: 'Purchase price',
+      fallback: 'Not set',
+      locale: locale,
+    ),
     location: _field(
       record,
       key: ArtworkFieldKeys.currentLocation,
@@ -3556,6 +3674,7 @@ PrototypeArtwork prototypeArtworkFromRecord(
       key: ArtworkFieldKeys.insuranceValue,
       label: 'User-provided insurance value',
       fallback: 'Not set',
+      locale: locale,
     ),
     condition: _field(
       record,
@@ -3575,13 +3694,61 @@ PrototypeField _field(
   required String key,
   required String label,
   required String fallback,
+  Locale? locale,
 }) {
   final value = record.field(key);
   return PrototypeField(
     label: label,
-    value: value?.value ?? fallback,
+    value: value == null ? fallback : _displayFieldValue(value, locale: locale),
     source: _prototypeSource(value?.source ?? ArtworkFieldSource.unknown),
     note: value?.note ?? 'Confirm this field before using it in a report.',
+  );
+}
+
+String _displayFieldValue(ArtworkFieldValue value, {Locale? locale}) {
+  final activeLocale = locale ?? const Locale('en');
+  return AppCurrencyFormatter.displayMoneyValue(
+    locale: activeLocale,
+    rawValue: value.value,
+    amount: value.moneyAmount,
+    currencyCode: value.moneyCurrencyCode,
+  );
+}
+
+String? _normalizeMoneyAmount(String rawValue) {
+  final trimmed = rawValue.trim();
+  if (trimmed.isEmpty) {
+    return null;
+  }
+
+  final normalized = trimmed.replaceAll(',', '.');
+  if (!RegExp(r'^\d+(?:\.\d+)?$').hasMatch(normalized)) {
+    throw StateError(
+      'Structured money amount must use digits with an optional decimal part.',
+    );
+  }
+  return normalized;
+}
+
+String? _normalizeCurrencyCode(String rawValue) {
+  final trimmed = rawValue.trim();
+  if (trimmed.isEmpty) {
+    return null;
+  }
+
+  final normalized = trimmed.toUpperCase();
+  if (!RegExp(r'^[A-Z]{3}$').hasMatch(normalized)) {
+    throw StateError(
+      'Structured money currency must be a three-letter ISO code.',
+    );
+  }
+  return normalized;
+}
+
+String _userFacingEditError(Object error) {
+  return error.toString().replaceFirst(
+    RegExp(r'^(Bad state|FormatException):\s*'),
+    '',
   );
 }
 

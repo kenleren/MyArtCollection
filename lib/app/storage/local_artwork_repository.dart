@@ -15,7 +15,7 @@ class LocalArtworkRepository {
   final Database _database;
 
   static const _databaseName = 'my_art_collection.db';
-  static const _schemaVersion = 4;
+  static const _schemaVersion = 5;
 
   static Future<LocalArtworkRepository> open() async {
     final directory = await getApplicationDocumentsDirectory();
@@ -50,6 +50,8 @@ class LocalArtworkRepository {
         artwork_id TEXT NOT NULL,
         field_key TEXT NOT NULL,
         value TEXT NOT NULL,
+        money_amount TEXT,
+        money_currency_code TEXT,
         source_state TEXT NOT NULL,
         source_note TEXT NOT NULL,
         last_confirmed_at TEXT,
@@ -82,6 +84,14 @@ class LocalArtworkRepository {
     if (oldVersion < 4) {
       await db.execute(
         "ALTER TABLE artworks ADD COLUMN lifecycle_status TEXT NOT NULL DEFAULT 'active'",
+      );
+    }
+    if (oldVersion < 5) {
+      await db.execute(
+        'ALTER TABLE artwork_fields ADD COLUMN money_amount TEXT',
+      );
+      await db.execute(
+        'ALTER TABLE artwork_fields ADD COLUMN money_currency_code TEXT',
       );
     }
   }
@@ -478,6 +488,8 @@ class LocalArtworkRepository {
       'artwork_id': artworkId,
       'field_key': entry.key,
       'value': field.value,
+      'money_amount': field.moneyAmount,
+      'money_currency_code': field.moneyCurrencyCode,
       'source_state': field.source.label,
       'source_note': field.note,
       'last_confirmed_at': field.lastConfirmedAt?.toUtc().toIso8601String(),
@@ -611,6 +623,8 @@ class LocalArtworkRepository {
           source: ArtworkFieldSource.fromStorage(row['source_state'] as String),
           note: row['source_note'] as String,
           lastConfirmedAt: _parseDate(row['last_confirmed_at'] as String?),
+          moneyAmount: row['money_amount'] as String?,
+          moneyCurrencyCode: row['money_currency_code'] as String?,
         ),
     };
   }

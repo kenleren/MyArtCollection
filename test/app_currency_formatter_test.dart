@@ -48,4 +48,28 @@ void main() {
       'EUR about 2k',
     );
   });
+
+  test(
+    'formats structured artwork money and falls back to legacy raw text',
+    () {
+      expect(
+        AppCurrencyFormatter.displayMoneyValue(
+          locale: const Locale('en'),
+          rawValue: 'legacy text',
+          amount: '2400.50',
+          currencyCode: 'USD',
+        ),
+        'USD 2,400.50',
+      );
+      expect(
+        AppCurrencyFormatter.displayMoneyValue(
+          locale: const Locale('nb'),
+          rawValue: 'legacy text',
+          amount: null,
+          currencyCode: null,
+        ),
+        'legacy text',
+      );
+    },
+  );
 }

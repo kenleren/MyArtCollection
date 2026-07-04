@@ -151,6 +151,7 @@ void main() {
       find.widgetWithText(OutlinedButton, 'Report preview').last,
     );
     expect(find.text('Generate an insurance-ready PDF'), findsWidgets);
+    expect(find.text('Purchase price: USD 1,800.'), findsOneWidget);
     expect(
       find.text('User-provided insurance value: USD 2,400.'),
       findsOneWidget,
@@ -1050,6 +1051,81 @@ void main() {
     );
   });
 
+  testWidgets(
+    'structured money fields render in details, report, and export views',
+    (WidgetTester tester) async {
+      final testDependencies = await tester.runAsync(
+        () async => _LiveDependencyFixture.create(),
+      );
+      final fixture = testDependencies!;
+      addTearDown(() async {
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.runAsync(fixture.dispose);
+      });
+
+      await tester.runAsync(() async {
+        await fixture.repository.upsert(
+          _artworkRecord(
+            id: 'structured-money',
+            title: 'Structured Money Artwork',
+            state: ArtworkRecordState.verifiedByYou,
+            source: ArtworkFieldSource.userConfirmed,
+            overrides: {
+              ArtworkFieldKeys.purchasePrice: const ArtworkFieldValue(
+                value: 'legacy purchase note',
+                source: ArtworkFieldSource.userConfirmed,
+                note: 'Structured purchase price fixture.',
+                moneyAmount: '1200.50',
+                moneyCurrencyCode: 'USD',
+              ),
+              ArtworkFieldKeys.insuranceValue: const ArtworkFieldValue(
+                value: 'legacy insurance note',
+                source: ArtworkFieldSource.userConfirmed,
+                note: 'Structured insurance value fixture.',
+                moneyAmount: '12000',
+                moneyCurrencyCode: 'NOK',
+              ),
+            },
+          ),
+        );
+        await fixture.addPrimaryImage(artworkId: 'structured-money');
+      });
+
+      await tester.pumpWidget(
+        MyArtCollectionApp(
+          initialRoute: AppRoutes.artworkDetails('structured-money'),
+          dependencies: fixture.dependencies,
+        ),
+      );
+      await pumpLiveData(tester);
+
+      expect(find.text('Structured Money Artwork'), findsWidgets);
+      expect(find.text('USD 1,200.50'), findsOneWidget);
+      expect(find.text('NOK 12,000'), findsOneWidget);
+      expect(find.text('legacy purchase note'), findsNothing);
+      expect(find.text('legacy insurance note'), findsNothing);
+
+      await tapVisible(tester, find.text('Report preview'));
+      await pumpLiveData(tester);
+
+      expect(find.text('Purchase price: USD 1,200.50.'), findsOneWidget);
+      expect(
+        find.text('User-provided insurance value: NOK 12,000.'),
+        findsOneWidget,
+      );
+
+      await tapVisible(tester, find.text('Export archive preview'));
+      await pumpLiveData(tester);
+
+      expect(find.text('Export record package'), findsWidgets);
+      expect(find.text('Purchase price: USD 1,200.50.'), findsOneWidget);
+      expect(
+        find.text('User-provided insurance value: NOK 12,000.'),
+        findsOneWidget,
+      );
+    },
+  );
+
   testWidgets('online research stays hidden by default', (
     WidgetTester tester,
   ) async {
@@ -1608,6 +1684,7 @@ ArtworkRecord _artworkRecord({
   ArtworkLifecycleStatus lifecycleStatus = ArtworkLifecycleStatus.active,
   ArtworkFieldSource source = ArtworkFieldSource.unknown,
   Set<String> missingFieldKeys = const {},
+  Map<String, ArtworkFieldValue> overrides = const {},
 }) {
   final now = DateTime.utc(2026, 7, 4, 12);
   return ArtworkRecord(
@@ -1620,16 +1697,20 @@ ArtworkRecord _artworkRecord({
     fields: {
       for (final entry in _testFieldValues.entries)
         if (!missingFieldKeys.contains(entry.key))
-          entry.key: ArtworkFieldValue(
-            value: entry.key == ArtworkFieldKeys.title ? title : entry.value,
-            source: source,
-            note: source == ArtworkFieldSource.userConfirmed
-                ? 'Confirmed in test fixture.'
-                : 'Needs confirmation in test fixture.',
-            lastConfirmedAt: source == ArtworkFieldSource.userConfirmed
-                ? now
-                : null,
-          ),
+          entry.key:
+              overrides[entry.key] ??
+              ArtworkFieldValue(
+                value: entry.key == ArtworkFieldKeys.title
+                    ? title
+                    : entry.value,
+                source: source,
+                note: source == ArtworkFieldSource.userConfirmed
+                    ? 'Confirmed in test fixture.'
+                    : 'Needs confirmation in test fixture.',
+                lastConfirmedAt: source == ArtworkFieldSource.userConfirmed
+                    ? now
+                    : null,
+              ),
     },
   );
 }
@@ -1740,6 +1821,7 @@ const _testFieldValues = {
   ArtworkFieldKeys.year: '2026',
   ArtworkFieldKeys.medium: 'Oil on canvas',
   ArtworkFieldKeys.dimensions: '40 x 50 cm',
+  ArtworkFieldKeys.purchasePrice: 'USD 80',
   ArtworkFieldKeys.currentLocation: 'Studio wall',
   ArtworkFieldKeys.insuranceValue: 'USD 100',
   ArtworkFieldKeys.conditionNotes: 'Good condition',

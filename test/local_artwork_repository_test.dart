@@ -60,6 +60,13 @@ void main() {
             note: 'User confirmed.',
             lastConfirmedAt: DateTime.utc(2026, 7, 4, 8, 4),
           ),
+          ArtworkFieldKeys.insuranceValue: const ArtworkFieldValue(
+            value: 'USD 2,400',
+            source: ArtworkFieldSource.userConfirmed,
+            note: 'User entered a structured insurance value.',
+            moneyAmount: '2400',
+            moneyCurrencyCode: 'USD',
+          ),
         },
       ),
     );
@@ -90,21 +97,50 @@ void main() {
       reloaded.field(ArtworkFieldKeys.artist)?.lastConfirmedAt,
       DateTime.utc(2026, 7, 4, 8, 4).toLocal(),
     );
+    expect(
+      reloaded.field(ArtworkFieldKeys.insuranceValue)?.moneyAmount,
+      '2400',
+    );
+    expect(
+      reloaded.field(ArtworkFieldKeys.insuranceValue)?.moneyCurrencyCode,
+      'USD',
+    );
 
     final rawDatabase = await databaseFactoryFfi.openDatabase(databasePath);
     addTearDown(rawDatabase.close);
 
     final sourceRows = await rawDatabase.query(
       'artwork_fields',
-      columns: ['field_key', 'source_state'],
+      columns: [
+        'field_key',
+        'source_state',
+        'money_amount',
+        'money_currency_code',
+      ],
       where: 'artwork_id = ?',
       whereArgs: ['artwork-001'],
       orderBy: 'field_key ASC',
     );
 
     expect(sourceRows, [
-      {'field_key': ArtworkFieldKeys.artist, 'source_state': 'user-confirmed'},
-      {'field_key': ArtworkFieldKeys.title, 'source_state': 'AI-suggested'},
+      {
+        'field_key': ArtworkFieldKeys.artist,
+        'source_state': 'user-confirmed',
+        'money_amount': null,
+        'money_currency_code': null,
+      },
+      {
+        'field_key': ArtworkFieldKeys.insuranceValue,
+        'source_state': 'user-confirmed',
+        'money_amount': '2400',
+        'money_currency_code': 'USD',
+      },
+      {
+        'field_key': ArtworkFieldKeys.title,
+        'source_state': 'AI-suggested',
+        'money_amount': null,
+        'money_currency_code': null,
+      },
     ]);
   });
 
@@ -277,6 +313,67 @@ void main() {
     expect(reloaded.lifecycleStatus, ArtworkLifecycleStatus.active);
     expect(reloaded.field(ArtworkFieldKeys.title)?.value, 'Legacy V3 Artwork');
   });
+
+  test(
+    'upgrades v4 databases without rewriting legacy free-form money text',
+    () async {
+      await repository.close();
+      await databaseFactoryFfi.deleteDatabase(databasePath);
+
+      final legacyDatabase = await databaseFactoryFfi.openDatabase(
+        databasePath,
+        options: OpenDatabaseOptions(version: 4, onCreate: _createV4Schema),
+      );
+
+      await legacyDatabase.insert('artworks', {
+        'artwork_id': 'legacy-v4-artwork',
+        'record_state': 'verifiedByYou',
+        'lifecycle_status': 'active',
+        'primary_image_attachment_id': null,
+        'created_at': DateTime.utc(2026, 7, 4, 8).toIso8601String(),
+        'updated_at': DateTime.utc(2026, 7, 4, 8, 5).toIso8601String(),
+      });
+      await legacyDatabase.insert('artwork_fields', {
+        'artwork_id': 'legacy-v4-artwork',
+        'field_key': ArtworkFieldKeys.insuranceValue,
+        'value': 'about twelve thousand, appraisal pending',
+        'source_state': 'user-confirmed',
+        'source_note': 'Legacy text should stay untouched.',
+        'last_confirmed_at': DateTime.utc(2026, 7, 4, 8).toIso8601String(),
+      });
+      await legacyDatabase.close();
+
+      repository = LocalArtworkRepository.forDatabase(
+        await LocalArtworkRepository.openAt(databasePath),
+      );
+
+      final reloaded = await repository.get('legacy-v4-artwork');
+      expect(reloaded, isNotNull);
+      expect(
+        reloaded!.field(ArtworkFieldKeys.insuranceValue)?.value,
+        'about twelve thousand, appraisal pending',
+      );
+      expect(
+        reloaded.field(ArtworkFieldKeys.insuranceValue)?.moneyAmount,
+        isNull,
+      );
+      expect(
+        reloaded.field(ArtworkFieldKeys.insuranceValue)?.moneyCurrencyCode,
+        isNull,
+      );
+
+      final rawDatabase = await databaseFactoryFfi.openDatabase(databasePath);
+      addTearDown(rawDatabase.close);
+      final moneyColumns = await rawDatabase.query(
+        'artwork_fields',
+        columns: ['money_amount', 'money_currency_code'],
+        where: 'artwork_id = ? AND field_key = ?',
+        whereArgs: ['legacy-v4-artwork', ArtworkFieldKeys.insuranceValue],
+      );
+      expect(moneyColumns.single['money_amount'], isNull);
+      expect(moneyColumns.single['money_currency_code'], isNull);
+    },
+  );
 }
 
 ArtworkRecord _record(String id, {required String title}) {
@@ -471,5 +568,12 @@ Future<void> _createV3Schema(Database db, int version) async {
         REFERENCES research_jobs (research_job_id)
         ON DELETE CASCADE
     )
-  ''');
+    ''');
+}
+
+Future<void> _createV4Schema(Database db, int version) async {
+  await _createV3Schema(db, version);
+  await db.execute(
+    "ALTER TABLE artworks ADD COLUMN lifecycle_status TEXT NOT NULL DEFAULT 'active'",
+  );
 }
