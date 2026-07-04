@@ -66,15 +66,18 @@ void main() {
       job.candidateAttributions.single.fieldSources.values,
       everyElement(ArtworkFieldSource.aiSuggested),
     );
-    expect(job.comparableValueSignals.single.label, 'Public estimate found');
-    expect(job.comparableValueSignals.single.amountLow, '2200');
-    expect(job.comparableValueSignals.single.amountHigh, '2800');
-    expect(job.comparableValueSignals.single.currency, 'USD');
     expect(
-      job.comparableValueSignals.single.signalDate,
-      DateTime.utc(2025, 5, 1),
+      job.comparableValueSignals.single.kind,
+      ComparableValueKind.noReliableComparable,
     );
-    expect(job.comparableValueSignals.single.caveat, contains('may not apply'));
+    expect(
+      job.comparableValueSignals.single.label,
+      'No reliable comparable found',
+    );
+    expect(job.comparableValueSignals.single.amountLow, isNull);
+    expect(job.comparableValueSignals.single.amountHigh, isNull);
+    expect(job.comparableValueSignals.single.currency, isNull);
+    expect(job.comparableValueSignals.single.signalDate, isNull);
 
     final persisted = await repository.getResearchJob(job.id);
     expect(persisted, isNotNull);
@@ -89,6 +92,68 @@ void main() {
       ArtworkFieldSource.unknown,
     );
   });
+
+  test(
+    'fixture client only displays amounts for explicit auction sources',
+    () async {
+      final service = OnlineResearchService(
+        repository: repository,
+        client: FixtureProfessionalSourceResearchClient(
+          allowlist: const ProfessionalSourceAllowlist([
+            ProfessionalSource(
+              host: 'auction.example',
+              name: 'Example Auction Results',
+              type: ResearchSourceType.auctionHouse,
+            ),
+          ]),
+          fixtureHits: [
+            ResearchFixtureHit(
+              sourceUrl: 'https://auction.example/lot/123',
+              title: 'Interior Study',
+              artist: 'Example Auction Artist',
+              dateText: '2025',
+              medium: 'Oil on canvas',
+              matchReason:
+                  'Auction lot shares subject, medium, and dimensions.',
+              rawSnippet: 'Sold lot with published estimate range.',
+              matchTerms: const ['auction-comparable'],
+              comparableKind: ComparableValueKind.comparableSaleSignal,
+              comparableAmountLow: '2200',
+              comparableAmountHigh: '2800',
+              comparableCurrency: 'USD',
+              comparableSignalDate: DateTime.utc(2025, 5, 1),
+              comparableCaveat:
+                  'Comparable data may not apply to this artwork; confirm with an expert.',
+            ),
+          ],
+          now: () => DateTime.utc(2026, 7, 4, 14),
+        ),
+      );
+
+      final job = await service.runResearch(
+        const OnlineResearchRequest(
+          artworkId: 'artwork-001',
+          consentSummary: 'User approved research.',
+          querySummary: 'auction-comparable',
+          searchTerms: ['auction-comparable'],
+        ),
+      );
+
+      expect(job.sourceHits.single.sourceType, ResearchSourceType.auctionHouse);
+      expect(
+        job.comparableValueSignals.single.kind,
+        ComparableValueKind.comparableSaleSignal,
+      );
+      expect(job.comparableValueSignals.single.label, 'Comparable sale signal');
+      expect(job.comparableValueSignals.single.amountLow, '2200');
+      expect(job.comparableValueSignals.single.amountHigh, '2800');
+      expect(job.comparableValueSignals.single.currency, 'USD');
+      expect(
+        job.comparableValueSignals.single.signalDate,
+        DateTime.utc(2025, 5, 1),
+      );
+    },
+  );
 
   test(
     'fixture client returns no reliable comparable when no sources match',

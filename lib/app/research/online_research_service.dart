@@ -142,6 +142,7 @@ class FixtureProfessionalSourceResearchClient implements OnlineResearchClient {
         .toList(growable: false);
     final hits = <ResearchSourceHit>[];
     final candidates = <CandidateAttribution>[];
+    ComparableValueSignal? comparableValueSignal;
 
     for (var index = 0; index < matchingHits.length; index += 1) {
       final fixture = matchingHits[index];
@@ -189,6 +190,13 @@ class FixtureProfessionalSourceResearchClient implements OnlineResearchClient {
           },
         ),
       );
+
+      comparableValueSignal ??= _valueSignalForFixture(
+        jobId: jobId,
+        sourceHitId: sourceHitId,
+        fixture: fixture,
+        source: source,
+      );
     }
 
     return ResearchJob(
@@ -203,7 +211,9 @@ class FixtureProfessionalSourceResearchClient implements OnlineResearchClient {
       provider: 'fixture-professional-source-search',
       sourceHits: hits,
       candidateAttributions: candidates,
-      comparableValueSignals: [_valueSignal(jobId, hits)],
+      comparableValueSignals: [
+        comparableValueSignal ?? _noReliableComparableSignal(jobId),
+      ],
     );
   }
 
@@ -215,35 +225,44 @@ class FixtureProfessionalSourceResearchClient implements OnlineResearchClient {
     return source;
   }
 
-  ComparableValueSignal _valueSignal(
-    String jobId,
-    List<ResearchSourceHit> hits,
-  ) {
-    if (hits.isEmpty) {
-      return ComparableValueSignal(
-        id: '$jobId-value-1',
-        researchJobId: jobId,
-        kind: ComparableValueKind.noReliableComparable,
-        label: 'No reliable comparable found',
-        sourceName: 'Professional-source search',
-        caveat: 'No source-backed comparable was available for this draft.',
-      );
+  ComparableValueSignal? _valueSignalForFixture({
+    required String jobId,
+    required String sourceHitId,
+    required ResearchFixtureHit fixture,
+    required ProfessionalSource source,
+  }) {
+    if (source.type != ResearchSourceType.auctionHouse ||
+        fixture.comparableAmountLow == null &&
+            fixture.comparableAmountHigh == null) {
+      return null;
     }
 
     return ComparableValueSignal(
       id: '$jobId-value-1',
       researchJobId: jobId,
-      sourceHitId: hits.first.id,
-      kind: ComparableValueKind.publicEstimate,
-      label: 'Public estimate found',
-      sourceName: hits.first.sourceName,
-      sourceUrl: hits.first.sourceUrl,
-      amountLow: '2200',
-      amountHigh: '2800',
-      currency: 'USD',
-      signalDate: DateTime.utc(2025, 5, 1),
+      sourceHitId: sourceHitId,
+      kind: fixture.comparableKind,
+      label: fixture.comparableKind.displayLabel,
+      sourceName: source.name,
+      sourceUrl: fixture.sourceUrl,
+      amountLow: fixture.comparableAmountLow,
+      amountHigh: fixture.comparableAmountHigh,
+      currency: fixture.comparableCurrency,
+      signalDate: fixture.comparableSignalDate,
       caveat:
+          fixture.comparableCaveat ??
           'Comparable data may not apply to this artwork; confirm with an expert.',
+    );
+  }
+
+  ComparableValueSignal _noReliableComparableSignal(String jobId) {
+    return ComparableValueSignal(
+      id: '$jobId-value-1',
+      researchJobId: jobId,
+      kind: ComparableValueKind.noReliableComparable,
+      label: ComparableValueKind.noReliableComparable.displayLabel,
+      sourceName: 'Professional-source search',
+      caveat: 'No source-backed comparable was available for this draft.',
     );
   }
 
@@ -272,6 +291,12 @@ class ResearchFixtureHit {
     this.rawSnippet,
     this.confidence = ResearchConfidence.possible,
     this.matchTerms = const [],
+    this.comparableKind = ComparableValueKind.publicEstimate,
+    this.comparableAmountLow,
+    this.comparableAmountHigh,
+    this.comparableCurrency,
+    this.comparableSignalDate,
+    this.comparableCaveat,
   });
 
   final String sourceUrl;
@@ -286,6 +311,12 @@ class ResearchFixtureHit {
   final String? rawSnippet;
   final ResearchConfidence confidence;
   final List<String> matchTerms;
+  final ComparableValueKind comparableKind;
+  final String? comparableAmountLow;
+  final String? comparableAmountHigh;
+  final String? comparableCurrency;
+  final DateTime? comparableSignalDate;
+  final String? comparableCaveat;
 
   bool matches(String querySummary, List<String> searchTerms) {
     final haystack = [querySummary, ...searchTerms].join(' ').toLowerCase();

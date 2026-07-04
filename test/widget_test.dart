@@ -898,14 +898,11 @@ void main() {
     await tester.pump();
 
     expect(find.text('Comparable source signals'), findsOneWidget);
-    expect(find.text('Public estimate found'), findsOneWidget);
+    expect(find.text('No reliable comparable found'), findsOneWidget);
+    expect(find.textContaining('Comparable amount'), findsNothing);
+    expect(find.textContaining('Signal date'), findsNothing);
     expect(
-      find.textContaining('Comparable amount: USD 2200-2800'),
-      findsOneWidget,
-    );
-    expect(find.textContaining('Signal date: 2025-05-01'), findsOneWidget);
-    expect(
-      find.textContaining('Comparable data may not apply'),
+      find.textContaining('No source-backed comparable was available'),
       findsOneWidget,
     );
     expect(find.textContaining('Market value'), findsNothing);
@@ -998,6 +995,166 @@ void main() {
     expect(find.textContaining('Appraised at'), findsNothing);
     expect(find.textContaining('Certified value'), findsNothing);
     expect(find.textContaining('Authentic value'), findsNothing);
+  });
+
+  testWidgets('online research displays allowed auction comparable amount', (
+    WidgetTester tester,
+  ) async {
+    final testDependencies = await tester.runAsync(
+      () async => _LiveDependencyFixture.create(),
+    );
+    final fixture = testDependencies!;
+    addTearDown(() async {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.runAsync(fixture.dispose);
+    });
+
+    await tester.runAsync(() async {
+      await fixture.repository.upsert(
+        _artworkRecord(
+          id: 'auction-comparable-draft',
+          title: 'Interior Study',
+          state: ArtworkRecordState.needsReview,
+        ),
+      );
+      await fixture.repository.upsertResearchJob(
+        _researchJob(
+          artworkId: 'auction-comparable-draft',
+          sourceHits: const [
+            ResearchSourceHit(
+              id: 'auction-source',
+              researchJobId: 'research-auction-comparable-draft',
+              sourceName: 'Example Auction Results',
+              sourceType: ResearchSourceType.auctionHouse,
+              confidence: ResearchConfidence.possible,
+              sourceUrl: 'https://auction.example/lot/123',
+              title: 'Interior Study',
+              artist: 'Example Auction Artist',
+            ),
+          ],
+          candidateAttributions: const [],
+          comparableValueSignals: [
+            ComparableValueSignal(
+              id: 'auction-value-signal',
+              researchJobId: 'research-auction-comparable-draft',
+              sourceHitId: 'auction-source',
+              kind: ComparableValueKind.comparableSaleSignal,
+              label: 'Market value',
+              sourceName: 'Untrusted persisted source name',
+              sourceUrl: 'https://auction.example/lot/123',
+              amountLow: '2200',
+              amountHigh: '2800',
+              currency: 'USD',
+              signalDate: DateTime.utc(2025, 5, 1),
+              caveat:
+                  'Comparable data may not apply to this artwork; confirm with an expert.',
+            ),
+          ],
+        ),
+      );
+    });
+
+    await tester.pumpWidget(
+      MyArtCollectionApp(
+        initialRoute: AppRoutes.artworkDraft('auction-comparable-draft'),
+        dependencies: fixture.dependencies,
+      ),
+    );
+    await pumpLiveData(tester);
+
+    await tester.ensureVisible(find.text('Comparable source signals'));
+    await tester.pump();
+
+    expect(find.text('Comparable sale signal'), findsOneWidget);
+    expect(find.textContaining('Market value'), findsNothing);
+    expect(find.text('Source: Example Auction Results'), findsOneWidget);
+    expect(
+      find.text('Citation: https://auction.example/lot/123'),
+      findsOneWidget,
+    );
+    expect(
+      find.textContaining('Comparable amount: USD 2200-2800'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('Signal date: 2025-05-01'), findsOneWidget);
+  });
+
+  testWidgets('online research suppresses unsafe comparable display data', (
+    WidgetTester tester,
+  ) async {
+    final testDependencies = await tester.runAsync(
+      () async => _LiveDependencyFixture.create(),
+    );
+    final fixture = testDependencies!;
+    addTearDown(() async {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.runAsync(fixture.dispose);
+    });
+
+    await tester.runAsync(() async {
+      await fixture.repository.upsert(
+        _artworkRecord(
+          id: 'unsafe-comparable-draft',
+          title: 'Interior Study',
+          state: ArtworkRecordState.needsReview,
+        ),
+      );
+      await fixture.repository.upsertResearchJob(
+        _researchJob(
+          artworkId: 'unsafe-comparable-draft',
+          sourceHits: const [
+            ResearchSourceHit(
+              id: 'unsafe-source',
+              researchJobId: 'research-unsafe-comparable-draft',
+              sourceName: 'Example Auction Results',
+              sourceType: ResearchSourceType.auctionHouse,
+              confidence: ResearchConfidence.possible,
+              sourceUrl: 'https://auction.example/lot/123',
+              title: 'Interior Study',
+              artist: 'Example Auction Artist',
+            ),
+          ],
+          candidateAttributions: const [],
+          comparableValueSignals: const [
+            ComparableValueSignal(
+              id: 'unsafe-value-signal',
+              researchJobId: 'research-unsafe-comparable-draft',
+              sourceHitId: 'unsafe-source',
+              kind: ComparableValueKind.publicEstimate,
+              label: 'Market value',
+              sourceName: 'Unsafe persisted source',
+              sourceUrl: 'https://evil.example/lot/123',
+              amountLow: '2200',
+              amountHigh: '2800',
+              currency: 'USD',
+              caveat: 'Market value from unsafe persisted text.',
+            ),
+          ],
+        ),
+      );
+    });
+
+    await tester.pumpWidget(
+      MyArtCollectionApp(
+        initialRoute: AppRoutes.artworkDraft('unsafe-comparable-draft'),
+        dependencies: fixture.dependencies,
+      ),
+    );
+    await pumpLiveData(tester);
+
+    await tester.ensureVisible(find.text('Comparable source signals'));
+    await tester.pump();
+
+    expect(find.text('No reliable comparable found'), findsOneWidget);
+    expect(find.textContaining('Market value'), findsNothing);
+    expect(find.textContaining('https://evil.example'), findsNothing);
+    expect(find.textContaining('Comparable amount'), findsNothing);
+    expect(
+      find.text(
+        'Comparable signal hidden because its source could not be verified.',
+      ),
+      findsOneWidget,
+    );
   });
 
   testWidgets('settings shell routes render the settings tab', (
@@ -1303,17 +1460,10 @@ ResearchJob _researchJob({
           ComparableValueSignal(
             id: 'value-$artworkId',
             researchJobId: jobId,
-            sourceHitId: 'source-$artworkId',
-            kind: ComparableValueKind.publicEstimate,
-            label: 'Public estimate found',
-            sourceName: 'The Met Collection',
-            sourceUrl: 'https://www.metmuseum.org/',
-            amountLow: '2200',
-            amountHigh: '2800',
-            currency: 'USD',
-            signalDate: DateTime.utc(2025, 5, 1),
-            caveat:
-                'Comparable data may not apply to this artwork; confirm with an expert.',
+            kind: ComparableValueKind.noReliableComparable,
+            label: 'No reliable comparable found',
+            sourceName: 'Professional-source search',
+            caveat: 'No source-backed comparable was available for this draft.',
           ),
         ],
   );

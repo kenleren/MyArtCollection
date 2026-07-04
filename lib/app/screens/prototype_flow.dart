@@ -1677,7 +1677,10 @@ class _ResearchResultsPanel extends StatelessWidget {
                 'No reliable professional-source candidate was found. Keep the local record and add documents or better photos later.',
           ),
           const SizedBox(height: 12),
-          _ComparableSignalsPanel(signals: researchJob.comparableValueSignals),
+          _ComparableSignalsPanel(
+            signals: researchJob.comparableValueSignals,
+            sourceHits: researchJob.sourceHits,
+          ),
         ],
       );
     }
@@ -1706,7 +1709,10 @@ class _ResearchResultsPanel extends StatelessWidget {
           ),
           const SizedBox(height: 12),
         ],
-        _ComparableSignalsPanel(signals: researchJob.comparableValueSignals),
+        _ComparableSignalsPanel(
+          signals: researchJob.comparableValueSignals,
+          sourceHits: researchJob.sourceHits,
+        ),
       ],
     );
   }
@@ -1722,9 +1728,13 @@ class _ResearchResultsPanel extends StatelessWidget {
 }
 
 class _ComparableSignalsPanel extends StatelessWidget {
-  const _ComparableSignalsPanel({required this.signals});
+  const _ComparableSignalsPanel({
+    required this.signals,
+    required this.sourceHits,
+  });
 
   final List<ComparableValueSignal> signals;
+  final List<ResearchSourceHit> sourceHits;
 
   @override
   Widget build(BuildContext context) {
@@ -1749,7 +1759,7 @@ class _ComparableSignalsPanel extends StatelessWidget {
           ),
           const SizedBox(height: 12),
           for (final signal in signals) ...[
-            _ComparableSignalCard(signal: signal),
+            _ComparableSignalCard(signal: signal, sourceHits: sourceHits),
             if (signal != signals.last) const SizedBox(height: 10),
           ],
         ],
@@ -1759,14 +1769,19 @@ class _ComparableSignalsPanel extends StatelessWidget {
 }
 
 class _ComparableSignalCard extends StatelessWidget {
-  const _ComparableSignalCard({required this.signal});
+  const _ComparableSignalCard({required this.signal, required this.sourceHits});
 
   final ComparableValueSignal signal;
+  final List<ResearchSourceHit> sourceHits;
 
   @override
   Widget build(BuildContext context) {
-    final amountText = _comparableAmountText(signal);
-    final dateText = _comparableDateText(signal.signalDate);
+    final kind = _effectiveComparableKind(signal, sourceHits);
+    final sourceName = _comparableSourceName(signal, sourceHits, kind);
+    final citationUrl = _comparableCitationUrl(signal, sourceHits, kind);
+    final amountText = _comparableAmountText(signal, sourceHits, kind);
+    final dateText = _comparableDateText(signal.signalDate, kind);
+    final caveat = _comparableCaveatText(signal, kind);
 
     return DecoratedBox(
       decoration: BoxDecoration(
@@ -1779,23 +1794,26 @@ class _ComparableSignalCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(signal.label, style: Theme.of(context).textTheme.titleSmall),
+            Text(
+              kind.displayLabel,
+              style: Theme.of(context).textTheme.titleSmall,
+            ),
             const SizedBox(height: 8),
             _StatusLine(
               icon: Icons.source_outlined,
-              text: 'Source: ${signal.sourceName}',
+              text: 'Source: $sourceName',
             ),
-            if (signal.sourceUrl != null)
+            if (citationUrl != null)
               _StatusLine(
                 icon: Icons.link_outlined,
-                text: 'Citation: ${signal.sourceUrl!}',
+                text: 'Citation: $citationUrl',
               ),
             if (amountText != null)
               _StatusLine(icon: Icons.price_check_outlined, text: amountText),
             if (dateText != null)
               _StatusLine(icon: Icons.event_outlined, text: dateText),
             const SizedBox(height: 8),
-            Text(signal.caveat, style: Theme.of(context).textTheme.bodySmall),
+            Text(caveat, style: Theme.of(context).textTheme.bodySmall),
           ],
         ),
       ),
@@ -1803,7 +1821,55 @@ class _ComparableSignalCard extends StatelessWidget {
   }
 }
 
-String? _comparableAmountText(ComparableValueSignal signal) {
+ComparableValueKind _effectiveComparableKind(
+  ComparableValueSignal signal,
+  List<ResearchSourceHit> sourceHits,
+) {
+  if (signal.kind == ComparableValueKind.noReliableComparable ||
+      signal.kind == ComparableValueKind.userProvidedInsuranceValue) {
+    return signal.kind;
+  }
+  return _linkedAuctionSource(signal, sourceHits) == null
+      ? ComparableValueKind.noReliableComparable
+      : signal.kind;
+}
+
+String _comparableSourceName(
+  ComparableValueSignal signal,
+  List<ResearchSourceHit> sourceHits,
+  ComparableValueKind kind,
+) {
+  if (kind == ComparableValueKind.noReliableComparable) {
+    return 'Professional-source search';
+  }
+  return _linkedAuctionSource(signal, sourceHits)?.sourceName ??
+      signal.sourceName;
+}
+
+String? _comparableCitationUrl(
+  ComparableValueSignal signal,
+  List<ResearchSourceHit> sourceHits,
+  ComparableValueKind kind,
+) {
+  if (kind == ComparableValueKind.userProvidedInsuranceValue) {
+    return null;
+  }
+  return _linkedAuctionSource(signal, sourceHits)?.sourceUrl;
+}
+
+String? _comparableAmountText(
+  ComparableValueSignal signal,
+  List<ResearchSourceHit> sourceHits,
+  ComparableValueKind kind,
+) {
+  if (!kind.canDisplayAmount) {
+    return null;
+  }
+  if (kind != ComparableValueKind.userProvidedInsuranceValue &&
+      _linkedAuctionSource(signal, sourceHits) == null) {
+    return null;
+  }
+
   final currency = signal.currency;
   final low = signal.amountLow;
   final high = signal.amountHigh;
@@ -1819,11 +1885,78 @@ String? _comparableAmountText(ComparableValueSignal signal) {
   return 'Comparable amount: $prefix${low ?? high}';
 }
 
-String? _comparableDateText(DateTime? date) {
-  if (date == null) {
+String? _comparableDateText(DateTime? date, ComparableValueKind kind) {
+  if (date == null || !kind.canDisplayAmount) {
     return null;
   }
   return 'Signal date: ${date.year}-${_twoDigits(date.month)}-${_twoDigits(date.day)}';
+}
+
+String _comparableCaveatText(
+  ComparableValueSignal signal,
+  ComparableValueKind kind,
+) {
+  if (kind != signal.kind) {
+    return 'Comparable signal hidden because its source could not be verified.';
+  }
+  if (_containsProhibitedComparablePhrase(signal.caveat)) {
+    return _defaultComparableCaveat(kind);
+  }
+  return signal.caveat;
+}
+
+String _defaultComparableCaveat(ComparableValueKind kind) {
+  return switch (kind) {
+    ComparableValueKind.noReliableComparable =>
+      'No source-backed comparable was available for this draft.',
+    ComparableValueKind.publicEstimate ||
+    ComparableValueKind.comparableSaleSignal ||
+    ComparableValueKind.userProvidedInsuranceValue =>
+      'Comparable data may not apply to this artwork; confirm with an expert.',
+  };
+}
+
+ResearchSourceHit? _linkedAuctionSource(
+  ComparableValueSignal signal,
+  List<ResearchSourceHit> sourceHits,
+) {
+  final sourceHitId = signal.sourceHitId;
+  if (sourceHitId == null) {
+    return null;
+  }
+
+  for (final sourceHit in sourceHits) {
+    if (sourceHit.id != sourceHitId ||
+        sourceHit.sourceType != ResearchSourceType.auctionHouse) {
+      continue;
+    }
+
+    final sourceUrl = sourceHit.sourceUrl;
+    if (!_isDisplaySafeWebUrl(sourceUrl)) {
+      return null;
+    }
+    if (signal.sourceUrl != null && signal.sourceUrl != sourceUrl) {
+      return null;
+    }
+    return sourceHit;
+  }
+  return null;
+}
+
+bool _isDisplaySafeWebUrl(String? url) {
+  final uri = Uri.tryParse(url?.trim() ?? '');
+  return uri != null &&
+      (uri.scheme == 'https' || uri.scheme == 'http') &&
+      uri.host.isNotEmpty;
+}
+
+bool _containsProhibitedComparablePhrase(String text) {
+  final normalized = text.toLowerCase();
+  return normalized.contains('market value') ||
+      normalized.contains('appraised at') ||
+      normalized.contains('worth') ||
+      normalized.contains('certified value') ||
+      normalized.contains('authentic value');
 }
 
 String _twoDigits(int value) => value.toString().padLeft(2, '0');

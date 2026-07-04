@@ -95,6 +95,28 @@ enum ComparableValueKind {
   }
 }
 
+extension ComparableValueKindDisplay on ComparableValueKind {
+  String get displayLabel {
+    return switch (this) {
+      ComparableValueKind.publicEstimate => 'Public estimate found',
+      ComparableValueKind.comparableSaleSignal => 'Comparable sale signal',
+      ComparableValueKind.userProvidedInsuranceValue =>
+        'User-provided insurance value',
+      ComparableValueKind.noReliableComparable =>
+        'No reliable comparable found',
+    };
+  }
+
+  bool get canDisplayAmount {
+    return switch (this) {
+      ComparableValueKind.publicEstimate ||
+      ComparableValueKind.comparableSaleSignal ||
+      ComparableValueKind.userProvidedInsuranceValue => true,
+      ComparableValueKind.noReliableComparable => false,
+    };
+  }
+}
+
 class AiDraftJob {
   const AiDraftJob({
     required this.id,
