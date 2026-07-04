@@ -88,6 +88,56 @@ and gives us room to add licensing or paid source providers later.
 
 ## Requirements
 
+### Monetization
+
+AI research is a monetization opportunity, but the product should charge for
+workflow value and professional-source evidence, not for unsupported certainty.
+
+Potential paid value:
+
+- deeper professional-source research after the free/on-device draft,
+- saved source-citation packs for insurance, resale, estate, or appraisal
+  conversations,
+- comparable sale/estimate signal history when terms permit,
+- multi-source research refreshes when a user adds documents or better photos,
+- exportable research appendix attached to a PDF/archive,
+- optional concierge or partner appraisal handoff once the user wants a human
+  expert.
+
+Free tier should probably include:
+
+- local/on-device draft when supported,
+- manual record creation,
+- limited online research previews with strict source labels.
+
+Paid tier candidates:
+
+- monthly research credits,
+- unlimited professional-source searches,
+- saved citation history,
+- comparable signal tracking,
+- report/export appendices,
+- higher limits for images/documents and collection size.
+
+Future partner revenue:
+
+- referral flow to vetted appraisers, conservators, insurers, framers, or
+  collection-management experts,
+- affiliate/partner relationships only with clear disclosure and no pressure on
+  the record workflow,
+- premium licensed-source integrations if source terms allow redistribution or
+  display.
+
+Monetization guardrails:
+
+- Never sell "AI valuation" as if it were an appraisal.
+- Do not gate export of user-owned records in a way that feels like hostage
+  taking.
+- Do not bias research candidates toward paid partners.
+- Keep partner/referral actions separate from AI field confirmation.
+- Make source/provider costs visible in product economics before promising
+  unlimited live research.
+
 ### User Consent And Privacy
 
 - The default import path may run on-device AI when supported.
