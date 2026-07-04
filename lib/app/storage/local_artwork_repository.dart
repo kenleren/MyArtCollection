@@ -2,6 +2,7 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:sqflite/sqflite.dart';
 
+import 'attachment_record.dart';
 import 'artwork_record.dart';
 
 class LocalArtworkRepository {
@@ -11,7 +12,7 @@ class LocalArtworkRepository {
   final Database _database;
 
   static const _databaseName = 'my_art_collection.db';
-  static const _schemaVersion = 1;
+  static const _schemaVersion = 2;
 
   static Future<LocalArtworkRepository> open() async {
     final directory = await getApplicationDocumentsDirectory();
@@ -21,7 +22,12 @@ class LocalArtworkRepository {
   }
 
   static Future<Database> openAt(String path) {
-    return openDatabase(path, version: _schemaVersion, onCreate: _createSchema);
+    return openDatabase(
+      path,
+      version: _schemaVersion,
+      onCreate: _createSchema,
+      onUpgrade: _upgradeSchema,
+    );
   }
 
   static Future<void> _createSchema(Database db, int version) async {
@@ -52,6 +58,45 @@ class LocalArtworkRepository {
 
     await db.execute(
       'CREATE INDEX artwork_fields_artwork_idx ON artwork_fields (artwork_id)',
+    );
+
+    await _createAttachmentsSchema(db);
+  }
+
+  static Future<void> _upgradeSchema(
+    Database db,
+    int oldVersion,
+    int newVersion,
+  ) async {
+    if (oldVersion < 2) {
+      await _createAttachmentsSchema(db);
+    }
+  }
+
+  static Future<void> _createAttachmentsSchema(Database db) async {
+    await db.execute('''
+      CREATE TABLE attachments (
+        attachment_id TEXT PRIMARY KEY,
+        artwork_id TEXT NOT NULL,
+        attachment_type TEXT NOT NULL,
+        file_name TEXT NOT NULL,
+        mime_type TEXT NOT NULL,
+        file_size_bytes INTEGER NOT NULL,
+        imported_at TEXT NOT NULL,
+        captured_at TEXT,
+        source_state TEXT NOT NULL,
+        relative_path TEXT NOT NULL,
+        checksum TEXT NOT NULL,
+        extraction_summary TEXT,
+        notes TEXT,
+        FOREIGN KEY (artwork_id)
+          REFERENCES artworks (artwork_id)
+          ON DELETE CASCADE
+      )
+    ''');
+
+    await db.execute(
+      'CREATE INDEX attachments_artwork_idx ON attachments (artwork_id)',
     );
   }
 
@@ -109,6 +154,7 @@ class LocalArtworkRepository {
 
   Future<void> delete(String id) async {
     await _database.transaction((txn) async {
+      await txn.delete('attachments', where: 'artwork_id = ?', whereArgs: [id]);
       await txn.delete(
         'artwork_fields',
         where: 'artwork_id = ?',
@@ -116,6 +162,36 @@ class LocalArtworkRepository {
       );
       await txn.delete('artworks', where: 'artwork_id = ?', whereArgs: [id]);
     });
+  }
+
+  Future<void> addAttachment(AttachmentRecord attachment) async {
+    await _database.insert(
+      'attachments',
+      _attachmentRow(attachment),
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  Future<List<AttachmentRecord>> attachmentsForArtwork(String artworkId) async {
+    final rows = await _database.query(
+      'attachments',
+      where: 'artwork_id = ?',
+      whereArgs: [artworkId],
+      orderBy: 'imported_at DESC',
+    );
+
+    return rows.map(_attachmentFromRow).toList();
+  }
+
+  Future<AttachmentRecord?> getAttachment(String attachmentId) async {
+    final rows = await _database.query(
+      'attachments',
+      where: 'attachment_id = ?',
+      whereArgs: [attachmentId],
+      limit: 1,
+    );
+
+    return rows.isEmpty ? null : _attachmentFromRow(rows.single);
   }
 
   Map<String, Object?> _recordRow(ArtworkRecord record) {
@@ -141,6 +217,24 @@ class LocalArtworkRepository {
       'source_state': field.source.label,
       'source_note': field.note,
       'last_confirmed_at': field.lastConfirmedAt?.toUtc().toIso8601String(),
+    };
+  }
+
+  Map<String, Object?> _attachmentRow(AttachmentRecord attachment) {
+    return {
+      'attachment_id': attachment.id,
+      'artwork_id': attachment.artworkId,
+      'attachment_type': attachment.type.storageValue,
+      'file_name': attachment.fileName,
+      'mime_type': attachment.mimeType,
+      'file_size_bytes': attachment.fileSizeBytes,
+      'imported_at': attachment.importedAt.toUtc().toIso8601String(),
+      'captured_at': attachment.capturedAt?.toUtc().toIso8601String(),
+      'source_state': attachment.source.label,
+      'relative_path': attachment.relativePath,
+      'checksum': attachment.checksum,
+      'extraction_summary': attachment.extractionSummary,
+      'notes': attachment.notes,
     };
   }
 
@@ -176,6 +270,24 @@ class LocalArtworkRepository {
       updatedAt: _parseRequiredDate(row['updated_at'] as String),
       primaryImageAttachmentId: row['primary_image_attachment_id'] as String?,
       fields: fields,
+    );
+  }
+
+  AttachmentRecord _attachmentFromRow(Map<String, Object?> row) {
+    return AttachmentRecord(
+      id: row['attachment_id'] as String,
+      artworkId: row['artwork_id'] as String,
+      type: AttachmentType.fromStorage(row['attachment_type'] as String),
+      fileName: row['file_name'] as String,
+      mimeType: row['mime_type'] as String,
+      fileSizeBytes: row['file_size_bytes'] as int,
+      importedAt: _parseRequiredDate(row['imported_at'] as String),
+      capturedAt: _parseDate(row['captured_at'] as String?),
+      source: ArtworkFieldSource.fromStorage(row['source_state'] as String),
+      relativePath: row['relative_path'] as String,
+      checksum: row['checksum'] as String,
+      extractionSummary: row['extraction_summary'] as String?,
+      notes: row['notes'] as String?,
     );
   }
 

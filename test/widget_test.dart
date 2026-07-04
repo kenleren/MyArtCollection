@@ -68,6 +68,7 @@ void main() {
     expect(find.text('Documents'), findsWidgets);
     expect(find.text('gallery-receipt-2025.pdf'), findsOneWidget);
     expect(find.text('Attach document placeholder'), findsOneWidget);
+    expect(find.text('Missing-file state'), findsOneWidget);
 
     await tapVisible(tester, find.text('Report preview'));
     expect(find.text('Generate an insurance-ready PDF'), findsWidgets);

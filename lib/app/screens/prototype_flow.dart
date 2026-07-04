@@ -449,6 +449,13 @@ class DocumentsScreen extends StatelessWidget {
             body:
                 'Receipt, certificate, appraisal, auction record, or provenance note can be added here later.',
           ),
+          const SizedBox(height: 12),
+          const _StatusPanel(
+            icon: Icons.warning_amber_outlined,
+            title: 'Missing-file state',
+            body:
+                'If an app-private file is unavailable, the record keeps its attachment metadata and asks you to reattach it.',
+          ),
           const SizedBox(height: 20),
           PrimaryActionButton(
             icon: Icons.verified_user_outlined,
