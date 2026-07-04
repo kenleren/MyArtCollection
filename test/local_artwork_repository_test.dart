@@ -148,6 +148,58 @@ void main() {
     expect(await repository.get('artwork-001'), isNull);
     expect(await repository.list(), isEmpty);
   });
+
+  test('upgrades v1 databases without losing artwork records', () async {
+    await repository.close();
+    await databaseFactoryFfi.deleteDatabase(databasePath);
+
+    final legacyDatabase = await databaseFactoryFfi.openDatabase(
+      databasePath,
+      options: OpenDatabaseOptions(version: 1, onCreate: _createV1Schema),
+    );
+
+    await legacyDatabase.insert('artworks', {
+      'artwork_id': 'legacy-artwork-001',
+      'record_state': 'needsReview',
+      'primary_image_attachment_id': null,
+      'created_at': DateTime.utc(2026, 7, 4, 8).toIso8601String(),
+      'updated_at': DateTime.utc(2026, 7, 4, 8, 5).toIso8601String(),
+    });
+    await legacyDatabase.insert('artwork_fields', {
+      'artwork_id': 'legacy-artwork-001',
+      'field_key': ArtworkFieldKeys.title,
+      'value': 'Legacy Interior Study',
+      'source_state': 'AI-suggested',
+      'source_note': 'Seeded by the v1 schema.',
+      'last_confirmed_at': null,
+    });
+    await legacyDatabase.close();
+
+    repository = LocalArtworkRepository.forDatabase(
+      await LocalArtworkRepository.openAt(databasePath),
+    );
+
+    final reloaded = await repository.get('legacy-artwork-001');
+    expect(reloaded, isNotNull);
+    expect(reloaded!.recordState, ArtworkRecordState.needsReview);
+    expect(
+      reloaded.field(ArtworkFieldKeys.title)?.value,
+      'Legacy Interior Study',
+    );
+    expect(
+      reloaded.field(ArtworkFieldKeys.title)?.source,
+      ArtworkFieldSource.aiSuggested,
+    );
+
+    final rawDatabase = await databaseFactoryFfi.openDatabase(databasePath);
+    addTearDown(rawDatabase.close);
+
+    final attachmentTables = await rawDatabase.rawQuery(
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
+      ['attachments'],
+    );
+    expect(attachmentTables, hasLength(1));
+  });
 }
 
 ArtworkRecord _record(String id, {required String title}) {
@@ -170,5 +222,36 @@ ArtworkRecord _record(String id, {required String title}) {
         note: 'Leave unknown or enter artist after review.',
       ),
     },
+  );
+}
+
+Future<void> _createV1Schema(Database db, int version) async {
+  await db.execute('''
+    CREATE TABLE artworks (
+      artwork_id TEXT PRIMARY KEY,
+      record_state TEXT NOT NULL,
+      primary_image_attachment_id TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )
+  ''');
+
+  await db.execute('''
+    CREATE TABLE artwork_fields (
+      artwork_id TEXT NOT NULL,
+      field_key TEXT NOT NULL,
+      value TEXT NOT NULL,
+      source_state TEXT NOT NULL,
+      source_note TEXT NOT NULL,
+      last_confirmed_at TEXT,
+      PRIMARY KEY (artwork_id, field_key),
+      FOREIGN KEY (artwork_id)
+        REFERENCES artworks (artwork_id)
+        ON DELETE CASCADE
+    )
+  ''');
+
+  await db.execute(
+    'CREATE INDEX artwork_fields_artwork_idx ON artwork_fields (artwork_id)',
   );
 }
