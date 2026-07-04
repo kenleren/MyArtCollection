@@ -6,6 +6,7 @@ import '../app_dependencies.dart';
 import '../app_routes.dart';
 import '../intake/artwork_intake_service.dart';
 import '../prototype/prototype_artwork.dart';
+import '../research/online_research_service.dart';
 import '../storage/ai_research_record.dart';
 import '../storage/attachment_record.dart';
 import '../storage/artwork_record.dart';
@@ -554,32 +555,63 @@ class _StaticCaptureImportScreen extends StatelessWidget {
   }
 }
 
-class DraftReviewScreen extends StatelessWidget {
+class DraftReviewScreen extends StatefulWidget {
   const DraftReviewScreen({
     super.key,
     required this.artwork,
     required this.isAiDraftReview,
     this.aiDraftJob,
+    this.initialResearchJob,
   });
 
   final PrototypeArtwork artwork;
   final bool isAiDraftReview;
   final AiDraftJob? aiDraftJob;
+  final ResearchJob? initialResearchJob;
+
+  @override
+  State<DraftReviewScreen> createState() => _DraftReviewScreenState();
+}
+
+class _DraftReviewScreenState extends State<DraftReviewScreen> {
+  ResearchJob? _researchJob;
+  Object? _researchError;
+  bool _showResearchConsent = false;
+  bool _isResearchBusy = false;
+  final Set<String> _acceptedResearchFields = {};
+  final Set<String> _rejectedResearchFields = {};
+
+  @override
+  void initState() {
+    super.initState();
+    _researchJob = widget.initialResearchJob;
+  }
+
+  @override
+  void didUpdateWidget(covariant DraftReviewScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.initialResearchJob?.id != widget.initialResearchJob?.id) {
+      _researchJob = widget.initialResearchJob;
+      _acceptedResearchFields.clear();
+      _rejectedResearchFields.clear();
+      _researchError = null;
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     final fields = [
-      artwork.title,
-      artwork.artist,
-      artwork.year,
-      artwork.medium,
-      artwork.dimensions,
-      artwork.location,
-      artwork.condition,
+      widget.artwork.title,
+      widget.artwork.artist,
+      widget.artwork.year,
+      widget.artwork.medium,
+      widget.artwork.dimensions,
+      widget.artwork.location,
+      widget.artwork.condition,
     ];
     return PrototypeScreenFrame(
-      title: isAiDraftReview ? 'AI draft review' : 'Draft review',
-      subtitle: isAiDraftReview
+      title: widget.isAiDraftReview ? 'AI draft review' : 'Draft review',
+      subtitle: widget.isAiDraftReview
           ? 'Possible values. Please confirm.'
           : 'Local draft. Please confirm.',
       child: Column(
@@ -587,9 +619,26 @@ class DraftReviewScreen extends StatelessWidget {
         children: [
           const _ProgressStrip(activeIndex: 1),
           const SizedBox(height: 16),
-          _PrimaryImageForArtwork(artworkId: artwork.id),
+          _PrimaryImageForArtwork(artworkId: widget.artwork.id),
           const SizedBox(height: 16),
-          _AiDraftStatusPanel(isBusy: false, draftJob: aiDraftJob),
+          _AiDraftStatusPanel(isBusy: false, draftJob: widget.aiDraftJob),
+          const SizedBox(height: 16),
+          _OnlineResearchPanel(
+            artwork: widget.artwork,
+            researchJob: _researchJob,
+            showConsent: _showResearchConsent,
+            isBusy: _isResearchBusy,
+            error: _researchError,
+            acceptedFieldLabels: _acceptedResearchFields,
+            rejectedFieldLabels: _rejectedResearchFields,
+            onStart: _canRunResearch
+                ? () => setState(() => _showResearchConsent = true)
+                : null,
+            onCancelConsent: () => setState(() => _showResearchConsent = false),
+            onConfirmConsent: _canRunResearch ? _runOnlineResearch : null,
+            onAcceptField: _acceptResearchField,
+            onRejectField: _rejectResearchField,
+          ),
           const SizedBox(height: 16),
           for (final field in fields) ...[
             FieldSourceTile(field: field),
@@ -597,21 +646,100 @@ class DraftReviewScreen extends StatelessWidget {
           ],
           PrimaryActionButton(
             icon: Icons.check_circle_outline,
-            label: isAiDraftReview
+            label: widget.isAiDraftReview
                 ? 'Confirm suggested fields'
                 : 'Continue review',
-            routeName: AppRoutes.artworkDetails(artwork.id),
+            routeName: AppRoutes.artworkDetails(widget.artwork.id),
           ),
           const SizedBox(height: 12),
           SecondaryActionButton(
             icon: Icons.attach_file,
             label: 'Continue to documents',
-            routeName: AppRoutes.artworkDocuments(artwork.id),
+            routeName: AppRoutes.artworkDocuments(widget.artwork.id),
           ),
         ],
       ),
     );
   }
+
+  bool get _canRunResearch => _maybeDependencies(context) != null;
+
+  Future<void> _runOnlineResearch() async {
+    setState(() {
+      _isResearchBusy = true;
+      _researchError = null;
+    });
+
+    try {
+      final dependencies = AppDependencyScope.of(context);
+      final service = dependencies.createOnlineResearchService();
+      final job = await service.runResearch(
+        OnlineResearchRequest(
+          artworkId: widget.artwork.id,
+          consentSummary:
+              'User approved selected artwork image, current draft fields, and local notes for professional-source research.',
+          querySummary: _researchQuerySummary(widget.artwork),
+          searchTerms: _researchSearchTerms(widget.artwork),
+        ),
+      );
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _researchJob = job;
+        _showResearchConsent = false;
+        _isResearchBusy = false;
+      });
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _researchError = error;
+        _isResearchBusy = false;
+      });
+    }
+  }
+
+  void _acceptResearchField(String label) {
+    setState(() {
+      _acceptedResearchFields.add(label);
+      _rejectedResearchFields.remove(label);
+    });
+  }
+
+  void _rejectResearchField(String label) {
+    setState(() {
+      _rejectedResearchFields.add(label);
+      _acceptedResearchFields.remove(label);
+    });
+  }
+}
+
+String _researchQuerySummary(PrototypeArtwork artwork) {
+  return [
+    artwork.title.value,
+    artwork.artist.value,
+    artwork.medium.value,
+    artwork.condition.value,
+  ].where(_usefulResearchTerm).join(' ');
+}
+
+List<String> _researchSearchTerms(PrototypeArtwork artwork) {
+  return [
+    artwork.title.value,
+    artwork.artist.value,
+    artwork.medium.value,
+    artwork.year.value,
+  ].where(_usefulResearchTerm).toList(growable: false);
+}
+
+bool _usefulResearchTerm(String value) {
+  final normalized = value.trim().toLowerCase();
+  return normalized.isNotEmpty &&
+      normalized != 'unknown' &&
+      normalized != 'could not determine' &&
+      normalized != 'untitled artwork';
 }
 
 class ArtworkDetailsScreen extends StatelessWidget {
@@ -1060,6 +1188,381 @@ class _AiDraftStatusPanel extends StatelessWidget {
       'AI-suggested only. Confirm before using in a record.',
     ];
     return parts.join(' ');
+  }
+}
+
+class _OnlineResearchPanel extends StatelessWidget {
+  const _OnlineResearchPanel({
+    required this.artwork,
+    required this.researchJob,
+    required this.showConsent,
+    required this.isBusy,
+    required this.error,
+    required this.acceptedFieldLabels,
+    required this.rejectedFieldLabels,
+    required this.onStart,
+    required this.onCancelConsent,
+    required this.onConfirmConsent,
+    required this.onAcceptField,
+    required this.onRejectField,
+  });
+
+  final PrototypeArtwork artwork;
+  final ResearchJob? researchJob;
+  final bool showConsent;
+  final bool isBusy;
+  final Object? error;
+  final Set<String> acceptedFieldLabels;
+  final Set<String> rejectedFieldLabels;
+  final VoidCallback? onStart;
+  final VoidCallback onCancelConsent;
+  final VoidCallback? onConfirmConsent;
+  final ValueChanged<String> onAcceptField;
+  final ValueChanged<String> onRejectField;
+
+  @override
+  Widget build(BuildContext context) {
+    if (showConsent) {
+      return _ResearchConsentPanel(
+        isBusy: isBusy,
+        onCancel: onCancelConsent,
+        onConfirm: onConfirmConsent,
+      );
+    }
+
+    final researchJob = this.researchJob;
+    if (researchJob != null) {
+      return _ResearchResultsPanel(
+        researchJob: researchJob,
+        acceptedFieldLabels: acceptedFieldLabels,
+        rejectedFieldLabels: rejectedFieldLabels,
+        onAcceptField: onAcceptField,
+        onRejectField: onRejectField,
+      );
+    }
+
+    if (error != null) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _StatusPanel(
+            icon: Icons.error_outline,
+            title: 'Research unavailable',
+            body:
+                'Professional-source research could not run. ${error.toString()}',
+          ),
+          const SizedBox(height: 12),
+          _ActionButton(
+            icon: Icons.travel_explore,
+            label: 'Try research again',
+            onPressed: onStart,
+          ),
+        ],
+      );
+    }
+
+    return _Panel(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(
+                Icons.travel_explore,
+                color: Theme.of(context).colorScheme.primary,
+              ),
+              const SizedBox(width: 10),
+              const Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Professional-source research'),
+                    SizedBox(height: 4),
+                    Text(
+                      'Optional. You choose before anything leaves this device.',
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          _ActionButton(
+            icon: Icons.travel_explore,
+            label: 'Research online',
+            onPressed: onStart,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ResearchConsentPanel extends StatelessWidget {
+  const _ResearchConsentPanel({
+    required this.isBusy,
+    required this.onCancel,
+    required this.onConfirm,
+  });
+
+  final bool isBusy;
+  final VoidCallback onCancel;
+  final VoidCallback? onConfirm;
+
+  @override
+  Widget build(BuildContext context) {
+    return _Panel(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Research consent',
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            'If you continue, the research service may receive the selected artwork image or a derived thumbnail, current draft fields, user notes, and on-device summary/search terms. Your full collection is not sent.',
+          ),
+          const SizedBox(height: 12),
+          const _Notice(
+            icon: Icons.fact_check_outlined,
+            text:
+                'Results are source-backed candidates. They are not authentication, attribution certainty, or an appraisal.',
+          ),
+          const SizedBox(height: 12),
+          _ActionButton(
+            icon: Icons.check_circle_outline,
+            label: isBusy ? 'Researching...' : 'Allow professional research',
+            onPressed: isBusy ? null : onConfirm,
+          ),
+          const SizedBox(height: 10),
+          _ActionButton(
+            icon: Icons.close,
+            label: 'Skip online research',
+            onPressed: isBusy ? null : onCancel,
+            isPrimary: false,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ResearchResultsPanel extends StatelessWidget {
+  const _ResearchResultsPanel({
+    required this.researchJob,
+    required this.acceptedFieldLabels,
+    required this.rejectedFieldLabels,
+    required this.onAcceptField,
+    required this.onRejectField,
+  });
+
+  final ResearchJob researchJob;
+  final Set<String> acceptedFieldLabels;
+  final Set<String> rejectedFieldLabels;
+  final ValueChanged<String> onAcceptField;
+  final ValueChanged<String> onRejectField;
+
+  @override
+  Widget build(BuildContext context) {
+    if (researchJob.sourceHits.isEmpty) {
+      return const _StatusPanel(
+        icon: Icons.travel_explore,
+        title: 'No source-backed match yet',
+        body:
+            'No reliable professional-source candidate was found. Keep the local record and add documents or better photos later.',
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _StatusPanel(
+          icon: Icons.travel_explore,
+          title: 'Source-backed candidates',
+          body:
+              '${researchJob.sourceHits.length} professional-source citation found. Review before confirming any field.',
+        ),
+        const SizedBox(height: 12),
+        for (final candidate in researchJob.candidateAttributions) ...[
+          _CandidateCitationCard(
+            candidate: candidate,
+            sourceHit: _sourceForCandidate(candidate),
+            acceptedFieldLabels: acceptedFieldLabels,
+            rejectedFieldLabels: rejectedFieldLabels,
+            onAcceptField: onAcceptField,
+            onRejectField: onRejectField,
+          ),
+          const SizedBox(height: 12),
+        ],
+      ],
+    );
+  }
+
+  ResearchSourceHit? _sourceForCandidate(CandidateAttribution candidate) {
+    for (final sourceHit in researchJob.sourceHits) {
+      if (sourceHit.id == candidate.sourceHitId) {
+        return sourceHit;
+      }
+    }
+    return null;
+  }
+}
+
+class _CandidateCitationCard extends StatelessWidget {
+  const _CandidateCitationCard({
+    required this.candidate,
+    required this.sourceHit,
+    required this.acceptedFieldLabels,
+    required this.rejectedFieldLabels,
+    required this.onAcceptField,
+    required this.onRejectField,
+  });
+
+  final CandidateAttribution candidate;
+  final ResearchSourceHit? sourceHit;
+  final Set<String> acceptedFieldLabels;
+  final Set<String> rejectedFieldLabels;
+  final ValueChanged<String> onAcceptField;
+  final ValueChanged<String> onRejectField;
+
+  @override
+  Widget build(BuildContext context) {
+    final sourceHit = this.sourceHit;
+    final fields = [
+      if (candidate.title != null)
+        _CandidateFieldSuggestion(label: 'Title', value: candidate.title!),
+      if (candidate.artist != null)
+        _CandidateFieldSuggestion(label: 'Artist', value: candidate.artist!),
+      if (candidate.year != null)
+        _CandidateFieldSuggestion(label: 'Year', value: candidate.year!),
+      if (candidate.medium != null)
+        _CandidateFieldSuggestion(label: 'Medium', value: candidate.medium!),
+    ];
+
+    return _Panel(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            candidate.title ?? 'Candidate match',
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
+          const SizedBox(height: 6),
+          Text(candidate.matchReason),
+          const SizedBox(height: 10),
+          _SourceBadge(
+            source: PrototypeSource.aiSuggested,
+            colors: _sourceColors(PrototypeSource.aiSuggested),
+          ),
+          const SizedBox(height: 12),
+          if (sourceHit != null) ...[
+            Text('Source: ${sourceHit.sourceName}'),
+            Text('Source type: ${sourceHit.sourceType.storageValue}'),
+            if (sourceHit.sourceUrl != null)
+              Text('Citation: ${sourceHit.sourceUrl!}'),
+            if (sourceHit.rawSnippet != null)
+              Text('Evidence: ${sourceHit.rawSnippet!}'),
+            const SizedBox(height: 12),
+          ],
+          for (final field in fields) ...[
+            _CandidateFieldRow(
+              suggestion: field,
+              accepted: acceptedFieldLabels.contains(field.label),
+              rejected: rejectedFieldLabels.contains(field.label),
+              onAccept: () => onAcceptField(field.label),
+              onReject: () => onRejectField(field.label),
+            ),
+            const SizedBox(height: 10),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _CandidateFieldSuggestion {
+  const _CandidateFieldSuggestion({required this.label, required this.value});
+
+  final String label;
+  final String value;
+}
+
+class _CandidateFieldRow extends StatelessWidget {
+  const _CandidateFieldRow({
+    required this.suggestion,
+    required this.accepted,
+    required this.rejected,
+    required this.onAccept,
+    required this.onReject,
+  });
+
+  final _CandidateFieldSuggestion suggestion;
+  final bool accepted;
+  final bool rejected;
+  final VoidCallback onAccept;
+  final VoidCallback onReject;
+
+  @override
+  Widget build(BuildContext context) {
+    final status = accepted
+        ? 'Accepted for review'
+        : rejected
+        ? 'Rejected for this draft'
+        : 'AI-suggested';
+
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: const Color(0xFFFAFAF8),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Theme.of(context).colorScheme.outlineVariant),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              suggestion.label,
+              style: Theme.of(context).textTheme.labelLarge,
+            ),
+            const SizedBox(height: 4),
+            Text(suggestion.value),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                _SourceBadge(
+                  source: PrototypeSource.aiSuggested,
+                  colors: _sourceColors(PrototypeSource.aiSuggested),
+                ),
+                Text(status),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                OutlinedButton.icon(
+                  onPressed: onAccept,
+                  icon: const Icon(Icons.check),
+                  label: const Text('Accept suggestion'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: onReject,
+                  icon: const Icon(Icons.close),
+                  label: const Text('Reject'),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }
 
@@ -1905,11 +2408,13 @@ class ArtworkRouteData {
     required this.artwork,
     required this.isAiDraftReview,
     this.latestAiDraftJob,
+    this.latestResearchJob,
   });
 
   final PrototypeArtwork artwork;
   final bool isAiDraftReview;
   final AiDraftJob? latestAiDraftJob;
+  final ResearchJob? latestResearchJob;
 }
 
 Future<ArtworkRouteData> artworkDataForRoute(
@@ -1931,12 +2436,15 @@ Future<ArtworkRouteData> artworkDataForRoute(
       .attachmentsForArtwork(record.id);
   final aiDraftJobs = await dependencies.artworkRepository
       .aiDraftJobsForArtwork(record.id);
+  final researchJobs = await dependencies.artworkRepository
+      .researchJobsForArtwork(record.id);
   return ArtworkRouteData(
     artwork: prototypeArtworkFromRecord(record, attachments: attachments),
     isAiDraftReview:
         aiDraftJobs.isNotEmpty &&
         aiDraftJobs.first.status == AiDraftJobStatus.completed,
     latestAiDraftJob: aiDraftJobs.isEmpty ? null : aiDraftJobs.first,
+    latestResearchJob: researchJobs.isEmpty ? null : researchJobs.first,
   );
 }
 

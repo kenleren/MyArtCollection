@@ -640,6 +640,82 @@ void main() {
     expect(find.text('Verified by you'), findsNothing);
   });
 
+  testWidgets('online research requires consent and shows cited candidates', (
+    WidgetTester tester,
+  ) async {
+    final testDependencies = await tester.runAsync(
+      () async => _LiveDependencyFixture.create(),
+    );
+    final fixture = testDependencies!;
+    addTearDown(() async {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.runAsync(fixture.dispose);
+    });
+
+    await tester.runAsync(() async {
+      await fixture.repository.upsert(
+        _artworkRecord(
+          id: 'research-draft',
+          title: 'Interior Study',
+          state: ArtworkRecordState.needsReview,
+        ),
+      );
+    });
+
+    await tester.pumpWidget(
+      MyArtCollectionApp(
+        initialRoute: AppRoutes.artworkDraft('research-draft'),
+        dependencies: fixture.dependencies,
+      ),
+    );
+    await pumpLiveData(tester);
+
+    expect(find.text('Research online'), findsOneWidget);
+    expect(find.text('Source-backed candidates'), findsNothing);
+
+    await tapVisible(tester, find.text('Research online'));
+
+    expect(find.text('Research consent'), findsOneWidget);
+    expect(find.textContaining('what leaves this device'), findsNothing);
+    expect(find.textContaining('selected artwork image'), findsOneWidget);
+    expect(
+      find.textContaining('Your full collection is not sent'),
+      findsOneWidget,
+    );
+
+    await tapVisible(tester, find.text('Skip online research'));
+
+    expect(find.text('Research online'), findsOneWidget);
+    expect(find.text('Source-backed candidates'), findsNothing);
+
+    await tapVisible(tester, find.text('Research online'));
+    await tapVisible(tester, find.text('Allow professional research'));
+    await pumpLiveData(tester);
+
+    expect(find.text('Source-backed candidates'), findsOneWidget);
+    expect(find.textContaining('The Met Collection'), findsOneWidget);
+    expect(find.textContaining('https://www.metmuseum.org/'), findsOneWidget);
+    expect(find.text('AI-suggested'), findsWidgets);
+
+    await tapVisible(tester, find.text('Accept suggestion').first);
+    expect(find.text('Accepted for review'), findsWidgets);
+    expect(find.text('AI-suggested'), findsWidgets);
+
+    await tapVisible(tester, find.text('Reject').first);
+    expect(find.text('Rejected for this draft'), findsWidgets);
+    expect(find.text('AI-suggested'), findsWidgets);
+
+    final jobs = await tester.runAsync(
+      () => fixture.repository.researchJobsForArtwork('research-draft'),
+    );
+    expect(jobs, isNotNull);
+    expect(jobs!, hasLength(1));
+    expect(
+      jobs.single.sourceHits.map((hit) => hit.sourceName),
+      contains('The Met Collection'),
+    );
+  });
+
   testWidgets('settings shell routes render the settings tab', (
     WidgetTester tester,
   ) async {

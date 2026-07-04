@@ -154,6 +154,7 @@ class _ArtworkRouteScreenState extends State<_ArtworkRouteScreen> {
             artwork: artwork,
             isAiDraftReview: routeData.isAiDraftReview,
             aiDraftJob: routeData.latestAiDraftJob,
+            initialResearchJob: routeData.latestResearchJob,
           ),
           'documents' => DocumentsScreen(artwork: artwork),
           'report-preview' => ReportPreviewScreen(artwork: artwork),
