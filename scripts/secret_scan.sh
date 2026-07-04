@@ -5,7 +5,7 @@ script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(git -C "$script_dir/.." rev-parse --show-toplevel)"
 cd "$repo_root"
 
-forbidden_path_pattern='(^|/)(google-services\.json|GoogleService-Info\.plist|firebase-debug\.log|[^/]*service[_.-]?account[^/]*\.json|[^/]*firebase[^/]*token[^/]*|[^/]*tester[^/]*(list|email)[^/]*|[^/]*(list|email)[^/]*tester[^/]*)$'
+forbidden_path_pattern='(^|/)(google-services\.json|GoogleService-Info\.plist|firebase-debug\.log|[^/]*service[_.-]?account[^/]*\.json|[^/]*firebase-adminsdk[^/]*\.json|[^/]*firebase[^/]*token[^/]*|[^/]*tester[^/]*(list|email)[^/]*|[^/]*(list|email)[^/]*tester[^/]*)$'
 tracked_forbidden_paths="$(git ls-files | grep -Ei "$forbidden_path_pattern" || true)"
 
 if [[ -n "$tracked_forbidden_paths" ]]; then
