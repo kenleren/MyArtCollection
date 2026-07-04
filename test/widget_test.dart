@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -132,6 +133,52 @@ void main() {
     expect(find.text('Choose from system picker'), findsOneWidget);
   });
 
+  testWidgets('live import success displays the saved primary image', (
+    WidgetTester tester,
+  ) async {
+    final testDependencies = await tester.runAsync(
+      () async => _LiveDependencyFixture.create(),
+    );
+    final fixture = testDependencies!;
+    addTearDown(() async {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.runAsync(fixture.dispose);
+    });
+
+    final sourceImage = await tester.runAsync(
+      () => fixture.writePngSource('picker-primary.png'),
+    );
+
+    await tester.pumpWidget(
+      MyArtCollectionApp(
+        initialRoute: AppRoutes.import,
+        dependencies: fixture.dependenciesWithPicker(
+          _SingleImagePicker(sourceImage!),
+        ),
+      ),
+    );
+    await pumpReady(tester);
+
+    await tester.runAsync(() async {
+      final button = tester.widget<FilledButton>(
+        find.widgetWithText(FilledButton, 'Choose from system picker'),
+      );
+      button.onPressed!();
+      await Future<void>.delayed(const Duration(seconds: 1));
+    });
+    await pumpLiveData(tester);
+
+    expect(find.text('Photo imported'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('primary-artwork-image-preview')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('primary-artwork-image-placeholder')),
+      findsNothing,
+    );
+  });
+
   testWidgets('collection lists local record after repository reload', (
     WidgetTester tester,
   ) async {
@@ -167,6 +214,120 @@ void main() {
     expect(find.text('Needs review'), findsOneWidget);
     expect(find.text('No artworks yet'), findsNothing);
     expect(find.textContaining('incomplete queue items'), findsOneWidget);
+  });
+
+  testWidgets('collection and draft show local primary image preview', (
+    WidgetTester tester,
+  ) async {
+    final testDependencies = await tester.runAsync(
+      () async => _LiveDependencyFixture.create(),
+    );
+    final fixture = testDependencies!;
+    addTearDown(() async {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.runAsync(fixture.dispose);
+    });
+
+    await tester.runAsync(() async {
+      await fixture.repository.upsert(
+        _artworkRecord(
+          id: 'local-photo',
+          title: 'Photo Preview Artwork',
+          state: ArtworkRecordState.needsReview,
+        ),
+      );
+      await fixture.addPrimaryImage(artworkId: 'local-photo');
+    });
+
+    await tester.pumpWidget(
+      MyArtCollectionApp(
+        initialRoute: AppRoutes.collection,
+        dependencies: fixture.dependencies,
+      ),
+    );
+    await pumpLiveData(tester);
+
+    expect(find.text('Photo Preview Artwork'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('primary-artwork-image-preview')),
+      findsOneWidget,
+    );
+
+    await tapVisible(tester, find.text('Resume draft'));
+    await pumpLiveData(tester);
+    await tester.runAsync(
+      () async => Future<void>.delayed(const Duration(milliseconds: 500)),
+    );
+    await tester.pump();
+
+    expect(find.text('AI draft review'), findsWidgets);
+    expect(find.text('Photo Preview Artwork'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('primary-artwork-image-preview')),
+      findsOneWidget,
+    );
+    expect(find.text('AI-suggested'), findsWidgets);
+  });
+
+  testWidgets('missing primary image fallback does not leak storage paths', (
+    WidgetTester tester,
+  ) async {
+    final testDependencies = await tester.runAsync(
+      () async => _LiveDependencyFixture.create(),
+    );
+    final fixture = testDependencies!;
+    addTearDown(() async {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.runAsync(fixture.dispose);
+    });
+    const secretRelativePath =
+        'artworks/missing-image/attachments/private-secret-file.png';
+
+    await tester.runAsync(() async {
+      await fixture.repository.upsert(
+        _artworkRecord(
+          id: 'missing-image',
+          title: 'Missing Preview Artwork',
+          state: ArtworkRecordState.needsReview,
+        ),
+      );
+      await fixture.repository.addAttachment(
+        _primaryImageAttachmentRecord(
+          id: 'primary-missing-image',
+          artworkId: 'missing-image',
+          relativePath: secretRelativePath,
+        ),
+      );
+    });
+
+    await tester.pumpWidget(
+      MyArtCollectionApp(
+        initialRoute: AppRoutes.collection,
+        dependencies: fixture.dependencies,
+      ),
+    );
+    await pumpLiveData(tester);
+
+    expect(find.text('Missing Preview Artwork'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('primary-artwork-image-placeholder')),
+      findsOneWidget,
+    );
+    expect(find.textContaining('private-secret'), findsNothing);
+    expect(find.textContaining('artworks/missing-image'), findsNothing);
+    expect(find.textContaining(fixture.tempDir.path), findsNothing);
+
+    await tapVisible(tester, find.text('Resume draft'));
+    await pumpLiveData(tester);
+
+    expect(find.text('AI draft review'), findsWidgets);
+    expect(
+      find.byKey(const ValueKey('primary-artwork-image-placeholder')),
+      findsOneWidget,
+    );
+    expect(find.textContaining('private-secret'), findsNothing);
+    expect(find.textContaining('artworks/missing-image'), findsNothing);
+    expect(find.textContaining(fixture.tempDir.path), findsNothing);
   });
 
   testWidgets('incomplete queue derives from local fields and documents', (
@@ -298,6 +459,10 @@ void main() {
 
     await tester.tap(find.text('Open record'));
     await pumpReady(tester);
+    await tester.runAsync(
+      () async => Future<void>.delayed(const Duration(milliseconds: 500)),
+    );
+    await tester.pump();
 
     expect(find.text('AI draft review'), findsWidgets);
     expect(find.text('Possible values. Please confirm.'), findsOneWidget);
@@ -361,10 +526,14 @@ class _LiveDependencyFixture {
   final LocalAttachmentStore attachmentStore;
 
   AppDependencies get dependencies {
+    return dependenciesWithPicker(_NoLostImagePicker());
+  }
+
+  AppDependencies dependenciesWithPicker(ArtworkImagePicker imagePicker) {
     return AppDependencies(
       artworkRepository: repository,
       attachmentStore: attachmentStore,
-      imagePicker: _NoLostImagePicker(),
+      imagePicker: imagePicker,
     );
   }
 
@@ -393,10 +562,51 @@ class _LiveDependencyFixture {
     );
   }
 
+  Future<File> writePngSource(String fileName) async {
+    final file = File(p.join(tempDir.path, fileName));
+    await file.writeAsBytes(_tinyPngBytes);
+    return file;
+  }
+
+  Future<AttachmentRecord> addPrimaryImage({
+    required String artworkId,
+    String? attachmentId,
+  }) async {
+    final id = attachmentId ?? 'primary-$artworkId';
+    final source = await writePngSource('$id.png');
+    final attachment = await attachmentStore.saveImportedAttachment(
+      artworkId: artworkId,
+      attachmentId: id,
+      sourceFile: source,
+      originalFileName: source.path,
+      mimeType: 'image/png',
+      type: AttachmentType.photo,
+      source: ArtworkFieldSource.userConfirmed,
+      importedAt: DateTime.utc(2026, 7, 4, 12),
+      notes: 'Primary image fixture.',
+    );
+    await repository.addAttachment(attachment);
+    return attachment;
+  }
+
   Future<void> dispose() async {
     await repository.close();
     await tempDir.delete(recursive: true);
   }
+}
+
+class _SingleImagePicker implements ArtworkImagePicker {
+  const _SingleImagePicker(this.file);
+
+  final File file;
+
+  @override
+  Future<XFile?> pick(ArtworkImagePickMode mode) async {
+    return XFile(file.path, name: p.basename(file.path), mimeType: 'image/png');
+  }
+
+  @override
+  Future<XFile?> retrieveLostImage() async => null;
 }
 
 ArtworkRecord _artworkRecord({
@@ -450,6 +660,26 @@ AttachmentRecord _attachmentRecord({
   );
 }
 
+AttachmentRecord _primaryImageAttachmentRecord({
+  required String id,
+  required String artworkId,
+  required String relativePath,
+}) {
+  return AttachmentRecord(
+    id: id,
+    artworkId: artworkId,
+    type: AttachmentType.photo,
+    fileName: 'primary.png',
+    mimeType: 'image/png',
+    fileSizeBytes: 12,
+    importedAt: DateTime.utc(2026, 7, 4, 12),
+    source: ArtworkFieldSource.userConfirmed,
+    relativePath: relativePath,
+    checksum: 'missing-checksum',
+    notes: 'Missing primary image fixture.',
+  );
+}
+
 const _testFieldValues = {
   ArtworkFieldKeys.title: 'Fixture title',
   ArtworkFieldKeys.artist: 'Fixture artist',
@@ -460,3 +690,7 @@ const _testFieldValues = {
   ArtworkFieldKeys.insuranceValue: 'USD 100',
   ArtworkFieldKeys.conditionNotes: 'Good condition',
 };
+
+final _tinyPngBytes = base64Decode(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=',
+);

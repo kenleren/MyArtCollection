@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 
 import '../app_dependencies.dart';
@@ -6,6 +8,7 @@ import '../intake/artwork_intake_service.dart';
 import '../prototype/prototype_artwork.dart';
 import '../storage/attachment_record.dart';
 import '../storage/artwork_record.dart';
+import '../storage/local_attachment_store.dart';
 
 class PrototypeIntroScreen extends StatelessWidget {
   const PrototypeIntroScreen({super.key});
@@ -387,6 +390,7 @@ class _CaptureImportScreenState extends State<CaptureImportScreen> {
             isBusy: _isBusy,
             result: _result,
             failure: _failure,
+            attachmentStore: AppDependencyScope.of(context).attachmentStore,
           ),
           const SizedBox(height: 12),
           const _StatusPanel(
@@ -547,6 +551,8 @@ class DraftReviewScreen extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const _ProgressStrip(activeIndex: 1),
+          const SizedBox(height: 16),
+          _PrimaryImageForArtwork(artworkId: artwork.id),
           const SizedBox(height: 16),
           for (final field in fields) ...[
             FieldSourceTile(field: field),
@@ -877,12 +883,14 @@ class _IntakeStatePanel extends StatelessWidget {
     required this.isBusy,
     required this.result,
     required this.failure,
+    required this.attachmentStore,
   });
 
   final bool isImport;
   final bool isBusy;
   final ArtworkIntakeResult? result;
   final ArtworkIntakeException? failure;
+  final LocalAttachmentStore attachmentStore;
 
   @override
   Widget build(BuildContext context) {
@@ -897,19 +905,27 @@ class _IntakeStatePanel extends StatelessWidget {
 
     final result = this.result;
     if (result != null) {
-      return _StatusPanel(
-        icon: result.wasRecovered
-            ? Icons.restore_outlined
-            : isImport
-            ? Icons.file_upload_outlined
-            : Icons.camera_alt,
-        title: result.wasRecovered
-            ? 'Interrupted import recovered'
-            : isImport
-            ? 'Photo imported'
-            : 'Photo captured',
-        body:
-            'Draft created locally. Return from Collection to keep reviewing this record after restart.',
+      return Column(
+        children: [
+          _StatusPanel(
+            icon: result.wasRecovered
+                ? Icons.restore_outlined
+                : isImport
+                ? Icons.file_upload_outlined
+                : Icons.camera_alt,
+            title: result.wasRecovered
+                ? 'Interrupted import recovered'
+                : isImport
+                ? 'Photo imported'
+                : 'Photo captured',
+            body:
+                'Draft created locally. Return from Collection to keep reviewing this record after restart.',
+          ),
+          const SizedBox(height: 12),
+          _PrimaryArtworkImagePreview(
+            file: attachmentStore.fileFor(result.primaryImage),
+          ),
+        ],
       );
     }
 
@@ -1059,6 +1075,122 @@ class _ArtworkHero extends StatelessWidget {
               left: 14,
               bottom: 12,
               child: _MiniLabel(text: 'Primary image fixture'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _PrimaryImageForArtwork extends StatefulWidget {
+  const _PrimaryImageForArtwork({required this.artworkId});
+
+  final String artworkId;
+
+  @override
+  State<_PrimaryImageForArtwork> createState() =>
+      _PrimaryImageForArtworkState();
+}
+
+class _PrimaryImageForArtworkState extends State<_PrimaryImageForArtwork> {
+  Future<File?>? _file;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final dependencies = _maybeDependencies(context);
+    _file ??= dependencies == null
+        ? Future<File?>.value(null)
+        : _primaryImageFileForArtwork(dependencies, widget.artworkId);
+  }
+
+  @override
+  void didUpdateWidget(covariant _PrimaryImageForArtwork oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.artworkId != widget.artworkId) {
+      final dependencies = _maybeDependencies(context);
+      _file = dependencies == null
+          ? Future<File?>.value(null)
+          : _primaryImageFileForArtwork(dependencies, widget.artworkId);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_maybeDependencies(context) == null) {
+      return const _ArtworkHero();
+    }
+
+    return FutureBuilder<File?>(
+      future: _file,
+      builder: (context, snapshot) {
+        return _PrimaryArtworkImagePreview(file: snapshot.data);
+      },
+    );
+  }
+}
+
+class _PrimaryArtworkImagePreview extends StatelessWidget {
+  const _PrimaryArtworkImagePreview({
+    required this.file,
+    this.isCompact = false,
+  });
+
+  static const imageKey = ValueKey('primary-artwork-image-preview');
+  static const placeholderKey = ValueKey('primary-artwork-image-placeholder');
+
+  final File? file;
+  final bool isCompact;
+
+  @override
+  Widget build(BuildContext context) {
+    final file = this.file;
+    final canAttemptImage = file != null && file.existsSync();
+
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(8),
+      child: AspectRatio(
+        aspectRatio: isCompact ? 16 / 9 : 4 / 3,
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: const Color(0xFFEFF3F6),
+            border: Border.all(color: const Color(0xFFC6D0D8)),
+          ),
+          child: canAttemptImage
+              ? Image.file(
+                  file,
+                  key: imageKey,
+                  fit: BoxFit.cover,
+                  semanticLabel: 'Primary artwork image',
+                  errorBuilder: (context, error, stackTrace) {
+                    return const _PrimaryImagePlaceholder();
+                  },
+                )
+              : const _PrimaryImagePlaceholder(),
+        ),
+      ),
+    );
+  }
+}
+
+class _PrimaryImagePlaceholder extends StatelessWidget {
+  const _PrimaryImagePlaceholder();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Center(
+      key: _PrimaryArtworkImagePreview.placeholderKey,
+      child: Padding(
+        padding: EdgeInsets.all(16),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.broken_image_outlined, size: 36),
+            SizedBox(height: 8),
+            Text(
+              'Primary image preview unavailable',
+              textAlign: TextAlign.center,
             ),
           ],
         ),
@@ -1309,6 +1441,11 @@ class _CollectionRecordPanel extends StatelessWidget {
           const SizedBox(height: 6),
           Text(record.recordState.label),
           const SizedBox(height: 8),
+          _PrimaryArtworkImagePreview(
+            file: summary.primaryImageFile,
+            isCompact: true,
+          ),
+          const SizedBox(height: 10),
           _StatusLine(
             icon: Icons.photo_library_outlined,
             text: record.primaryImageAttachmentId == null
@@ -1348,11 +1485,13 @@ class _LocalArtworkSummary {
     required this.record,
     required this.attachments,
     required this.incompleteItems,
+    required this.primaryImageFile,
   });
 
   final ArtworkRecord record;
   final List<AttachmentRecord> attachments;
   final List<_IncompleteItem> incompleteItems;
+  final File? primaryImageFile;
 
   int get supportingAttachmentCount {
     return attachments
@@ -1497,11 +1636,60 @@ Future<List<_LocalArtworkSummary>> _loadLocalArtwork(
         record: record,
         attachments: attachments,
         incompleteItems: _incompleteItems(record, attachments),
+        primaryImageFile: _primaryImageFileFromAttachments(
+          dependencies,
+          record,
+          attachments,
+        ),
       ),
     );
   }
 
   return summaries;
+}
+
+Future<File?> _primaryImageFileForArtwork(
+  AppDependencies dependencies,
+  String artworkId,
+) async {
+  final record = await dependencies.artworkRepository.get(artworkId);
+  if (record == null) {
+    return null;
+  }
+
+  final attachmentId = record.primaryImageAttachmentId;
+  if (attachmentId == null) {
+    return null;
+  }
+
+  final attachment = await dependencies.artworkRepository.getAttachment(
+    attachmentId,
+  );
+  if (attachment == null || attachment.type != AttachmentType.photo) {
+    return null;
+  }
+
+  return dependencies.attachmentStore.fileFor(attachment);
+}
+
+File? _primaryImageFileFromAttachments(
+  AppDependencies dependencies,
+  ArtworkRecord record,
+  List<AttachmentRecord> attachments,
+) {
+  final attachmentId = record.primaryImageAttachmentId;
+  if (attachmentId == null) {
+    return null;
+  }
+
+  for (final attachment in attachments) {
+    if (attachment.id == attachmentId &&
+        attachment.type == AttachmentType.photo) {
+      return dependencies.attachmentStore.fileFor(attachment);
+    }
+  }
+
+  return null;
 }
 
 List<_IncompleteItem> _incompleteItems(
