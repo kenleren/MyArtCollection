@@ -55,16 +55,32 @@ that the product cannot support.
 ## Requirements
 
 1. Keep the store story centered on private records, fast intake, supporting
-   documents, and exports.
-2. Keep all AI language assistive and review-based.
-3. Keep privacy language factual:
+   documents, and review workflow.
+2. Keep all AI language out of the default listing unless the shipped build
+   actually exposes that feature to users.
+3. If a shipped build includes off-device AI, disclose it in plain language:
+   AI suggestions require an explicit user action and upload only the selected
+   content needed for that request to the app AI service.
+4. Keep privacy language factual:
    - local-first by default
    - optional Google-account backup only when that shipped behavior exists in
      the release being listed
-   - clear export and delete/disconnect controls
-4. Use phone-first creative. Add large-screen assets only after real
+   - delete/disconnect controls only when those controls exist in the shipped
+     release
+   - export/report language only when generation, sharing, or save flows are
+     actually usable in the shipped release
+5. Treat privacy-policy URL, Play Data safety worksheet, and SDK/track review
+   as unconditional submission gates before any open, closed, or production
+   Play track is used.
+6. No Play Console asset upload until human approval is recorded, external
+   marketing review is complete, and screenshots/graphics have been reviewed
+   against the exact release candidate build.
+7. Experiments and custom store listings must not vary privacy, AI-processing,
+   backup, authenticity, appraisal, insurance-value, or similar trust claims
+   unless the claim is true for every distributed build under the package.
+8. Use phone-first creative. Add large-screen assets only after real
    large-screen layouts are verified.
-5. Treat Data safety answers and the privacy-policy URL as release gates, not
+9. Treat Data safety answers and the privacy-policy URL as release gates, not
    copy afterthoughts.
 
 ## Options considered
@@ -77,7 +93,7 @@ that the product cannot support.
 | Category | `Art & Design` | Best matches art-specific discovery and collector intent | Slightly less obviously utilitarian | Yes |
 | Category | `Productivity` | Signals utility and organization | Loses art-specific relevance | No |
 | Listing emphasis | AI-first | Curiosity and demos | Attracts appraisal / identification expectations | No |
-| Listing emphasis | privacy + records + export | Best match to repo truth and paid wedge | Slightly less flashy | Yes |
+| Listing emphasis | privacy + records + documents | Best match to current shipped-safe truth | Slightly less flashy | Yes |
 
 Recommendation could be wrong if beta evidence shows users primarily search for
 generic home-inventory language rather than art-specific record language.
@@ -102,13 +118,14 @@ Rule:
 
 Recommended draft:
 
-- `Private artwork records with AI-assisted drafts, documents, and export`
+- `Private artwork records with photos, notes, and documents`
 
 Why:
 
 - Fits the `80`-character limit.
 - States the job clearly.
 - Avoids appraisal/authenticity/privacy overclaim.
+- Avoids promising AI or export behavior that the shipped build may not expose.
 
 ### Full description draft
 
@@ -121,57 +138,74 @@ MyArtCollection helps serious hobby collectors turn photos, receipts, certificat
 
 How it works:
 - Add an artwork from a photo or import
-- Review AI-assisted draft details
-- Confirm the facts yourself
+- Review the record details yourself
 - Attach supporting documents
 - Track what still needs review
-- Generate exportable records and insurance-ready PDFs
 
 Built for collectors who want:
 - A private record of what they own
 - Faster cataloging for small to mid-size collections
 - Better document organization for insurance, moving, estate, or appraisal conversations
-- Clear separation between AI suggestions and confirmed facts
 
 Trust and privacy:
-- AI suggests. You confirm.
 - The app does not determine authenticity or appraise value.
-- User-confirmed facts outrank AI suggestions.
 - Supporting documents help document a record, but do not prove authenticity.
 - Your records stay on your device by default.
-- If backup is enabled in the shipped release, backup stays in your Google account.
 
 Use MyArtCollection to build a calmer, cleaner record of your collection and keep your paperwork close to the artwork it supports.
 ```
 
 Release note for this copy:
 
-- Remove the backup sentence if optional Google-account backup is not actually
-  enabled in the build being listed.
+- This default listing copy is the shipped-safe baseline while AI, backup, and
+  export/report flows remain absent, preview-only, or otherwise not user-usable
+  in the listed build.
+
+### Future-gated copy blocks
+
+These lines are optional and may be used only when the exact shipped release
+supports them:
+
+- AI-enabled build add-on:
+  - `AI suggestions are optional. When you choose an AI action, the app sends only the selected content for that request to the app AI service.`
+- Backup-enabled build add-on:
+  - `If backup is enabled in the shipped release, backup stays in your Google account.`
+- Export/report-enabled build add-on:
+  - `If export or report generation ships in the listed build, describe only the exact generated output and avoid insurance-ready or proof-ready language unless the flow is truly available.`
 
 ### Feature and value bullets
 
 Use these as screenshot headlines, listing bullets in internal briefs, and
-custom-listing variants:
+custom-listing variants for the default listing:
 
 - Private artwork records
-- AI-assisted draft, user-confirmed facts
+- Photo-first record setup
 - Supporting documents with each artwork
 - Incomplete queue for missing fields or documents
-- Insurance-ready PDF and archive export
-- Local-first storage with explicit backup and export controls
+- Local-first storage on your device by default
+
+Future-gated bullets for AI/export/backups:
+
+- AI-assisted draft, user-confirmed facts
+- Export/report generation available in this build
+- Backup available in this build
 
 ### Privacy and trust language
 
 Allowed store-copy themes:
 
 - Private record
-- AI-assisted draft
 - You confirm the facts
 - Supporting documents
 - User-provided insurance values
+- On-device by default
+
+Allowed only when the shipped build supports them:
+
+- AI-assisted draft
 - Export your archive
-- Insurance-ready PDF
+- Generate a PDF report
+- Backup in your Google account
 
 Banned store-copy themes:
 
@@ -209,8 +243,8 @@ Notes:
 | User intent | Example query family | What the user wants | Listing answer |
 | --- | --- | --- | --- |
 | Private art inventory | `art inventory app`, `private art collection app` | A collector-specific record tool | Lead with private records and art-specific organization |
-| Insurance prep | `document artwork for insurance`, `art insurance inventory` | Proof-ready documentation workflow | Emphasize documents, completeness, PDF export, user-provided values |
-| Fast cataloging | `catalog artwork from photos`, `art collection organizer` | Faster setup than spreadsheets | Emphasize photo intake and AI-assisted drafts |
+| Insurance prep | `document artwork for insurance`, `art insurance inventory` | Documentation workflow for later conversations | Emphasize documents, completeness, and user-provided values without promising reports or PDFs unless shipped |
+| Fast cataloging | `catalog artwork from photos`, `art collection organizer` | Faster setup than spreadsheets | Emphasize photo intake and record review; add AI wording only if the listed build exposes it |
 | Provenance paperwork | `organize art receipts and certificates` | Keep related files with each artwork | Emphasize supporting documents and record completeness |
 | Calm utility | `art collection records`, `collection documentation` | Trustworthy, non-hype tooling | Emphasize user confirmation and no fake certainty |
 
@@ -232,24 +266,25 @@ Recommendation:
 
 Storyboard:
 
-1. Intro / onboarding  
-   Headline: `Private artwork records`  
-   Show: intro screen with `AI drafts. You confirm.`
-2. Add artwork  
-   Headline: `Start with a photo`  
+1. Intro / onboarding
+   Headline: `Private artwork records`
+   Show: intro screen without unshipped AI, backup, or export claims
+2. Add artwork
+   Headline: `Start with a photo`
    Show: add flow with capture/import choices
-3. AI draft review  
-   Headline: `Review AI-assisted details`  
-   Show: suggested fields labeled for confirmation
-4. Artwork details  
-   Headline: `Confirm the facts yourself`  
+3. Artwork details
+   Headline: `Confirm the facts yourself`
    Show: confirmed record with user-reviewed fields
-5. Documents  
-   Headline: `Keep receipts and certificates together`  
+4. Documents
+   Headline: `Keep receipts and certificates together`
    Show: document attachment screen with supporting-doc language
-6. Reports / export  
-   Headline: `Export records for insurance conversations`  
-   Show: report preview or export surface
+5. Review queue
+   Headline: `See what still needs review`
+   Show: needs-review list or record completeness cues
+6. Privacy / storage
+   Headline: `Stored on your device by default`
+   Show: a real shipped settings or trust surface only if it exists in the
+   release candidate
 
 Rules:
 
@@ -257,6 +292,8 @@ Rules:
 - Keep screenshot text minimal and readable.
 - Do not show fabricated appraisal values, artist certainty, or authenticity
   claims.
+- Do not show preview-only AI, backup, export, or PDF surfaces in public
+  listing assets.
 - Do not show personal artwork metadata from real private collections unless the
   images are approved fixtures.
 
@@ -278,7 +315,7 @@ Recommendation:
 Direction:
 
 - `20-30` seconds
-- show capture -> draft review -> document attach -> report/export
+- show capture -> record review -> document attach
 - no voiceover needed
 - no promises beyond the shipped build
 - use an unlisted, ad-free, not-age-restricted YouTube video if uploaded
@@ -323,11 +360,12 @@ Recommended message:
 
 Secondary message for internal use only:
 
-- `AI-assisted drafts. You confirm.`
+- `Review and organize your records`
 
 ## Store listing experiments
 
-Run experiments only after baseline traffic exists.
+Run experiments only after baseline traffic exists and the trust-claim parity
+rule below is satisfied.
 
 Priority order:
 
@@ -338,12 +376,12 @@ Priority order:
 
 Initial hypotheses:
 
-- H1: Privacy-first screenshot headlines outperform AI-first headlines for
+- H1: Privacy-first screenshot headlines outperform review-workflow headlines for
   install conversion.
 - H2: `Art Records` in the title outperforms `Art Inventory` for qualified
   installs.
-- H3: Report/export proof beats generic collection-home visuals in screenshot
-  set position `#1` or `#2`.
+- H3: Documents-plus-review proof beats generic collection-home visuals in
+  screenshot set position `#1` or `#2`.
 - H4: Document-organization framing increases conversion for insurance and
   estate-prep searchers.
 
@@ -365,11 +403,11 @@ Recommended segments:
 1. Serious collectors  
    Emphasis: private records, collection overview, faster cataloging
 2. Insurance / estate prep  
-   Emphasis: supporting documents, completeness, exportable PDF
+   Emphasis: supporting documents, completeness, and user-provided values
 3. Provenance / paperwork organization  
    Emphasis: receipts, certificates, appraisals, notes in one record
 4. Privacy-first inventory  
-   Emphasis: local-first record, explicit backup/export controls
+   Emphasis: local-first record and calm review workflow
 
 Recommended keyword or audience targeting once available:
 
@@ -384,6 +422,13 @@ Do not create a custom listing around:
 - authenticity checking
 - market value tracking
 
+Trust-claim parity rule:
+
+- Experiments and custom listings may vary positioning, ordering, or visuals,
+  but may not vary privacy, AI-processing, backup, authenticity, appraisal,
+  insurance-value, exportability, or similar trust claims unless those claims
+  are true for every build distributed under the package.
+
 ## Policy and trust guardrails
 
 1. Metadata must stay descriptive, relevant, and non-repetitive.
@@ -395,11 +440,16 @@ Do not create a custom listing around:
    feedback and safety handling consistent with Google Play AI policy.
 6. Data safety answers must match actual collection, sharing, and protection
    practices in the shipped build.
-7. If the app requests sensitive permissions or data, a real privacy-policy URL
-   is a release gate.
+7. A real privacy-policy URL is a release gate before any open, closed, or
+   production Play submission.
 8. If the Play developer account is a new personal account created after
    November 13, 2023, production launch is gated by the `12 testers / 14 days`
    closed-test requirement.
+9. Complete a Data safety worksheet and SDK/track review before any open,
+   closed, or production Play submission.
+10. Do not upload Play listing assets until human approval is recorded,
+   external marketing review is complete, and screenshots/graphics have been
+   reviewed against the exact release candidate.
 
 ## Acceptance checks
 
@@ -407,15 +457,17 @@ Do not create a custom listing around:
   limits.
 - The listing clearly describes MyArtCollection as a private art-record app.
 - The listing does not claim authenticity, appraisal certainty, unsupported AI,
-  or stronger privacy than implemented.
+  unsupported export/PDF/report capability, or stronger privacy than
+  implemented.
 - The screenshot shot list maps to real screens already defined in repo docs and
-  app routes.
+  app routes, and excludes preview-only surfaces from public assets.
 - Icon, feature graphic, screenshot, and preview-video requirements are
   documented.
 - Custom listing opportunities and experiment hypotheses are documented without
   implying they should ship before the default listing exists.
-- Data safety, privacy-policy, and account-testing gates are called out as
-  follow-up requirements before submission.
+- Data safety, privacy-policy, SDK/track review, human approval, and
+  release-candidate asset review are called out as mandatory gates before any
+  Play submission or asset upload.
 
 ## Task breakdown
 
@@ -423,13 +475,15 @@ Do not create a custom listing around:
 
 1. Create fixture-safe artwork metadata and documents for store screenshots.
 2. Capture real phone screenshots from the shipped build that match the
-   storyboard.
+   storyboard and exclude preview-only AI/export/report screens.
 3. Design icon and feature-graphic variants against the specs above.
 4. Draft a public privacy-policy page and URL that matches actual shipped data
    behavior.
 5. Prepare a Play Data safety worksheet from the repo telemetry and storage
    docs.
-6. Set the Play category and exact tags in Console once the app exists there.
+6. Complete SDK/track review and confirm which claims are true in the release
+   candidate before any asset upload.
+7. Set the Play category and exact tags in Console once the app exists there.
 
 ### Needs codex-visual-review
 
@@ -443,20 +497,21 @@ Do not create a custom listing around:
 1. Review privacy-policy and Data safety answers against actual telemetry and
    storage behavior before submission.
 2. Review listing copy for accidental overclaim around AI, privacy, insurance,
-   provenance, and valuation.
+   provenance, valuation, export, and report/PDF capability.
 
 ### Needs codex-deployment-manager
 
 1. Track Play Console gating items before any beta/public submission:
-   privacy-policy URL, Data safety, target audience, content rating, and
-   personal-account testing gate if applicable.
+   privacy-policy URL, Data safety, SDK/track review, target audience, content
+   rating, human approval, release-candidate asset review, and personal-account
+   testing gate if applicable.
 
 ## Open decisions for humans
 
 1. Final title choice:
    `MyArtCollection: Art Records` vs `MyArtCollection: Art Inventory`.
-2. Whether the first public-facing listing should mention backup at all, based
-   on the exact shipped beta scope.
+2. Whether any AI, backup, export, or PDF wording becomes eligible for the
+   first public-facing listing, based on the exact shipped beta scope.
 3. Whether the first experiment should test title wording or screenshot order.
 4. Whether large-screen screenshots should wait until tablet-specific polish is
    complete.
