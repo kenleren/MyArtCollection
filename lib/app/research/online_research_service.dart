@@ -238,6 +238,10 @@ class FixtureProfessionalSourceResearchClient implements OnlineResearchClient {
       label: 'Public estimate found',
       sourceName: hits.first.sourceName,
       sourceUrl: hits.first.sourceUrl,
+      amountLow: '2200',
+      amountHigh: '2800',
+      currency: 'USD',
+      signalDate: DateTime.utc(2025, 5, 1),
       caveat:
           'Comparable data may not apply to this artwork; confirm with an expert.',
     );

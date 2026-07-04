@@ -890,9 +890,29 @@ void main() {
       find.textContaining('2 professional-source citations found'),
       findsOneWidget,
     );
-    expect(find.textContaining('The Met Collection'), findsOneWidget);
-    expect(find.textContaining('https://www.metmuseum.org/'), findsOneWidget);
+    expect(find.textContaining('The Met Collection'), findsWidgets);
+    expect(find.textContaining('https://www.metmuseum.org/'), findsWidgets);
     expect(find.text('AI-suggested'), findsWidgets);
+
+    await tester.ensureVisible(find.text('Comparable source signals'));
+    await tester.pump();
+
+    expect(find.text('Comparable source signals'), findsOneWidget);
+    expect(find.text('Public estimate found'), findsOneWidget);
+    expect(
+      find.textContaining('Comparable amount: USD 2200-2800'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('Signal date: 2025-05-01'), findsOneWidget);
+    expect(
+      find.textContaining('Comparable data may not apply'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('Market value'), findsNothing);
+    expect(find.textContaining('Worth'), findsNothing);
+    expect(find.textContaining('Appraised at'), findsNothing);
+    expect(find.textContaining('Certified value'), findsNothing);
+    expect(find.textContaining('Authentic value'), findsNothing);
 
     await tapVisible(tester, find.text('Accept suggestion').first);
     expect(find.text('Accepted for review'), findsOneWidget);
@@ -912,6 +932,72 @@ void main() {
       jobs.single.sourceHits.map((hit) => hit.sourceName),
       contains('The Met Collection'),
     );
+  });
+
+  testWidgets('online research displays no reliable comparable guardrail', (
+    WidgetTester tester,
+  ) async {
+    final testDependencies = await tester.runAsync(
+      () async => _LiveDependencyFixture.create(),
+    );
+    final fixture = testDependencies!;
+    addTearDown(() async {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.runAsync(fixture.dispose);
+    });
+
+    await tester.runAsync(() async {
+      await fixture.repository.upsert(
+        _artworkRecord(
+          id: 'no-comparable-draft',
+          title: 'Bronze Garden Sculpture',
+          state: ArtworkRecordState.needsReview,
+        ),
+      );
+      await fixture.repository.upsertResearchJob(
+        _researchJob(
+          artworkId: 'no-comparable-draft',
+          sourceHits: const [],
+          candidateAttributions: const [],
+          comparableValueSignals: const [
+            ComparableValueSignal(
+              id: 'no-comparable-signal',
+              researchJobId: 'research-no-comparable-draft',
+              kind: ComparableValueKind.noReliableComparable,
+              label: 'No reliable comparable found',
+              sourceName: 'Professional-source search',
+              caveat:
+                  'No source-backed comparable was available for this draft.',
+            ),
+          ],
+        ),
+      );
+    });
+
+    await tester.pumpWidget(
+      MyArtCollectionApp(
+        initialRoute: AppRoutes.artworkDraft('no-comparable-draft'),
+        dependencies: fixture.dependencies,
+      ),
+    );
+    await pumpLiveData(tester);
+
+    expect(find.text('No source-backed match yet'), findsOneWidget);
+    await tester.ensureVisible(find.text('Comparable source signals'));
+    await tester.pump();
+
+    expect(find.text('Comparable source signals'), findsOneWidget);
+    expect(find.text('No reliable comparable found'), findsOneWidget);
+    expect(find.text('Source: Professional-source search'), findsOneWidget);
+    expect(
+      find.text('No source-backed comparable was available for this draft.'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('Market value'), findsNothing);
+    expect(find.textContaining('Worth'), findsNothing);
+    expect(find.textContaining('Appraised at'), findsNothing);
+    expect(find.textContaining('Certified value'), findsNothing);
+    expect(find.textContaining('Authentic value'), findsNothing);
   });
 
   testWidgets('settings shell routes render the settings tab', (
@@ -1166,10 +1252,16 @@ AttachmentRecord _primaryImageAttachmentRecord({
   );
 }
 
-ResearchJob _researchJob({required String artworkId}) {
+ResearchJob _researchJob({
+  required String artworkId,
+  List<ResearchSourceHit>? sourceHits,
+  List<CandidateAttribution>? candidateAttributions,
+  List<ComparableValueSignal>? comparableValueSignals,
+}) {
   final now = DateTime.utc(2026, 7, 4, 12);
+  final jobId = 'research-$artworkId';
   return ResearchJob(
-    id: 'research-$artworkId',
+    id: jobId,
     artworkId: artworkId,
     status: ResearchJobStatus.completed,
     createdAt: now,
@@ -1178,29 +1270,52 @@ ResearchJob _researchJob({required String artworkId}) {
     consentSummary: 'Fixture consent.',
     querySummary: 'Fixture query.',
     provider: 'fixture',
-    sourceHits: [
-      ResearchSourceHit(
-        id: 'source-$artworkId',
-        researchJobId: 'research-$artworkId',
-        sourceName: 'The Met Collection',
-        sourceType: ResearchSourceType.museumCollection,
-        confidence: ResearchConfidence.possible,
-        sourceUrl: 'https://www.metmuseum.org/',
-        title: 'AI Draft Title',
-        artist: 'Candidate Artist',
-      ),
-    ],
-    candidateAttributions: [
-      CandidateAttribution(
-        id: 'candidate-$artworkId',
-        researchJobId: 'research-$artworkId',
-        sourceHitId: 'source-$artworkId',
-        title: 'AI Draft Title',
-        artist: 'Candidate Artist',
-        confidence: ResearchConfidence.possible,
-        matchReason: 'Fixture candidate.',
-      ),
-    ],
+    sourceHits:
+        sourceHits ??
+        [
+          ResearchSourceHit(
+            id: 'source-$artworkId',
+            researchJobId: jobId,
+            sourceName: 'The Met Collection',
+            sourceType: ResearchSourceType.museumCollection,
+            confidence: ResearchConfidence.possible,
+            sourceUrl: 'https://www.metmuseum.org/',
+            title: 'AI Draft Title',
+            artist: 'Candidate Artist',
+          ),
+        ],
+    candidateAttributions:
+        candidateAttributions ??
+        [
+          CandidateAttribution(
+            id: 'candidate-$artworkId',
+            researchJobId: jobId,
+            sourceHitId: 'source-$artworkId',
+            title: 'AI Draft Title',
+            artist: 'Candidate Artist',
+            confidence: ResearchConfidence.possible,
+            matchReason: 'Fixture candidate.',
+          ),
+        ],
+    comparableValueSignals:
+        comparableValueSignals ??
+        [
+          ComparableValueSignal(
+            id: 'value-$artworkId',
+            researchJobId: jobId,
+            sourceHitId: 'source-$artworkId',
+            kind: ComparableValueKind.publicEstimate,
+            label: 'Public estimate found',
+            sourceName: 'The Met Collection',
+            sourceUrl: 'https://www.metmuseum.org/',
+            amountLow: '2200',
+            amountHigh: '2800',
+            currency: 'USD',
+            signalDate: DateTime.utc(2025, 5, 1),
+            caveat:
+                'Comparable data may not apply to this artwork; confirm with an expert.',
+          ),
+        ],
   );
 }
 

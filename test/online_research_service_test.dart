@@ -67,6 +67,13 @@ void main() {
       everyElement(ArtworkFieldSource.aiSuggested),
     );
     expect(job.comparableValueSignals.single.label, 'Public estimate found');
+    expect(job.comparableValueSignals.single.amountLow, '2200');
+    expect(job.comparableValueSignals.single.amountHigh, '2800');
+    expect(job.comparableValueSignals.single.currency, 'USD');
+    expect(
+      job.comparableValueSignals.single.signalDate,
+      DateTime.utc(2025, 5, 1),
+    );
     expect(job.comparableValueSignals.single.caveat, contains('may not apply'));
 
     final persisted = await repository.getResearchJob(job.id);

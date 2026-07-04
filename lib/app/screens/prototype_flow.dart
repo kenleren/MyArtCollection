@@ -1667,11 +1667,18 @@ class _ResearchResultsPanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (researchJob.sourceHits.isEmpty) {
-      return const _StatusPanel(
-        icon: Icons.travel_explore,
-        title: 'No source-backed match yet',
-        body:
-            'No reliable professional-source candidate was found. Keep the local record and add documents or better photos later.',
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const _StatusPanel(
+            icon: Icons.travel_explore,
+            title: 'No source-backed match yet',
+            body:
+                'No reliable professional-source candidate was found. Keep the local record and add documents or better photos later.',
+          ),
+          const SizedBox(height: 12),
+          _ComparableSignalsPanel(signals: researchJob.comparableValueSignals),
+        ],
       );
     }
 
@@ -1699,6 +1706,7 @@ class _ResearchResultsPanel extends StatelessWidget {
           ),
           const SizedBox(height: 12),
         ],
+        _ComparableSignalsPanel(signals: researchJob.comparableValueSignals),
       ],
     );
   }
@@ -1712,6 +1720,113 @@ class _ResearchResultsPanel extends StatelessWidget {
     return null;
   }
 }
+
+class _ComparableSignalsPanel extends StatelessWidget {
+  const _ComparableSignalsPanel({required this.signals});
+
+  final List<ComparableValueSignal> signals;
+
+  @override
+  Widget build(BuildContext context) {
+    if (signals.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    final signalCount = signals.length;
+    final signalWord = signalCount == 1 ? 'signal' : 'signals';
+
+    return _Panel(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Comparable source signals',
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
+          const SizedBox(height: 6),
+          Text(
+            '$signalCount source-backed comparable $signalWord. These are source context only, not an appraisal.',
+          ),
+          const SizedBox(height: 12),
+          for (final signal in signals) ...[
+            _ComparableSignalCard(signal: signal),
+            if (signal != signals.last) const SizedBox(height: 10),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _ComparableSignalCard extends StatelessWidget {
+  const _ComparableSignalCard({required this.signal});
+
+  final ComparableValueSignal signal;
+
+  @override
+  Widget build(BuildContext context) {
+    final amountText = _comparableAmountText(signal);
+    final dateText = _comparableDateText(signal.signalDate);
+
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: const Color(0xFFFAFAF8),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Theme.of(context).colorScheme.outlineVariant),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(signal.label, style: Theme.of(context).textTheme.titleSmall),
+            const SizedBox(height: 8),
+            _StatusLine(
+              icon: Icons.source_outlined,
+              text: 'Source: ${signal.sourceName}',
+            ),
+            if (signal.sourceUrl != null)
+              _StatusLine(
+                icon: Icons.link_outlined,
+                text: 'Citation: ${signal.sourceUrl!}',
+              ),
+            if (amountText != null)
+              _StatusLine(icon: Icons.price_check_outlined, text: amountText),
+            if (dateText != null)
+              _StatusLine(icon: Icons.event_outlined, text: dateText),
+            const SizedBox(height: 8),
+            Text(signal.caveat, style: Theme.of(context).textTheme.bodySmall),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+String? _comparableAmountText(ComparableValueSignal signal) {
+  final currency = signal.currency;
+  final low = signal.amountLow;
+  final high = signal.amountHigh;
+
+  if (low == null && high == null) {
+    return null;
+  }
+
+  final prefix = currency == null ? '' : '$currency ';
+  if (low != null && high != null) {
+    return 'Comparable amount: $prefix$low-$high';
+  }
+  return 'Comparable amount: $prefix${low ?? high}';
+}
+
+String? _comparableDateText(DateTime? date) {
+  if (date == null) {
+    return null;
+  }
+  return 'Signal date: ${date.year}-${_twoDigits(date.month)}-${_twoDigits(date.day)}';
+}
+
+String _twoDigits(int value) => value.toString().padLeft(2, '0');
 
 class _CandidateCitationCard extends StatelessWidget {
   const _CandidateCitationCard({
