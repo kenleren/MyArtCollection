@@ -1,14 +1,44 @@
+import java.util.Base64
+
 plugins {
     id("com.android.application")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id("dev.flutter.flutter-gradle-plugin")
 }
 
+fun dartDefineEnabled(name: String): Boolean {
+    val encodedDefines = providers.gradleProperty("dart-defines").orNull ?: return false
+    return encodedDefines
+        .split(",")
+        .filter { it.isNotBlank() }
+        .mapNotNull { encoded ->
+            runCatching { String(Base64.getDecoder().decode(encoded)) }.getOrNull()
+        }
+        .any { it == "$name=true" }
+}
+
 val enableFirebaseAndroid =
     providers.environmentVariable("MY_ART_COLLECTION_FIREBASE_ANDROID")
         .map { it.equals("true", ignoreCase = true) }
         .getOrElse(false)
+val firebaseAndroidDartDefineEnabled = dartDefineEnabled("MY_ART_COLLECTION_FIREBASE_ANDROID")
+val crashlyticsDartDefineEnabled =
+    dartDefineEnabled("MY_ART_COLLECTION_INTERNAL_BETA_CRASHLYTICS")
 val googleServicesConfig = file("google-services.json")
+
+if (crashlyticsDartDefineEnabled && !enableFirebaseAndroid) {
+    throw GradleException(
+        "MY_ART_COLLECTION_INTERNAL_BETA_CRASHLYTICS=true requires " +
+            "MY_ART_COLLECTION_FIREBASE_ANDROID=true in the Gradle environment",
+    )
+}
+
+if (crashlyticsDartDefineEnabled && !firebaseAndroidDartDefineEnabled) {
+    throw GradleException(
+        "MY_ART_COLLECTION_INTERNAL_BETA_CRASHLYTICS=true requires " +
+            "--dart-define=MY_ART_COLLECTION_FIREBASE_ANDROID=true",
+    )
+}
 
 if (enableFirebaseAndroid) {
     require(googleServicesConfig.isFile) {

@@ -26,6 +26,7 @@ flutter build apk --debug
 ```sh
 MY_ART_COLLECTION_FIREBASE_ANDROID=true \
 flutter build apk --release \
+  --dart-define=MY_ART_COLLECTION_FIREBASE_ANDROID=true \
   --dart-define=MY_ART_COLLECTION_INTERNAL_BETA_CRASHLYTICS=true
 ```
 
@@ -49,10 +50,12 @@ tester email lists.
 See [Secret Hygiene](SECRET_HYGIENE.md) for the repository guardrail, ignored
 legacy `/google/` boundary, and Firebase service-account rotation gate.
 
-The Android Gradle Firebase plugins are applied only when
-`MY_ART_COLLECTION_FIREBASE_ANDROID=true` is set. That opt-in build path also
-requires `android/app/google-services.json`. Debug/local builds do not read or
-use that file and keep Crashlytics collection disabled by default.
+The Android Gradle Firebase plugins are applied only when the Gradle environment
+has `MY_ART_COLLECTION_FIREBASE_ANDROID=true`. Crashlytics runtime collection
+also requires `--dart-define=MY_ART_COLLECTION_FIREBASE_ANDROID=true` and
+`--dart-define=MY_ART_COLLECTION_INTERNAL_BETA_CRASHLYTICS=true`. That paired
+opt-in path requires `android/app/google-services.json`. Debug/local builds do
+not read or use that file and keep Crashlytics collection disabled by default.
 
 ## Crashlytics Internal Beta
 
@@ -62,8 +65,9 @@ configuration:
 - `android/app/src/main/AndroidManifest.xml` sets
   `firebase_crashlytics_collection_enabled=false`.
 - `lib/app/telemetry/crash_telemetry.dart` initializes Firebase and enables
-  Crashlytics only in release mode with
-  `MY_ART_COLLECTION_INTERNAL_BETA_CRASHLYTICS=true`.
+  Crashlytics only on Android release builds with both
+  `MY_ART_COLLECTION_FIREBASE_ANDROID=true` and
+  `MY_ART_COLLECTION_INTERNAL_BETA_CRASHLYTICS=true` Dart defines.
 - Flutter framework, platform dispatcher, and zone errors route only through the
   app-owned sanitized facade.
 - The facade sends fixed categories only. It does not send artwork titles,
@@ -89,6 +93,7 @@ Crashlytics build gates plus the one-off test-crash define:
 ```sh
 MY_ART_COLLECTION_FIREBASE_ANDROID=true \
 flutter run --release \
+  --dart-define=MY_ART_COLLECTION_FIREBASE_ANDROID=true \
   --dart-define=MY_ART_COLLECTION_INTERNAL_BETA_CRASHLYTICS=true \
   --dart-define=MY_ART_COLLECTION_CRASHLYTICS_TEST_CRASH=true
 ```
@@ -107,15 +112,21 @@ npm install -g firebase-tools
 Build and upload:
 
 ```sh
-flutter build apk --debug
+MY_ART_COLLECTION_FIREBASE_ANDROID=true \
+flutter build apk --release \
+  --dart-define=MY_ART_COLLECTION_FIREBASE_ANDROID=true \
+  --dart-define=MY_ART_COLLECTION_INTERNAL_BETA_CRASHLYTICS=true
+
 FIREBASE_APP_ID="1:example:android:example" \
+APK_PATH="build/app/outputs/flutter-apk/app-release.apk" \
 FIREBASE_GROUPS="internal-testers" \
 RELEASE_NOTES_FILE="release-notes/internal-testers.md" \
 scripts/firebase_app_distribution_upload.sh
 ```
 
-The script fails before upload when `FIREBASE_APP_ID` is missing, the APK is
-missing, or the Firebase CLI is unavailable.
+The script fails before upload when `FIREBASE_APP_ID` or `APK_PATH` is missing,
+the APK is missing, or the Firebase CLI is unavailable. It does not default to a
+debug APK; pass the exact artifact intended for the tester release.
 
 ## Release Evidence
 

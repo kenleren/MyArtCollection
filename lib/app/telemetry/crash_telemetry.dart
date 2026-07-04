@@ -7,6 +7,9 @@ import 'package:flutter/foundation.dart';
 const _internalBetaCrashlyticsDefine = bool.fromEnvironment(
   'MY_ART_COLLECTION_INTERNAL_BETA_CRASHLYTICS',
 );
+const _firebaseAndroidDefine = bool.fromEnvironment(
+  'MY_ART_COLLECTION_FIREBASE_ANDROID',
+);
 const _crashlyticsTestCrashDefine = bool.fromEnvironment(
   'MY_ART_COLLECTION_CRASHLYTICS_TEST_CRASH',
 );
@@ -20,10 +23,17 @@ class CrashTelemetryConfig {
 
   factory CrashTelemetryConfig.fromEnvironment({
     bool isReleaseMode = kReleaseMode,
+    TargetPlatform? targetPlatform,
+    bool firebaseAndroid = _firebaseAndroidDefine,
     bool internalBetaCrashlytics = _internalBetaCrashlyticsDefine,
     bool crashlyticsTestCrash = _crashlyticsTestCrashDefine,
   }) {
-    final collectionEnabled = isReleaseMode && internalBetaCrashlytics;
+    final effectiveTargetPlatform = targetPlatform ?? defaultTargetPlatform;
+    final collectionEnabled =
+        isReleaseMode &&
+        effectiveTargetPlatform == TargetPlatform.android &&
+        firebaseAndroid &&
+        internalBetaCrashlytics;
     return CrashTelemetryConfig(
       collectionEnabled: collectionEnabled,
       initializeFirebase: collectionEnabled,

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-APK_PATH="${APK_PATH:-build/app/outputs/flutter-apk/app-debug.apk}"
+APK_PATH="${APK_PATH:-}"
 FIREBASE_GROUPS="${FIREBASE_GROUPS:-internal-testers}"
 RELEASE_NOTES_FILE="${RELEASE_NOTES_FILE:-}"
 
@@ -11,9 +11,9 @@ Upload an Android APK to Firebase App Distribution.
 
 Required environment:
   FIREBASE_APP_ID       Firebase Android app id, not the Android package id.
+  APK_PATH              APK artifact to upload
 
 Optional environment:
-  APK_PATH              Defaults to build/app/outputs/flutter-apk/app-debug.apk
   FIREBASE_GROUPS       Defaults to internal-testers
   RELEASE_NOTES_FILE    Path to release notes file
 
@@ -34,8 +34,14 @@ if [[ -z "${FIREBASE_APP_ID:-}" ]]; then
   exit 2
 fi
 
+if [[ -z "$APK_PATH" ]]; then
+  echo "Missing APK_PATH. Build the intended APK, then pass its exact path." >&2
+  usage >&2
+  exit 2
+fi
+
 if [[ ! -f "$APK_PATH" ]]; then
-  echo "APK not found at $APK_PATH. Run: flutter build apk --debug" >&2
+  echo "APK not found at $APK_PATH." >&2
   exit 3
 fi
 

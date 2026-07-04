@@ -9,6 +9,8 @@ void main() {
   test('default environment keeps Crashlytics collection off', () {
     final config = CrashTelemetryConfig.fromEnvironment(
       isReleaseMode: false,
+      targetPlatform: TargetPlatform.android,
+      firebaseAndroid: true,
       internalBetaCrashlytics: true,
     );
 
@@ -20,6 +22,8 @@ void main() {
   test('internal beta release enables Crashlytics explicitly', () {
     final config = CrashTelemetryConfig.fromEnvironment(
       isReleaseMode: true,
+      targetPlatform: TargetPlatform.android,
+      firebaseAndroid: true,
       internalBetaCrashlytics: true,
     );
 
@@ -28,11 +32,39 @@ void main() {
     expect(config.forceTestCrashOnStartup, isFalse);
   });
 
+  test('Crashlytics stays Android-only even with the beta define', () {
+    final config = CrashTelemetryConfig.fromEnvironment(
+      isReleaseMode: true,
+      targetPlatform: TargetPlatform.iOS,
+      firebaseAndroid: true,
+      internalBetaCrashlytics: true,
+    );
+
+    expect(config.collectionEnabled, isFalse);
+    expect(config.initializeFirebase, isFalse);
+    expect(config.forceTestCrashOnStartup, isFalse);
+  });
+
+  test('Crashlytics requires paired Firebase Android Dart define', () {
+    final config = CrashTelemetryConfig.fromEnvironment(
+      isReleaseMode: true,
+      targetPlatform: TargetPlatform.android,
+      firebaseAndroid: false,
+      internalBetaCrashlytics: true,
+    );
+
+    expect(config.collectionEnabled, isFalse);
+    expect(config.initializeFirebase, isFalse);
+    expect(config.forceTestCrashOnStartup, isFalse);
+  });
+
   test(
     'test crash requires release, internal beta, and test-crash defines',
     () {
       final config = CrashTelemetryConfig.fromEnvironment(
         isReleaseMode: true,
+        targetPlatform: TargetPlatform.android,
+        firebaseAndroid: true,
         internalBetaCrashlytics: true,
         crashlyticsTestCrash: true,
       );
@@ -41,6 +73,8 @@ void main() {
       expect(
         CrashTelemetryConfig.fromEnvironment(
           isReleaseMode: false,
+          targetPlatform: TargetPlatform.android,
+          firebaseAndroid: true,
           internalBetaCrashlytics: true,
           crashlyticsTestCrash: true,
         ).forceTestCrashOnStartup,

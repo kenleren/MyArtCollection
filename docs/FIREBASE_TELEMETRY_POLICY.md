@@ -84,7 +84,9 @@ and must remain off in beta until tester/user disclosure is in place.
 Current Android implementation:
 
 - Runtime collection is disabled unless the app is a release-mode build and
-  `--dart-define=MY_ART_COLLECTION_INTERNAL_BETA_CRASHLYTICS=true` is present.
+  running on Android with both
+  `--dart-define=MY_ART_COLLECTION_FIREBASE_ANDROID=true` and
+  `--dart-define=MY_ART_COLLECTION_INTERNAL_BETA_CRASHLYTICS=true` present.
 - Android manifest defaults set Crashlytics collection to `false`.
 - Firebase initialization is skipped when collection is off, so local/debug
   builds do not require `google-services.json`.
