@@ -768,6 +768,7 @@ class ArtworkDetailsScreen extends StatelessWidget {
     final confirmedFields = [
       artwork.title,
       artwork.artist,
+      artwork.year,
       artwork.medium,
       artwork.dimensions,
       artwork.location,
@@ -783,7 +784,7 @@ class ArtworkDetailsScreen extends StatelessWidget {
         children: [
           _PrimaryImageForArtwork(artworkId: artwork.id),
           const SizedBox(height: 16),
-          const _CompletenessPanel(),
+          _CompletenessPanel(fields: confirmedFields),
           const SizedBox(height: 16),
           for (final field in confirmedFields) ...[
             FieldSourceTile(field: field),
@@ -2403,7 +2404,7 @@ class _CollectionRecordPanel extends StatelessWidget {
                 : Icons.rule_folder_outlined,
             text: incompleteCount == 0
                 ? 'No incomplete queue items for this record.'
-                : '$incompleteCount incomplete queue item${incompleteCount == 1 ? '' : 's'} need attention.',
+                : '$incompleteCount incomplete queue item${incompleteCount == 1 ? '' : 's'} ${incompleteCount == 1 ? 'needs' : 'need'} attention.',
           ),
           const SizedBox(height: 12),
           PrimaryActionButton(
@@ -2456,19 +2457,33 @@ class _IncompleteItem {
 }
 
 class _CompletenessPanel extends StatelessWidget {
-  const _CompletenessPanel();
+  const _CompletenessPanel({required this.fields});
+
+  final List<PrototypeField> fields;
 
   @override
   Widget build(BuildContext context) {
+    final reviewedCount = fields
+        .where(
+          (field) =>
+              field.source == PrototypeSource.userConfirmed ||
+              field.source == PrototypeSource.documentExtracted,
+        )
+        .length;
+    final totalCount = fields.length;
+    final progress = totalCount == 0 ? 0.0 : reviewedCount / totalCount;
+
     return _Panel(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text('Completeness', style: Theme.of(context).textTheme.titleMedium),
           const SizedBox(height: 8),
-          const LinearProgressIndicator(value: .88),
+          LinearProgressIndicator(value: progress),
           const SizedBox(height: 8),
-          const Text('7 of 8 core fields are user-confirmed or reviewed.'),
+          Text(
+            '$reviewedCount of $totalCount core fields are user-confirmed or reviewed.',
+          ),
           const SizedBox(height: 8),
           const _StatusLine(
             icon: Icons.verified_user_outlined,
@@ -2510,9 +2525,10 @@ class _ReportSummary extends StatelessWidget {
             icon: Icons.attach_file,
             text: 'Attached documents are listed as supporting records.',
           ),
-          const _StatusLine(
+          _StatusLine(
             icon: Icons.price_check_outlined,
-            text: 'User-provided insurance value: USD 2,400.',
+            text:
+                'User-provided insurance value: ${artwork.insuranceValue.value}.',
           ),
         ],
       ),

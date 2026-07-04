@@ -680,13 +680,6 @@ void main() {
         ),
       );
       await fixture.addPrimaryImage(artworkId: 'manual-edit');
-      await fixture.repository.addAttachment(
-        _attachmentRecord(
-          id: 'manual-edit-receipt',
-          artworkId: 'manual-edit',
-          type: AttachmentType.receipt,
-        ),
-      );
       await fixture.repository.upsertResearchJob(
         _researchJob(artworkId: 'manual-edit'),
       );
@@ -782,7 +775,7 @@ void main() {
       () => fixture.repository.attachmentsForArtwork('manual-edit'),
     );
     expect(attachments, isNotNull);
-    expect(attachments!, hasLength(2));
+    expect(attachments!, hasLength(1));
 
     final researchJobs = await tester.runAsync(
       () => fixture.repository.researchJobsForArtwork('manual-edit'),
@@ -812,7 +805,7 @@ void main() {
     expect(find.text('Manual Confirmed Title'), findsOneWidget);
     expect(find.text('Verified by you'), findsOneWidget);
     expect(
-      find.text('No incomplete queue items for this record.'),
+      find.text('1 incomplete queue item needs attention.'),
       findsOneWidget,
     );
 
@@ -822,7 +815,22 @@ void main() {
     expect(find.text('Verified by you'), findsWidgets);
     expect(find.text('Manual Confirmed Title'), findsWidgets);
     expect(find.text('Manual Artist'), findsOneWidget);
+    expect(find.text('1998'), findsWidgets);
+    expect(
+      find.text('8 of 8 core fields are user-confirmed or reviewed.'),
+      findsOneWidget,
+    );
+    expect(find.text('NOK 12,000'), findsOneWidget);
     expect(find.text('User confirmed'), findsWidgets);
+
+    await tapVisible(tester, find.text('Report preview'));
+    await pumpLiveData(tester);
+
+    expect(find.text('Generate an insurance-ready PDF'), findsWidgets);
+    expect(
+      find.text('User-provided insurance value: NOK 12,000.'),
+      findsOneWidget,
+    );
   });
 
   testWidgets('online research requires consent and shows cited candidates', (
