@@ -10,6 +10,7 @@ import 'package:my_art_collection/app/app_dependencies.dart';
 import 'package:my_art_collection/app/app_routes.dart';
 import 'package:my_art_collection/app/intake/artwork_image_picker.dart';
 import 'package:my_art_collection/app/startup_route.dart';
+import 'package:my_art_collection/app/storage/ai_research_record.dart';
 import 'package:my_art_collection/app/storage/artwork_record.dart';
 import 'package:my_art_collection/app/storage/attachment_record.dart';
 import 'package:my_art_collection/app/storage/local_artwork_repository.dart';
@@ -657,6 +658,173 @@ void main() {
     expect(find.text('Verified by you'), findsNothing);
   });
 
+  testWidgets('manual edits persist as user-confirmed local fields', (
+    WidgetTester tester,
+  ) async {
+    final testDependencies = await tester.runAsync(
+      () async => _LiveDependencyFixture.create(),
+    );
+    final fixture = testDependencies!;
+    addTearDown(() async {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.runAsync(fixture.dispose);
+    });
+
+    await tester.runAsync(() async {
+      await fixture.repository.upsert(
+        _artworkRecord(
+          id: 'manual-edit',
+          title: 'AI Draft Title',
+          state: ArtworkRecordState.needsReview,
+          source: ArtworkFieldSource.aiSuggested,
+        ),
+      );
+      await fixture.addPrimaryImage(artworkId: 'manual-edit');
+      await fixture.repository.addAttachment(
+        _attachmentRecord(
+          id: 'manual-edit-receipt',
+          artworkId: 'manual-edit',
+          type: AttachmentType.receipt,
+        ),
+      );
+      await fixture.repository.upsertResearchJob(
+        _researchJob(artworkId: 'manual-edit'),
+      );
+    });
+
+    await tester.pumpWidget(
+      MyArtCollectionApp(
+        initialRoute: AppRoutes.artworkDraft('manual-edit'),
+        dependencies: fixture.dependencies,
+      ),
+    );
+    await pumpLiveData(tester);
+
+    expect(find.text('Draft review'), findsWidgets);
+    expect(find.text('AI Draft Title'), findsWidgets);
+    expect(find.text('AI-suggested'), findsWidgets);
+
+    await tapVisible(tester, find.text('Edit record fields'));
+    await pumpLiveData(tester);
+    expect(find.text('Your values outrank AI suggestions'), findsOneWidget);
+
+    await enterVisibleText(
+      tester,
+      find.byKey(const ValueKey('artwork-edit-title')),
+      'Manual Confirmed Title',
+    );
+    await enterVisibleText(
+      tester,
+      find.byKey(const ValueKey('artwork-edit-artist')),
+      'Manual Artist',
+    );
+    await enterVisibleText(
+      tester,
+      find.byKey(const ValueKey('artwork-edit-year')),
+      '1998',
+    );
+    await enterVisibleText(
+      tester,
+      find.byKey(const ValueKey('artwork-edit-medium')),
+      'Lithograph on paper',
+    );
+    await enterVisibleText(
+      tester,
+      find.byKey(const ValueKey('artwork-edit-dimensions')),
+      '30 x 40 cm',
+    );
+    await enterVisibleText(
+      tester,
+      find.byKey(const ValueKey('artwork-edit-current_location')),
+      'Hallway',
+    );
+    await enterVisibleText(
+      tester,
+      find.byKey(const ValueKey('artwork-edit-insurance_value')),
+      'NOK 12,000',
+    );
+    await enterVisibleText(
+      tester,
+      find.byKey(const ValueKey('artwork-edit-condition_notes')),
+      'Small crease in lower-left margin.',
+    );
+
+    await tapVisible(tester, find.text('Save user-confirmed fields'));
+    await pumpLiveData(tester);
+    await tester.pump(const Duration(seconds: 1));
+    await pumpLiveData(tester);
+
+    expect(find.text('Draft review'), findsWidgets);
+    expect(find.text('Manual Confirmed Title'), findsWidgets);
+    expect(find.text('Manual Artist'), findsOneWidget);
+    expect(find.text('User confirmed'), findsWidgets);
+
+    var saved = await tester.runAsync(
+      () => fixture.repository.get('manual-edit'),
+    );
+    expect(saved, isNotNull);
+    expect(saved!.recordState, ArtworkRecordState.verifiedByYou);
+    expect(
+      saved.field(ArtworkFieldKeys.title)?.source,
+      ArtworkFieldSource.userConfirmed,
+    );
+    expect(
+      saved.field(ArtworkFieldKeys.title)?.value,
+      'Manual Confirmed Title',
+    );
+    expect(
+      saved.field(ArtworkFieldKeys.conditionNotes)?.value,
+      contains('crease'),
+    );
+    expect(saved.field(ArtworkFieldKeys.title)?.lastConfirmedAt, isNotNull);
+
+    final attachments = await tester.runAsync(
+      () => fixture.repository.attachmentsForArtwork('manual-edit'),
+    );
+    expect(attachments, isNotNull);
+    expect(attachments!, hasLength(2));
+
+    final researchJobs = await tester.runAsync(
+      () => fixture.repository.researchJobsForArtwork('manual-edit'),
+    );
+    expect(researchJobs, isNotNull);
+    expect(researchJobs!, hasLength(1));
+    expect(researchJobs.single.sourceHits, hasLength(1));
+
+    await tester.runAsync(fixture.reopenRepository);
+    saved = await tester.runAsync(() => fixture.repository.get('manual-edit'));
+    expect(saved?.field(ArtworkFieldKeys.artist)?.value, 'Manual Artist');
+    expect(
+      saved?.field(ArtworkFieldKeys.artist)?.source,
+      ArtworkFieldSource.userConfirmed,
+    );
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+    await tester.pumpWidget(
+      MyArtCollectionApp(
+        initialRoute: AppRoutes.collection,
+        dependencies: fixture.dependencies,
+      ),
+    );
+    await pumpLiveData(tester);
+
+    expect(find.text('Manual Confirmed Title'), findsOneWidget);
+    expect(find.text('Verified by you'), findsOneWidget);
+    expect(
+      find.text('No incomplete queue items for this record.'),
+      findsOneWidget,
+    );
+
+    await tapVisible(tester, find.text('Open record'));
+    await pumpLiveData(tester);
+
+    expect(find.text('Verified by you'), findsWidgets);
+    expect(find.text('Manual Confirmed Title'), findsWidgets);
+    expect(find.text('Manual Artist'), findsOneWidget);
+    expect(find.text('User confirmed'), findsWidgets);
+  });
+
   testWidgets('online research requires consent and shows cited candidates', (
     WidgetTester tester,
   ) async {
@@ -758,6 +926,17 @@ Future<void> tapVisible(WidgetTester tester, Finder finder) async {
   await tester.pump();
   await tester.tap(finder);
   await pumpReady(tester);
+}
+
+Future<void> enterVisibleText(
+  WidgetTester tester,
+  Finder finder,
+  String text,
+) async {
+  await tester.ensureVisible(finder);
+  await tester.pump();
+  await tester.enterText(finder, text);
+  await tester.pump();
 }
 
 Future<void> pumpReady(WidgetTester tester) async {
@@ -976,6 +1155,44 @@ AttachmentRecord _primaryImageAttachmentRecord({
     relativePath: relativePath,
     checksum: 'missing-checksum',
     notes: 'Missing primary image fixture.',
+  );
+}
+
+ResearchJob _researchJob({required String artworkId}) {
+  final now = DateTime.utc(2026, 7, 4, 12);
+  return ResearchJob(
+    id: 'research-$artworkId',
+    artworkId: artworkId,
+    status: ResearchJobStatus.completed,
+    createdAt: now,
+    updatedAt: now,
+    completedAt: now,
+    consentSummary: 'Fixture consent.',
+    querySummary: 'Fixture query.',
+    provider: 'fixture',
+    sourceHits: [
+      ResearchSourceHit(
+        id: 'source-$artworkId',
+        researchJobId: 'research-$artworkId',
+        sourceName: 'The Met Collection',
+        sourceType: ResearchSourceType.museumCollection,
+        confidence: ResearchConfidence.possible,
+        sourceUrl: 'https://www.metmuseum.org/',
+        title: 'AI Draft Title',
+        artist: 'Candidate Artist',
+      ),
+    ],
+    candidateAttributions: [
+      CandidateAttribution(
+        id: 'candidate-$artworkId',
+        researchJobId: 'research-$artworkId',
+        sourceHitId: 'source-$artworkId',
+        title: 'AI Draft Title',
+        artist: 'Candidate Artist',
+        confidence: ResearchConfidence.possible,
+        matchReason: 'Fixture candidate.',
+      ),
+    ],
   );
 }
 

@@ -655,6 +655,12 @@ class _DraftReviewScreenState extends State<DraftReviewScreen> {
             const SizedBox(height: 10),
           ],
           PrimaryActionButton(
+            icon: Icons.edit_note_outlined,
+            label: 'Edit record fields',
+            routeName: AppRoutes.artworkEdit(widget.artwork.id),
+          ),
+          const SizedBox(height: 12),
+          PrimaryActionButton(
             icon: Icons.check_circle_outline,
             label: widget.isAiDraftReview
                 ? 'Confirm suggested fields'
@@ -767,7 +773,7 @@ class ArtworkDetailsScreen extends StatelessWidget {
       artwork.location,
       artwork.insuranceValue,
       artwork.condition,
-    ].map(_asConfirmed);
+    ];
 
     return PrototypeScreenFrame(
       title: artwork.title.value,
@@ -784,6 +790,12 @@ class ArtworkDetailsScreen extends StatelessWidget {
             const SizedBox(height: 10),
           ],
           PrimaryActionButton(
+            icon: Icons.edit_note_outlined,
+            label: 'Edit record fields',
+            routeName: AppRoutes.artworkEdit(artwork.id),
+          ),
+          const SizedBox(height: 12),
+          PrimaryActionButton(
             icon: Icons.attach_file,
             label: 'Attach receipt placeholder',
             routeName: AppRoutes.artworkDocuments(artwork.id),
@@ -798,18 +810,203 @@ class ArtworkDetailsScreen extends StatelessWidget {
       ),
     );
   }
+}
 
-  PrototypeField _asConfirmed(PrototypeField field) {
-    if (field.source != PrototypeSource.aiSuggested) {
-      return field;
+class ArtworkEditScreen extends StatefulWidget {
+  const ArtworkEditScreen({super.key, required this.artworkId});
+
+  final String artworkId;
+
+  @override
+  State<ArtworkEditScreen> createState() => _ArtworkEditScreenState();
+}
+
+class _ArtworkEditScreenState extends State<ArtworkEditScreen> {
+  final Map<String, TextEditingController> _controllers = {
+    for (final field in _editableArtworkFields)
+      field.key: TextEditingController(),
+  };
+  Future<ArtworkRecord?>? _recordFuture;
+  String? _seededArtworkId;
+  bool _isSaving = false;
+  String? _errorMessage;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _recordFuture ??= _loadRecord();
+  }
+
+  @override
+  void dispose() {
+    for (final controller in _controllers.values) {
+      controller.dispose();
     }
+    super.dispose();
+  }
 
-    return PrototypeField(
-      label: field.label,
-      value: field.value,
-      source: PrototypeSource.userConfirmed,
-      note: 'User confirmed from the draft review.',
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<ArtworkRecord?>(
+      future: _recordFuture,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState != ConnectionState.done) {
+          return const PrototypeScreenFrame(
+            title: 'Edit record fields',
+            subtitle: 'Loading local record',
+            child: Center(child: CircularProgressIndicator()),
+          );
+        }
+
+        final record = snapshot.requireData;
+        if (record == null) {
+          return const PrototypeScreenFrame(
+            title: 'Edit record fields',
+            subtitle: 'Local record unavailable',
+            child: _StatusPanel(
+              icon: Icons.error_outline,
+              title: 'Record not found',
+              body:
+                  'Return to Collection and reopen the artwork before editing.',
+            ),
+          );
+        }
+
+        _seedControllers(record);
+
+        return PrototypeScreenFrame(
+          title: 'Edit record fields',
+          subtitle: 'Your values outrank AI suggestions',
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const _Notice(
+                icon: Icons.verified_user_outlined,
+                text:
+                    'Saved values are labeled User confirmed. AI and research suggestions stay as suggestions until you save your edits.',
+              ),
+              const SizedBox(height: 16),
+              for (final field in _editableArtworkFields) ...[
+                TextField(
+                  key: ValueKey('artwork-edit-${field.key}'),
+                  controller: _controllers[field.key],
+                  textInputAction: field.maxLines > 1
+                      ? TextInputAction.newline
+                      : TextInputAction.next,
+                  keyboardType: field.maxLines > 1
+                      ? TextInputType.multiline
+                      : field.keyboardType,
+                  minLines: field.maxLines > 1 ? 3 : 1,
+                  maxLines: field.maxLines,
+                  decoration: InputDecoration(
+                    border: const OutlineInputBorder(),
+                    labelText: field.label,
+                    helperText: field.helperText,
+                  ),
+                ),
+                const SizedBox(height: 14),
+              ],
+              if (_errorMessage != null) ...[
+                _StatusPanel(
+                  icon: Icons.error_outline,
+                  title: 'Could not save edits',
+                  body: _errorMessage!,
+                ),
+                const SizedBox(height: 14),
+              ],
+              _ActionButton(
+                icon: Icons.save_outlined,
+                label: _isSaving ? 'Saving...' : 'Save user-confirmed fields',
+                onPressed: _isSaving ? null : () => _save(record),
+              ),
+              const SizedBox(height: 10),
+              _ActionButton(
+                icon: Icons.arrow_back,
+                label: 'Back to draft review',
+                onPressed: _isSaving
+                    ? null
+                    : () => Navigator.pushReplacementNamed(
+                        context,
+                        AppRoutes.artworkDraft(record.id),
+                      ),
+                isPrimary: false,
+              ),
+            ],
+          ),
+        );
+      },
     );
+  }
+
+  Future<ArtworkRecord?> _loadRecord() async {
+    final dependencies = _maybeDependencies(context);
+    if (dependencies == null) {
+      return null;
+    }
+    return dependencies.artworkRepository.get(widget.artworkId);
+  }
+
+  void _seedControllers(ArtworkRecord record) {
+    if (_seededArtworkId == record.id) {
+      return;
+    }
+    _seededArtworkId = record.id;
+    for (final field in _editableArtworkFields) {
+      _controllers[field.key]!.text = record.field(field.key)?.value ?? '';
+    }
+  }
+
+  Future<void> _save(ArtworkRecord record) async {
+    setState(() {
+      _isSaving = true;
+      _errorMessage = null;
+    });
+
+    try {
+      final dependencies = AppDependencyScope.of(context);
+      final now = DateTime.now().toUtc();
+      final fields = Map<String, ArtworkFieldValue>.of(record.fields);
+
+      for (final field in _editableArtworkFields) {
+        final value = _controllers[field.key]!.text.trim();
+        if (value.isEmpty) {
+          fields.remove(field.key);
+          continue;
+        }
+
+        fields[field.key] = ArtworkFieldValue(
+          value: value,
+          source: ArtworkFieldSource.userConfirmed,
+          note: 'Edited and confirmed by you.',
+          lastConfirmedAt: now,
+        );
+      }
+
+      final updatedRecord = record.copyWith(
+        recordState: _hasCompleteConfirmedCoreFields(fields)
+            ? ArtworkRecordState.verifiedByYou
+            : ArtworkRecordState.needsReview,
+        updatedAt: now,
+        fields: fields,
+      );
+
+      await dependencies.artworkRepository.upsert(updatedRecord);
+      if (!mounted) {
+        return;
+      }
+      Navigator.pushReplacementNamed(
+        context,
+        AppRoutes.artworkDraft(record.id),
+      );
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _isSaving = false;
+        _errorMessage = error.toString();
+      });
+    }
   }
 }
 
@@ -2532,6 +2729,76 @@ const _coreFieldKeys = [
   ArtworkFieldKeys.insuranceValue,
   ArtworkFieldKeys.conditionNotes,
 ];
+
+const _editableArtworkFields = [
+  _EditableArtworkField(
+    key: ArtworkFieldKeys.title,
+    label: 'Title',
+    helperText: 'Use your preferred record title.',
+  ),
+  _EditableArtworkField(
+    key: ArtworkFieldKeys.artist,
+    label: 'Artist',
+    helperText: 'Leave blank if the artist is still unknown.',
+  ),
+  _EditableArtworkField(
+    key: ArtworkFieldKeys.year,
+    label: 'Year or date',
+    helperText: 'Use a year, range, or date text you can support.',
+  ),
+  _EditableArtworkField(
+    key: ArtworkFieldKeys.medium,
+    label: 'Medium or material',
+    helperText: 'For example: oil on canvas, lithograph, bronze.',
+  ),
+  _EditableArtworkField(
+    key: ArtworkFieldKeys.dimensions,
+    label: 'Dimensions',
+    helperText: 'Include units, for example 60 x 80 cm.',
+  ),
+  _EditableArtworkField(
+    key: ArtworkFieldKeys.currentLocation,
+    label: 'Current location',
+    helperText: 'Private location label for your own records.',
+  ),
+  _EditableArtworkField(
+    key: ArtworkFieldKeys.insuranceValue,
+    label: 'User-provided insurance value',
+    helperText: 'Your own value note only; not an appraisal.',
+    keyboardType: TextInputType.text,
+  ),
+  _EditableArtworkField(
+    key: ArtworkFieldKeys.conditionNotes,
+    label: 'Condition notes',
+    helperText: 'Describe visible condition, damage, or frame notes.',
+    maxLines: 4,
+  ),
+];
+
+class _EditableArtworkField {
+  const _EditableArtworkField({
+    required this.key,
+    required this.label,
+    required this.helperText,
+    this.keyboardType = TextInputType.text,
+    this.maxLines = 1,
+  });
+
+  final String key;
+  final String label;
+  final String helperText;
+  final TextInputType keyboardType;
+  final int maxLines;
+}
+
+bool _hasCompleteConfirmedCoreFields(Map<String, ArtworkFieldValue> fields) {
+  return _coreFieldKeys.every((key) {
+    final field = fields[key];
+    return field != null &&
+        field.value.trim().isNotEmpty &&
+        field.source == ArtworkFieldSource.userConfirmed;
+  });
+}
 
 class ArtworkRouteData {
   const ArtworkRouteData({

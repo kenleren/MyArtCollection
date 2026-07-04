@@ -21,6 +21,7 @@ class AppRoutes {
 
   static String artwork(String artworkId) => '/artwork/$artworkId';
   static String artworkDraft(String artworkId) => '${artwork(artworkId)}/draft';
+  static String artworkEdit(String artworkId) => '${artwork(artworkId)}/edit';
   static String artworkDetails(String artworkId) =>
       '${artwork(artworkId)}/details';
   static String artworkDocuments(String artworkId) =>

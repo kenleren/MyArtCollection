@@ -87,6 +87,10 @@ class AppRouter {
         settings: settings,
         child: _ArtworkRouteScreen(artworkId: artworkId, suffix: suffix),
       ),
+      'edit' => _page(
+        settings: settings,
+        child: ArtworkEditScreen(artworkId: artworkId),
+      ),
       'details' => _page(
         settings: settings,
         child: _ArtworkRouteScreen(artworkId: artworkId, suffix: suffix),
