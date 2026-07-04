@@ -9,8 +9,9 @@ class PrototypeIntroScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return PrototypeScreenFrame(
-      title: 'MyArtCollection',
-      subtitle: 'Private artwork records',
+      appBarTitle: 'MyArtCollection',
+      title: 'Private artwork records',
+      subtitle: 'AI drafts. You confirm.',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -546,11 +547,13 @@ class ExportPreviewScreen extends StatelessWidget {
 class PrototypeScreenFrame extends StatelessWidget {
   const PrototypeScreenFrame({
     super.key,
+    this.appBarTitle,
     required this.title,
     required this.subtitle,
     required this.child,
   });
 
+  final String? appBarTitle;
   final String title;
   final String subtitle;
   final Widget child;
@@ -558,7 +561,7 @@ class PrototypeScreenFrame extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: Text(title)),
+      appBar: AppBar(title: Text(appBarTitle ?? title)),
       body: SafeArea(
         child: ListView(
           padding: const EdgeInsets.all(20),

@@ -4,6 +4,19 @@ import 'package:my_art_collection/app/app.dart';
 import 'package:my_art_collection/app/app_routes.dart';
 
 void main() {
+  testWidgets('intro screen shows brand once and value heading once', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(
+      const MyArtCollectionApp(initialRoute: AppRoutes.splash),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('MyArtCollection'), findsOneWidget);
+    expect(find.text('Private artwork records'), findsOneWidget);
+    expect(find.text('AI drafts. You confirm.'), findsOneWidget);
+  });
+
   testWidgets('collection shell renders and can open add artwork', (
     WidgetTester tester,
   ) async {
