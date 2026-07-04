@@ -3,8 +3,10 @@
 Status: Proposed
 Issue: [#42](https://github.com/kenleren/MyArtCollection/issues/42)
 Scheduling evidence: [issue comment](https://github.com/kenleren/MyArtCollection/issues/42#issuecomment-4883398463)
-Implementation evidence: [issue comment](https://github.com/kenleren/MyArtCollection/issues/42#issuecomment-4883425657)
-Review rework evidence: [issue comment](https://github.com/kenleren/MyArtCollection/issues/42#issuecomment-4883461683)
+Initial implementation evidence: [issue comment](https://github.com/kenleren/MyArtCollection/issues/42#issuecomment-4883425657)
+First review-block reconciliation: [issue comment](https://github.com/kenleren/MyArtCollection/issues/42#issuecomment-4883461683)
+OpenAI provider-change notice: [issue comment](https://github.com/kenleren/MyArtCollection/issues/42#issuecomment-4883485006)
+Current implementation evidence: [issue comment](https://github.com/kenleren/MyArtCollection/issues/42#issuecomment-4883490307)
 
 ## Problem statement
 
