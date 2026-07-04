@@ -126,22 +126,27 @@ class _ArtworkRouteScreen extends StatefulWidget {
 }
 
 class _ArtworkRouteScreenState extends State<_ArtworkRouteScreen> {
-  Future<PrototypeArtwork>? _artwork;
+  Future<ArtworkRouteData>? _routeData;
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    _artwork ??= artworkForRoute(context, widget.artworkId);
+    _routeData ??= artworkDataForRoute(context, widget.artworkId);
   }
 
   @override
   Widget build(BuildContext context) {
-    return FutureBuilder<PrototypeArtwork>(
-      future: _artwork,
+    return FutureBuilder<ArtworkRouteData>(
+      future: _routeData,
       builder: (context, snapshot) {
-        final artwork = snapshot.data ?? prototypeArtwork;
+        final routeData =
+            snapshot.data ?? const ArtworkRouteData(artwork: prototypeArtwork);
+        final artwork = routeData.artwork;
         return switch (widget.suffix) {
-          'draft' => DraftReviewScreen(artwork: artwork),
+          'draft' => DraftReviewScreen(
+            artwork: artwork,
+            aiDraftJob: routeData.latestAiDraftJob,
+          ),
           'documents' => DocumentsScreen(artwork: artwork),
           'report-preview' => ReportPreviewScreen(artwork: artwork),
           'export' => ExportPreviewScreen(artwork: artwork),

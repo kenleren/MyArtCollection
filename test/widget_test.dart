@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:my_art_collection/app/ai/on_device_ai_draft_service.dart';
 import 'package:my_art_collection/app/app.dart';
 import 'package:my_art_collection/app/app_dependencies.dart';
 import 'package:my_art_collection/app/app_routes.dart';
@@ -170,6 +171,8 @@ void main() {
     await pumpLiveData(tester);
 
     expect(find.text('Photo imported'), findsOneWidget);
+    expect(find.text('On-device AI unavailable'), findsOneWidget);
+    expect(find.textContaining('No photo was sent online'), findsOneWidget);
     expect(
       find.byKey(const ValueKey('primary-artwork-image-preview')),
       findsOneWidget,
@@ -308,6 +311,8 @@ void main() {
     await tester.pump();
 
     expect(find.text('AI draft review'), findsWidgets);
+    expect(find.text('Private AI draft'), findsOneWidget);
+    expect(find.textContaining('has not run for this photo'), findsOneWidget);
     expect(find.text('Photo Preview Artwork'), findsOneWidget);
     expect(
       find.byKey(const ValueKey('primary-artwork-image-preview')),
@@ -390,6 +395,63 @@ void main() {
     expect(find.textContaining('private-secret'), findsNothing);
     expect(find.textContaining('artworks/missing-image'), findsNothing);
     expect(find.textContaining(fixture.tempDir.path), findsNothing);
+  });
+
+  testWidgets('private on-device AI draft displays after live import', (
+    WidgetTester tester,
+  ) async {
+    final testDependencies = await tester.runAsync(
+      () async => _LiveDependencyFixture.create(
+        onDeviceAiDraftProvider: const _CompletedAiDraftProvider(),
+      ),
+    );
+    final fixture = testDependencies!;
+    addTearDown(() async {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.runAsync(fixture.dispose);
+    });
+
+    final sourceImage = await tester.runAsync(
+      () => fixture.writePngSource('picker-ai-primary.png'),
+    );
+
+    await tester.pumpWidget(
+      MyArtCollectionApp(
+        initialRoute: AppRoutes.import,
+        dependencies: fixture.dependenciesWithPicker(
+          _SingleImagePicker(sourceImage!),
+        ),
+      ),
+    );
+    await pumpReady(tester);
+
+    await tester.runAsync(() async {
+      final button = tester.widget<FilledButton>(
+        find.widgetWithText(FilledButton, 'Choose from system picker'),
+      );
+      button.onPressed!();
+      await Future<void>.delayed(const Duration(seconds: 1));
+    });
+    await pumpLiveData(tester);
+
+    expect(find.text('Photo imported'), findsOneWidget);
+    expect(find.text('Private AI draft saved'), findsOneWidget);
+    expect(
+      find.textContaining('Visible lower-right signature'),
+      findsOneWidget,
+    );
+
+    await tapVisible(tester, find.text('Review AI draft'));
+    await pumpLiveData(tester);
+    await tester.runAsync(
+      () async => Future<void>.delayed(const Duration(milliseconds: 500)),
+    );
+    await tester.pump();
+
+    expect(find.text('AI draft review'), findsWidgets);
+    expect(find.text('Private AI draft saved'), findsOneWidget);
+    expect(find.textContaining('AI-suggested only'), findsOneWidget);
+    expect(find.text('User confirmed'), findsNothing);
   });
 
   testWidgets('incomplete queue derives from local fields and documents', (
@@ -581,11 +643,13 @@ class _LiveDependencyFixture {
     required this.tempDir,
     required this.repository,
     required this.attachmentStore,
+    required this.onDeviceAiDraftProvider,
   });
 
   final Directory tempDir;
   LocalArtworkRepository repository;
   final LocalAttachmentStore attachmentStore;
+  final OnDeviceAiDraftProvider onDeviceAiDraftProvider;
 
   AppDependencies get dependencies {
     return dependenciesWithPicker(_NoLostImagePicker());
@@ -596,10 +660,14 @@ class _LiveDependencyFixture {
       artworkRepository: repository,
       attachmentStore: attachmentStore,
       imagePicker: imagePicker,
+      onDeviceAiDraftProvider: onDeviceAiDraftProvider,
     );
   }
 
-  static Future<_LiveDependencyFixture> create() async {
+  static Future<_LiveDependencyFixture> create({
+    OnDeviceAiDraftProvider onDeviceAiDraftProvider =
+        const DisabledOnDeviceAiDraftProvider(),
+  }) async {
     final tempDir = await Directory.systemTemp.createTemp(
       'my_art_collection_widget_test_',
     );
@@ -614,6 +682,7 @@ class _LiveDependencyFixture {
       tempDir: tempDir,
       repository: repository,
       attachmentStore: attachmentStore,
+      onDeviceAiDraftProvider: onDeviceAiDraftProvider,
     );
   }
 
@@ -669,6 +738,30 @@ class _SingleImagePicker implements ArtworkImagePicker {
 
   @override
   Future<XFile?> retrieveLostImage() async => null;
+}
+
+class _CompletedAiDraftProvider implements OnDeviceAiDraftProvider {
+  const _CompletedAiDraftProvider();
+
+  @override
+  Future<OnDeviceAiCapability> checkAvailability() async {
+    return const OnDeviceAiCapability(
+      availability: OnDeviceAiAvailability.available,
+      deviceModel: 'Pixel test device',
+    );
+  }
+
+  @override
+  Future<OnDeviceAiDraftResult> createDraft(
+    OnDeviceAiDraftRequest request,
+  ) async {
+    return const OnDeviceAiDraftResult(
+      visualSummary: 'Visible lower-right signature on a framed artwork.',
+      signatureNotes: 'May read E. Test.',
+      mediumHint: 'Print or lithograph on paper',
+      searchTerms: ['E. Test framed artwork'],
+    );
+  }
 }
 
 ArtworkRecord _artworkRecord({

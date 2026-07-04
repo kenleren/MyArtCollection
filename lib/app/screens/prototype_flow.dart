@@ -6,6 +6,7 @@ import '../app_dependencies.dart';
 import '../app_routes.dart';
 import '../intake/artwork_intake_service.dart';
 import '../prototype/prototype_artwork.dart';
+import '../storage/ai_research_record.dart';
 import '../storage/attachment_record.dart';
 import '../storage/artwork_record.dart';
 import '../storage/local_attachment_store.dart';
@@ -366,8 +367,10 @@ class CaptureImportScreen extends StatefulWidget {
 
 class _CaptureImportScreenState extends State<CaptureImportScreen> {
   ArtworkIntakeResult? _result;
+  AiDraftJob? _aiDraftJob;
   ArtworkIntakeException? _failure;
   bool _isBusy = false;
+  bool _isAiDraftBusy = false;
 
   bool get _isImport => widget.mode == 'import';
 
@@ -386,7 +389,9 @@ class _CaptureImportScreenState extends State<CaptureImportScreen> {
           _IntakeStatePanel(
             isImport: _isImport,
             isBusy: _isBusy,
+            isAiDraftBusy: _isAiDraftBusy,
             result: _result,
+            aiDraftJob: _aiDraftJob,
             failure: _failure,
             attachmentStore: AppDependencyScope.of(context).attachmentStore,
           ),
@@ -468,8 +473,10 @@ class _CaptureImportScreenState extends State<CaptureImportScreen> {
       }
       setState(() {
         _result = result;
+        _aiDraftJob = null;
         _failure = null;
       });
+      await _runPrivateAiDraft(result);
     } on ArtworkIntakeException catch (error) {
       if (!mounted) {
         return;
@@ -480,6 +487,26 @@ class _CaptureImportScreenState extends State<CaptureImportScreen> {
         setState(() => _isBusy = false);
       }
     }
+  }
+
+  Future<void> _runPrivateAiDraft(ArtworkIntakeResult result) async {
+    setState(() => _isAiDraftBusy = true);
+
+    final service = AppDependencyScope.of(
+      context,
+    ).createOnDeviceAiDraftService();
+    final draftJob = await service.createDraftForPrimaryImage(
+      record: result.record,
+      primaryImage: result.primaryImage,
+    );
+
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _aiDraftJob = draftJob;
+      _isAiDraftBusy = false;
+    });
   }
 }
 
@@ -526,9 +553,10 @@ class _StaticCaptureImportScreen extends StatelessWidget {
 }
 
 class DraftReviewScreen extends StatelessWidget {
-  const DraftReviewScreen({super.key, required this.artwork});
+  const DraftReviewScreen({super.key, required this.artwork, this.aiDraftJob});
 
   final PrototypeArtwork artwork;
+  final AiDraftJob? aiDraftJob;
 
   @override
   Widget build(BuildContext context) {
@@ -551,6 +579,8 @@ class DraftReviewScreen extends StatelessWidget {
           const _ProgressStrip(activeIndex: 1),
           const SizedBox(height: 16),
           _PrimaryImageForArtwork(artworkId: artwork.id),
+          const SizedBox(height: 16),
+          _AiDraftStatusPanel(isBusy: false, draftJob: aiDraftJob),
           const SizedBox(height: 16),
           for (final field in fields) ...[
             FieldSourceTile(field: field),
@@ -879,14 +909,18 @@ class _IntakeStatePanel extends StatelessWidget {
   const _IntakeStatePanel({
     required this.isImport,
     required this.isBusy,
+    required this.isAiDraftBusy,
     required this.result,
+    required this.aiDraftJob,
     required this.failure,
     required this.attachmentStore,
   });
 
   final bool isImport;
   final bool isBusy;
+  final bool isAiDraftBusy;
   final ArtworkIntakeResult? result;
+  final AiDraftJob? aiDraftJob;
   final ArtworkIntakeException? failure;
   final LocalAttachmentStore attachmentStore;
 
@@ -923,6 +957,8 @@ class _IntakeStatePanel extends StatelessWidget {
           _PrimaryArtworkImagePreview(
             file: attachmentStore.fileFor(result.primaryImage),
           ),
+          const SizedBox(height: 12),
+          _AiDraftStatusPanel(isBusy: isAiDraftBusy, draftJob: aiDraftJob),
         ],
       );
     }
@@ -949,6 +985,70 @@ class _IntakeStatePanel extends StatelessWidget {
       body:
           'Choose one artwork image. The app copies only that file into private storage.',
     );
+  }
+}
+
+class _AiDraftStatusPanel extends StatelessWidget {
+  const _AiDraftStatusPanel({required this.isBusy, required this.draftJob});
+
+  final bool isBusy;
+  final AiDraftJob? draftJob;
+
+  @override
+  Widget build(BuildContext context) {
+    if (isBusy) {
+      return const _StatusPanel(
+        icon: Icons.auto_awesome_outlined,
+        title: 'Private AI draft',
+        body: 'Checking on-device AI. No online research is running.',
+      );
+    }
+
+    final draftJob = this.draftJob;
+    if (draftJob == null) {
+      return const _StatusPanel(
+        icon: Icons.auto_awesome_outlined,
+        title: 'Private AI draft',
+        body:
+            'On-device AI has not run for this photo. You can still review and edit manually.',
+      );
+    }
+
+    return switch (draftJob.status) {
+      AiDraftJobStatus.completed => _StatusPanel(
+        icon: Icons.auto_awesome,
+        title: 'Private AI draft saved',
+        body: _completedDraftBody(draftJob),
+      ),
+      AiDraftJobStatus.unavailable => _StatusPanel(
+        icon: Icons.offline_bolt_outlined,
+        title: 'On-device AI unavailable',
+        body:
+            '${draftJob.errorMessage ?? 'This device or build cannot run a private AI draft yet.'} No photo was sent online.',
+      ),
+      AiDraftJobStatus.failed => _StatusPanel(
+        icon: Icons.error_outline,
+        title: 'Private AI draft failed',
+        body:
+            '${draftJob.errorMessage ?? 'The draft could not be created.'} You can continue manually.',
+      ),
+      AiDraftJobStatus.pending || AiDraftJobStatus.running => _StatusPanel(
+        icon: Icons.hourglass_top,
+        title: 'Private AI draft pending',
+        body: 'The draft is not ready yet. No online research is running.',
+      ),
+    };
+  }
+
+  static String _completedDraftBody(AiDraftJob draftJob) {
+    final parts = [
+      if (draftJob.visualSummary != null) draftJob.visualSummary!,
+      if (draftJob.signatureNotes != null)
+        'Signature: ${draftJob.signatureNotes!}',
+      if (draftJob.mediumHint != null) 'Medium hint: ${draftJob.mediumHint!}',
+      'AI-suggested only. Confirm before using in a record.',
+    ];
+    return parts.join(' ');
   }
 }
 
@@ -1789,7 +1889,14 @@ const _coreFieldKeys = [
   ArtworkFieldKeys.conditionNotes,
 ];
 
-Future<PrototypeArtwork> artworkForRoute(
+class ArtworkRouteData {
+  const ArtworkRouteData({required this.artwork, this.latestAiDraftJob});
+
+  final PrototypeArtwork artwork;
+  final AiDraftJob? latestAiDraftJob;
+}
+
+Future<ArtworkRouteData> artworkDataForRoute(
   BuildContext context,
   String artworkId,
 ) async {
@@ -1798,12 +1905,17 @@ Future<PrototypeArtwork> artworkForRoute(
       ? null
       : await dependencies.artworkRepository.get(artworkId);
   if (record == null) {
-    return prototypeArtwork;
+    return const ArtworkRouteData(artwork: prototypeArtwork);
   }
 
   final attachments = await dependencies!.artworkRepository
       .attachmentsForArtwork(record.id);
-  return prototypeArtworkFromRecord(record, attachments: attachments);
+  final aiDraftJobs = await dependencies.artworkRepository
+      .aiDraftJobsForArtwork(record.id);
+  return ArtworkRouteData(
+    artwork: prototypeArtworkFromRecord(record, attachments: attachments),
+    latestAiDraftJob: aiDraftJobs.isEmpty ? null : aiDraftJobs.first,
+  );
 }
 
 PrototypeArtwork prototypeArtworkFromRecord(
