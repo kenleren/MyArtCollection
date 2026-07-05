@@ -30,7 +30,7 @@
           want to share what you currently use to manage your collection.
         </p>
         <div class="cta-row">
-          <a class="button" href="mailto:ken.leren@icloud.com?subject=MyArtCollection%20early%20access">Email for early access</a>
+          <a class="button" href="#support-form">Open the form</a>
           <a class="button-secondary" href="/pricing/">View launch pricing</a>
         </div>
       </section>
@@ -42,28 +42,62 @@
             <h2>One direct route.</h2>
           </div>
           <p>
-            This site intentionally uses email instead of a form. That avoids a
-            third-party contact provider while the product is still moving toward
-            launch.
+            The launch site uses a static form that opens your mail client. A
+            silent in-browser submission can be added later with a backend form
+            endpoint.
           </p>
         </div>
-        <div class="page-card">
-          <h2>Contact</h2>
-          <p>
-            <a href="mailto:ken.leren@icloud.com">ken.leren@icloud.com</a>
-          </p>
-          <ul class="feature-list">
-            <li>Include whether you collect paintings, prints, sculpture, design objects, or mixed works.</li>
-            <li>Tell us what you use today: notes, spreadsheets, Airtable, gallery software, or nothing consistent.</li>
-            <li>For privacy or pricing questions, mention the page you were reading.</li>
-          </ul>
-        </div>
+        <form
+          id="support-form"
+          class="support-form"
+          action="mailto:ken.leren@icloud.com"
+          method="post"
+          enctype="text/plain"
+        >
+          <div>
+            <label for="topic">Topic</label>
+            <select id="topic" name="Topic">
+              <option>Early access</option>
+              <option>Privacy question</option>
+              <option>Pricing question</option>
+              <option>Collector feedback</option>
+            </select>
+          </div>
+          <div>
+            <label for="name">Name</label>
+            <input id="name" name="Name" autocomplete="name" placeholder="Your name">
+          </div>
+          <div>
+            <label for="email">Email</label>
+            <input id="email" name="Email" type="email" autocomplete="email" placeholder="you@example.com">
+          </div>
+          <div>
+            <label for="collection">Collection type</label>
+            <input id="collection" name="Collection type" placeholder="Paintings, prints, sculpture, design objects...">
+          </div>
+          <div class="form-full">
+            <label for="message">What should we know?</label>
+            <textarea
+              id="message"
+              name="Message"
+              rows="7"
+              placeholder="Tell us what you collect, what you use today, and what would make MyArtCollection worth testing."
+            ></textarea>
+          </div>
+          <div class="form-full form-actions">
+            <button class="button" type="submit">Send request</button>
+            <p class="muted-note">
+              This opens your email app with the form contents. No message is
+              sent silently from the website.
+            </p>
+          </div>
+        </form>
       </section>
     </main>
 
     <footer class="site-footer">
       <div class="footer-card">
-        <p>Support inbox owner: MyArtCollection via <a href="mailto:ken.leren@icloud.com">ken.leren@icloud.com</a></p>
+        <p>Support inbox owner: MyArtCollection. Messages are sent through the form above.</p>
       </div>
     </footer>
   </body>
