@@ -57,6 +57,8 @@ class LocalAttachmentStore {
     required ArtworkFieldSource source,
     required DateTime importedAt,
     DateTime? capturedAt,
+    String? derivedFromAttachmentId,
+    String? transformSummary,
     String? extractionSummary,
     String? notes,
   }) async {
@@ -107,6 +109,8 @@ class LocalAttachmentStore {
       fileSizeBytes: fileSizeBytes,
       importedAt: importedAt,
       capturedAt: capturedAt,
+      derivedFromAttachmentId: derivedFromAttachmentId,
+      transformSummary: transformSummary,
       source: source,
       relativePath: relativePath,
       checksum: sha256.convert(bytes).toString(),

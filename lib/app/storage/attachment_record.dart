@@ -69,6 +69,8 @@ class AttachmentRecord {
     required this.relativePath,
     required this.checksum,
     this.capturedAt,
+    this.derivedFromAttachmentId,
+    this.transformSummary,
     this.extractionSummary,
     this.notes,
   }) : role = role ?? AttachmentRole.defaultFor(type);
@@ -82,6 +84,8 @@ class AttachmentRecord {
   final int fileSizeBytes;
   final DateTime importedAt;
   final DateTime? capturedAt;
+  final String? derivedFromAttachmentId;
+  final String? transformSummary;
   final ArtworkFieldSource source;
   final String relativePath;
   final String checksum;
@@ -96,4 +100,8 @@ class AttachmentRecord {
       type == AttachmentType.photo && role == AttachmentRole.supportingPhoto;
 
   bool get isSupportingDocument => role == AttachmentRole.supportingDocument;
+
+  bool get isDerivative => derivedFromAttachmentId != null;
+
+  bool get isOriginalCapture => derivedFromAttachmentId == null;
 }

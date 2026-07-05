@@ -156,6 +156,74 @@ void main() {
     },
   );
 
+  test(
+    'stores edited photo derivatives as new attachments with explicit lineage',
+    () async {
+      final primarySource = File(p.join(tempDir.path, 'primary-capture.jpg'));
+      await primarySource.writeAsBytes([3, 3, 3]);
+      final primary = await store.saveImportedAttachment(
+        artworkId: 'artwork-001',
+        attachmentId: 'attachment-primary',
+        sourceFile: primarySource,
+        originalFileName: 'primary-capture.jpg',
+        mimeType: 'image/jpeg',
+        type: AttachmentType.photo,
+        source: ArtworkFieldSource.userConfirmed,
+        importedAt: DateTime.utc(2026, 7, 4, 9),
+      );
+      await repository.addAttachment(primary);
+
+      final derivativeSource = File(p.join(tempDir.path, 'primary-edit.jpg'));
+      final derivativeBytes = [4, 4, 4];
+      await derivativeSource.writeAsBytes(derivativeBytes);
+      final derivative = await store.saveImportedAttachment(
+        artworkId: 'artwork-001',
+        attachmentId: 'attachment-primary-edit',
+        sourceFile: derivativeSource,
+        originalFileName: 'primary-edit.jpg',
+        mimeType: 'image/jpeg',
+        type: AttachmentType.photo,
+        role: AttachmentRole.primaryArtworkPhoto,
+        source: ArtworkFieldSource.userConfirmed,
+        importedAt: DateTime.utc(2026, 7, 4, 10),
+        derivedFromAttachmentId: 'attachment-primary',
+        transformSummary: 'crop=4:3; rotate=90deg; straighten=1.5deg',
+        notes: 'Edited locally from the original capture.',
+      );
+      await repository.addAttachment(derivative);
+
+      expect(await store.exists(primary), isTrue);
+      expect(await store.exists(derivative), isTrue);
+      expect(derivative.derivedFromAttachmentId, 'attachment-primary');
+      expect(
+        derivative.transformSummary,
+        'crop=4:3; rotate=90deg; straighten=1.5deg',
+      );
+      expect(derivative.isDerivative, isTrue);
+      expect(derivative.isOriginalCapture, isFalse);
+
+      final originalBytes = await store.fileFor(primary).readAsBytes();
+      expect(originalBytes, [3, 3, 3]);
+      final derivativeStoredBytes = await store
+          .fileFor(derivative)
+          .readAsBytes();
+      expect(derivativeStoredBytes, derivativeBytes);
+
+      final attachments = await repository.attachmentsForArtwork('artwork-001');
+      expect(attachments, hasLength(2));
+      final persistedDerivative = attachments.singleWhere(
+        (attachment) => attachment.id == 'attachment-primary-edit',
+      );
+      expect(persistedDerivative.derivedFromAttachmentId, 'attachment-primary');
+      expect(
+        persistedDerivative.transformSummary,
+        'crop=4:3; rotate=90deg; straighten=1.5deg',
+      );
+      expect(persistedDerivative.type, AttachmentType.photo);
+      expect(persistedDerivative.role, AttachmentRole.primaryArtworkPhoto);
+    },
+  );
+
   test('rejects unsupported MIME types and over-limit imports', () async {
     await expectLater(
       store.saveImportedAttachment(

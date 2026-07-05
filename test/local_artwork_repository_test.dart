@@ -676,6 +676,88 @@ void main() {
       );
     },
   );
+
+  test(
+    'upgrades v6 attachment rows with additive derivative provenance columns',
+    () async {
+      await repository.close();
+      await databaseFactoryFfi.deleteDatabase(databasePath);
+
+      final legacyDatabase = await databaseFactoryFfi.openDatabase(
+        databasePath,
+        options: OpenDatabaseOptions(version: 6, onCreate: _createV6Schema),
+      );
+
+      await legacyDatabase.insert('artworks', {
+        'artwork_id': 'legacy-v6-artwork',
+        'record_state': 'verifiedByYou',
+        'lifecycle_status': 'active',
+        'primary_image_attachment_id': 'legacy-primary-photo',
+        'created_at': DateTime.utc(2026, 7, 4, 8).toIso8601String(),
+        'updated_at': DateTime.utc(2026, 7, 4, 8, 5).toIso8601String(),
+      });
+      await legacyDatabase.insert(
+        'attachments',
+        _legacyAttachmentRow(
+          id: 'legacy-primary-photo',
+          artworkId: 'legacy-v6-artwork',
+          type: 'photo',
+          fileName: 'primary.jpg',
+          mimeType: 'image/jpeg',
+          importedAt: DateTime.utc(2026, 7, 4, 8),
+          attachmentRole: 'primary_artwork_photo',
+        ),
+      );
+      await legacyDatabase.insert(
+        'attachments',
+        _legacyAttachmentRow(
+          id: 'legacy-supporting-photo',
+          artworkId: 'legacy-v6-artwork',
+          type: 'photo',
+          fileName: 'detail.jpg',
+          mimeType: 'image/jpeg',
+          importedAt: DateTime.utc(2026, 7, 4, 8, 1),
+          attachmentRole: 'supporting_photo',
+        ),
+      );
+      await legacyDatabase.close();
+
+      repository = LocalArtworkRepository.forDatabase(
+        await LocalArtworkRepository.openAt(databasePath),
+      );
+
+      final attachments = await repository.attachmentsForArtwork(
+        'legacy-v6-artwork',
+      );
+      expect(attachments, hasLength(2));
+      expect(
+        attachments
+            .singleWhere(
+              (attachment) => attachment.id == 'legacy-primary-photo',
+            )
+            .derivedFromAttachmentId,
+        isNull,
+      );
+      expect(
+        attachments
+            .singleWhere(
+              (attachment) => attachment.id == 'legacy-supporting-photo',
+            )
+            .transformSummary,
+        isNull,
+      );
+
+      final rawDatabase = await databaseFactoryFfi.openDatabase(databasePath);
+      addTearDown(rawDatabase.close);
+      final columnInfo = await rawDatabase.rawQuery(
+        'PRAGMA table_info(attachments)',
+      );
+      expect(
+        columnInfo.map((column) => column['name']),
+        containsAll(['derived_from_attachment_id', 'transform_summary']),
+      );
+    },
+  );
 }
 
 ArtworkRecord _record(String id, {required String title}) {
@@ -888,6 +970,13 @@ Future<void> _createV5Schema(Database db, int version) async {
   );
 }
 
+Future<void> _createV6Schema(Database db, int version) async {
+  await _createV5Schema(db, version);
+  await db.execute(
+    "ALTER TABLE attachments ADD COLUMN attachment_role TEXT NOT NULL DEFAULT 'supporting_document'",
+  );
+}
+
 Map<String, Object?> _legacyAttachmentRow({
   required String id,
   required String artworkId,
@@ -895,8 +984,9 @@ Map<String, Object?> _legacyAttachmentRow({
   required String fileName,
   required String mimeType,
   required DateTime importedAt,
+  String? attachmentRole,
 }) {
-  return {
+  final row = <String, Object?>{
     'attachment_id': id,
     'artwork_id': artworkId,
     'attachment_type': type,
@@ -911,4 +1001,10 @@ Map<String, Object?> _legacyAttachmentRow({
     'extraction_summary': null,
     'notes': null,
   };
+
+  if (attachmentRole != null) {
+    row['attachment_role'] = attachmentRole;
+  }
+
+  return row;
 }

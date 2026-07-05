@@ -55,6 +55,8 @@ Suggested fields:
 - opaque `artwork_id`
 - attachment kind or subtype
 - attachment role: primary artwork photo, supporting photo, or supporting document
+- optional `derived_from_attachment_id` for edited photo derivatives that keep the original capture intact
+- optional `transform_summary` describing the local crop/rotate/straighten steps that produced a derivative
 - original file name
 - MIME type
 - byte size
@@ -158,6 +160,9 @@ Rules:
 - The app should preserve the original file class when possible instead of silently converting it into a different user import.
 - Image attachments retain their image subtype while `attachment_role`
   distinguishes the primary artwork photo from supporting reference photos.
+- Edited photos must be stored as new attachment rows with lineage metadata
+  back to the original capture; do not overwrite the original attachment row or
+  reuse its file path for the edited derivative.
 - A file that arrives with an unrecognized MIME type should be rejected for the prototype unless a later spec explicitly widens support.
 
 Generated PDFs and ZIP exports are not user imports.
@@ -200,6 +205,10 @@ Required assumptions:
   row referenced by `artworks.primary_image_attachment_id` is
   `primary_artwork_photo`, other `photo` rows are `supporting_photo`, and
   non-photo rows are `supporting_document`.
+- Derivative provenance columns are additive: existing rows should remain
+  readable, and new edited-photo rows may populate
+  `derived_from_attachment_id` and `transform_summary` without rewriting
+  original captures.
 - Downgrades and production-grade migration guarantees are out of scope for this issue.
 
 Testing assumptions for later implementation:

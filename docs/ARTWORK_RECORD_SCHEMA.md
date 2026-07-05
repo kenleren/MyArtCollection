@@ -97,6 +97,8 @@ Attachment metadata:
 - `artwork_id`
 - `attachment_type`
 - `attachment_role`
+- `derived_from_attachment_id` for edited photo derivatives that preserve the original capture
+- `transform_summary` for the local edit steps that produced the derivative
 - `file_name`
 - `mime_type`
 - `file_size_bytes`
@@ -125,6 +127,10 @@ Attachment rules:
   `primary_artwork_photo` and its id is referenced by `primary_image_attachment_id`.
 - Supporting photo rows keep `attachment_type: photo` and use
   `attachment_role: supporting_photo`.
+- Edited photo derivatives are new photo attachments, not overwrites. They may
+  store `derived_from_attachment_id` plus a short `transform_summary` so the
+  app can show exactly which original capture they came from and what local
+  edits were applied.
 - Receipt, certificate, appraisal, auction record, and provenance note attachments use `attachment_role: supporting_document`.
 - Legacy attachment rows without roles are compatible: the photo row referenced
   by `primary_image_attachment_id` is primary, other photo rows are supporting

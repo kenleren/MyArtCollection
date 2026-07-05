@@ -28,7 +28,7 @@ class LocalArtworkRepository {
   final Database _database;
 
   static const _databaseName = 'my_art_collection.db';
-  static const _schemaVersion = 6;
+  static const _schemaVersion = 7;
 
   static Future<LocalArtworkRepository> open() async {
     final directory = await getApplicationDocumentsDirectory();
@@ -113,6 +113,14 @@ class LocalArtworkRepository {
       );
       await _backfillAttachmentRoles(db);
     }
+    if (oldVersion >= 2 && oldVersion < 7) {
+      await db.execute(
+        'ALTER TABLE attachments ADD COLUMN derived_from_attachment_id TEXT',
+      );
+      await db.execute(
+        'ALTER TABLE attachments ADD COLUMN transform_summary TEXT',
+      );
+    }
   }
 
   static Future<void> _createAttachmentsSchema(Database db) async {
@@ -130,6 +138,8 @@ class LocalArtworkRepository {
         source_state TEXT NOT NULL,
         relative_path TEXT NOT NULL,
         checksum TEXT NOT NULL,
+        derived_from_attachment_id TEXT,
+        transform_summary TEXT,
         extraction_summary TEXT,
         notes TEXT,
         FOREIGN KEY (artwork_id)
@@ -598,6 +608,8 @@ class LocalArtworkRepository {
       'file_size_bytes': attachment.fileSizeBytes,
       'imported_at': attachment.importedAt.toUtc().toIso8601String(),
       'captured_at': attachment.capturedAt?.toUtc().toIso8601String(),
+      'derived_from_attachment_id': attachment.derivedFromAttachmentId,
+      'transform_summary': attachment.transformSummary,
       'source_state': attachment.source.label,
       'relative_path': attachment.relativePath,
       'checksum': attachment.checksum,
@@ -753,6 +765,8 @@ class LocalArtworkRepository {
       fileSizeBytes: row['file_size_bytes'] as int,
       importedAt: _parseRequiredDate(row['imported_at'] as String),
       capturedAt: _parseDate(row['captured_at'] as String?),
+      derivedFromAttachmentId: row['derived_from_attachment_id'] as String?,
+      transformSummary: row['transform_summary'] as String?,
       source: ArtworkFieldSource.fromStorage(row['source_state'] as String),
       relativePath: row['relative_path'] as String,
       checksum: row['checksum'] as String,
