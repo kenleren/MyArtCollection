@@ -1,7 +1,10 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:my_art_collection/app/ai/on_device_ai_draft_service.dart';
@@ -34,6 +37,72 @@ void main() {
     expect(find.text('Archivale'), findsOneWidget);
     expect(find.text('Private artwork records'), findsOneWidget);
     expect(find.text('AI drafts. You confirm.'), findsOneWidget);
+  });
+
+  testWidgets('app provides system-aware light and dark Material themes', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(const ArchivaleApp(initialRoute: AppRoutes.splash));
+    await pumpReady(tester);
+
+    final materialApp = tester.widget<MaterialApp>(find.byType(MaterialApp));
+    expect(materialApp.themeMode, ThemeMode.system);
+    expect(materialApp.darkTheme, isNotNull);
+
+    await tester.pumpWidget(
+      const ArchivaleApp(
+        initialRoute: AppRoutes.splash,
+        themeMode: ThemeMode.dark,
+      ),
+    );
+    await pumpReady(tester);
+
+    final headingContext = tester.element(find.text('Private artwork records'));
+    final theme = Theme.of(headingContext);
+    expect(theme.brightness, Brightness.dark);
+    expect(theme.colorScheme.primary, const Color(0xFFD9BE78));
+    expect(theme.scaffoldBackgroundColor, const Color(0xFF0B1110));
+  });
+
+  testWidgets('dark mode visual evidence covers core mobile screens', (
+    WidgetTester tester,
+  ) async {
+    await captureVisualEvidence(
+      tester,
+      routeName: AppRoutes.splash,
+      themeMode: ThemeMode.dark,
+      fileName: 'dark_intro.png',
+    );
+    await captureVisualEvidence(
+      tester,
+      routeName: AppRoutes.collectionAdd,
+      themeMode: ThemeMode.dark,
+      fileName: 'dark_add_artwork.png',
+    );
+    await captureVisualEvidence(
+      tester,
+      routeName: AppRoutes.artworkDraft('sample-001'),
+      themeMode: ThemeMode.dark,
+      fileName: 'dark_draft_review.png',
+    );
+    await captureVisualEvidence(
+      tester,
+      routeName: AppRoutes.collection,
+      themeMode: ThemeMode.dark,
+      fileName: 'dark_collection_shell.png',
+    );
+    await captureVisualEvidence(
+      tester,
+      routeName: AppRoutes.collectionSettings,
+      themeMode: ThemeMode.dark,
+      fileName: 'dark_settings.png',
+    );
+    await captureVisualEvidence(
+      tester,
+      routeName: AppRoutes.collection,
+      themeMode: ThemeMode.light,
+      fileName: 'light_collection_shell.png',
+    );
   });
 
   testWidgets('collection shell renders and can open add artwork', (
@@ -1528,6 +1597,48 @@ Future<void> pumpLiveData(WidgetTester tester) async {
   );
   await tester.pump();
   await tester.pump(const Duration(milliseconds: 400));
+}
+
+Future<void> captureVisualEvidence(
+  WidgetTester tester, {
+  required String routeName,
+  required ThemeMode themeMode,
+  required String fileName,
+}) async {
+  tester.view.physicalSize = const Size(393, 852);
+  tester.view.devicePixelRatio = 1;
+  addTearDown(() {
+    tester.view.resetPhysicalSize();
+    tester.view.resetDevicePixelRatio();
+  });
+
+  final boundaryKey = GlobalKey();
+  await tester.pumpWidget(
+    RepaintBoundary(
+      key: boundaryKey,
+      child: ArchivaleApp(initialRoute: routeName, themeMode: themeMode),
+    ),
+  );
+  await pumpReady(tester);
+
+  final boundary =
+      boundaryKey.currentContext!.findRenderObject()! as RenderRepaintBoundary;
+  final bytes = await tester.runAsync<Uint8List>(() async {
+    final image = await boundary.toImage(pixelRatio: 2);
+    final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
+    image.dispose();
+    return byteData!.buffer.asUint8List();
+  });
+
+  final outputDirectory = Directory(
+    p.join('.dart_tool', 'issue101_visual_evidence'),
+  );
+  outputDirectory.createSync(recursive: true);
+  final screenshotFile = File(p.join(outputDirectory.path, fileName));
+  screenshotFile.writeAsBytesSync(bytes!);
+
+  await tester.pumpWidget(const SizedBox.shrink());
+  await tester.pump();
 }
 
 class _NoLostImagePicker implements ArtworkImagePicker {

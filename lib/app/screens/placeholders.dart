@@ -30,7 +30,14 @@ class SimplePlaceholderScreen extends StatelessWidget {
             const SizedBox(height: 20),
             DecoratedBox(
               decoration: BoxDecoration(
-                color: Colors.white,
+                color: Theme.of(context).brightness == Brightness.dark
+                    ? Color.alphaBlend(
+                        Theme.of(
+                          context,
+                        ).colorScheme.primary.withValues(alpha: .05),
+                        Theme.of(context).colorScheme.surface,
+                      )
+                    : Colors.white,
                 borderRadius: BorderRadius.circular(8),
                 border: Border.all(
                   color: Theme.of(context).colorScheme.outlineVariant,
