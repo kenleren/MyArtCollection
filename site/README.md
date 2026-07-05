@@ -68,3 +68,50 @@ Then open:
 - `http://127.0.0.1:8000/privacy/`
 - `http://127.0.0.1:8000/support/`
 - `http://127.0.0.1:8000/pricing/`
+
+## Firebase Hosting config
+
+Repo-side Firebase Hosting is intentionally minimal:
+
+- `firebase.json` serves the `site/` directory only.
+- No `.firebaserc` is committed here, so Firebase project selection stays human/local CLI owned.
+- No secrets, tokens, service accounts, or Google Cloud credential files are stored in the repo.
+
+### Syntax check
+
+Validate the hosting config from the repository root:
+
+```sh
+jq . firebase.json
+```
+
+If `jq` is unavailable, use:
+
+```sh
+python3 -m json.tool firebase.json
+```
+
+### Ad hoc local hosting preview
+
+When you want a Firebase-style static preview without adding a repo dependency, run the Firebase CLI ad hoc from the repository root:
+
+```sh
+npx --yes firebase-tools@latest emulators:start --only hosting --project demo-myartcollection
+```
+
+Then open the local URL printed by the emulator and confirm the same public routes:
+
+- `/`
+- `/privacy/`
+- `/support/`
+- `/pricing/`
+
+### Human-owned publish steps
+
+Publishing remains separate from repo config work and needs human-owned Firebase Console and deployment review:
+
+1. Select the correct Firebase project in the local CLI.
+2. Attach the `myartcollection.app` custom domain in Firebase Hosting.
+3. Complete the DNS verification and certificate issuance steps in Firebase Console.
+4. Run a live hosting smoke check after the site is attached.
+5. Get deployment-manager review before any real publish or deploy.
