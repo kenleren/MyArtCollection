@@ -97,6 +97,22 @@ void main() {
         ),
       );
     });
+
+    test('enforces 2 MB byte limit for string previews', () {
+      final oversizedCsv = StringBuffer('Title\n')
+        ..write(List.filled(CsvArtworkImportService.maxFileBytes, 'a').join());
+
+      expect(
+        () => _service().previewFromString(oversizedCsv.toString()),
+        throwsA(
+          isA<CsvArtworkImportException>().having(
+            (error) => error.failure,
+            'failure',
+            CsvArtworkImportFailure.fileTooLarge,
+          ),
+        ),
+      );
+    });
   });
 
   group('CSV mapping and validation', () {
@@ -182,6 +198,36 @@ void main() {
         expect(preview.rows.single.record!.primaryImageAttachmentId, isNull);
       },
     );
+
+    test('preserves row cells beyond headers as unmapped notes', () {
+      final preview = _service().previewFromString(
+        'Title,Notes\n'
+        'Work,note,extra,https://example.test/reference\n',
+      );
+
+      final row = preview.rows.single;
+      final notes = row.record!.field(ArtworkFieldKeys.notes)!.value;
+
+      expect(row.isImportable, isTrue);
+      expect(
+        row.warnings,
+        contains(
+          'Row has more cells than headers; extra cells were preserved in notes.',
+        ),
+      );
+      expect(row.rawValues['Unmapped column 3'], 'extra');
+      expect(
+        row.rawValues['Unmapped column 4'],
+        'https://example.test/reference',
+      );
+      expect(notes, contains('note'));
+      expect(notes, contains('Imported unmapped fields:'));
+      expect(notes, contains('- Unmapped column 3: extra'));
+      expect(
+        notes,
+        contains('- Unmapped column 4: https://example.test/reference'),
+      );
+    });
 
     test(
       'rejects rows without title, artist, or notes-like identifying text',

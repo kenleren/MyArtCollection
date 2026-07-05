@@ -113,6 +113,13 @@ class CsvArtworkImportService {
     String csv, {
     List<ArtworkRecord> existingRecords = const [],
   }) {
+    if (utf8.encode(csv).length > maxFileBytes) {
+      throw const CsvArtworkImportException(
+        CsvArtworkImportFailure.fileTooLarge,
+        'CSV import file exceeds the 2 MB limit.',
+      );
+    }
+
     final rows = _CsvParser().parse(_stripUtf8Bom(csv));
     if (rows.isEmpty || rows.every((row) => row.every(_isBlank))) {
       throw const CsvArtworkImportException(
@@ -221,6 +228,19 @@ class CsvArtworkImportService {
           }
         case _ColumnKind.skip:
           break;
+      }
+    }
+    if (values.length > headers.length) {
+      warnings.add(
+        'Row has more cells than headers; extra cells were preserved in notes.',
+      );
+      for (var index = headers.length; index < values.length; index += 1) {
+        final header = 'Unmapped column ${index + 1}';
+        final value = values[index].trim();
+        rawValues[header] = value;
+        if (!_isBlank(value) && appendUnmappedColumnsToNotes) {
+          unmappedNotes.add('- $header: $value');
+        }
       }
     }
 
