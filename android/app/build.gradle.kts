@@ -1,4 +1,5 @@
 import java.util.Base64
+import java.util.Properties
 
 plugins {
     id("com.android.application")
@@ -16,6 +17,63 @@ fun dartDefineEnabled(name: String): Boolean {
         }
         .any { it == "$name=true" }
 }
+
+fun requestedReleaseArtifactTasks(): List<String> {
+    val artifactPrefixes = listOf("assemble", "bundle", "package", "install")
+    return gradle.startParameter.taskNames.filter { taskName ->
+        val normalized = taskName.substringAfterLast(":")
+        normalized.contains("release", ignoreCase = true) &&
+            artifactPrefixes.any { normalized.startsWith(it, ignoreCase = true) }
+    }
+}
+
+fun nonBlankOrNull(value: String?): String? = value?.trim()?.takeIf { it.isNotEmpty() }
+
+val keyProperties =
+    Properties().apply {
+        val keyPropertiesFile = rootProject.file("key.properties")
+        if (keyPropertiesFile.isFile) {
+            keyPropertiesFile.inputStream().use(::load)
+        }
+    }
+
+fun releaseSigningValue(gradleOrEnvName: String, keyPropertiesName: String): String? =
+    nonBlankOrNull(providers.gradleProperty(gradleOrEnvName).orNull)
+        ?: nonBlankOrNull(providers.environmentVariable(gradleOrEnvName).orNull)
+        ?: nonBlankOrNull(keyProperties.getProperty(keyPropertiesName))
+
+val releaseSigningInputs =
+    mapOf(
+        "storeFile" to
+            releaseSigningValue(
+                "MY_ART_COLLECTION_ANDROID_RELEASE_STORE_FILE",
+                "storeFile",
+            ),
+        "storePassword" to
+            releaseSigningValue(
+                "MY_ART_COLLECTION_ANDROID_RELEASE_STORE_PASSWORD",
+                "storePassword",
+            ),
+        "keyAlias" to
+            releaseSigningValue(
+                "MY_ART_COLLECTION_ANDROID_RELEASE_KEY_ALIAS",
+                "keyAlias",
+            ),
+        "keyPassword" to
+            releaseSigningValue(
+                "MY_ART_COLLECTION_ANDROID_RELEASE_KEY_PASSWORD",
+                "keyPassword",
+            ),
+    )
+val releaseSigningReady = releaseSigningInputs.values.all { it != null }
+val releaseArtifactTasks = requestedReleaseArtifactTasks()
+val releaseSigningFailureMessage =
+    buildString {
+        append("Android release signing is required for Play-ready release artifacts. ")
+        append("Provide all release signing inputs through ignored android/key.properties ")
+        append("or MY_ART_COLLECTION_ANDROID_RELEASE_* Gradle/environment properties ")
+        append("before building release APK or AAB.")
+    }
 
 val enableFirebaseAndroid =
     providers.environmentVariable("MY_ART_COLLECTION_FIREBASE_ANDROID")
@@ -93,12 +151,29 @@ android {
         buildConfig = true
     }
 
+    signingConfigs {
+        create("release") {
+            if (releaseSigningReady) {
+                storeFile = rootProject.file(releaseSigningInputs.getValue("storeFile")!!)
+                storePassword = releaseSigningInputs.getValue("storePassword")
+                keyAlias = releaseSigningInputs.getValue("keyAlias")
+                keyPassword = releaseSigningInputs.getValue("keyPassword")
+            }
+        }
+    }
+
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
+            if (releaseSigningReady) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
+    }
+}
+
+gradle.taskGraph.whenReady {
+    if (releaseArtifactTasks.isNotEmpty() && !releaseSigningReady) {
+        throw GradleException(releaseSigningFailureMessage)
     }
 }
 

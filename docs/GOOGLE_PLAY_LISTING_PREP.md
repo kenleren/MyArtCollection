@@ -450,6 +450,9 @@ Trust-claim parity rule:
 10. Do not upload Play listing assets until human approval is recorded,
    external marketing review is complete, and screenshots/graphics have been
    reviewed against the exact release candidate.
+11. A Play-ready Android release requires owner-held upload-key decisions,
+    secret storage outside the repository, and sanitized signed-AAB verification
+    from the configured release-signing path before any Play track upload.
 
 ## Acceptance checks
 
@@ -468,6 +471,9 @@ Trust-claim parity rule:
 - Data safety, privacy-policy, SDK/track review, human approval, and
   release-candidate asset review are called out as mandatory gates before any
   Play submission or asset upload.
+- Owner-held upload-key decisions, out-of-repo signing secrets, and sanitized
+  signed-AAB verification are called out as mandatory gates before any Play
+  track upload.
 
 ## Task breakdown
 
@@ -503,8 +509,8 @@ Trust-claim parity rule:
 
 1. Track Play Console gating items before any beta/public submission:
    privacy-policy URL, Data safety, SDK/track review, target audience, content
-   rating, human approval, release-candidate asset review, and personal-account
-   testing gate if applicable.
+   rating, human approval, release-candidate asset review, personal-account
+   testing gate if applicable, and the first owner-run signed-AAB verification.
 
 ## Open decisions for humans
 
