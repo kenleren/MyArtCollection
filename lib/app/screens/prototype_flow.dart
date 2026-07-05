@@ -151,9 +151,13 @@ class _CollectionHomeContent extends StatelessWidget {
     return ListView(
       padding: const EdgeInsets.all(20),
       children: [
-        const _Heading(
-          title: 'Collection',
-          subtitle: 'Private record overview',
+        const _ShellIntro(subtitle: 'Private record overview'),
+        const SizedBox(height: 16),
+        PrimaryActionButton(
+          key: const ValueKey('collection-top-cta'),
+          icon: Icons.add_a_photo_outlined,
+          label: l10n.addArtworkAction,
+          routeName: AppRoutes.collectionAdd,
         ),
         const SizedBox(height: 16),
         const _LimitHint(),
@@ -165,12 +169,6 @@ class _CollectionHomeContent extends StatelessWidget {
             _CollectionRecordPanel(summary: summary),
             const SizedBox(height: 12),
           ],
-          PrimaryActionButton(
-            icon: Icons.add_a_photo_outlined,
-            label: l10n.addArtworkAction,
-            routeName: AppRoutes.collectionAdd,
-          ),
-          const SizedBox(height: 12),
         ],
         const SizedBox(height: 32),
       ],
@@ -221,14 +219,24 @@ class _IncompleteQueueContent extends StatelessWidget {
     final items = records
         .expand((summary) => summary.incompleteItems)
         .toList(growable: false);
+    final topAction = items.isEmpty
+        ? const _TopRouteAction(
+            actionLabel: 'Add artwork',
+            routeName: AppRoutes.collectionAdd,
+            icon: Icons.add_a_photo_outlined,
+          )
+        : _TopRouteAction(
+            actionLabel: items.first.actionLabel,
+            routeName: items.first.routeName,
+            icon: items.first.icon,
+          );
 
     return ListView(
       padding: const EdgeInsets.all(20),
       children: [
-        const _Heading(
-          title: 'Incomplete',
-          subtitle: 'Records that need attention',
-        ),
+        const _ShellIntro(subtitle: 'Records that need attention'),
+        const SizedBox(height: 16),
+        topAction,
         const SizedBox(height: 16),
         if (items.isEmpty)
           const _StatusPanel(
@@ -261,14 +269,10 @@ class ReportsHomeScreen extends StatelessWidget {
     return ListView(
       padding: const EdgeInsets.all(20),
       children: [
-        const _Heading(
-          title: 'Reports',
-          subtitle: 'Generate an insurance-ready PDF',
-        ),
-        const SizedBox(height: 16),
-        _ReportSummary(artwork: prototypeArtwork),
+        const _ShellIntro(subtitle: 'Generate an insurance-ready PDF'),
         const SizedBox(height: 16),
         PrimaryActionButton(
+          key: const ValueKey('reports-top-cta'),
           icon: Icons.picture_as_pdf_outlined,
           label: 'Artwork report',
           routeName: AppRoutes.artworkReportPreview(prototypeArtwork.id),
@@ -279,6 +283,8 @@ class ReportsHomeScreen extends StatelessWidget {
           label: 'Export your archive',
           routeName: AppRoutes.artworkExport(prototypeArtwork.id),
         ),
+        const SizedBox(height: 16),
+        _ReportSummary(artwork: prototypeArtwork),
       ],
     );
   }
@@ -292,7 +298,20 @@ class SettingsHomeScreen extends StatelessWidget {
     return ListView(
       padding: const EdgeInsets.all(20),
       children: const [
-        _Heading(title: 'Settings', subtitle: 'Privacy and storage'),
+        _ShellIntro(subtitle: 'Privacy and storage'),
+        SizedBox(height: 16),
+        PrimaryActionButton(
+          key: ValueKey('settings-top-cta'),
+          icon: Icons.lock_outline,
+          label: 'Review privacy',
+          routeName: AppRoutes.settingsPrivacy,
+        ),
+        SizedBox(height: 12),
+        SecondaryActionButton(
+          icon: Icons.ios_share_outlined,
+          label: 'Export your archive',
+          routeName: AppRoutes.settingsExport,
+        ),
         SizedBox(height: 16),
         _StatusPanel(
           icon: Icons.lock_outline,
@@ -2493,6 +2512,17 @@ class _Heading extends StatelessWidget {
   }
 }
 
+class _ShellIntro extends StatelessWidget {
+  const _ShellIntro({required this.subtitle});
+
+  final String subtitle;
+
+  @override
+  Widget build(BuildContext context) {
+    return Text(subtitle, style: Theme.of(context).textTheme.titleMedium);
+  }
+}
+
 class _ArtworkHero extends StatelessWidget {
   const _ArtworkHero();
 
@@ -2855,14 +2885,30 @@ class _EmptyCollectionPanel extends StatelessWidget {
           ),
           const SizedBox(height: 6),
           const Text('Add artwork to start your first record.'),
-          const SizedBox(height: 12),
-          PrimaryActionButton(
-            icon: Icons.add_a_photo_outlined,
-            label: 'Add artwork',
-            routeName: AppRoutes.collectionAdd,
-          ),
         ],
       ),
+    );
+  }
+}
+
+class _TopRouteAction extends StatelessWidget {
+  const _TopRouteAction({
+    required this.actionLabel,
+    required this.routeName,
+    required this.icon,
+  });
+
+  final String actionLabel;
+  final String routeName;
+  final IconData icon;
+
+  @override
+  Widget build(BuildContext context) {
+    return PrimaryActionButton(
+      key: const ValueKey('incomplete-top-cta'),
+      icon: icon,
+      label: actionLabel,
+      routeName: routeName,
     );
   }
 }

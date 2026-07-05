@@ -46,14 +46,18 @@ void main() {
     );
     await pumpReady(tester);
 
-    expect(find.text('Collection'), findsWidgets);
+    expect(find.text('Collection'), findsNWidgets(2));
     expect(find.text('Incomplete'), findsOneWidget);
     expect(find.text('Reports'), findsOneWidget);
     expect(find.text('Settings'), findsOneWidget);
     expect(find.text('No artworks yet'), findsOneWidget);
     expect(find.text('Blue Interior Study'), findsNothing);
 
-    await tapVisible(tester, find.widgetWithText(FilledButton, 'Add artwork'));
+    final addArtworkButton = tester.widget<FilledButton>(
+      find.widgetWithText(FilledButton, 'Add artwork'),
+    );
+    addArtworkButton.onPressed!();
+    await pumpReady(tester);
 
     expect(find.text('Add artwork'), findsWidgets);
     expect(find.text('Take photo'), findsOneWidget);
@@ -70,6 +74,57 @@ void main() {
     expect(find.textContaining('prove authenticity'), findsNothing);
     expect(find.textContaining('appraise value'), findsNothing);
   });
+
+  testWidgets(
+    'shell screens keep a single body title and top CTA in the first mobile viewport',
+    (WidgetTester tester) async {
+      tester.view.physicalSize = const Size(393, 852);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(() {
+        tester.view.resetPhysicalSize();
+        tester.view.resetDevicePixelRatio();
+      });
+
+      final expectations = [
+        (
+          route: AppRoutes.collection,
+          title: 'Collection',
+          subtitle: 'Private record overview',
+          ctaKey: const ValueKey('collection-top-cta'),
+        ),
+        (
+          route: AppRoutes.collectionIncomplete,
+          title: 'Incomplete',
+          subtitle: 'Records that need attention',
+          ctaKey: const ValueKey('incomplete-top-cta'),
+        ),
+        (
+          route: AppRoutes.collectionReport,
+          title: 'Reports',
+          subtitle: 'Generate an insurance-ready PDF',
+          ctaKey: const ValueKey('reports-top-cta'),
+        ),
+        (
+          route: AppRoutes.collectionSettings,
+          title: 'Settings',
+          subtitle: 'Privacy and storage',
+          ctaKey: const ValueKey('settings-top-cta'),
+        ),
+      ];
+
+      for (final item in expectations) {
+        await tester.pumpWidget(MyArtCollectionApp(initialRoute: item.route));
+        await pumpReady(tester);
+
+        expect(find.text(item.title), findsNWidgets(2));
+        expect(find.text(item.subtitle), findsOneWidget);
+        expect(find.byKey(item.ctaKey), findsOneWidget);
+        expect(tester.getTopLeft(find.byKey(item.ctaKey)).dy, lessThan(260));
+
+        await tester.pumpWidget(const SizedBox.shrink());
+      }
+    },
+  );
 
   testWidgets('collection shell localizes supported mobile locales', (
     WidgetTester tester,
@@ -1495,11 +1550,58 @@ void main() {
       await tester.pumpWidget(MyArtCollectionApp(initialRoute: route));
       await pumpReady(tester);
 
-      expect(find.text('Settings'), findsWidgets);
+      expect(find.text('Settings'), findsNWidgets(2));
       expect(find.text('Privacy and storage'), findsWidgets);
+      expect(find.byKey(const ValueKey('settings-top-cta')), findsOneWidget);
       expect(find.text('Disconnect backup'), findsOneWidget);
       expect(find.text('No artworks yet'), findsNothing);
     }
+  });
+
+  testWidgets('incomplete shell promotes the next recovery action to the top', (
+    WidgetTester tester,
+  ) async {
+    tester.view.physicalSize = const Size(393, 852);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(() {
+      tester.view.resetPhysicalSize();
+      tester.view.resetDevicePixelRatio();
+    });
+
+    final testDependencies = await tester.runAsync(
+      () async => _LiveDependencyFixture.create(),
+    );
+    final fixture = testDependencies!;
+    addTearDown(() async {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.runAsync(fixture.dispose);
+    });
+
+    await tester.runAsync(() async {
+      await fixture.repository.upsert(
+        _artworkRecord(
+          id: 'needs-review',
+          title: 'Needs Review Fixture',
+          state: ArtworkRecordState.needsReview,
+        ),
+      );
+      await fixture.addPrimaryImage(artworkId: 'needs-review');
+    });
+
+    await tester.pumpWidget(
+      MyArtCollectionApp(
+        initialRoute: AppRoutes.collectionIncomplete,
+        dependencies: fixture.dependencies,
+      ),
+    );
+    await pumpLiveData(tester);
+
+    expect(find.byKey(const ValueKey('incomplete-top-cta')), findsOneWidget);
+    expect(find.widgetWithText(FilledButton, 'Review draft'), findsOneWidget);
+    expect(
+      tester.getTopLeft(find.byKey(const ValueKey('incomplete-top-cta'))).dy,
+      lessThan(260),
+    );
   });
 }
 
