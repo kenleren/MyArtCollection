@@ -75,8 +75,28 @@ Then open:
 Repo-side Firebase Hosting is intentionally minimal:
 
 - `firebase.json` serves the `site/` directory only.
+- Public HTML routes are configured to revalidate on every request.
+- Static CSS, image, and logo assets use short-lived cache headers so brand
+  fixes and rollback verification are not hidden by long browser or edge cache
+  lifetimes.
 - No `.firebaserc` is committed here, so Firebase project selection stays human/local CLI owned.
 - No secrets, tokens, service accounts, or Google Cloud credential files are stored in the repo.
+
+### Cache-control policy
+
+Firebase Hosting headers in `firebase.json` use this policy:
+
+- `/`, `/privacy/`, `/support/`, and `/pricing/` send
+  `Cache-Control: public, max-age=0, s-maxage=0, must-revalidate`.
+- Direct HTML file requests matching `/**/*.html` send the same revalidation
+  header so route documents do not persist stale HTML after deploy.
+- `/styles.css` and `/assets/**` send
+  `Cache-Control: public, max-age=3600, must-revalidate`.
+
+The asset policy allows ordinary short browser and edge caching without
+long-lived `immutable` behavior. That keeps post-deploy checks, urgent brand
+fixes, and rollback verification understandable while still avoiding a no-cache
+policy for every static byte.
 
 ### Syntax check
 
@@ -116,3 +136,10 @@ Publishing remains separate from repo config work and needs human-owned Firebase
 3. Complete the DNS verification and certificate issuance steps in Firebase Console.
 4. Run a live hosting smoke check after the site is attached.
 5. Get deployment-manager review before any real publish or deploy.
+
+Live smoke after a deploy should use both normal browsing and no-cache or
+cache-busted requests. Confirm `https://archivale.app/`,
+`https://archivale.app/privacy/`, `https://archivale.app/support/`, and
+`https://archivale.app/pricing/` return the current Archivale title/body copy,
+not stale MyArtCollection HTML, and confirm response headers match the policy
+above.
