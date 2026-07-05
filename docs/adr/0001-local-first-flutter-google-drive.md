@@ -6,7 +6,7 @@ Proposed
 
 ## Context
 
-MyArtCollection needs to be a slick paid mobile app for iPhone and Android. Its trust story depends on privacy, data ownership, and portability.
+Archivale needs to be a slick paid mobile app for iPhone and Android. Its trust story depends on privacy, data ownership, and portability.
 
 The product promise is:
 

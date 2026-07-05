@@ -40,7 +40,7 @@ Future<void> main() async {
     );
 
     runApp(
-      MyArtCollectionApp(
+      ArchivaleApp(
         dependencies: dependencies,
         initialRoute: await initialRouteForRepository(artworkRepository),
       ),

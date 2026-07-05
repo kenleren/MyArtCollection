@@ -17,7 +17,7 @@ Related docs:
 
 ## Problem statement
 
-MyArtCollection needs a provider-data and source-rights gate before any real
+Archivale needs a provider-data and source-rights gate before any real
 collector content is sent to an AI or research provider. The preferred first
 paid path is still OpenAI Responses API hosted `web_search` with `gpt-5.4` and
 high reasoning by default, but that path is only acceptable if data-use,
@@ -102,7 +102,7 @@ source-rights misuse.
 
 ### Inference from the sources
 
-The vendor docs do not provide a turnkey privacy posture for MyArtCollection.
+The vendor docs do not provide a turnkey privacy posture for Archivale.
 They do show that the first acceptable live-content path needs more than
 `store=false`. It also needs:
 
@@ -126,7 +126,7 @@ They do show that the first acceptable live-content path needs more than
 ### 1. Paid-service mode only
 
 - The first paid provider path must use a billed OpenAI API organization/project
-  controlled by MyArtCollection, not a consumer ChatGPT subscription and not a
+  controlled by Archivale, not a consumer ChatGPT subscription and not a
   tester's personal account.
 - Human owners must record the OpenAI organization, project, billing owner, and
   data-controls owner before any live-content call.

@@ -7,7 +7,7 @@ Status: research/spec only
 
 ## Problem statement
 
-MyArtCollection has an Android-facing readiness spec in `#76`, but the iOS
+Archivale has an Android-facing readiness spec in `#76`, but the iOS
 distribution path is still implicit. Apple distribution adds a separate setup
 surface for App Store Connect, TestFlight, App Privacy nutrition labels,
 screenshots, export-compliance answers, signing/provisioning ownership, and
@@ -28,7 +28,7 @@ Repo and issue evidence:
 - `#76` already established the release-spec structure and trust boundaries for
   store readiness work:
   [docs/GOOGLE_PLAY_STORE_READINESS_SPEC.md](/Users/kenleren/Private/Ken/MyArtCollection/docs/GOOGLE_PLAY_STORE_READINESS_SPEC.md).
-- `#78` accepted the canonical human-facing brand string `My Art Collection`
+- `#78` accepted the canonical human-facing brand string `Archivale`
   for install and in-app surfaces. Review evidence also recorded that iOS
   runtime proof depended on the deployment-target fix in `#82`.
 - `#82` has a pushed compatibility fix at commit `1f8185a` on branch
@@ -37,7 +37,7 @@ Repo and issue evidence:
   branch still needs independent review before it should be treated as a
   completed Apple readiness prerequisite.
 - iOS project metadata today:
-  - display name is `My Art Collection`
+  - display name is `Archivale`
     ([ios/Runner/Info.plist](/Users/kenleren/Private/Ken/MyArtCollection/ios/Runner/Info.plist:10));
   - bundle id is `com.kenleren.myArtCollection`
     ([ios/Runner.xcodeproj/project.pbxproj](/Users/kenleren/Private/Ken/MyArtCollection/ios/Runner.xcodeproj/project.pbxproj:386));
@@ -62,7 +62,7 @@ Repo and issue evidence:
   `pt`, and `sv`
   ([lib/l10n](/Users/kenleren/Private/Ken/MyArtCollection/lib/l10n)).
 - Brand drift still exists in localizations and Flutter metadata: `MaterialApp`
-  title and ARB `appTitle` remain `MyArtCollection`
+  title and ARB `appTitle` remain `Archivale`
   ([lib/app/app.dart](/Users/kenleren/Private/Ken/MyArtCollection/lib/app/app.dart:29),
   [lib/l10n/app_en.arb](/Users/kenleren/Private/Ken/MyArtCollection/lib/l10n/app_en.arb:3)).
 
@@ -269,7 +269,7 @@ all of them automatically. For first readiness:
   different commercial default is explicitly chosen;
 - do not add localized App Store metadata until privacy-policy URLs, screenshots,
   and copy exist for that language;
-- fix brand drift before wider localization work so `My Art Collection` remains
+- fix brand drift before wider localization work so `Archivale` remains
   the human-facing name consistently.
 
 ## Blockers and risks
@@ -281,7 +281,7 @@ all of them automatically. For first readiness:
 | No App Store Connect record yet | Prevents actual TestFlight/App Store setup | Human creates record once naming/language/bundle/SKU decisions are approved |
 | No iOS Firebase config files under `ios/` | Good for privacy minimization, but means Firebase-on-iOS is not operationally ready | Keep first iOS lane non-Firebase unless a later task approves broader setup |
 | Privacy label drift from SDK inclusion | Apple answers must include third-party code behavior | Base answers on actual linked SDK usage and Firebase Apple disclosure guidance |
-| Brand drift remains in ARB and Flutter title | Can leak old `MyArtCollection` string into screenshots or metadata | Fix naming drift before final screenshot capture |
+| Brand drift remains in ARB and Flutter title | Can leak old `Archivale` string into screenshots or metadata | Fix naming drift before final screenshot capture |
 
 `#82` review acceptance is the only confirmed hard blocker today. The others
 are scope and truth management risks, not reasons to stop planning.

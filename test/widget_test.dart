@@ -28,12 +28,10 @@ void main() {
   testWidgets('intro screen shows brand once and value heading once', (
     WidgetTester tester,
   ) async {
-    await tester.pumpWidget(
-      const MyArtCollectionApp(initialRoute: AppRoutes.splash),
-    );
+    await tester.pumpWidget(const ArchivaleApp(initialRoute: AppRoutes.splash));
     await pumpReady(tester);
 
-    expect(find.text('MyArtCollection'), findsOneWidget);
+    expect(find.text('Archivale'), findsOneWidget);
     expect(find.text('Private artwork records'), findsOneWidget);
     expect(find.text('AI drafts. You confirm.'), findsOneWidget);
   });
@@ -42,7 +40,7 @@ void main() {
     WidgetTester tester,
   ) async {
     await tester.pumpWidget(
-      const MyArtCollectionApp(initialRoute: AppRoutes.collection),
+      const ArchivaleApp(initialRoute: AppRoutes.collection),
     );
     await pumpReady(tester);
 
@@ -100,10 +98,7 @@ void main() {
 
     for (final entry in expectedLabels.entries) {
       await tester.pumpWidget(
-        MyArtCollectionApp(
-          initialRoute: AppRoutes.collection,
-          locale: entry.key,
-        ),
+        ArchivaleApp(initialRoute: AppRoutes.collection, locale: entry.key),
       );
       await pumpReady(tester);
 
@@ -119,7 +114,7 @@ void main() {
     WidgetTester tester,
   ) async {
     await tester.pumpWidget(
-      const MyArtCollectionApp(initialRoute: AppRoutes.collection),
+      const ArchivaleApp(initialRoute: AppRoutes.collection),
     );
     await pumpReady(tester);
 
@@ -176,7 +171,7 @@ void main() {
     });
 
     await tester.pumpWidget(
-      MyArtCollectionApp(
+      ArchivaleApp(
         initialRoute: AppRoutes.import,
         dependencies: fixture.dependencies,
       ),
@@ -213,7 +208,7 @@ void main() {
     );
 
     await tester.pumpWidget(
-      MyArtCollectionApp(
+      ArchivaleApp(
         initialRoute: AppRoutes.import,
         dependencies: fixture.dependenciesWithPicker(
           _SingleImagePicker(sourceImage!),
@@ -269,7 +264,7 @@ void main() {
     });
 
     await tester.pumpWidget(
-      MyArtCollectionApp(
+      ArchivaleApp(
         initialRoute: AppRoutes.collection,
         dependencies: fixture.dependencies,
       ),
@@ -316,7 +311,7 @@ void main() {
     expect(existingRecordsRoute, AppRoutes.collection);
 
     await tester.pumpWidget(
-      MyArtCollectionApp(
+      ArchivaleApp(
         initialRoute: existingRecordsRoute!,
         dependencies: fixture.dependencies,
       ),
@@ -352,7 +347,7 @@ void main() {
     });
 
     await tester.pumpWidget(
-      MyArtCollectionApp(
+      ArchivaleApp(
         initialRoute: AppRoutes.collection,
         dependencies: fixture.dependencies,
       ),
@@ -426,7 +421,7 @@ void main() {
     });
 
     await tester.pumpWidget(
-      MyArtCollectionApp(
+      ArchivaleApp(
         initialRoute: AppRoutes.artworkDraft('neutral-loading-draft'),
         dependencies: fixture.dependencies,
       ),
@@ -477,7 +472,7 @@ void main() {
     });
 
     await tester.pumpWidget(
-      MyArtCollectionApp(
+      ArchivaleApp(
         initialRoute: AppRoutes.collection,
         dependencies: fixture.dependencies,
       ),
@@ -525,7 +520,7 @@ void main() {
     );
 
     await tester.pumpWidget(
-      MyArtCollectionApp(
+      ArchivaleApp(
         initialRoute: AppRoutes.import,
         dependencies: fixture.dependenciesWithPicker(
           _SingleImagePicker(sourceImage!),
@@ -603,7 +598,7 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump();
     await tester.pumpWidget(
-      MyArtCollectionApp(
+      ArchivaleApp(
         initialRoute: AppRoutes.collectionIncomplete,
         dependencies: fixture.dependencies,
       ),
@@ -642,7 +637,7 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump();
     await tester.pumpWidget(
-      MyArtCollectionApp(
+      ArchivaleApp(
         initialRoute: AppRoutes.collectionIncomplete,
         dependencies: fixture.dependencies,
       ),
@@ -681,7 +676,7 @@ void main() {
     });
 
     await tester.pumpWidget(
-      MyArtCollectionApp(
+      ArchivaleApp(
         initialRoute: AppRoutes.collectionIncomplete,
         dependencies: fixture.dependencies,
       ),
@@ -735,7 +730,7 @@ void main() {
       });
 
       await tester.pumpWidget(
-        MyArtCollectionApp(
+        ArchivaleApp(
           initialRoute: AppRoutes.collection,
           dependencies: fixture.dependencies,
         ),
@@ -808,7 +803,7 @@ void main() {
       await tester.pumpWidget(const SizedBox.shrink());
       await tester.pump();
       await tester.pumpWidget(
-        MyArtCollectionApp(
+        ArchivaleApp(
           initialRoute: AppRoutes.collection,
           dependencies: fixture.dependencies,
         ),
@@ -856,7 +851,7 @@ void main() {
     });
 
     await tester.pumpWidget(
-      MyArtCollectionApp(
+      ArchivaleApp(
         initialRoute: AppRoutes.collectionIncomplete,
         dependencies: fixture.dependencies,
       ),
@@ -904,7 +899,7 @@ void main() {
     });
 
     await tester.pumpWidget(
-      MyArtCollectionApp(
+      ArchivaleApp(
         initialRoute: AppRoutes.artworkDraft('manual-edit'),
         dependencies: fixture.dependencies,
       ),
@@ -1013,7 +1008,7 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump();
     await tester.pumpWidget(
-      MyArtCollectionApp(
+      ArchivaleApp(
         initialRoute: AppRoutes.collection,
         dependencies: fixture.dependencies,
       ),
@@ -1092,7 +1087,7 @@ void main() {
       });
 
       await tester.pumpWidget(
-        MyArtCollectionApp(
+        ArchivaleApp(
           initialRoute: AppRoutes.artworkDetails('structured-money'),
           dependencies: fixture.dependencies,
         ),
@@ -1149,7 +1144,7 @@ void main() {
     });
 
     await tester.pumpWidget(
-      MyArtCollectionApp(
+      ArchivaleApp(
         initialRoute: AppRoutes.artworkDraft('research-draft'),
         dependencies: fixture.dependencies,
       ),
@@ -1185,7 +1180,7 @@ void main() {
     });
 
     await tester.pumpWidget(
-      MyArtCollectionApp(
+      ArchivaleApp(
         initialRoute: AppRoutes.artworkDraft('research-draft'),
         dependencies: fixture.dependenciesWithFlags(
           featureFlags: const AppFeatureFlags(onlineResearchEnabled: true),
@@ -1303,7 +1298,7 @@ void main() {
     });
 
     await tester.pumpWidget(
-      MyArtCollectionApp(
+      ArchivaleApp(
         initialRoute: AppRoutes.artworkDraft('no-comparable-draft'),
         dependencies: fixture.dependencies,
       ),
@@ -1386,7 +1381,7 @@ void main() {
     });
 
     await tester.pumpWidget(
-      MyArtCollectionApp(
+      ArchivaleApp(
         initialRoute: AppRoutes.artworkDraft('auction-comparable-draft'),
         dependencies: fixture.dependencies,
       ),
@@ -1466,7 +1461,7 @@ void main() {
     });
 
     await tester.pumpWidget(
-      MyArtCollectionApp(
+      ArchivaleApp(
         initialRoute: AppRoutes.artworkDraft('unsafe-comparable-draft'),
         dependencies: fixture.dependencies,
       ),
@@ -1492,7 +1487,7 @@ void main() {
     WidgetTester tester,
   ) async {
     for (final route in [AppRoutes.collectionSettings, AppRoutes.settings]) {
-      await tester.pumpWidget(MyArtCollectionApp(initialRoute: route));
+      await tester.pumpWidget(ArchivaleApp(initialRoute: route));
       await pumpReady(tester);
 
       expect(find.text('Settings'), findsWidgets);

@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 368 128" role="img" aria-labelledby="title desc">
+  <title id="title">Archivale: Art Records logo</title>
+  <desc id="desc">A framed archival A mark beside the Archivale wordmark.</desc>
+  <defs>
+    <linearGradient id="gold" x1="16" y1="14" x2="118" y2="116" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#f0d99b"/>
+      <stop offset=".5" stop-color="#c8a15a"/>
+      <stop offset="1" stop-color="#8d6a35"/>
+    </linearGradient>
+  </defs>
+
+  <g class="mark">
+    <rect x="11" y="11" width="106" height="106" rx="24" fill="#07110f"/>
+    <path d="M37 22 H91 L96 28 H106 V41 L112 46 V82 L106 87 V100 H96 L91 106 H37 L32 100 H22 V87 L16 82 V46 L22 41 V28 H32 Z" fill="none" stroke="url(#gold)" stroke-width="3"/>
+    <path d="M42 30 H86 L91 36 H98 V44 L104 49 V79 L98 84 V92 H91 L86 98 H42 L37 92 H30 V84 L24 79 V49 L30 44 V36 H37 Z" fill="none" stroke="#ecd7a4" stroke-opacity=".72" stroke-width="1.7"/>
+    <path d="M49 86 L64 40 L79 86 M55 69 H73" fill="none" stroke="#f5ead2" stroke-width="5.7" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M64 30 V41 M64 87 V99 M28 64 H40 M88 64 H100" stroke="#c8a15a" stroke-width="1.8" stroke-linecap="round"/>
+    <path d="M64 72 L68 76 L64 80 L60 76 Z" fill="#c8a15a"/>
+  </g>
+
+  <g class="wordmark">
+    <text x="140" y="65" fill="#fff8ec" font-family="Georgia, 'Times New Roman', serif" font-size="45" letter-spacing=".1">Archivale</text>
+    <path d="M141 81 H211 M309 81 H366" stroke="#c8a15a" stroke-width="1.45" stroke-opacity=".9"/>
+    <path d="M260 76 L266 82 L260 88 L254 82 Z" fill="#c8a15a"/>
+    <text x="218" y="101" fill="#d8c3a0" font-family="Inter, 'Segoe UI', Arial, sans-serif" font-size="15" font-weight="700" letter-spacing="4.2">ART RECORDS</text>
+  </g>
+</svg>

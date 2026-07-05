@@ -12,7 +12,7 @@ Google Play launch blockers into agent-executable work without actually
 publishing the app, submitting a Play release, enabling paid services, or
 touching secrets.
 
-The work is broader than store-copy polish. MyArtCollection needs a bounded
+The work is broader than store-copy polish. Archivale needs a bounded
 submission path for:
 
 - store listing fields and asset dependencies,
@@ -249,7 +249,7 @@ Recommended IA:
 - `/`:
   one-screen plain product explanation and links to privacy/support
 - `/privacy`:
-  privacy policy for MyArtCollection Android app
+  privacy policy for Archivale Android app
 - `/support`:
   support email, supported platform, beta/public issue reporting guidance
 - `/updates`:

@@ -1,7 +1,7 @@
-# MyArtCollection Static Website
+# Archivale Static Website
 
 This directory contains the repo-managed static website surface for
-`myartcollection.app`.
+`archivale.app`.
 
 ## Scope
 
@@ -19,8 +19,9 @@ public-safe update content ready to publish.
 
 - Static HTML and CSS only.
 - No deploy, DNS change, Firebase Hosting mutation, or external publication.
-- No analytics, cookies, trackers, JavaScript frameworks, forms, or backend.
-- Support uses `mailto:ken.leren@icloud.com`.
+- No analytics, cookies, trackers, JavaScript frameworks, or backend form
+  endpoint.
+- Support uses a static form that opens the user's mail client.
 
 ## Copy posture
 
@@ -30,7 +31,7 @@ real pricing page.
 
 Guardrails used here:
 
-- MyArtCollection is a private art record tool for serious hobby collectors.
+- Archivale is a private art record tool for serious hobby collectors.
 - The product must not imply authenticity determination, certified provenance,
   appraisal certainty, official insurance approval, or guaranteed attribution.
 - Backup, reports, exports, and AI-assisted behavior should only be described in
@@ -111,7 +112,7 @@ Then open the local URL printed by the emulator and confirm the same public rout
 Publishing remains separate from repo config work and needs human-owned Firebase Console and deployment review:
 
 1. Select the correct Firebase project in the local CLI.
-2. Attach the `myartcollection.app` custom domain in Firebase Hosting.
+2. Attach the `archivale.app` custom domain in Firebase Hosting.
 3. Complete the DNS verification and certificate issuance steps in Firebase Console.
 4. Run a live hosting smoke check after the site is attached.
 5. Get deployment-manager review before any real publish or deploy.

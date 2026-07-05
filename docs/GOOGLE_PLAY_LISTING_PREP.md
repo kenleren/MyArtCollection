@@ -6,7 +6,7 @@ Scheduling evidence: https://github.com/kenleren/MyArtCollection/issues/53#issue
 
 ## Problem statement
 
-Prepare a decision-ready Google Play listing package for MyArtCollection before
+Prepare a decision-ready Google Play listing package for Archivale before
 beta or public distribution. The listing must improve install conversion
 without making trust, privacy, AI, authenticity, appraisal, or policy claims
 that the product cannot support.
@@ -87,9 +87,9 @@ that the product cannot support.
 
 | Decision | Option | Pros | Risks | Recommendation |
 | --- | --- | --- | --- | --- |
-| App title | `MyArtCollection` | Clean brand | Too generic for first-glance understanding | No |
-| App title | `MyArtCollection: Art Records` | Brand plus clear function inside 30 chars | Slightly less elegant brand presentation | Yes |
-| App title | `MyArtCollection: Art Inventory` | Strong search intent | "Inventory" can read generic or household-focused | Backup option |
+| App title | `Archivale` | Clean, distinctive brand | Needs a descriptor for first-glance store understanding | No |
+| App title | `Archivale: Art Records` | Brand plus clear function inside 30 chars | Slightly less elegant brand presentation | Yes |
+| App title | `Archivale: Art Inventory` | Strong search intent | "Inventory" can read generic or household-focused | Backup option |
 | Category | `Art & Design` | Best matches art-specific discovery and collector intent | Slightly less obviously utilitarian | Yes |
 | Category | `Productivity` | Signals utility and organization | Loses art-specific relevance | No |
 | Listing emphasis | AI-first | Curiosity and demos | Attracts appraisal / identification expectations | No |
@@ -104,11 +104,11 @@ generic home-inventory language rather than art-specific record language.
 
 Recommended:
 
-- `MyArtCollection: Art Records`
+- `Archivale: Art Records`
 
 Fallback:
 
-- `MyArtCollection: Art Inventory`
+- `Archivale: Art Inventory`
 
 Rule:
 
@@ -134,7 +134,7 @@ Recommended draft:
 ```text
 Keep your artwork records private, organized, and easier to trust.
 
-MyArtCollection helps serious hobby collectors turn photos, receipts, certificates, appraisals, and notes into clean artwork records without building a spreadsheet or hiring a registrar.
+Archivale helps serious hobby collectors turn photos, receipts, certificates, appraisals, and notes into clean artwork records without building a spreadsheet or hiring a registrar.
 
 How it works:
 - Add an artwork from a photo or import
@@ -152,7 +152,7 @@ Trust and privacy:
 - Supporting documents help document a record, but do not prove authenticity.
 - Your records stay on your device by default.
 
-Use MyArtCollection to build a calmer, cleaner record of your collection and keep your paperwork close to the artwork it supports.
+Use Archivale to build a calmer, cleaner record of your collection and keep your paperwork close to the artwork it supports.
 ```
 
 Release note for this copy:
@@ -455,7 +455,7 @@ Trust-claim parity rule:
 
 - A final title, short description, and full description exist and fit Play
   limits.
-- The listing clearly describes MyArtCollection as a private art-record app.
+- The listing clearly describes Archivale as a private art-record app.
 - The listing does not claim authenticity, appraisal certainty, unsupported AI,
   unsupported export/PDF/report capability, or stronger privacy than
   implemented.
@@ -509,7 +509,7 @@ Trust-claim parity rule:
 ## Open decisions for humans
 
 1. Final title choice:
-   `MyArtCollection: Art Records` vs `MyArtCollection: Art Inventory`.
+   `Archivale: Art Records` vs `Archivale: Art Inventory`.
 2. Whether any AI, backup, export, or PDF wording becomes eligible for the
    first public-facing listing, based on the exact shipped beta scope.
 3. Whether the first experiment should test title wording or screenshot order.

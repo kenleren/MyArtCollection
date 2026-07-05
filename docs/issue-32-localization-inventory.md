@@ -66,7 +66,7 @@ languages would recreate the mixed-language state that #32 is meant to remove.
 
 ### Intentionally English or non-localized tokens
 
-- `MyArtCollection` brand
+- `Archivale` brand
 - `AI`
 - `Google`, `Google Drive`
 - `PDF`, `ZIP`, `ISO`

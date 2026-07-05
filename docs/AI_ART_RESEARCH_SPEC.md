@@ -2,7 +2,7 @@
 
 ## Problem
 
-MyArtCollection needs to move from fixture-backed AI language to a real
+Archivale needs to move from fixture-backed AI language to a real
 AI-assisted intake loop. The feature should help a collector identify candidate
 artist, title, year, medium, subject, and source-backed comparable value signals
 from a photo and optional local user notes, while preserving the product rule
@@ -34,7 +34,7 @@ The user goal is not automatic authentication or appraisal. The useful job is:
 - On-device AI cannot search live websites by itself. Internet research needs a
   network service or API layer.
 - A user's consumer Google AI Pro / Gemini subscription should not be treated
-  as the app's compute entitlement for MyArtCollection. It raises access or
+  as the app's compute entitlement for Archivale. It raises access or
   usage limits inside Google's Gemini surfaces, while Gemini API usage is
   managed through API keys, tiers, billing, and Google Cloud projects. Treat
   bring-your-own-key as a possible advanced/admin option later, not the default

@@ -1,6 +1,6 @@
 # Mobile Information Architecture
 
-This document defines the MVP mobile information architecture for MyArtCollection. It stays at the product and navigation level only: routes, object model, entry and exit points, record states, empty/error/offline behavior, and the open product decisions still under discussion.
+This document defines the MVP mobile information architecture for Archivale. It stays at the product and navigation level only: routes, object model, entry and exit points, record states, empty/error/offline behavior, and the open product decisions still under discussion.
 
 ## Design Principles
 

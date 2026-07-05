@@ -1,6 +1,6 @@
 # Artwork Record Schema
 
-This document defines the MVP artwork record model, attachment model, provenance labels, validation rules, and export/report mappings for MyArtCollection.
+This document defines the MVP artwork record model, attachment model, provenance labels, validation rules, and export/report mappings for Archivale.
 
 ## Scope And Rules
 

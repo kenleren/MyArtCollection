@@ -9,7 +9,7 @@ class AppLocalizationsPt extends AppLocalizations {
   AppLocalizationsPt([String locale = 'pt']) : super(locale);
 
   @override
-  String get appTitle => 'MyArtCollection';
+  String get appTitle => 'Archivale';
 
   @override
   String get collectionTab => 'Colecao';

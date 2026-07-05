@@ -1,7 +1,7 @@
 # Firebase App Distribution
 
 Firebase App Distribution is the beta delivery layer for Android tester APKs.
-It does not change MyArtCollection's local-first artwork storage model and does
+It does not change Archivale's local-first artwork storage model and does
 not imply Firebase Auth, Firestore, Storage, Analytics, Performance Monitoring,
 or other Firebase data products. Crashlytics is allowed only for Android
 internal beta crash triage when explicitly enabled as described below.

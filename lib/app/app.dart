@@ -6,8 +6,8 @@ import 'app_dependencies.dart';
 import 'app_router.dart';
 import 'app_routes.dart';
 
-class MyArtCollectionApp extends StatelessWidget {
-  const MyArtCollectionApp({
+class ArchivaleApp extends StatelessWidget {
+  const ArchivaleApp({
     super.key,
     this.initialRoute = AppRoutes.splash,
     this.locale,
@@ -26,7 +26,7 @@ class MyArtCollectionApp extends StatelessWidget {
     );
 
     final app = MaterialApp(
-      title: 'MyArtCollection',
+      title: 'Archivale',
       debugShowCheckedModeBanner: false,
       localizationsDelegates: const [
         AppLocalizations.delegate,

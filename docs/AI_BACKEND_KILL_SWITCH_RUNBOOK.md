@@ -7,7 +7,7 @@ Related blockers: [#48](https://github.com/kenleren/MyArtCollection/issues/48), 
 
 ## Problem statement
 
-MyArtCollection needs a decision-ready, operator-usable runbook for stopping
+Archivale needs a decision-ready, operator-usable runbook for stopping
 paid AI/backend traffic before any broker rollout. A client-only switch is not
 enough because stale builds can still reach a server endpoint, and provider
 spend can continue after a UI flag is turned off.

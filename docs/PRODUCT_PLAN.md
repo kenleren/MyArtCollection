@@ -4,7 +4,7 @@
 
 Collectors with meaningful home collections often have records scattered across photos, receipts, PDFs, emails, notes, and memory. The pain is not just manual cataloging. It is the uncertainty of not knowing what is documented, where documents live, and whether an insurance or estate conversation could be supported quickly.
 
-MyArtCollection should reduce the initial friction from:
+Archivale should reduce the initial friction from:
 
 > I need to manually inventory my art collection.
 

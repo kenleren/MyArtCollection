@@ -10,7 +10,7 @@ Current implementation evidence: [issue comment](https://github.com/kenleren/MyA
 
 ## Problem statement
 
-MyArtCollection needs a hard decision gate before any paid AI or backend path is
+Archivale needs a hard decision gate before any paid AI or backend path is
 implemented. The repo already wants a thin server-side AI broker, but #42
 exists because paid backend work changes privacy, abuse, deployment, and cost
 risk immediately. The owner preference after the first review pass is to use
@@ -448,7 +448,7 @@ Before a paid beta is exposed to any tester, #49 must define and verify:
 
 ### Explicit answer: can a user's Gemini Pro / AI Pro subscription be used by the app?
 
-No, not as the default architecture for MyArtCollection.
+No, not as the default architecture for Archivale.
 
 Evidence-backed reason:
 
@@ -467,7 +467,7 @@ Inference from those sources:
 
 ### Explicit answer: can a user's ChatGPT subscription be used by the app?
 
-No, not as the default architecture for MyArtCollection.
+No, not as the default architecture for Archivale.
 
 Evidence-backed reason:
 
