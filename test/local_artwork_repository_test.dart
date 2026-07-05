@@ -758,6 +758,57 @@ void main() {
       );
     },
   );
+
+  test('rejects derivative attachments with missing sources', () async {
+    final derivative = _attachment(
+      id: 'attachment-derivative',
+      artworkId: 'artwork-001',
+      derivedFromAttachmentId: 'attachment-missing',
+      transformSummary: 'crop=4:3',
+      importedAt: DateTime.utc(2026, 7, 4, 10),
+    );
+
+    await expectLater(
+      repository.addAttachment(derivative),
+      throwsA(
+        isA<AttachmentLineageException>().having(
+          (error) => error.failure,
+          'failure',
+          AttachmentLineageFailure.missingSource,
+        ),
+      ),
+    );
+  });
+
+  test('rejects derivative attachments that point across artworks', () async {
+    await repository.create(_record('artwork-002', title: 'Secondary artwork'));
+    await repository.addAttachment(
+      _attachment(
+        id: 'attachment-source',
+        artworkId: 'artwork-002',
+        importedAt: DateTime.utc(2026, 7, 4, 9),
+      ),
+    );
+
+    final derivative = _attachment(
+      id: 'attachment-derivative',
+      artworkId: 'artwork-001',
+      derivedFromAttachmentId: 'attachment-source',
+      transformSummary: 'rotate=90deg',
+      importedAt: DateTime.utc(2026, 7, 4, 10),
+    );
+
+    await expectLater(
+      repository.addAttachment(derivative),
+      throwsA(
+        isA<AttachmentLineageException>().having(
+          (error) => error.failure,
+          'failure',
+          AttachmentLineageFailure.crossArtworkSource,
+        ),
+      ),
+    );
+  });
 }
 
 ArtworkRecord _record(String id, {required String title}) {
@@ -780,6 +831,29 @@ ArtworkRecord _record(String id, {required String title}) {
         note: 'Leave unknown or enter artist after review.',
       ),
     },
+  );
+}
+
+AttachmentRecord _attachment({
+  required String id,
+  required String artworkId,
+  required DateTime importedAt,
+  String? derivedFromAttachmentId,
+  String? transformSummary,
+}) {
+  return AttachmentRecord(
+    id: id,
+    artworkId: artworkId,
+    type: AttachmentType.photo,
+    fileName: '$id.jpg',
+    mimeType: 'image/jpeg',
+    fileSizeBytes: 3,
+    importedAt: importedAt,
+    source: ArtworkFieldSource.userConfirmed,
+    relativePath: 'artworks/$artworkId/attachments/$id/payload.jpg',
+    checksum: 'checksum-$id',
+    derivedFromAttachmentId: derivedFromAttachmentId,
+    transformSummary: transformSummary,
   );
 }
 

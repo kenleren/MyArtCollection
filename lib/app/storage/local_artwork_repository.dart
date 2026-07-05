@@ -21,6 +21,18 @@ class LocalArtworkInsertConflictException implements Exception {
   }
 }
 
+enum AttachmentLineageFailure { missingSource, crossArtworkSource }
+
+class AttachmentLineageException implements Exception {
+  const AttachmentLineageException(this.failure, this.message);
+
+  final AttachmentLineageFailure failure;
+  final String message;
+
+  @override
+  String toString() => message;
+}
+
 class LocalArtworkRepository {
   LocalArtworkRepository._(this._database);
   LocalArtworkRepository.forDatabase(this._database);
@@ -441,11 +453,14 @@ class LocalArtworkRepository {
   }
 
   Future<void> addAttachment(AttachmentRecord attachment) async {
-    await _database.insert(
-      'attachments',
-      _attachmentRow(attachment),
-      conflictAlgorithm: ConflictAlgorithm.replace,
-    );
+    await _database.transaction((txn) async {
+      await _validateAttachmentLineage(txn, attachment);
+      await txn.insert(
+        'attachments',
+        _attachmentRow(attachment),
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+    });
   }
 
   Future<List<AttachmentRecord>> attachmentsForArtwork(String artworkId) async {
@@ -616,6 +631,41 @@ class LocalArtworkRepository {
       'extraction_summary': attachment.extractionSummary,
       'notes': attachment.notes,
     };
+  }
+
+  Future<void> _validateAttachmentLineage(
+    Transaction txn,
+    AttachmentRecord attachment,
+  ) async {
+    final sourceAttachmentId = attachment.derivedFromAttachmentId;
+    if (sourceAttachmentId == null) {
+      return;
+    }
+
+    final sourceRows = await txn.query(
+      'attachments',
+      columns: ['artwork_id'],
+      where: 'attachment_id = ?',
+      whereArgs: [sourceAttachmentId],
+      limit: 1,
+    );
+
+    if (sourceRows.isEmpty) {
+      throw AttachmentLineageException(
+        AttachmentLineageFailure.missingSource,
+        'Attachment ${attachment.id} cannot derive from missing attachment '
+        '$sourceAttachmentId.',
+      );
+    }
+
+    final sourceArtworkId = sourceRows.single['artwork_id'] as String;
+    if (sourceArtworkId != attachment.artworkId) {
+      throw AttachmentLineageException(
+        AttachmentLineageFailure.crossArtworkSource,
+        'Attachment ${attachment.id} can only derive from an attachment in '
+        'the same artwork.',
+      );
+    }
   }
 
   Map<String, Object?> _aiDraftJobRow(AiDraftJob job) {

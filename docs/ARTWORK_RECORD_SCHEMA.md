@@ -130,7 +130,9 @@ Attachment rules:
 - Edited photo derivatives are new photo attachments, not overwrites. They may
   store `derived_from_attachment_id` plus a short `transform_summary` so the
   app can show exactly which original capture they came from and what local
-  edits were applied.
+  edits were applied. The storage write path must verify that the source
+  attachment exists and belongs to the same artwork before saving the
+  derivative row.
 - Receipt, certificate, appraisal, auction record, and provenance note attachments use `attachment_role: supporting_document`.
 - Legacy attachment rows without roles are compatible: the photo row referenced
   by `primary_image_attachment_id` is primary, other photo rows are supporting

@@ -163,6 +163,8 @@ Rules:
 - Edited photos must be stored as new attachment rows with lineage metadata
   back to the original capture; do not overwrite the original attachment row or
   reuse its file path for the edited derivative.
+- The attachment write path must reject derivative rows when the source
+  attachment is missing or belongs to a different `artwork_id`.
 - A file that arrives with an unrecognized MIME type should be rejected for the prototype unless a later spec explicitly widens support.
 
 Generated PDFs and ZIP exports are not user imports.
