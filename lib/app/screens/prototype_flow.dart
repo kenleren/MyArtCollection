@@ -5,6 +5,7 @@ import '../../l10n/app_localizations.dart';
 import '../app_dependencies.dart';
 import '../app_routes.dart';
 import '../intake/artwork_intake_service.dart';
+import '../intake/supporting_attachment_service.dart';
 import '../localization/app_currency_formatter.dart';
 import '../prototype/prototype_artwork.dart';
 import '../research/online_research_service.dart';
@@ -528,6 +529,283 @@ class _CaptureImportScreenState extends State<CaptureImportScreen> {
   }
 }
 
+class SupportingPhotoIntakeScreen extends StatefulWidget {
+  const SupportingPhotoIntakeScreen({
+    super.key,
+    required this.artworkId,
+    required this.mode,
+  });
+
+  final String artworkId;
+  final String mode;
+
+  @override
+  State<SupportingPhotoIntakeScreen> createState() =>
+      _SupportingPhotoIntakeScreenState();
+}
+
+class _SupportingPhotoIntakeScreenState
+    extends State<SupportingPhotoIntakeScreen> {
+  Future<ArtworkRecord?>? _recordFuture;
+  SupportingAttachmentResult? _result;
+  ArtworkIntakeException? _failure;
+  bool _isBusy = false;
+
+  bool get _isImport => widget.mode == 'import';
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final dependencies = _maybeDependencies(context);
+    _recordFuture ??= dependencies == null
+        ? Future<ArtworkRecord?>.value(null)
+        : dependencies.artworkRepository.get(widget.artworkId);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_maybeDependencies(context) == null) {
+      return _StaticSupportingPhotoIntakeScreen(
+        artworkId: widget.artworkId,
+        mode: widget.mode,
+      );
+    }
+
+    return FutureBuilder<ArtworkRecord?>(
+      future: _recordFuture,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState != ConnectionState.done) {
+          return const PrototypeScreenFrame(
+            title: 'Supporting photo',
+            subtitle: 'Loading local record',
+            child: Center(child: CircularProgressIndicator()),
+          );
+        }
+
+        final record = snapshot.data;
+        if (record == null) {
+          return const PrototypeScreenFrame(
+            title: 'Supporting photo',
+            subtitle: 'Local record unavailable',
+            child: _StatusPanel(
+              icon: Icons.error_outline,
+              title: 'Record not found',
+              body:
+                  'Return to Collection and reopen the artwork before adding supporting records.',
+            ),
+          );
+        }
+
+        final title =
+            record.field(ArtworkFieldKeys.title)?.value ?? 'Untitled artwork';
+        return PrototypeScreenFrame(
+          title: _isImport
+              ? 'Import supporting photo'
+              : 'Take supporting photo',
+          subtitle: title,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const _ProgressStrip(activeIndex: 2),
+              const SizedBox(height: 16),
+              _SupportingPhotoStatePanel(
+                isImport: _isImport,
+                isBusy: _isBusy,
+                result: _result,
+                failure: _failure,
+                attachmentStore: AppDependencyScope.of(context).attachmentStore,
+              ),
+              const SizedBox(height: 12),
+              if (_result == null) ...[
+                const _EvidencePhotoGuide(isFollowUp: true),
+                const SizedBox(height: 12),
+                const _StatusPanel(
+                  icon: Icons.lock_outline,
+                  title: 'Artwork-scoped save',
+                  body:
+                      'This photo is saved as a supporting record for the current artwork. It does not replace the primary artwork image.',
+                ),
+                const SizedBox(height: 20),
+                _ActionButton(
+                  icon: _isImport
+                      ? Icons.photo_library_outlined
+                      : Icons.photo_camera_outlined,
+                  label: _isImport
+                      ? 'Choose supporting photo'
+                      : 'Open camera for supporting photo',
+                  onPressed: _isBusy ? null : _runIntake,
+                ),
+              ] else ...[
+                PrimaryActionButton(
+                  icon: Icons.folder_copy_outlined,
+                  label: 'View supporting records',
+                  routeName: AppRoutes.artworkDocuments(widget.artworkId),
+                ),
+                const SizedBox(height: 12),
+                SecondaryActionButton(
+                  icon: Icons.picture_as_pdf_outlined,
+                  label: 'Report preview',
+                  routeName: AppRoutes.artworkReportPreview(widget.artworkId),
+                ),
+              ],
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _runIntake() async {
+    setState(() {
+      _isBusy = true;
+      _failure = null;
+    });
+
+    try {
+      final service = AppDependencyScope.of(
+        context,
+      ).createSupportingAttachmentService();
+      final result = _isImport
+          ? await service.importSupportingPhoto(widget.artworkId)
+          : await service.captureSupportingPhoto(widget.artworkId);
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _result = result;
+        _failure = null;
+      });
+    } on ArtworkIntakeException catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() => _failure = error);
+    } finally {
+      if (mounted) {
+        setState(() => _isBusy = false);
+      }
+    }
+  }
+}
+
+class _SupportingPhotoStatePanel extends StatelessWidget {
+  const _SupportingPhotoStatePanel({
+    required this.isImport,
+    required this.isBusy,
+    required this.result,
+    required this.failure,
+    required this.attachmentStore,
+  });
+
+  final bool isImport;
+  final bool isBusy;
+  final SupportingAttachmentResult? result;
+  final ArtworkIntakeException? failure;
+  final LocalAttachmentStore attachmentStore;
+
+  @override
+  Widget build(BuildContext context) {
+    if (isBusy) {
+      return const _StatusPanel(
+        icon: Icons.hourglass_top,
+        title: 'Opening supporting record intake',
+        body:
+            'Use the system picker or camera. The app stores only your chosen file.',
+      );
+    }
+
+    final result = this.result;
+    if (result != null) {
+      return Column(
+        children: [
+          _StatusPanel(
+            icon: isImport
+                ? Icons.file_upload_outlined
+                : Icons.camera_alt_outlined,
+            title: isImport
+                ? 'Supporting photo imported'
+                : 'Supporting photo captured',
+            body:
+                'Saved as a supporting record. The primary artwork image is unchanged.',
+          ),
+          const SizedBox(height: 12),
+          _PrimaryArtworkImagePreview(
+            file: attachmentStore.fileFor(result.attachment),
+            semanticLabel: 'Supporting record photo',
+            unavailableLabel: 'Supporting photo preview unavailable',
+          ),
+        ],
+      );
+    }
+
+    final failure = this.failure;
+    if (failure != null) {
+      return _StatusPanel(
+        icon: failure.failure == ArtworkIntakeFailure.cancelled
+            ? Icons.cancel_outlined
+            : Icons.error_outline,
+        title: failure.failure == ArtworkIntakeFailure.cancelled
+            ? 'Supporting photo cancelled'
+            : 'Supporting photo needs attention',
+        body:
+            '${failure.message} Retry when ready; no broad photo-library access is required for import.',
+      );
+    }
+
+    return _StatusPanel(
+      icon: isImport
+          ? Icons.photo_library_outlined
+          : Icons.photo_camera_outlined,
+      title: isImport ? 'Use system photo picker' : 'Use camera',
+      body:
+          'Add a label, signature, frame, reverse-side, or condition photo as supporting record evidence.',
+    );
+  }
+}
+
+class _StaticSupportingPhotoIntakeScreen extends StatelessWidget {
+  const _StaticSupportingPhotoIntakeScreen({
+    required this.artworkId,
+    required this.mode,
+  });
+
+  final String artworkId;
+  final String mode;
+
+  @override
+  Widget build(BuildContext context) {
+    final isImport = mode == 'import';
+
+    return PrototypeScreenFrame(
+      title: isImport ? 'Import supporting photo' : 'Take supporting photo',
+      subtitle: 'Supporting record photo',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const _ProgressStrip(activeIndex: 2),
+          const SizedBox(height: 16),
+          const _EvidencePhotoGuide(isFollowUp: true),
+          const SizedBox(height: 12),
+          _StatusPanel(
+            icon: isImport ? Icons.file_upload_outlined : Icons.camera_alt,
+            title: isImport
+                ? 'Supporting photo imported'
+                : 'Supporting photo captured',
+            body:
+                'Saved as a supporting record. The primary artwork image is unchanged.',
+          ),
+          const SizedBox(height: 20),
+          PrimaryActionButton(
+            icon: Icons.folder_copy_outlined,
+            label: 'View supporting records',
+            routeName: AppRoutes.artworkDocuments(artworkId),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _StaticCaptureImportScreen extends StatelessWidget {
   const _StaticCaptureImportScreen({required this.mode});
 
@@ -670,6 +948,14 @@ class _DraftReviewScreenState extends State<DraftReviewScreen> {
             icon: Icons.edit_note_outlined,
             label: 'Edit record fields',
             routeName: AppRoutes.artworkEdit(widget.artwork.id),
+          ),
+          const SizedBox(height: 12),
+          SecondaryActionButton(
+            icon: Icons.add_photo_alternate_outlined,
+            label: 'Add supporting photo',
+            routeName: AppRoutes.artworkSupportingPhotoImport(
+              widget.artwork.id,
+            ),
           ),
           const SizedBox(height: 12),
           PrimaryActionButton(
@@ -854,8 +1140,8 @@ class _ArtworkDetailsScreenState extends State<ArtworkDetailsScreen> {
           ),
           const SizedBox(height: 12),
           PrimaryActionButton(
-            icon: Icons.attach_file,
-            label: 'Attach receipt placeholder',
+            icon: Icons.add_photo_alternate_outlined,
+            label: 'Add supporting records',
             routeName: AppRoutes.artworkDocuments(artwork.id),
           ),
           const SizedBox(height: 12),
@@ -1249,18 +1535,39 @@ class DocumentsScreen extends StatelessWidget {
           const _Notice(
             icon: Icons.info_outline,
             text:
-                'These documents support the record, but do not prove authenticity.',
+                'Supporting photos and documents enrich the record, but do not prove authenticity.',
           ),
           const SizedBox(height: 16),
-          for (final document in artwork.documents) ...[
-            DocumentTile(document: document),
-            const SizedBox(height: 10),
-          ],
+          if (artwork.documents.isEmpty)
+            const _StatusPanel(
+              icon: Icons.folder_copy_outlined,
+              title: 'No supporting records yet',
+              body:
+                  'Add photos of labels, signatures, backs, frames, condition, receipts, or provenance clues when available.',
+            )
+          else
+            for (final document in artwork.documents) ...[
+              DocumentTile(document: document),
+              const SizedBox(height: 10),
+            ],
+          const SizedBox(height: 12),
+          PrimaryActionButton(
+            icon: Icons.photo_camera_outlined,
+            label: 'Take supporting photo',
+            routeName: AppRoutes.artworkSupportingPhotoCapture(artwork.id),
+          ),
+          const SizedBox(height: 12),
+          SecondaryActionButton(
+            icon: Icons.photo_library_outlined,
+            label: 'Import supporting photo',
+            routeName: AppRoutes.artworkSupportingPhotoImport(artwork.id),
+          ),
+          const SizedBox(height: 12),
           const _StatusPanel(
             icon: Icons.add_circle_outline,
-            title: 'Attach document placeholder',
+            title: 'Receipts and documents',
             body:
-                'Receipt, certificate, appraisal, auction record, or provenance note can be added here later.',
+                'Capture receipts, certificates, auction records, or provenance notes as supporting photos for now. Dedicated document upload will follow.',
           ),
           const SizedBox(height: 12),
           const _StatusPanel(
@@ -2617,6 +2924,8 @@ class _PrimaryArtworkImagePreview extends StatelessWidget {
   const _PrimaryArtworkImagePreview({
     required this.file,
     this.isCompact = false,
+    this.semanticLabel = 'Primary artwork image',
+    this.unavailableLabel = 'Primary image preview unavailable',
   });
 
   static const imageKey = ValueKey('primary-artwork-image-preview');
@@ -2624,6 +2933,8 @@ class _PrimaryArtworkImagePreview extends StatelessWidget {
 
   final File? file;
   final bool isCompact;
+  final String semanticLabel;
+  final String unavailableLabel;
 
   @override
   Widget build(BuildContext context) {
@@ -2645,12 +2956,12 @@ class _PrimaryArtworkImagePreview extends StatelessWidget {
                   file,
                   key: imageKey,
                   fit: BoxFit.cover,
-                  semanticLabel: 'Primary artwork image',
+                  semanticLabel: semanticLabel,
                   errorBuilder: (context, error, stackTrace) {
-                    return const _PrimaryImagePlaceholder();
+                    return _PrimaryImagePlaceholder(label: unavailableLabel);
                   },
                 )
-              : const _PrimaryImagePlaceholder(),
+              : _PrimaryImagePlaceholder(label: unavailableLabel),
         ),
       ),
     );
@@ -2658,7 +2969,9 @@ class _PrimaryArtworkImagePreview extends StatelessWidget {
 }
 
 class _PrimaryImagePlaceholder extends StatelessWidget {
-  const _PrimaryImagePlaceholder();
+  const _PrimaryImagePlaceholder({required this.label});
+
+  final String label;
 
   @override
   Widget build(BuildContext context) {
@@ -2677,7 +2990,7 @@ class _PrimaryImagePlaceholder extends StatelessWidget {
             ),
             const SizedBox(height: 8),
             Text(
-              'Primary image preview unavailable',
+              label,
               textAlign: TextAlign.center,
               style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                 color: colorScheme.onSurfaceVariant,
@@ -3080,8 +3393,8 @@ class _CollectionRecordPanel extends StatelessWidget {
           _StatusLine(
             icon: Icons.attach_file,
             text: supportingCount == 0
-                ? 'No supporting documents attached yet.'
-                : '$supportingCount supporting document${supportingCount == 1 ? '' : 's'} attached.',
+                ? 'No supporting records attached yet.'
+                : '$supportingCount supporting record${supportingCount == 1 ? '' : 's'} attached.',
           ),
           _StatusLine(
             icon: incompleteCount == 0
@@ -3318,9 +3631,7 @@ class _LocalArtworkSummary {
   final File? primaryImageFile;
 
   int get supportingAttachmentCount {
-    return attachments
-        .where((attachment) => attachment.type != AttachmentType.photo)
-        .length;
+    return attachments.where(_isSupportingRecordAttachment).length;
   }
 }
 
@@ -3427,9 +3738,11 @@ class _ReportSummary extends StatelessWidget {
             icon: Icons.check_circle_outline,
             text: 'Confirmed fields are included.',
           ),
-          const _StatusLine(
+          _StatusLine(
             icon: Icons.attach_file,
-            text: 'Attached documents are listed as supporting records.',
+            text: artwork.documents.isEmpty
+                ? 'No supporting records are attached yet.'
+                : '${artwork.documents.length} supporting record${artwork.documents.length == 1 ? '' : 's'} listed.',
           ),
           _StatusLine(
             icon: Icons.receipt_long_outlined,
@@ -3639,7 +3952,7 @@ List<_IncompleteItem> _incompleteItems(
   final reviewCount = _fieldsNeedingReview(record).length;
   final missingCount = _missingCoreFields(record).length;
   final supportingCount = attachments
-      .where((attachment) => attachment.type != AttachmentType.photo)
+      .where(_isSupportingRecordAttachment)
       .length;
 
   if (record.recordState != ArtworkRecordState.verifiedByYou ||
@@ -3675,11 +3988,11 @@ List<_IncompleteItem> _incompleteItems(
     items.add(
       _IncompleteItem(
         icon: Icons.attach_file,
-        title: '$title needs supporting documents',
+        title: '$title needs supporting records',
         body: supportingCount == 0
-            ? 'Add a receipt, certificate, appraisal, auction record, or provenance note when available.'
-            : '$supportingCount supporting document${supportingCount == 1 ? '' : 's'} attached; review the document completeness state.',
-        actionLabel: 'Attach documents',
+            ? 'Add a supporting photo, receipt, certificate, appraisal, auction record, or provenance note when available.'
+            : '$supportingCount supporting record${supportingCount == 1 ? '' : 's'} attached; review the supporting-record completeness state.',
+        actionLabel: 'Attach supporting records',
         routeName: AppRoutes.artworkDocuments(record.id),
       ),
     );
@@ -3926,7 +4239,7 @@ PrototypeArtwork prototypeArtworkFromRecord(
       fallback: 'Needs review',
     ),
     documents: attachments
-        .where((attachment) => attachment.type != AttachmentType.photo)
+        .where(_isSupportingRecordAttachment)
         .map(_documentFromAttachment)
         .toList(growable: false),
   );
@@ -4004,9 +4317,16 @@ PrototypeSource _prototypeSource(ArtworkFieldSource source) {
   };
 }
 
+bool _isSupportingRecordAttachment(AttachmentRecord attachment) {
+  return attachment.role == AttachmentRole.supportingPhoto ||
+      attachment.role == AttachmentRole.supportingDocument;
+}
+
 PrototypeDocument _documentFromAttachment(AttachmentRecord attachment) {
   return PrototypeDocument(
-    type: _attachmentTypeLabel(attachment.type),
+    type: attachment.isSupportingPhoto
+        ? 'Supporting photo'
+        : _attachmentTypeLabel(attachment.type),
     fileName: attachment.fileName,
     source: _prototypeSource(attachment.source),
     note: attachment.notes ?? 'Stored as app-private attachment metadata.',

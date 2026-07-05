@@ -6,6 +6,7 @@ import 'import/csv_artwork_import_service.dart';
 import 'import/csv_import_file_picker.dart';
 import 'intake/artwork_image_picker.dart';
 import 'intake/artwork_intake_service.dart';
+import 'intake/supporting_attachment_service.dart';
 import 'research/online_research_service.dart';
 import 'storage/local_artwork_repository.dart';
 import 'storage/local_attachment_store.dart';
@@ -31,6 +32,14 @@ class AppDependencies {
 
   ArtworkIntakeService createIntakeService() {
     return ArtworkIntakeService(
+      picker: imagePicker,
+      repository: artworkRepository,
+      attachmentStore: attachmentStore,
+    );
+  }
+
+  SupportingAttachmentService createSupportingAttachmentService() {
+    return SupportingAttachmentService(
       picker: imagePicker,
       repository: artworkRepository,
       attachmentStore: attachmentStore,

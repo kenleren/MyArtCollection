@@ -102,6 +102,20 @@ class AppRouter {
         settings: settings,
         child: _ArtworkRouteScreen(artworkId: artworkId, suffix: suffix),
       ),
+      'supporting-photo/capture' => _page(
+        settings: settings,
+        child: SupportingPhotoIntakeScreen(
+          artworkId: artworkId,
+          mode: 'capture',
+        ),
+      ),
+      'supporting-photo/import' => _page(
+        settings: settings,
+        child: SupportingPhotoIntakeScreen(
+          artworkId: artworkId,
+          mode: 'import',
+        ),
+      ),
       'report-preview' => _page(
         settings: settings,
         child: _ArtworkRouteScreen(artworkId: artworkId, suffix: suffix),

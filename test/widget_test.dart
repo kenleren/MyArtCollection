@@ -162,6 +162,76 @@ void main() {
     );
   });
 
+  testWidgets('visual evidence captures supporting record mobile states', (
+    WidgetTester tester,
+  ) async {
+    final testDependencies = await tester.runAsync(
+      () async => _LiveDependencyFixture.create(),
+    );
+    final fixture = testDependencies!;
+    addTearDown(() async {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.runAsync(fixture.dispose);
+    });
+
+    await tester.runAsync(() async {
+      await fixture.repository.upsert(
+        _artworkRecord(
+          id: 'supporting-visual',
+          title: 'Supporting Visual Artwork',
+          state: ArtworkRecordState.verifiedByYou,
+          source: ArtworkFieldSource.userConfirmed,
+        ),
+      );
+      await fixture.addPrimaryImage(artworkId: 'supporting-visual');
+      await fixture.addSupportingPhoto(
+        artworkId: 'supporting-visual',
+        fileName: 'supporting-visual-detail.png',
+      );
+    });
+
+    await captureArtifactForApp(
+      tester,
+      routeName: AppRoutes.artworkDocuments('supporting-visual'),
+      dependencies: fixture.dependencies,
+      fileName: 'issue-113-documents-mobile.png',
+      ensureVisibleFinder: find.text(
+        'Import supporting photo',
+        skipOffstage: false,
+      ),
+    );
+    await captureArtifactForApp(
+      tester,
+      routeName: AppRoutes.artworkSupportingPhotoImport('supporting-visual'),
+      dependencies: fixture.dependencies,
+      fileName: 'issue-113-supporting-intake-mobile.png',
+      ensureVisibleFinder: find.text(
+        'Choose supporting photo',
+        skipOffstage: false,
+      ),
+    );
+    await captureArtifactForApp(
+      tester,
+      routeName: AppRoutes.collection,
+      dependencies: fixture.dependencies,
+      fileName: 'issue-113-saved-list-mobile.png',
+      ensureVisibleFinder: find.text(
+        '1 supporting record attached.',
+        skipOffstage: false,
+      ),
+    );
+    await captureArtifactForApp(
+      tester,
+      routeName: AppRoutes.artworkReportPreview('supporting-visual'),
+      dependencies: fixture.dependencies,
+      fileName: 'issue-113-report-preview-mobile.png',
+      ensureVisibleFinder: find.text(
+        '1 supporting record listed.',
+        skipOffstage: false,
+      ),
+    );
+  });
+
   testWidgets('collection shell renders and can open add artwork', (
     WidgetTester tester,
   ) async {
@@ -421,10 +491,10 @@ void main() {
     expect(find.text('Blue Interior Study'), findsWidgets);
     expect(find.text('Record state: Verified by you'), findsOneWidget);
 
-    await tapVisible(tester, find.text('Attach receipt placeholder'));
+    await tapVisible(tester, find.text('Add supporting records'));
     expect(find.text('Documents'), findsWidgets);
     expect(find.text('gallery-receipt-2025.pdf'), findsOneWidget);
-    expect(find.text('Attach document placeholder'), findsOneWidget);
+    expect(find.text('Receipts and documents'), findsOneWidget);
     expect(find.text('Missing-file state'), findsOneWidget);
 
     await tapVisible(
@@ -525,6 +595,133 @@ void main() {
       findsNothing,
     );
   });
+
+  testWidgets(
+    'existing artwork can import supporting photo without replacing primary image',
+    (WidgetTester tester) async {
+      final testDependencies = await tester.runAsync(
+        () async => _LiveDependencyFixture.create(),
+      );
+      final fixture = testDependencies!;
+      addTearDown(() async {
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.runAsync(fixture.dispose);
+      });
+
+      await tester.runAsync(() async {
+        await fixture.repository.upsert(
+          _artworkRecord(
+            id: 'supporting-ui',
+            title: 'Supporting UI Artwork',
+            state: ArtworkRecordState.verifiedByYou,
+            source: ArtworkFieldSource.userConfirmed,
+          ),
+        );
+        await fixture.addPrimaryImage(artworkId: 'supporting-ui');
+      });
+      final supportingSource = await tester.runAsync(
+        () => fixture.writePngSource('signature-detail.png'),
+      );
+
+      await tester.pumpWidget(
+        ArchivaleApp(
+          initialRoute: AppRoutes.artworkDetails('supporting-ui'),
+          dependencies: fixture.dependenciesWithPicker(
+            _SingleImagePicker(supportingSource!),
+          ),
+        ),
+      );
+      await pumpLiveData(tester);
+
+      expect(find.text('Supporting UI Artwork'), findsWidgets);
+
+      await tapVisible(tester, find.text('Add supporting records'));
+      await pumpLiveData(tester);
+
+      expect(find.text('Documents'), findsWidgets);
+      expect(find.text('No supporting records yet'), findsOneWidget);
+      expect(find.text('Take supporting photo'), findsOneWidget);
+      expect(find.text('Import supporting photo'), findsOneWidget);
+
+      await tapVisible(tester, find.text('Import supporting photo'));
+      await pumpLiveData(tester);
+      expect(find.text('Import supporting photo'), findsWidgets);
+      expect(find.text('Supporting UI Artwork'), findsWidgets);
+      expect(find.text('Artwork-scoped save'), findsOneWidget);
+
+      await pressAsyncButton(
+        tester,
+        find.widgetWithText(FilledButton, 'Choose supporting photo'),
+      );
+
+      expect(find.text('Supporting photo imported'), findsOneWidget);
+      expect(
+        find.text(
+          'Saved as a supporting record. The primary artwork image is unchanged.',
+        ),
+        findsOneWidget,
+      );
+      expect(find.text('View supporting records'), findsOneWidget);
+
+      final savedRecord = await tester.runAsync(
+        () => fixture.repository.get('supporting-ui'),
+      );
+      expect(savedRecord!.primaryImageAttachmentId, 'primary-supporting-ui');
+      final attachments = await tester.runAsync(
+        () => fixture.repository.attachmentsForArtwork('supporting-ui'),
+      );
+      expect(attachments, isNotNull);
+      expect(
+        attachments!
+            .where(
+              (attachment) =>
+                  attachment.role == AttachmentRole.supportingPhoto &&
+                  attachment.type == AttachmentType.photo,
+            )
+            .length,
+        1,
+      );
+      expect(
+        attachments.where(
+          (attachment) => attachment.id == 'primary-supporting-ui',
+        ),
+        hasLength(1),
+      );
+
+      await tapVisible(tester, find.text('View supporting records'));
+      await pumpLiveData(tester);
+
+      expect(find.text('Supporting photo'), findsOneWidget);
+      expect(find.text('signature-detail.png'), findsOneWidget);
+      expect(find.text('No supporting records yet'), findsNothing);
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+      await tester.pumpWidget(
+        ArchivaleApp(
+          initialRoute: AppRoutes.collection,
+          dependencies: fixture.dependencies,
+        ),
+      );
+      await pumpLiveData(tester);
+
+      expect(find.text('Supporting UI Artwork'), findsOneWidget);
+      expect(find.text('1 supporting record attached.'), findsOneWidget);
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+      await tester.pumpWidget(
+        ArchivaleApp(
+          initialRoute: AppRoutes.artworkReportPreview('supporting-ui'),
+          dependencies: fixture.dependencies,
+        ),
+      );
+      await pumpLiveData(tester);
+
+      expect(find.text('Report preview'), findsWidgets);
+      expect(find.text('1 supporting record listed.'), findsOneWidget);
+    },
+  );
 
   testWidgets('collection lists local record after repository reload', (
     WidgetTester tester,
@@ -893,12 +1090,12 @@ void main() {
 
     expect(find.text('Needs Local Review needs review'), findsOneWidget);
     expect(
-      find.text('Needs Local Review needs supporting documents'),
+      find.text('Needs Local Review needs supporting records'),
       findsOneWidget,
     );
     expect(find.text('Complete Local Record needs review'), findsNothing);
     expect(
-      find.text('Complete Local Record needs supporting documents'),
+      find.text('Complete Local Record needs supporting records'),
       findsNothing,
     );
 
@@ -932,7 +1129,7 @@ void main() {
 
     expect(find.text('Needs Local Review needs review'), findsNothing);
     expect(
-      find.text('Needs Local Review needs supporting documents'),
+      find.text('Needs Local Review needs supporting records'),
       findsNothing,
     );
     expect(find.text('No incomplete records'), findsOneWidget);
@@ -1151,7 +1348,7 @@ void main() {
     );
     expect(find.text('Sold Incomplete Artwork needs review'), findsNothing);
     expect(
-      find.text('Sold Incomplete Artwork needs supporting documents'),
+      find.text('Sold Incomplete Artwork needs supporting records'),
       findsNothing,
     );
     expect(find.textContaining('Removed Incomplete Artwork'), findsNothing);
@@ -2048,10 +2245,7 @@ Future<void> captureCsvImportSuccessVisualEvidence(
     tester,
     find.widgetWithText(FilledButton, 'Confirm local import'),
   );
-  await waitForFinder(
-    tester,
-    find.text('Open first imported record'),
-  );
+  await waitForFinder(tester, find.text('Open first imported record'));
   await tester.ensureVisible(find.text('Open first imported record'));
   await tester.pump();
 
@@ -2182,6 +2376,29 @@ class _LiveDependencyFixture {
       source: ArtworkFieldSource.userConfirmed,
       importedAt: DateTime.utc(2026, 7, 4, 12),
       notes: 'Primary image fixture.',
+    );
+    await repository.addAttachment(attachment);
+    return attachment;
+  }
+
+  Future<AttachmentRecord> addSupportingPhoto({
+    required String artworkId,
+    String? attachmentId,
+    String fileName = 'supporting-photo.png',
+  }) async {
+    final id = attachmentId ?? 'supporting-$artworkId';
+    final source = await writePngSource(fileName);
+    final attachment = await attachmentStore.saveImportedAttachment(
+      artworkId: artworkId,
+      attachmentId: id,
+      sourceFile: source,
+      originalFileName: fileName,
+      mimeType: 'image/png',
+      type: AttachmentType.photo,
+      role: AttachmentRole.supportingPhoto,
+      source: ArtworkFieldSource.userConfirmed,
+      importedAt: DateTime.utc(2026, 7, 5, 12),
+      notes: 'Supporting photo fixture.',
     );
     await repository.addAttachment(attachment);
     return attachment;
