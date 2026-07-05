@@ -56,6 +56,7 @@ test('fake-provider happy path validates, reserves credit, and returns fixture o
   assert.deepEqual(trace, [
     'auth',
     'consent',
+    'payload_receipt',
     'entitlement',
     'breaker',
     'payload',
@@ -98,6 +99,52 @@ test('stale consent rejects before provider call and credit reserve', async () =
   assert.equal(response.error?.code, 'stale_consent');
   assert.equal(deps.provider.callCount, 0);
   assert.equal(deps.creditLedger.reserveCount, 0);
+});
+
+test('stale payload contract rejects before entitlement, credit reserve, or provider call', async () => {
+  const trace: string[] = [];
+  const deps = createFakeBrokerDependencies({ orderTrace: trace });
+
+  const response = await handleResearchRequest(
+    request({ payload_contract_version: 'art-research-payload-v0' }),
+    { ...baseContext, entitled: false, credit_available: false, breaker_open: true },
+    deps,
+  );
+
+  assert.equal(response.status, 'rejected');
+  assert.equal(response.error?.code, 'payload_contract_mismatch');
+  assert.equal(response.error?.stage, 'payload_receipt');
+  assert.equal(deps.provider.callCount, 0);
+  assert.equal(deps.creditLedger.reserveCount, 0);
+  assert.deepEqual(trace, ['auth', 'consent', 'payload_receipt']);
+});
+
+test('malformed payload receipt rejects before entitlement, credit reserve, or provider call', async () => {
+  const cases: Array<[string, Partial<BrokerRequest>, string]> = [
+    ['invalid request id', { request_id: 'not-a-uuid' }, 'invalid_request_id'],
+    ['invalid payload hash', { payload_hash: 'not-a-sha-256-hex-digest' }, 'invalid_payload_hash'],
+    ['invalid payload class', { approved_payload_class: 'raw_notes' }, 'payload_class_mismatch'],
+  ];
+
+  for (const [name, overrides, expectedCode] of cases) {
+    await test(name, async () => {
+      const trace: string[] = [];
+      const deps = createFakeBrokerDependencies({ orderTrace: trace });
+
+      const response = await handleResearchRequest(
+        request(overrides),
+        { ...baseContext, entitled: false, credit_available: false, breaker_open: true },
+        deps,
+      );
+
+      assert.equal(response.status, 'rejected');
+      assert.equal(response.error?.code, expectedCode);
+      assert.equal(response.error?.stage, 'payload_receipt');
+      assert.equal(deps.provider.callCount, 0);
+      assert.equal(deps.creditLedger.reserveCount, 0);
+      assert.deepEqual(trace, ['auth', 'consent', 'payload_receipt']);
+    });
+  }
 });
 
 test('same request id with a changed payload hash returns conflict without another provider call', async () => {

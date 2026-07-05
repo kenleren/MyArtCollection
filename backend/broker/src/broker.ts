@@ -64,6 +64,12 @@ export async function handleResearchRequest(
     return fail('stale_consent', 'Consent copy version is not current.', 'consent');
   }
 
+  trace?.push('payload_receipt');
+  const receiptError = validatePayloadReceipt(request);
+  if (receiptError !== undefined) {
+    return fail(receiptError.code, receiptError.message, 'payload_receipt');
+  }
+
   trace?.push('entitlement');
   if (!context.entitled || !context.credit_available) {
     return fail('entitlement_or_credit_denied', 'Entitlement or credit placeholder denied the request.', 'entitlement');
@@ -126,6 +132,16 @@ export async function handleResearchRequest(
 }
 
 function validatePayload(request: BrokerRequest): { code: string; message: string } | undefined {
+  if (request.image.byte_size <= 0 || request.image.byte_size > 1_500_000) {
+    return { code: 'invalid_image_size', message: 'Image derivative size is outside the v1 bounds.' };
+  }
+  if (request.image.long_edge_px <= 0 || request.image.long_edge_px > 1600) {
+    return { code: 'invalid_image_dimensions', message: 'Image derivative dimensions are outside the v1 bounds.' };
+  }
+  return undefined;
+}
+
+function validatePayloadReceipt(request: BrokerRequest): { code: string; message: string } | undefined {
   if (!isUuid(request.request_id)) {
     return { code: 'invalid_request_id', message: 'request_id must be a UUID.' };
   }
@@ -137,12 +153,6 @@ function validatePayload(request: BrokerRequest): { code: string; message: strin
   }
   if (!/^[a-f0-9]{64}$/.test(request.payload_hash)) {
     return { code: 'invalid_payload_hash', message: 'payload_hash must be a lowercase SHA-256 hex digest.' };
-  }
-  if (request.image.byte_size <= 0 || request.image.byte_size > 1_500_000) {
-    return { code: 'invalid_image_size', message: 'Image derivative size is outside the v1 bounds.' };
-  }
-  if (request.image.long_edge_px <= 0 || request.image.long_edge_px > 1600) {
-    return { code: 'invalid_image_dimensions', message: 'Image derivative dimensions are outside the v1 bounds.' };
   }
   return undefined;
 }
