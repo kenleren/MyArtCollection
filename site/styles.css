@@ -434,6 +434,10 @@ th {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.pricing-principles {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
 .panel,
 .feature,
 .price-card,
@@ -626,6 +630,15 @@ th {
   font-size: 0.94rem;
 }
 
+.plan-detail {
+  margin: 1rem 0 0;
+  border-top: 1px solid var(--line);
+  padding-top: 0.85rem;
+  color: var(--gold-2);
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
 .table-wrap {
   overflow-x: auto;
 }
@@ -726,6 +739,7 @@ textarea::placeholder {
   .gallery-grid,
   .feature-grid,
   .trust-grid,
+  .pricing-principles,
   .price-grid,
   .preview-strip {
     grid-template-columns: 1fr;
