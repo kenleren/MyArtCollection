@@ -145,6 +145,7 @@ void main() {
       routeName: AppRoutes.collection,
       dependencies: fixture.dependencies,
       fileName: 'issue-108-csv-entry-mobile.png',
+      ensureVisibleFinder: find.text('Import CSV', skipOffstage: false),
     );
     await captureCsvImportPreviewVisualEvidence(
       tester,
@@ -1943,6 +1944,7 @@ Future<void> captureArtifactForApp(
   required String fileName,
   ThemeMode themeMode = ThemeMode.system,
   AppDependencies? dependencies,
+  Finder? ensureVisibleFinder,
 }) async {
   await _configureMobileViewport(tester);
 
@@ -1958,6 +1960,10 @@ Future<void> captureArtifactForApp(
     ),
   );
   await pumpLiveData(tester);
+  if (ensureVisibleFinder != null) {
+    await tester.ensureVisible(ensureVisibleFinder);
+    await tester.pump();
+  }
   await captureBoundaryToArtifacts(tester, boundaryKey, fileName);
 }
 
