@@ -33,6 +33,8 @@ migrate_working_dir/
 /build/
 /coverage/
 /android/build/
+**/node_modules/
+/backend/broker/build/
 
 # Symbolication related
 app.*.symbols

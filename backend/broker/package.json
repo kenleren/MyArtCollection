@@ -1,0 +1,15 @@
+{
+  "name": "@archivale/fake-research-broker",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Fake-provider-only Archivale research broker scaffold.",
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "npm run build && node --test build/dist-test/*.test.js"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.3",
+    "typescript": "^5.8.3"
+  }
+}
