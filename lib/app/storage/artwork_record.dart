@@ -138,7 +138,10 @@ abstract final class ArtworkFieldKeys {
   static const medium = 'medium';
   static const dimensions = 'dimensions';
   static const purchasePrice = 'purchase_price';
+  static const purchaseDate = 'purchase_date';
+  static const sellerOrGallery = 'seller_or_gallery';
   static const currentLocation = 'current_location';
   static const insuranceValue = 'insurance_value';
   static const conditionNotes = 'condition_notes';
+  static const notes = 'notes';
 }

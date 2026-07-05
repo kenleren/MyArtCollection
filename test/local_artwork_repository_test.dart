@@ -188,6 +188,118 @@ void main() {
     expect(await repository.list(), isEmpty);
   });
 
+  test(
+    'round-trips canonical import fields and existing money metadata',
+    () async {
+      final createdAt = DateTime.utc(2026, 7, 4, 8);
+      final updatedAt = DateTime.utc(2026, 7, 4, 8, 15);
+
+      await repository.create(
+        ArtworkRecord(
+          id: 'imported-artwork-001',
+          recordState: ArtworkRecordState.needsReview,
+          createdAt: createdAt,
+          updatedAt: updatedAt,
+          fields: {
+            ArtworkFieldKeys.title: const ArtworkFieldValue(
+              value: 'Imported receipt artwork',
+              source: ArtworkFieldSource.documentExtracted,
+              note: 'Imported from document title text.',
+            ),
+            ArtworkFieldKeys.artist: const ArtworkFieldValue(
+              value: 'Unknown',
+              source: ArtworkFieldSource.unknown,
+              note: 'Imported data did not identify the artist.',
+            ),
+            ArtworkFieldKeys.year: const ArtworkFieldValue(
+              value: '1998',
+              source: ArtworkFieldSource.documentExtracted,
+              note: 'Imported from dated gallery paperwork.',
+            ),
+            ArtworkFieldKeys.purchaseDate: const ArtworkFieldValue(
+              value: '2021-05-14',
+              source: ArtworkFieldSource.documentExtracted,
+              note: 'Imported from receipt date.',
+            ),
+            ArtworkFieldKeys.sellerOrGallery: const ArtworkFieldValue(
+              value: 'North Gallery',
+              source: ArtworkFieldSource.documentExtracted,
+              note: 'Imported from receipt seller line.',
+            ),
+            ArtworkFieldKeys.notes: const ArtworkFieldValue(
+              value: 'Receipt says framing was included.',
+              source: ArtworkFieldSource.unknown,
+              note: 'Imported notes need review before confirmation.',
+            ),
+            ArtworkFieldKeys.purchasePrice: const ArtworkFieldValue(
+              value: 'USD 1,200.50',
+              source: ArtworkFieldSource.documentExtracted,
+              note: 'Imported receipt total.',
+              moneyAmount: '1200.50',
+              moneyCurrencyCode: 'USD',
+            ),
+            ArtworkFieldKeys.insuranceValue: const ArtworkFieldValue(
+              value: 'NOK 12,000',
+              source: ArtworkFieldSource.unknown,
+              note: 'Imported archive value needs review.',
+              moneyAmount: '12000',
+              moneyCurrencyCode: 'NOK',
+            ),
+          },
+        ),
+      );
+
+      final reloaded = await reloadAndGet('imported-artwork-001');
+
+      expect(reloaded, isNotNull);
+      expect(reloaded!.field(ArtworkFieldKeys.year)?.value, '1998');
+      expect(
+        reloaded.field(ArtworkFieldKeys.year)?.source,
+        ArtworkFieldSource.documentExtracted,
+      );
+      expect(
+        reloaded.field(ArtworkFieldKeys.purchaseDate)?.value,
+        '2021-05-14',
+      );
+      expect(
+        reloaded.field(ArtworkFieldKeys.purchaseDate)?.source,
+        ArtworkFieldSource.documentExtracted,
+      );
+      expect(
+        reloaded.field(ArtworkFieldKeys.sellerOrGallery)?.value,
+        'North Gallery',
+      );
+      expect(
+        reloaded.field(ArtworkFieldKeys.sellerOrGallery)?.source,
+        ArtworkFieldSource.documentExtracted,
+      );
+      expect(
+        reloaded.field(ArtworkFieldKeys.notes)?.value,
+        'Receipt says framing was included.',
+      );
+      expect(
+        reloaded.field(ArtworkFieldKeys.notes)?.source,
+        ArtworkFieldSource.unknown,
+      );
+      expect(
+        reloaded.field(ArtworkFieldKeys.purchasePrice)?.moneyAmount,
+        '1200.50',
+      );
+      expect(
+        reloaded.field(ArtworkFieldKeys.purchasePrice)?.moneyCurrencyCode,
+        'USD',
+      );
+      expect(
+        reloaded.field(ArtworkFieldKeys.insuranceValue)?.moneyAmount,
+        '12000',
+      );
+      expect(
+        reloaded.field(ArtworkFieldKeys.insuranceValue)?.moneyCurrencyCode,
+        'NOK',
+      );
+    },
+  );
+
   test('persists lifecycle status changes across repository reloads', () async {
     final original = _record('artwork-lifecycle', title: 'Lifecycle artwork');
     await repository.create(original);
