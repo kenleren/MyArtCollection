@@ -98,6 +98,7 @@ void main() {
       );
       expect(attachments, hasLength(1));
       expect(attachments.single.type, AttachmentType.photo);
+      expect(attachments.single.role, AttachmentRole.primaryArtworkPhoto);
       expect(await attachmentStore.exists(attachments.single), isTrue);
       expect(attachments.single.relativePath, isNot(contains('selected')));
     },

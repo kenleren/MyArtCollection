@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:my_art_collection/app/storage/artwork_record.dart';
+import 'package:my_art_collection/app/storage/attachment_record.dart';
 import 'package:my_art_collection/app/storage/local_artwork_repository.dart';
 import 'package:path/path.dart' as p;
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
@@ -374,6 +375,105 @@ void main() {
       expect(moneyColumns.single['money_currency_code'], isNull);
     },
   );
+
+  test(
+    'upgrades v5 attachment rows with role backfill from primary image pointer',
+    () async {
+      await repository.close();
+      await databaseFactoryFfi.deleteDatabase(databasePath);
+
+      final legacyDatabase = await databaseFactoryFfi.openDatabase(
+        databasePath,
+        options: OpenDatabaseOptions(version: 5, onCreate: _createV5Schema),
+      );
+
+      await legacyDatabase.insert('artworks', {
+        'artwork_id': 'legacy-v5-artwork',
+        'record_state': 'verifiedByYou',
+        'lifecycle_status': 'active',
+        'primary_image_attachment_id': 'legacy-primary-photo',
+        'created_at': DateTime.utc(2026, 7, 4, 8).toIso8601String(),
+        'updated_at': DateTime.utc(2026, 7, 4, 8, 5).toIso8601String(),
+      });
+      await legacyDatabase.insert(
+        'attachments',
+        _legacyAttachmentRow(
+          id: 'legacy-primary-photo',
+          artworkId: 'legacy-v5-artwork',
+          type: 'photo',
+          fileName: 'primary.jpg',
+          mimeType: 'image/jpeg',
+          importedAt: DateTime.utc(2026, 7, 4, 8),
+        ),
+      );
+      await legacyDatabase.insert(
+        'attachments',
+        _legacyAttachmentRow(
+          id: 'legacy-supporting-photo',
+          artworkId: 'legacy-v5-artwork',
+          type: 'photo',
+          fileName: 'condition.png',
+          mimeType: 'image/png',
+          importedAt: DateTime.utc(2026, 7, 4, 8, 1),
+        ),
+      );
+      await legacyDatabase.insert(
+        'attachments',
+        _legacyAttachmentRow(
+          id: 'legacy-receipt',
+          artworkId: 'legacy-v5-artwork',
+          type: 'receipt',
+          fileName: 'receipt.pdf',
+          mimeType: 'application/pdf',
+          importedAt: DateTime.utc(2026, 7, 4, 8, 2),
+        ),
+      );
+      await legacyDatabase.close();
+
+      repository = LocalArtworkRepository.forDatabase(
+        await LocalArtworkRepository.openAt(databasePath),
+      );
+
+      final reloaded = await repository.get('legacy-v5-artwork');
+      expect(reloaded!.primaryImageAttachmentId, 'legacy-primary-photo');
+
+      final attachments = await repository.attachmentsForArtwork(
+        'legacy-v5-artwork',
+      );
+      expect(
+        attachments
+            .singleWhere(
+              (attachment) => attachment.id == 'legacy-primary-photo',
+            )
+            .role,
+        AttachmentRole.primaryArtworkPhoto,
+      );
+      expect(
+        attachments
+            .singleWhere(
+              (attachment) => attachment.id == 'legacy-supporting-photo',
+            )
+            .role,
+        AttachmentRole.supportingPhoto,
+      );
+      expect(
+        attachments
+            .singleWhere((attachment) => attachment.id == 'legacy-receipt')
+            .role,
+        AttachmentRole.supportingDocument,
+      );
+
+      final rawDatabase = await databaseFactoryFfi.openDatabase(databasePath);
+      addTearDown(rawDatabase.close);
+      final roleColumns = await rawDatabase.rawQuery(
+        'PRAGMA table_info(attachments)',
+      );
+      expect(
+        roleColumns.map((column) => column['name']),
+        contains('attachment_role'),
+      );
+    },
+  );
 }
 
 ArtworkRecord _record(String id, {required String title}) {
@@ -576,4 +676,37 @@ Future<void> _createV4Schema(Database db, int version) async {
   await db.execute(
     "ALTER TABLE artworks ADD COLUMN lifecycle_status TEXT NOT NULL DEFAULT 'active'",
   );
+}
+
+Future<void> _createV5Schema(Database db, int version) async {
+  await _createV4Schema(db, version);
+  await db.execute('ALTER TABLE artwork_fields ADD COLUMN money_amount TEXT');
+  await db.execute(
+    'ALTER TABLE artwork_fields ADD COLUMN money_currency_code TEXT',
+  );
+}
+
+Map<String, Object?> _legacyAttachmentRow({
+  required String id,
+  required String artworkId,
+  required String type,
+  required String fileName,
+  required String mimeType,
+  required DateTime importedAt,
+}) {
+  return {
+    'attachment_id': id,
+    'artwork_id': artworkId,
+    'attachment_type': type,
+    'file_name': fileName,
+    'mime_type': mimeType,
+    'file_size_bytes': 4,
+    'imported_at': importedAt.toIso8601String(),
+    'captured_at': null,
+    'source_state': 'user-confirmed',
+    'relative_path': 'artworks/$artworkId/attachments/$id/payload',
+    'checksum': '$id-checksum',
+    'extraction_summary': null,
+    'notes': null,
+  };
 }
