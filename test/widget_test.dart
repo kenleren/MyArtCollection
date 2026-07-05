@@ -205,6 +205,14 @@ void main() {
       tester,
       find.widgetWithText(OutlinedButton, 'Report preview').last,
     );
+    final currentScaffold = find.byType(Scaffold).last;
+    expect(
+      find.descendant(
+        of: currentScaffold,
+        matching: find.text('Report preview'),
+      ),
+      findsOneWidget,
+    );
     expect(find.text('Generate an insurance-ready PDF'), findsWidgets);
     expect(find.text('Purchase price: USD 1,800.'), findsOneWidget);
     expect(
@@ -216,6 +224,37 @@ void main() {
     expect(find.text('Export record package'), findsWidgets);
     expect(find.text('ZIP archive preview'), findsOneWidget);
     expect(find.text('User-provided insurance values only.'), findsOneWidget);
+  });
+
+  testWidgets('report preview avoids a duplicate body heading', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(
+      const MyArtCollectionApp(initialRoute: AppRoutes.collection),
+    );
+    await pumpReady(tester);
+
+    await tapVisible(tester, find.widgetWithText(FilledButton, 'Add artwork'));
+    await tapVisible(tester, find.text('Import photo'));
+    await tapVisible(tester, find.text('Review AI draft'));
+    await tapVisible(tester, find.text('Confirm suggested fields'));
+    await tapVisible(tester, find.text('Attach receipt placeholder'));
+    await tapVisible(
+      tester,
+      find.widgetWithText(OutlinedButton, 'Report preview').last,
+    );
+    final currentScaffold = find.byType(Scaffold).last;
+
+    expect(
+      find.descendant(
+        of: currentScaffold,
+        matching: find.text('Report preview'),
+      ),
+      findsOneWidget,
+    );
+    expect(find.text('Generate an insurance-ready PDF'), findsOneWidget);
+    expect(find.text('Included'), findsOneWidget);
+    expect(find.text('Excluded'), findsOneWidget);
   });
 
   testWidgets('live import flow shows failed recovery state', (

@@ -1310,6 +1310,7 @@ class ReportPreviewScreen extends StatelessWidget {
     return PrototypeScreenFrame(
       title: 'Report preview',
       subtitle: 'Generate an insurance-ready PDF',
+      showBodyTitle: false,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -1383,12 +1384,14 @@ class PrototypeScreenFrame extends StatelessWidget {
     this.appBarTitle,
     required this.title,
     required this.subtitle,
+    this.showBodyTitle = true,
     required this.child,
   });
 
   final String? appBarTitle;
   final String title;
   final String subtitle;
+  final bool showBodyTitle;
   final Widget child;
 
   @override
@@ -1399,7 +1402,9 @@ class PrototypeScreenFrame extends StatelessWidget {
         child: ListView(
           padding: const EdgeInsets.all(20),
           children: [
-            _Heading(title: title, subtitle: subtitle),
+            showBodyTitle
+                ? _Heading(title: title, subtitle: subtitle)
+                : _ShellIntro(subtitle: subtitle),
             const SizedBox(height: 20),
             child,
           ],
