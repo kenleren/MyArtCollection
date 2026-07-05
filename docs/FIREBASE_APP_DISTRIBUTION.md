@@ -41,9 +41,11 @@ flutter build apk --release \
 
 This release APK path is now fail-closed on Android release signing. Before any
 real `--release` APK build, the operator must provide complete signing inputs
-through ignored `android/key.properties` or
-`MY_ART_COLLECTION_ANDROID_RELEASE_*` Gradle/environment properties. The build
-must not fall back to the Android debug key.
+through exactly one supported source contract: ignored `android/key.properties`,
+`MY_ART_COLLECTION_ANDROID_RELEASE_*` Gradle properties, or
+`MY_ART_COLLECTION_ANDROID_RELEASE_*` environment variables. The build must not
+fall back to the Android debug key, and mixed-source release-signing inputs are
+rejected to keep local and CI behavior aligned.
 
 ## One-Time Firebase Setup
 
@@ -60,9 +62,10 @@ must not fall back to the Android debug key.
    internal beta build.
 7. Separately provide Android release-signing inputs outside source control
    before any `flutter build apk --release` run. Phase 1 supports ignored
-   `android/key.properties` or `MY_ART_COLLECTION_ANDROID_RELEASE_*`
-   Gradle/environment properties. Keep keystores and secret values outside repo
-   evidence.
+   `android/key.properties`, `MY_ART_COLLECTION_ANDROID_RELEASE_*` Gradle
+   properties, or `MY_ART_COLLECTION_ANDROID_RELEASE_*` environment variables.
+   Use only one source contract per build. Keep keystores and secret values
+   outside repo evidence.
 
 Do not commit `google-services.json`, service-account JSON, Firebase tokens, or
 tester email lists.

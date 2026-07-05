@@ -27,3 +27,24 @@ regex = '''"refresh_token"\s*:\s*"[^"]{20,}"'''
 keywords = [
   "refresh_token",
 ]
+
+[[rules]]
+id = "android-release-signing-key-properties"
+description = "Android release-signing credential properties"
+regex = '''(?i)(storePassword|keyPassword|storeFile|keyAlias)\s*[:=]\s*["']?[^\s#"']{4,}'''
+path = '''(?i)(^|/)([^/]+\.properties|[^/]+\.sh|\.env(\.[^/]+)?|[^/]+\.ya?ml)$'''
+keywords = [
+  "storePassword",
+  "keyPassword",
+  "storeFile",
+  "keyAlias",
+]
+
+[[rules]]
+id = "android-release-signing-env-assignment"
+description = "Android release-signing environment or shell assignment"
+regex = '''MY_ART_COLLECTION_ANDROID_RELEASE_(STORE_FILE|STORE_PASSWORD|KEY_ALIAS|KEY_PASSWORD)\s*=\s*["']?[^\s#"']{4,}'''
+path = '''(?i)(^|/)([^/]+\.sh|\.env(\.[^/]+)?|[^/]+\.ya?ml)$'''
+keywords = [
+  "MY_ART_COLLECTION_ANDROID_RELEASE_",
+]

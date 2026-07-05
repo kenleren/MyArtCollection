@@ -18,16 +18,25 @@ fun dartDefineEnabled(name: String): Boolean {
         .any { it == "$name=true" }
 }
 
-fun requestedReleaseArtifactTasks(): List<String> {
-    val artifactPrefixes = listOf("assemble", "bundle", "package", "install")
-    return gradle.startParameter.taskNames.filter { taskName ->
-        val normalized = taskName.substringAfterLast(":")
-        normalized.contains("release", ignoreCase = true) &&
-            artifactPrefixes.any { normalized.startsWith(it, ignoreCase = true) }
-    }
+fun nonBlankOrNull(value: String?): String? = value?.trim()?.takeIf { it.isNotEmpty() }
+
+enum class ReleaseSigningSource {
+    GRADLE_PROPERTY,
+    ENVIRONMENT_VARIABLE,
+    KEY_PROPERTIES,
 }
 
-fun nonBlankOrNull(value: String?): String? = value?.trim()?.takeIf { it.isNotEmpty() }
+data class ReleaseSigningInput(
+    val value: String,
+    val source: ReleaseSigningSource,
+)
+
+fun isReleaseArtifactOrSigningTask(taskName: String): Boolean {
+    val normalized = taskName.substringAfterLast(":")
+    val guardedPrefixes = listOf("assemble", "bundle", "package", "sign", "install")
+    return normalized.contains("release", ignoreCase = true) &&
+        guardedPrefixes.any { normalized.startsWith(it, ignoreCase = true) }
+}
 
 val keyProperties =
     Properties().apply {
@@ -37,43 +46,91 @@ val keyProperties =
         }
     }
 
-fun releaseSigningValue(gradleOrEnvName: String, keyPropertiesName: String): String? =
-    nonBlankOrNull(providers.gradleProperty(gradleOrEnvName).orNull)
-        ?: nonBlankOrNull(providers.environmentVariable(gradleOrEnvName).orNull)
-        ?: nonBlankOrNull(keyProperties.getProperty(keyPropertiesName))
+fun releaseSigningValue(
+    gradleOrEnvName: String,
+    keyPropertiesName: String,
+): Pair<ReleaseSigningInput?, String?> {
+    val gradlePropertyValue = nonBlankOrNull(providers.gradleProperty(gradleOrEnvName).orNull)
+    val environmentValue = nonBlankOrNull(providers.environmentVariable(gradleOrEnvName).orNull)
+    val keyPropertiesValue = nonBlankOrNull(keyProperties.getProperty(keyPropertiesName))
 
-val releaseSigningInputs =
-    mapOf(
-        "storeFile" to
-            releaseSigningValue(
-                "MY_ART_COLLECTION_ANDROID_RELEASE_STORE_FILE",
-                "storeFile",
-            ),
-        "storePassword" to
-            releaseSigningValue(
-                "MY_ART_COLLECTION_ANDROID_RELEASE_STORE_PASSWORD",
-                "storePassword",
-            ),
-        "keyAlias" to
-            releaseSigningValue(
-                "MY_ART_COLLECTION_ANDROID_RELEASE_KEY_ALIAS",
-                "keyAlias",
-            ),
-        "keyPassword" to
-            releaseSigningValue(
-                "MY_ART_COLLECTION_ANDROID_RELEASE_KEY_PASSWORD",
-                "keyPassword",
-            ),
-    )
-val releaseSigningReady = releaseSigningInputs.values.all { it != null }
-val releaseArtifactTasks = requestedReleaseArtifactTasks()
-val releaseSigningFailureMessage =
+    if (
+        gradlePropertyValue != null &&
+        environmentValue != null &&
+        gradlePropertyValue != environmentValue
+    ) {
+        return null to
+            "Conflicting Android release signing inputs were provided for $gradleOrEnvName. " +
+            "Use exactly one signing-input source contract for a release build."
+    }
+
+    return when {
+        gradlePropertyValue != null ->
+            ReleaseSigningInput(gradlePropertyValue, ReleaseSigningSource.GRADLE_PROPERTY) to null
+        environmentValue != null ->
+            ReleaseSigningInput(environmentValue, ReleaseSigningSource.ENVIRONMENT_VARIABLE) to null
+        keyPropertiesValue != null ->
+            ReleaseSigningInput(keyPropertiesValue, ReleaseSigningSource.KEY_PROPERTIES) to null
+        else -> null to null
+    }
+}
+
+fun releaseSigningConfigurationIssue(
+    inputs: Map<String, ReleaseSigningInput>,
+    perInputError: String?,
+): String? {
+    if (perInputError != null) {
+        return perInputError
+    }
+
+    val configuredSources = inputs.values.map { it.source }.toSet()
+    if (configuredSources.size > 1) {
+        return "Android release signing inputs must come from exactly one source contract: " +
+            "ignored android/key.properties, MY_ART_COLLECTION_ANDROID_RELEASE_* Gradle properties, " +
+            "or MY_ART_COLLECTION_ANDROID_RELEASE_* environment variables. Do not mix them."
+    }
+
+    val missingKeys =
+        listOf("storeFile", "storePassword", "keyAlias", "keyPassword").filterNot(inputs::containsKey)
+    if (missingKeys.isNotEmpty()) {
+        return "Android release signing is incomplete. Provide storeFile, storePassword, keyAlias, " +
+            "and keyPassword through one supported source contract before building release APK or AAB."
+    }
+
+    return null
+}
+
+fun releaseSigningFailureMessage(detail: String): String =
     buildString {
         append("Android release signing is required for Play-ready release artifacts. ")
-        append("Provide all release signing inputs through ignored android/key.properties ")
-        append("or MY_ART_COLLECTION_ANDROID_RELEASE_* Gradle/environment properties ")
-        append("before building release APK or AAB.")
+        append(detail)
     }
+
+fun ensureReleaseSigningReady() {
+    releaseSigningConfigurationIssue?.let { throw GradleException(releaseSigningFailureMessage(it)) }
+}
+
+val releaseSigningInputKeys =
+    mapOf(
+        "storeFile" to "MY_ART_COLLECTION_ANDROID_RELEASE_STORE_FILE",
+        "storePassword" to "MY_ART_COLLECTION_ANDROID_RELEASE_STORE_PASSWORD",
+        "keyAlias" to "MY_ART_COLLECTION_ANDROID_RELEASE_KEY_ALIAS",
+        "keyPassword" to "MY_ART_COLLECTION_ANDROID_RELEASE_KEY_PASSWORD",
+    )
+val releaseSigningResults =
+    releaseSigningInputKeys.mapValues { (inputName, gradleOrEnvName) ->
+        releaseSigningValue(gradleOrEnvName, inputName)
+    }
+val releaseSigningInputs =
+    releaseSigningResults.mapNotNull { (name, result) ->
+        result.first?.let { name to it }
+    }.toMap()
+val releaseSigningConfigurationIssue =
+    releaseSigningConfigurationIssue(
+        releaseSigningInputs,
+        releaseSigningResults.values.mapNotNull { it.second }.firstOrNull(),
+    )
+val releaseSigningReady = releaseSigningConfigurationIssue == null
 
 val enableFirebaseAndroid =
     providers.environmentVariable("MY_ART_COLLECTION_FIREBASE_ANDROID")
@@ -154,10 +211,10 @@ android {
     signingConfigs {
         create("release") {
             if (releaseSigningReady) {
-                storeFile = rootProject.file(releaseSigningInputs.getValue("storeFile")!!)
-                storePassword = releaseSigningInputs.getValue("storePassword")
-                keyAlias = releaseSigningInputs.getValue("keyAlias")
-                keyPassword = releaseSigningInputs.getValue("keyPassword")
+                storeFile = rootProject.file(releaseSigningInputs.getValue("storeFile").value)
+                storePassword = releaseSigningInputs.getValue("storePassword").value
+                keyAlias = releaseSigningInputs.getValue("keyAlias").value
+                keyPassword = releaseSigningInputs.getValue("keyPassword").value
             }
         }
     }
@@ -172,8 +229,8 @@ android {
 }
 
 gradle.taskGraph.whenReady {
-    if (releaseArtifactTasks.isNotEmpty() && !releaseSigningReady) {
-        throw GradleException(releaseSigningFailureMessage)
+    if (allTasks.any { isReleaseArtifactOrSigningTask(it.name) }) {
+        ensureReleaseSigningReady()
     }
 }
 

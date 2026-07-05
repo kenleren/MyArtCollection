@@ -22,9 +22,13 @@ out of Git history and out of pull request logs.
 ## Android Release Signing Rules
 
 - Keep Android release-signing inputs outside tracked source control. The
-  supported Phase 1 contract is ignored `android/key.properties` and/or
-  `MY_ART_COLLECTION_ANDROID_RELEASE_*` Gradle or environment properties on the
-  owner machine or approved CI secret store.
+  supported Phase 1 contract is exactly one of:
+  - ignored `android/key.properties`
+  - `MY_ART_COLLECTION_ANDROID_RELEASE_*` Gradle properties
+  - `MY_ART_COLLECTION_ANDROID_RELEASE_*` environment variables
+  Do not mix sources inside one release build. If both Gradle properties and
+  environment variables are present for the same key with different values, the
+  Android release build fails closed.
 - Do not commit, print, validate, move, screenshot, or paste keystores, upload
   keys, signing passwords, aliases, or secret-bearing property files.
 - Do not expose secret file paths, `storeFile` values, full signing commands
@@ -47,7 +51,9 @@ release-process changes:
 scripts/secret_scan.sh
 ```
 
-The wrapper first blocks tracked Firebase credential/config paths, then runs
+The wrapper first blocks tracked Firebase credential/config paths and tracked
+Android signing paths such as `android/key.properties`, `*.keystore`, and
+`*.jks`. It then blocks tracked signing credential assignments before running
 Gitleaks with `.gitleaks.toml` and full redaction enabled. If Gitleaks is not
 installed, the wrapper fails closed with install guidance instead of silently
 skipping the scan.
