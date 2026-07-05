@@ -281,7 +281,7 @@ all of them automatically. For first readiness:
 | No App Store Connect record yet | Prevents actual TestFlight/App Store setup | Human creates record once naming/language/bundle/SKU decisions are approved |
 | No iOS Firebase config files under `ios/` | Good for privacy minimization, but means Firebase-on-iOS is not operationally ready | Keep first iOS lane non-Firebase unless a later task approves broader setup |
 | Privacy label drift from SDK inclusion | Apple answers must include third-party code behavior | Base answers on actual linked SDK usage and Firebase Apple disclosure guidance |
-| Brand drift remains in ARB and Flutter title | Can leak old `Archivale` string into screenshots or metadata | Fix naming drift before final screenshot capture |
+| Brand strings can drift again during rename/localization work | Inconsistent screenshots or metadata undermine App Store readiness | Keep `Archivale` synchronized across ARB, Flutter title, install metadata, and store-copy drafts before final screenshot capture |
 
 `#82` review acceptance is the only confirmed hard blocker today. The others
 are scope and truth management risks, not reasons to stop planning.
