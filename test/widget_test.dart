@@ -119,7 +119,7 @@ void main() {
     );
   });
 
-  testWidgets('visual evidence captures csv import mobile layout', (
+  testWidgets('visual evidence captures required csv import mobile states', (
     WidgetTester tester,
   ) async {
     final testDependencies = await tester.runAsync(
@@ -138,12 +138,26 @@ void main() {
     final csvFile = await tester.runAsync(
       () => fixture.writeTextSource('visual-import.csv', _csvImportCsv),
     );
+    final visualCsvFile = csvFile!;
 
-    await captureCsvImportVisualEvidence(
+    await captureArtifactForApp(
+      tester,
+      routeName: AppRoutes.collection,
+      dependencies: fixture.dependencies,
+      fileName: 'issue-108-csv-entry-mobile.png',
+    );
+    await captureCsvImportPreviewVisualEvidence(
       tester,
       dependencies: fixture.dependencies,
-      csvPath: csvFile!.path,
-      fileName: 'issue-108-csv-import-mobile.png',
+      csvPath: visualCsvFile.path,
+      fileName: 'issue-108-csv-preview-mobile.png',
+    );
+    await captureCsvImportSuccessVisualEvidence(
+      tester,
+      dependencies: fixture.dependenciesWithFlags(
+        csvImportFilePicker: _SingleCsvPicker(visualCsvFile),
+      ),
+      fileName: 'issue-108-csv-success-mobile.png',
     );
   });
 
@@ -1877,18 +1891,22 @@ Future<void> loadScreenshotFont() async {
   }
 }
 
-Future<void> captureVisualEvidence(
-  WidgetTester tester, {
-  required String routeName,
-  required ThemeMode themeMode,
-  required String fileName,
-}) async {
+Future<void> _configureMobileViewport(WidgetTester tester) async {
   tester.view.physicalSize = const Size(393, 852);
   tester.view.devicePixelRatio = 1;
   addTearDown(() {
     tester.view.resetPhysicalSize();
     tester.view.resetDevicePixelRatio();
   });
+}
+
+Future<void> captureVisualEvidence(
+  WidgetTester tester, {
+  required String routeName,
+  required ThemeMode themeMode,
+  required String fileName,
+}) async {
+  await _configureMobileViewport(tester);
 
   final boundaryKey = GlobalKey();
   await tester.pumpWidget(
@@ -1919,18 +1937,37 @@ Future<void> captureVisualEvidence(
   await tester.pump();
 }
 
-Future<void> captureCsvImportVisualEvidence(
+Future<void> captureArtifactForApp(
+  WidgetTester tester, {
+  required String routeName,
+  required String fileName,
+  ThemeMode themeMode = ThemeMode.system,
+  AppDependencies? dependencies,
+}) async {
+  await _configureMobileViewport(tester);
+
+  final boundaryKey = GlobalKey();
+  await tester.pumpWidget(
+    RepaintBoundary(
+      key: boundaryKey,
+      child: ArchivaleApp(
+        initialRoute: routeName,
+        dependencies: dependencies,
+        themeMode: themeMode,
+      ),
+    ),
+  );
+  await pumpLiveData(tester);
+  await captureBoundaryToArtifacts(tester, boundaryKey, fileName);
+}
+
+Future<void> captureCsvImportPreviewVisualEvidence(
   WidgetTester tester, {
   required AppDependencies dependencies,
   required String csvPath,
   required String fileName,
 }) async {
-  tester.view.physicalSize = const Size(393, 852);
-  tester.view.devicePixelRatio = 1;
-  addTearDown(() {
-    tester.view.resetPhysicalSize();
-    tester.view.resetDevicePixelRatio();
-  });
+  await _configureMobileViewport(tester);
 
   final boundaryKey = GlobalKey();
   await tester.pumpWidget(
@@ -1962,7 +1999,64 @@ Future<void> captureCsvImportVisualEvidence(
     'field:title',
   );
   await pumpLiveData(tester);
+  await tester.ensureVisible(find.text('Cancel without writing'));
+  await tester.pump();
 
+  await captureBoundaryToArtifacts(tester, boundaryKey, fileName);
+}
+
+Future<void> captureCsvImportSuccessVisualEvidence(
+  WidgetTester tester, {
+  required AppDependencies dependencies,
+  required String fileName,
+}) async {
+  await _configureMobileViewport(tester);
+
+  final boundaryKey = GlobalKey();
+  await tester.pumpWidget(
+    RepaintBoundary(
+      key: boundaryKey,
+      child: ArchivaleApp(
+        initialRoute: AppRoutes.collectionImportCsv,
+        dependencies: dependencies,
+      ),
+    ),
+  );
+  await pumpLiveData(tester);
+  await pressAsyncButton(
+    tester,
+    find.widgetWithText(FilledButton, 'Choose CSV file'),
+  );
+  await waitForFinder(
+    tester,
+    find.byKey(const ValueKey('csv-mapping-Work Name')),
+  );
+  await selectDropdownItem(
+    tester,
+    find.byKey(const ValueKey('csv-mapping-Work Name')),
+    'field:title',
+  );
+  await pumpLiveData(tester);
+  await tapVisible(tester, find.text('Import as new'));
+  await pressAsyncButton(
+    tester,
+    find.widgetWithText(FilledButton, 'Confirm local import'),
+  );
+  await waitForFinder(
+    tester,
+    find.text('Open first imported record'),
+  );
+  await tester.ensureVisible(find.text('Open first imported record'));
+  await tester.pump();
+
+  await captureBoundaryToArtifacts(tester, boundaryKey, fileName);
+}
+
+Future<void> captureBoundaryToArtifacts(
+  WidgetTester tester,
+  GlobalKey boundaryKey,
+  String fileName,
+) async {
   final boundary =
       boundaryKey.currentContext!.findRenderObject()! as RenderRepaintBoundary;
   final bytes = await tester.runAsync<Uint8List>(() async {
