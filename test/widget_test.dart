@@ -12,6 +12,7 @@ import 'package:my_art_collection/app/app.dart';
 import 'package:my_art_collection/app/app_dependencies.dart';
 import 'package:my_art_collection/app/app_routes.dart';
 import 'package:my_art_collection/app/config/app_feature_flags.dart';
+import 'package:my_art_collection/app/import/csv_import_file_picker.dart';
 import 'package:my_art_collection/app/intake/artwork_image_picker.dart';
 import 'package:my_art_collection/app/startup_route.dart';
 import 'package:my_art_collection/app/storage/ai_research_record.dart';
@@ -118,6 +119,34 @@ void main() {
     );
   });
 
+  testWidgets('visual evidence captures csv import mobile layout', (
+    WidgetTester tester,
+  ) async {
+    final testDependencies = await tester.runAsync(
+      () async => _LiveDependencyFixture.create(),
+    );
+    final fixture = testDependencies!;
+    addTearDown(() async {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.runAsync(fixture.dispose);
+    });
+
+    await tester.runAsync(() async {
+      await fixture.repository.upsert(_existingCsvDuplicateRecord());
+    });
+
+    final csvFile = await tester.runAsync(
+      () => fixture.writeTextSource('visual-import.csv', _csvImportCsv),
+    );
+
+    await captureCsvImportVisualEvidence(
+      tester,
+      dependencies: fixture.dependencies,
+      csvPath: csvFile!.path,
+      fileName: 'issue-108-csv-import-mobile.png',
+    );
+  });
+
   testWidgets('collection shell renders and can open add artwork', (
     WidgetTester tester,
   ) async {
@@ -132,6 +161,7 @@ void main() {
     expect(find.text('Settings'), findsOneWidget);
     expect(find.text('No artworks yet'), findsOneWidget);
     expect(find.text('Blue Interior Study'), findsNothing);
+    expect(find.text('Import CSV'), findsOneWidget);
 
     await tapVisible(tester, find.widgetWithText(FilledButton, 'Add artwork'));
 
@@ -150,6 +180,165 @@ void main() {
     expect(find.textContaining('prove authenticity'), findsNothing);
     expect(find.textContaining('appraise value'), findsNothing);
   });
+
+  testWidgets(
+    'csv import entry shows privacy framing, mapping edits, preview categories, and cancel with no write',
+    (WidgetTester tester) async {
+      final testDependencies = await tester.runAsync(
+        () async => _LiveDependencyFixture.create(),
+      );
+      final fixture = testDependencies!;
+      addTearDown(() async {
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.runAsync(fixture.dispose);
+      });
+
+      await tester.runAsync(() async {
+        await fixture.repository.upsert(_existingCsvDuplicateRecord());
+      });
+
+      final csvFile = await tester.runAsync(
+        () => fixture.writeTextSource('collector-import.csv', _csvImportCsv),
+      );
+
+      await tester.pumpWidget(
+        ArchivaleApp(
+          initialRoute: AppRoutes.collectionImportCsv,
+          dependencies: fixture.dependencies,
+        ),
+      );
+      await pumpLiveData(tester);
+
+      expect(find.text('Import collector CSV'), findsOneWidget);
+      expect(find.text('Private local records only'), findsOneWidget);
+      expect(find.text('Local-only CSV review'), findsOneWidget);
+      expect(find.textContaining('does not connect to Drive'), findsOneWidget);
+      expect(find.text('Choose CSV file'), findsOneWidget);
+      expect(find.text('Load test harness path'), findsOneWidget);
+      expect(find.text('Choose from system picker'), findsNothing);
+
+      await enterVisibleText(
+        tester,
+        find.byKey(const ValueKey('csv-test-harness-path-field')),
+        csvFile!.path,
+      );
+      await pressAsyncButton(
+        tester,
+        find.widgetWithText(OutlinedButton, 'Load test harness path'),
+      );
+      await waitForFinder(
+        tester,
+        find.byKey(const ValueKey('csv-mapping-Work Name')),
+      );
+      await selectDropdownItem(
+        tester,
+        find.byKey(const ValueKey('csv-mapping-Work Name')),
+        'field:title',
+      );
+      await pumpLiveData(tester);
+
+      expect(find.text('Preview categories'), findsOneWidget);
+      expect(find.text('Ready: 1'), findsOneWidget);
+      expect(find.text('Warning: 1'), findsOneWidget);
+      expect(find.text('Duplicate candidate: 1'), findsOneWidget);
+      expect(find.text('Blocked: 1'), findsOneWidget);
+      expect(find.text('Skip'), findsOneWidget);
+      expect(find.text('Import as new'), findsOneWidget);
+
+      await tapVisible(tester, find.text('Cancel without writing'));
+
+      final recordsAfterCancel = await tester.runAsync(fixture.repository.list);
+      expect(recordsAfterCancel!.map((record) => record.id), ['existing-001']);
+      expect(find.text('Choose CSV file'), findsOneWidget);
+      expect(find.text('Preview categories'), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'csv import can load from file picker, confirm writes, and open an imported record',
+    (WidgetTester tester) async {
+      final testDependencies = await tester.runAsync(
+        () async => _LiveDependencyFixture.create(),
+      );
+      final fixture = testDependencies!;
+      addTearDown(() async {
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.runAsync(fixture.dispose);
+      });
+
+      await tester.runAsync(() async {
+        await fixture.repository.upsert(_existingCsvDuplicateRecord());
+      });
+
+      final csvFile = await tester.runAsync(
+        () => fixture.writeTextSource('picker-import.csv', _csvImportCsv),
+      );
+
+      await tester.pumpWidget(
+        ArchivaleApp(
+          initialRoute: AppRoutes.collectionImportCsv,
+          dependencies: fixture.dependenciesWithFlags(
+            csvImportFilePicker: _SingleCsvPicker(csvFile!),
+          ),
+        ),
+      );
+      await pumpLiveData(tester);
+
+      await pressAsyncButton(
+        tester,
+        find.widgetWithText(FilledButton, 'Choose CSV file'),
+      );
+      await waitForFinder(
+        tester,
+        find.byKey(const ValueKey('csv-mapping-Work Name')),
+      );
+      await selectDropdownItem(
+        tester,
+        find.byKey(const ValueKey('csv-mapping-Work Name')),
+        'field:title',
+      );
+      await pumpLiveData(tester);
+      await tapVisible(tester, find.text('Import as new'));
+      await pressAsyncButton(
+        tester,
+        find.widgetWithText(FilledButton, 'Confirm local import'),
+      );
+
+      expect(find.text('Local CSV import complete'), findsOneWidget);
+      expect(find.text('Imported records: 3'), findsOneWidget);
+      expect(find.text('Skipped duplicate candidates: 0'), findsOneWidget);
+      expect(find.text('Imported with warnings: 1'), findsOneWidget);
+      expect(find.text('Blocked rows left unchanged: 1'), findsOneWidget);
+
+      final recordsAfterImport = await tester.runAsync(fixture.repository.list);
+      expect(recordsAfterImport, hasLength(4));
+      expect(
+        recordsAfterImport!
+            .where(
+              (record) =>
+                  record.field(ArtworkFieldKeys.title)?.value == 'Fresh Harbor',
+            )
+            .single
+            .primaryImageAttachmentId,
+        isNull,
+      );
+      expect(
+        recordsAfterImport.any(
+          (record) =>
+              record.field(ArtworkFieldKeys.title)?.value == 'Blue Interior' &&
+              record.id != 'existing-001',
+        ),
+        isTrue,
+      );
+
+      await tapVisible(tester, find.text('Open first imported record'));
+      await pumpLiveData(tester);
+
+      expect(find.text('Draft review'), findsWidgets);
+      expect(find.text('Fresh Harbor'), findsWidgets);
+      expect(find.text('Add evidence photos next'), findsOneWidget);
+    },
+  );
 
   testWidgets('collection shell localizes supported mobile locales', (
     WidgetTester tester,
@@ -1598,6 +1787,52 @@ Future<void> enterVisibleText(
   await tester.pump();
 }
 
+Future<void> selectDropdownItem(
+  WidgetTester tester,
+  Finder finder,
+  String value,
+) async {
+  await tester.ensureVisible(finder);
+  await tester.pump();
+  final dropdown = tester.widget<DropdownButtonFormField<String>>(finder);
+  dropdown.onChanged!(value);
+  await pumpLiveData(tester);
+}
+
+Future<void> waitForFinder(
+  WidgetTester tester,
+  Finder finder, {
+  int attempts = 20,
+}) async {
+  for (var attempt = 0; attempt < attempts; attempt += 1) {
+    await tester.pump(const Duration(milliseconds: 100));
+    if (finder.evaluate().isNotEmpty) {
+      return;
+    }
+  }
+
+  final visibleTexts = find
+      .byType(Text)
+      .evaluate()
+      .map((element) => element.widget)
+      .whereType<Text>()
+      .map((text) => text.data)
+      .whereType<String>()
+      .toList();
+  fail('Finder not found. Visible text: ${visibleTexts.join(' | ')}');
+}
+
+Future<void> pressAsyncButton(WidgetTester tester, Finder finder) async {
+  await tester.ensureVisible(finder);
+  await tester.pump();
+  await tester.runAsync(() async {
+    final dynamic button = tester.widget(finder);
+    (button.onPressed as VoidCallback?)!.call();
+    await Future<void>.delayed(const Duration(milliseconds: 100));
+  });
+  await pumpLiveData(tester);
+}
+
 Future<void> pumpReady(WidgetTester tester) async {
   await tester.pump();
   await tester.pump(const Duration(milliseconds: 400));
@@ -1684,6 +1919,68 @@ Future<void> captureVisualEvidence(
   await tester.pump();
 }
 
+Future<void> captureCsvImportVisualEvidence(
+  WidgetTester tester, {
+  required AppDependencies dependencies,
+  required String csvPath,
+  required String fileName,
+}) async {
+  tester.view.physicalSize = const Size(393, 852);
+  tester.view.devicePixelRatio = 1;
+  addTearDown(() {
+    tester.view.resetPhysicalSize();
+    tester.view.resetDevicePixelRatio();
+  });
+
+  final boundaryKey = GlobalKey();
+  await tester.pumpWidget(
+    RepaintBoundary(
+      key: boundaryKey,
+      child: ArchivaleApp(
+        initialRoute: AppRoutes.collectionImportCsv,
+        dependencies: dependencies,
+      ),
+    ),
+  );
+  await pumpLiveData(tester);
+  await enterVisibleText(
+    tester,
+    find.byKey(const ValueKey('csv-test-harness-path-field')),
+    csvPath,
+  );
+  await pressAsyncButton(
+    tester,
+    find.widgetWithText(OutlinedButton, 'Load test harness path'),
+  );
+  await waitForFinder(
+    tester,
+    find.byKey(const ValueKey('csv-mapping-Work Name')),
+  );
+  await selectDropdownItem(
+    tester,
+    find.byKey(const ValueKey('csv-mapping-Work Name')),
+    'field:title',
+  );
+  await pumpLiveData(tester);
+
+  final boundary =
+      boundaryKey.currentContext!.findRenderObject()! as RenderRepaintBoundary;
+  final bytes = await tester.runAsync<Uint8List>(() async {
+    final image = await boundary.toImage(pixelRatio: 2);
+    final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
+    image.dispose();
+    return byteData!.buffer.asUint8List();
+  });
+
+  final outputDirectory = Directory(p.join('artifacts', 'visual'));
+  outputDirectory.createSync(recursive: true);
+  final screenshotFile = File(p.join(outputDirectory.path, fileName));
+  screenshotFile.writeAsBytesSync(bytes!);
+
+  await tester.pumpWidget(const SizedBox.shrink());
+  await tester.pump();
+}
+
 class _NoLostImagePicker implements ArtworkImagePicker {
   @override
   Future<XFile?> pick(ArtworkImagePickMode mode) async => null;
@@ -1715,12 +2012,14 @@ class _LiveDependencyFixture {
 
   AppDependencies dependenciesWithFlags({
     ArtworkImagePicker? imagePicker,
+    CsvImportFilePicker csvImportFilePicker = const _NoCsvPicker(),
     AppFeatureFlags featureFlags = const AppFeatureFlags(),
   }) {
     return AppDependencies(
       artworkRepository: repository,
       attachmentStore: attachmentStore,
       imagePicker: imagePicker ?? _NoLostImagePicker(),
+      csvImportFilePicker: csvImportFilePicker,
       featureFlags: featureFlags,
       onDeviceAiDraftProvider: onDeviceAiDraftProvider,
     );
@@ -1758,6 +2057,12 @@ class _LiveDependencyFixture {
   Future<File> writePngSource(String fileName) async {
     final file = File(p.join(tempDir.path, fileName));
     await file.writeAsBytes(_tinyPngBytes);
+    return file;
+  }
+
+  Future<File> writeTextSource(String fileName, String contents) async {
+    final file = File(p.join(tempDir.path, fileName));
+    await file.writeAsString(contents);
     return file;
   }
 
@@ -1800,6 +2105,28 @@ class _SingleImagePicker implements ArtworkImagePicker {
 
   @override
   Future<XFile?> retrieveLostImage() async => null;
+}
+
+class _NoCsvPicker implements CsvImportFilePicker {
+  const _NoCsvPicker();
+
+  @override
+  Future<CsvImportFileSelection?> pickCsvFile() async => null;
+}
+
+class _SingleCsvPicker implements CsvImportFilePicker {
+  const _SingleCsvPicker(this.file);
+
+  final File file;
+
+  @override
+  Future<CsvImportFileSelection?> pickCsvFile() async {
+    return CsvImportFileSelection(
+      displayName: p.basename(file.path),
+      path: file.path,
+      bytes: await file.readAsBytes(),
+    );
+  }
 }
 
 class _CompletedAiDraftProvider implements OnDeviceAiDraftProvider {
@@ -1963,6 +2290,42 @@ ResearchJob _researchJob({
         ],
   );
 }
+
+ArtworkRecord _existingCsvDuplicateRecord() {
+  return _artworkRecord(
+    id: 'existing-001',
+    title: 'Blue Interior',
+    state: ArtworkRecordState.verifiedByYou,
+    source: ArtworkFieldSource.userConfirmed,
+    overrides: {
+      ArtworkFieldKeys.artist: ArtworkFieldValue(
+        value: 'A. Maker',
+        source: ArtworkFieldSource.userConfirmed,
+        note: 'Confirmed in test fixture.',
+        lastConfirmedAt: DateTime.utc(2026, 7, 4, 12),
+      ),
+      ArtworkFieldKeys.year: ArtworkFieldValue(
+        value: '2020',
+        source: ArtworkFieldSource.userConfirmed,
+        note: 'Confirmed in test fixture.',
+        lastConfirmedAt: DateTime.utc(2026, 7, 4, 12),
+      ),
+      ArtworkFieldKeys.dimensions: ArtworkFieldValue(
+        value: '40 x 50 cm',
+        source: ArtworkFieldSource.userConfirmed,
+        note: 'Confirmed in test fixture.',
+        lastConfirmedAt: DateTime.utc(2026, 7, 4, 12),
+      ),
+    },
+  );
+}
+
+const _csvImportCsv =
+    'Work Name,Creator,Year,Dimensions,Notes\n'
+    'Fresh Harbor,A. Maker,2020,40 x 50 cm,\n'
+    'Question Mark,,c. 1900,about 40 x 50,Owner note\n'
+    'Blue Interior,A. Maker,2020,40 x 50 cm,\n'
+    ',,1998,40 x 50 cm,\n';
 
 const _testFieldValues = {
   ArtworkFieldKeys.title: 'Fixture title',

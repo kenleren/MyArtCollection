@@ -311,6 +311,27 @@ void main() {
         CsvArtworkDuplicateSource.incomingRow,
       );
     });
+
+    test('honors explicit header mapping overrides', () {
+      final preview = _service().previewFromString(
+        'Work Name,Creator,Reference Link\n'
+        'Blue Interior,A. Maker,https://example.test/ref\n',
+        headerMappings: const [
+          CsvArtworkColumnMapping.canonical(ArtworkFieldKeys.title),
+          CsvArtworkColumnMapping.canonical(ArtworkFieldKeys.artist),
+          CsvArtworkColumnMapping.skip(),
+        ],
+      );
+
+      final row = preview.rows.single;
+      expect(row.record!.field(ArtworkFieldKeys.title)?.value, 'Blue Interior');
+      expect(row.record!.field(ArtworkFieldKeys.artist)?.value, 'A. Maker');
+      expect(
+        row.record!.field(ArtworkFieldKeys.notes),
+        isNull,
+      );
+      expect(preview.skippedColumns, ['Reference Link']);
+    });
   });
 
   group('preview write boundary', () {

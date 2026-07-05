@@ -23,11 +23,13 @@ class CsvArtworkImportException implements Exception {
 class CsvArtworkImportPreview {
   const CsvArtworkImportPreview({
     required this.headers,
+    required this.headerMappings,
     required this.rows,
     required this.skippedColumns,
   });
 
   final List<String> headers;
+  final List<CsvArtworkColumnMapping> headerMappings;
   final List<CsvArtworkImportRowPreview> rows;
   final List<String> skippedColumns;
 
@@ -73,6 +75,42 @@ class CsvArtworkDuplicateCandidate {
 
 enum CsvArtworkDuplicateSource { existingRecord, incomingRow }
 
+enum CsvArtworkColumnMappingKind { canonical, reference, unmapped, skip }
+
+class CsvArtworkColumnMapping {
+  const CsvArtworkColumnMapping.canonical(this.fieldKey)
+    : kind = CsvArtworkColumnMappingKind.canonical;
+  const CsvArtworkColumnMapping.reference()
+    : kind = CsvArtworkColumnMappingKind.reference,
+      fieldKey = null;
+  const CsvArtworkColumnMapping.unmapped()
+    : kind = CsvArtworkColumnMappingKind.unmapped,
+      fieldKey = null;
+  const CsvArtworkColumnMapping.skip()
+    : kind = CsvArtworkColumnMappingKind.skip,
+      fieldKey = null;
+
+  final CsvArtworkColumnMappingKind kind;
+  final String? fieldKey;
+
+  String get id => switch (kind) {
+    CsvArtworkColumnMappingKind.canonical => 'field:$fieldKey',
+    CsvArtworkColumnMappingKind.reference => 'reference',
+    CsvArtworkColumnMappingKind.unmapped => 'unmapped',
+    CsvArtworkColumnMappingKind.skip => 'skip',
+  };
+
+  @override
+  bool operator ==(Object other) {
+    return other is CsvArtworkColumnMapping &&
+        other.kind == kind &&
+        other.fieldKey == fieldKey;
+  }
+
+  @override
+  int get hashCode => Object.hash(kind, fieldKey);
+}
+
 class CsvArtworkImportService {
   CsvArtworkImportService({
     DateTime Function()? now,
@@ -91,6 +129,7 @@ class CsvArtworkImportService {
   CsvArtworkImportPreview previewFromBytes(
     Uint8List bytes, {
     List<ArtworkRecord> existingRecords = const [],
+    List<CsvArtworkColumnMapping>? headerMappings,
   }) {
     if (bytes.isEmpty) {
       throw const CsvArtworkImportException(
@@ -106,12 +145,17 @@ class CsvArtworkImportService {
     }
 
     final text = _decodeUtf8(bytes);
-    return previewFromString(text, existingRecords: existingRecords);
+    return previewFromString(
+      text,
+      existingRecords: existingRecords,
+      headerMappings: headerMappings,
+    );
   }
 
   CsvArtworkImportPreview previewFromString(
     String csv, {
     List<ArtworkRecord> existingRecords = const [],
+    List<CsvArtworkColumnMapping>? headerMappings,
   }) {
     if (utf8.encode(csv).length > maxFileBytes) {
       throw const CsvArtworkImportException(
@@ -146,10 +190,17 @@ class CsvArtworkImportService {
       );
     }
 
-    final mappings = headers.map(_mappingForHeader).toList();
+    final mappings = <CsvArtworkColumnMapping>[
+      for (var index = 0; index < headers.length; index += 1)
+        if (headerMappings != null && index < headerMappings.length)
+          headerMappings[index]
+        else
+          _mappingForHeader(headers[index]),
+    ];
     final skippedColumns = <String>[
       for (var index = 0; index < headers.length; index += 1)
-        if (mappings[index].kind == _ColumnKind.skip) headers[index],
+        if (mappings[index].kind == CsvArtworkColumnMappingKind.skip)
+          headers[index],
     ];
 
     final existingKeys = existingRecords
@@ -187,6 +238,7 @@ class CsvArtworkImportService {
 
     return CsvArtworkImportPreview(
       headers: headers,
+      headerMappings: List.unmodifiable(mappings),
       rows: previews,
       skippedColumns: skippedColumns,
     );
@@ -196,7 +248,7 @@ class CsvArtworkImportService {
     required int rowNumber,
     required List<String> headers,
     required List<String> values,
-    required List<_ColumnMapping> mappings,
+    required List<CsvArtworkColumnMapping> mappings,
     required List<ArtworkRecord> existingRecords,
     required List<_DuplicateKey> existingKeys,
     required List<_DuplicateKey> incomingKeys,
@@ -218,15 +270,15 @@ class CsvArtworkImportService {
 
       final mapping = mappings[index];
       switch (mapping.kind) {
-        case _ColumnKind.canonical:
+        case CsvArtworkColumnMappingKind.canonical:
           fieldText.putIfAbsent(mapping.fieldKey!, () => value);
-        case _ColumnKind.reference:
+        case CsvArtworkColumnMappingKind.reference:
           referenceNotes.add('- $header: $value');
-        case _ColumnKind.unmapped:
+        case CsvArtworkColumnMappingKind.unmapped:
           if (appendUnmappedColumnsToNotes) {
             unmappedNotes.add('- $header: $value');
           }
-        case _ColumnKind.skip:
+        case CsvArtworkColumnMappingKind.skip:
           break;
       }
     }
@@ -351,11 +403,11 @@ class CsvArtworkImportService {
     return text;
   }
 
-  static _ColumnMapping _mappingForHeader(String header) {
+  static CsvArtworkColumnMapping _mappingForHeader(String header) {
     final normalized = _normalizeHeader(header);
     final compact = normalized.replaceAll('_', '');
     if (normalized.isEmpty) {
-      return const _ColumnMapping.skip();
+      return const CsvArtworkColumnMapping.skip();
     }
     if (_referenceHeaderCompacts.contains(compact) ||
         compact.contains('photo') ||
@@ -365,14 +417,14 @@ class CsvArtworkImportService {
         compact.contains('reference') ||
         compact.endsWith('url') ||
         compact.endsWith('link')) {
-      return const _ColumnMapping.reference();
+      return const CsvArtworkColumnMapping.reference();
     }
     final fieldKey =
         _canonicalHeaderMap[normalized] ?? _canonicalCompactMap[compact];
     if (fieldKey != null) {
-      return _ColumnMapping.canonical(fieldKey);
+      return CsvArtworkColumnMapping.canonical(fieldKey);
     }
-    return const _ColumnMapping.unmapped();
+    return const CsvArtworkColumnMapping.unmapped();
   }
 
   static String _normalizeHeader(String value) {
@@ -611,22 +663,6 @@ class CsvArtworkImportService {
     'certificates',
   };
 }
-
-class _ColumnMapping {
-  const _ColumnMapping.canonical(this.fieldKey) : kind = _ColumnKind.canonical;
-  const _ColumnMapping.reference()
-    : kind = _ColumnKind.reference,
-      fieldKey = null;
-  const _ColumnMapping.unmapped()
-    : kind = _ColumnKind.unmapped,
-      fieldKey = null;
-  const _ColumnMapping.skip() : kind = _ColumnKind.skip, fieldKey = null;
-
-  final _ColumnKind kind;
-  final String? fieldKey;
-}
-
-enum _ColumnKind { canonical, reference, unmapped, skip }
 
 class _ParsedMoney {
   const _ParsedMoney({required this.amount, required this.currencyCode});

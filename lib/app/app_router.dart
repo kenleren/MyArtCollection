@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'app_routes.dart';
 import 'prototype/prototype_artwork.dart';
 import 'screens/app_shell.dart';
+import 'screens/csv_import_screen.dart';
 import 'screens/prototype_flow.dart';
 
 class AppRouter {
@@ -32,6 +33,8 @@ class AppRouter {
         );
       case AppRoutes.collectionAdd:
         return _page(settings: settings, child: const AddArtworkScreen());
+      case AppRoutes.collectionImportCsv:
+        return _page(settings: settings, child: const CsvImportScreen());
       case AppRoutes.capture:
         return _page(
           settings: settings,

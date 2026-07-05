@@ -6,6 +6,7 @@ class AppRoutes {
 
   static const collection = '/collection';
   static const collectionAdd = '/collection/add';
+  static const collectionImportCsv = '/collection/import-csv';
   static const collectionIncomplete = '/collection/incomplete';
   static const collectionReport = '/collection/report';
   static const collectionSettings = '/collection/settings';
