@@ -176,7 +176,9 @@ The broker request/response DTOs must stay separate from the current local
 `OnlineResearchRequest`. Do not reuse local fields such as `artworkId`,
 `consentSummary`, or `querySummary` as network payload fields. The app must map
 between the local model and the broker envelope explicitly at the device
-boundary.
+boundary. The local `ResearchConsentState.approved` value is a required
+precondition for that mapping, but the free-text `consentSummary` must not be
+serialized into the broker envelope.
 
 ### Why this is the right first contract
 
@@ -227,6 +229,10 @@ Allowed `consent_scope` values:
 - `image_plus_draft_hints`
 
 No v1 consent scope may authorize raw note text.
+
+`consent_scope` is not optional and is not inferred from UI flow, feature flags,
+or owner-test fixture behavior. A missing, declined, or unsupported consent
+state must fail closed before provider execution.
 
 ### Allowed image payload
 

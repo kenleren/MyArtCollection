@@ -7,14 +7,18 @@ class OnlineResearchRequest {
     required this.artworkId,
     required this.consentSummary,
     required this.querySummary,
+    this.consentState = ResearchConsentState.missing,
     this.searchTerms = const [],
   });
 
   final String artworkId;
   final String consentSummary;
   final String querySummary;
+  final ResearchConsentState consentState;
   final List<String> searchTerms;
 }
+
+enum ResearchConsentState { missing, declined, approved }
 
 abstract class OnlineResearchClient {
   Future<ResearchJob> research(OnlineResearchRequest request);
@@ -38,6 +42,7 @@ class OnlineResearchService {
   final ProfessionalSourceAllowlist _allowlist;
 
   Future<ResearchJob> runResearch(OnlineResearchRequest request) async {
+    _requireApprovedResearchConsent(request);
     final job = _TrustedResearchResponse(
       request: request,
       job: await _client.research(request),
@@ -45,6 +50,12 @@ class OnlineResearchService {
     ).sanitize();
     await _repository.upsertResearchJob(job);
     return job;
+  }
+
+  void _requireApprovedResearchConsent(OnlineResearchRequest request) {
+    if (request.consentState != ResearchConsentState.approved) {
+      throw ResearchConsentRequiredException(request.consentState);
+    }
   }
 }
 
@@ -134,6 +145,16 @@ class InvalidResearchResponseException implements Exception {
 
   @override
   String toString() => 'Invalid online research response: $message';
+}
+
+class ResearchConsentRequiredException implements Exception {
+  const ResearchConsentRequiredException(this.consentState);
+
+  final ResearchConsentState consentState;
+
+  @override
+  String toString() =>
+      'Online research requires explicit approved consent: $consentState';
 }
 
 class _TrustedResearchResponse {

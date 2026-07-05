@@ -713,6 +713,7 @@ class _DraftReviewScreenState extends State<DraftReviewScreen> {
           artworkId: widget.artwork.id,
           consentSummary:
               'User approved selected artwork image, current draft fields, and local notes for professional-source research.',
+          consentState: ResearchConsentState.approved,
           querySummary: _researchQuerySummary(widget.artwork),
           searchTerms: _researchSearchTerms(widget.artwork),
         ),

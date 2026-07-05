@@ -45,6 +45,7 @@ void main() {
         artworkId: 'artwork-001',
         consentSummary:
             'User approved selected image and local draft notes for research.',
+        consentState: ResearchConsentState.approved,
         querySummary: 'Oil on canvas with possible signature',
         searchTerms: ['oil', 'canvas'],
       ),
@@ -141,6 +142,7 @@ void main() {
         const OnlineResearchRequest(
           artworkId: 'artwork-001',
           consentSummary: 'User approved research.',
+          consentState: ResearchConsentState.approved,
           querySummary: 'auction-comparable',
           searchTerms: ['auction-comparable'],
         ),
@@ -161,6 +163,75 @@ void main() {
       );
     },
   );
+
+  test('service rejects missing consent before calling client', () async {
+    final job = _researchJob();
+    final client = _RecordingResearchClient(job);
+    final service = OnlineResearchService(
+      repository: repository,
+      client: client,
+    );
+
+    await expectLater(
+      service.runResearch(
+        const OnlineResearchRequest(
+          artworkId: 'artwork-001',
+          consentSummary: 'Caller supplied consent text but no approved state.',
+          querySummary: 'non-ui caller missing consent',
+        ),
+      ),
+      throwsA(isA<ResearchConsentRequiredException>()),
+    );
+
+    expect(client.callCount, 0);
+    expect(await repository.getResearchJob(job.id), isNull);
+  });
+
+  test('service rejects declined consent before calling client', () async {
+    final job = _researchJob();
+    final client = _RecordingResearchClient(job);
+    final service = OnlineResearchService(
+      repository: repository,
+      client: client,
+    );
+
+    await expectLater(
+      service.runResearch(
+        const OnlineResearchRequest(
+          artworkId: 'artwork-001',
+          consentSummary: 'User declined professional-source research.',
+          consentState: ResearchConsentState.declined,
+          querySummary: 'non-ui caller declined consent',
+        ),
+      ),
+      throwsA(isA<ResearchConsentRequiredException>()),
+    );
+
+    expect(client.callCount, 0);
+    expect(await repository.getResearchJob(job.id), isNull);
+  });
+
+  test('service accepts approved consent from a non-ui caller path', () async {
+    final job = _researchJob();
+    final client = _RecordingResearchClient(job);
+    final service = OnlineResearchService(
+      repository: repository,
+      client: client,
+    );
+
+    final result = await service.runResearch(
+      const OnlineResearchRequest(
+        artworkId: 'artwork-001',
+        consentSummary: 'User approved professional-source research.',
+        consentState: ResearchConsentState.approved,
+        querySummary: 'non-ui caller approved consent',
+      ),
+    );
+
+    expect(result.id, job.id);
+    expect(client.callCount, 1);
+    expect(await repository.getResearchJob(job.id), isNotNull);
+  });
 
   test(
     'fixture client returns no reliable comparable when no sources match',
@@ -387,6 +458,7 @@ void main() {
           const OnlineResearchRequest(
             artworkId: 'artwork-001',
             consentSummary: 'User approved research.',
+            consentState: ResearchConsentState.approved,
             querySummary: 'mismatched comparable citation',
           ),
         ),
@@ -443,6 +515,7 @@ void main() {
       const OnlineResearchRequest(
         artworkId: 'artwork-001',
         consentSummary: 'User approved research.',
+        consentState: ResearchConsentState.approved,
         querySummary: 'poisoned source prose',
       ),
     );
@@ -524,6 +597,7 @@ Future<void> _expectServiceRejects(
       const OnlineResearchRequest(
         artworkId: 'artwork-001',
         consentSummary: 'User approved research.',
+        consentState: ResearchConsentState.approved,
         querySummary: 'malicious fake response',
       ),
     ),
@@ -599,6 +673,19 @@ class _FakeResearchClient implements OnlineResearchClient {
 
   @override
   Future<ResearchJob> research(OnlineResearchRequest request) async => job;
+}
+
+class _RecordingResearchClient implements OnlineResearchClient {
+  _RecordingResearchClient(this.job);
+
+  final ResearchJob job;
+  var callCount = 0;
+
+  @override
+  Future<ResearchJob> research(OnlineResearchRequest request) async {
+    callCount += 1;
+    return job;
+  }
 }
 
 final _longEvidenceText = List.filled(

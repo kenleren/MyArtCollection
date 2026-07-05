@@ -125,6 +125,9 @@ Any approved paid broker implementation must satisfy all of the following:
   project must stay separate.
 - Wrong-project App Check tokens and wrong-project Auth ID tokens must fail
   closed before any provider call.
+- The broker start path must fail closed before any provider call unless the
+  mapped local request has an explicit approved research-consent state and the
+  broker envelope carries an allowed `consent_scope`.
 - The first broker identity model must work without a mandatory user-facing
   account signup flow.
 - Quotas must be keyed to a revocable identity, not to App Check alone and not
