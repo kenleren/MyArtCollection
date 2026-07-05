@@ -147,11 +147,40 @@ void main() {
       fileName: 'issue-108-csv-entry-mobile.png',
       ensureVisibleFinder: find.text('Import CSV', skipOffstage: false),
     );
+    await captureArtifactForApp(
+      tester,
+      routeName: AppRoutes.collection,
+      dependencies: fixture.dependencies,
+      fileName: 'issue-109-csv-entry-mobile.png',
+      ensureVisibleFinder: find.text('Import CSV', skipOffstage: false),
+    );
+    await captureCsvImportMappingVisualEvidence(
+      tester,
+      dependencies: fixture.dependencies,
+      csvPath: visualCsvFile.path,
+      fileName: 'issue-109-csv-mapping-mobile.png',
+    );
     await captureCsvImportPreviewVisualEvidence(
       tester,
       dependencies: fixture.dependencies,
       csvPath: visualCsvFile.path,
       fileName: 'issue-108-csv-preview-mobile.png',
+    );
+    await captureCsvImportPreviewVisualEvidence(
+      tester,
+      dependencies: fixture.dependencies,
+      csvPath: visualCsvFile.path,
+      fileName: 'issue-109-csv-preview-warning-duplicate-mobile.png',
+      ensureVisibleFinder: find.text(
+        'Duplicate candidate: 1',
+        skipOffstage: false,
+      ),
+    );
+    await captureCsvImportCancelVisualEvidence(
+      tester,
+      dependencies: fixture.dependencies,
+      csvPath: visualCsvFile.path,
+      fileName: 'issue-109-csv-cancel-no-write-mobile.png',
     );
     await captureCsvImportSuccessVisualEvidence(
       tester,
@@ -159,6 +188,8 @@ void main() {
         csvImportFilePicker: _SingleCsvPicker(visualCsvFile),
       ),
       fileName: 'issue-108-csv-success-mobile.png',
+      additionalSuccessFileName: 'issue-109-csv-success-summary-mobile.png',
+      importedDraftFileName: 'issue-109-imported-draft-mobile.png',
     );
   });
 
@@ -407,6 +438,18 @@ void main() {
             .primaryImageAttachmentId,
         isNull,
       );
+      final freshHarborRecord = recordsAfterImport
+          .where(
+            (record) =>
+                record.field(ArtworkFieldKeys.title)?.value == 'Fresh Harbor',
+          )
+          .single;
+      expect(freshHarborRecord.recordState, ArtworkRecordState.needsReview);
+      expect(freshHarborRecord.primaryImageAttachmentId, isNull);
+      expect(
+        freshHarborRecord.field(ArtworkFieldKeys.title)?.source,
+        ArtworkFieldSource.documentExtracted,
+      );
       expect(
         recordsAfterImport.any(
           (record) =>
@@ -420,7 +463,9 @@ void main() {
       await pumpLiveData(tester);
 
       expect(find.text('Draft review'), findsWidgets);
+      expect(find.text('Local draft. Please confirm.'), findsOneWidget);
       expect(find.text('Fresh Harbor'), findsWidgets);
+      expect(find.text('Primary image preview unavailable'), findsOneWidget);
       expect(find.text('Add evidence photos next'), findsOneWidget);
     },
   );
@@ -2169,6 +2214,7 @@ Future<void> captureCsvImportPreviewVisualEvidence(
   required AppDependencies dependencies,
   required String csvPath,
   required String fileName,
+  Finder? ensureVisibleFinder,
 }) async {
   await _configureMobileViewport(tester);
 
@@ -2202,7 +2248,93 @@ Future<void> captureCsvImportPreviewVisualEvidence(
     'field:title',
   );
   await pumpLiveData(tester);
-  await tester.ensureVisible(find.text('Cancel without writing'));
+  await tester.ensureVisible(
+    ensureVisibleFinder ?? find.text('Cancel without writing'),
+  );
+  await tester.pump();
+
+  await captureBoundaryToArtifacts(tester, boundaryKey, fileName);
+}
+
+Future<void> captureCsvImportMappingVisualEvidence(
+  WidgetTester tester, {
+  required AppDependencies dependencies,
+  required String csvPath,
+  required String fileName,
+}) async {
+  await _configureMobileViewport(tester);
+
+  final boundaryKey = GlobalKey();
+  await tester.pumpWidget(
+    RepaintBoundary(
+      key: boundaryKey,
+      child: ArchivaleApp(
+        initialRoute: AppRoutes.collectionImportCsv,
+        dependencies: dependencies,
+      ),
+    ),
+  );
+  await pumpLiveData(tester);
+  await enterVisibleText(
+    tester,
+    find.byKey(const ValueKey('csv-test-harness-path-field')),
+    csvPath,
+  );
+  await pressAsyncButton(
+    tester,
+    find.widgetWithText(OutlinedButton, 'Load test harness path'),
+  );
+  await waitForFinder(
+    tester,
+    find.byKey(const ValueKey('csv-mapping-Work Name')),
+  );
+  await tester.ensureVisible(find.text('Header mapping'));
+  await tester.pump();
+
+  await captureBoundaryToArtifacts(tester, boundaryKey, fileName);
+}
+
+Future<void> captureCsvImportCancelVisualEvidence(
+  WidgetTester tester, {
+  required AppDependencies dependencies,
+  required String csvPath,
+  required String fileName,
+}) async {
+  await _configureMobileViewport(tester);
+
+  final boundaryKey = GlobalKey();
+  await tester.pumpWidget(
+    RepaintBoundary(
+      key: boundaryKey,
+      child: ArchivaleApp(
+        initialRoute: AppRoutes.collectionImportCsv,
+        dependencies: dependencies,
+      ),
+    ),
+  );
+  await pumpLiveData(tester);
+  await enterVisibleText(
+    tester,
+    find.byKey(const ValueKey('csv-test-harness-path-field')),
+    csvPath,
+  );
+  await pressAsyncButton(
+    tester,
+    find.widgetWithText(OutlinedButton, 'Load test harness path'),
+  );
+  await waitForFinder(
+    tester,
+    find.byKey(const ValueKey('csv-mapping-Work Name')),
+  );
+  await selectDropdownItem(
+    tester,
+    find.byKey(const ValueKey('csv-mapping-Work Name')),
+    'field:title',
+  );
+  await pumpLiveData(tester);
+  await tapVisible(tester, find.text('Cancel without writing'));
+  await waitForFinder(tester, find.text('Choose CSV file'));
+  await tester.ensureVisible(find.text('Choose CSV file'));
   await tester.pump();
 
   await captureBoundaryToArtifacts(tester, boundaryKey, fileName);
@@ -2212,6 +2344,8 @@ Future<void> captureCsvImportSuccessVisualEvidence(
   WidgetTester tester, {
   required AppDependencies dependencies,
   required String fileName,
+  String? additionalSuccessFileName,
+  String? importedDraftFileName,
 }) async {
   await _configureMobileViewport(tester);
 
@@ -2249,14 +2383,41 @@ Future<void> captureCsvImportSuccessVisualEvidence(
   await tester.ensureVisible(find.text('Open first imported record'));
   await tester.pump();
 
-  await captureBoundaryToArtifacts(tester, boundaryKey, fileName);
+  await captureBoundaryToArtifacts(
+    tester,
+    boundaryKey,
+    fileName,
+    resetAfterCapture:
+        additionalSuccessFileName == null && importedDraftFileName == null,
+  );
+  if (additionalSuccessFileName != null) {
+    await captureBoundaryToArtifacts(
+      tester,
+      boundaryKey,
+      additionalSuccessFileName,
+      resetAfterCapture: importedDraftFileName == null,
+    );
+  }
+  if (importedDraftFileName != null) {
+    await tapVisible(tester, find.text('Open first imported record'));
+    await pumpLiveData(tester);
+    await waitForFinder(tester, find.text('Add evidence photos next'));
+    await tester.ensureVisible(find.text('Primary image preview unavailable'));
+    await tester.pump();
+    await captureBoundaryToArtifacts(
+      tester,
+      boundaryKey,
+      importedDraftFileName,
+    );
+  }
 }
 
 Future<void> captureBoundaryToArtifacts(
   WidgetTester tester,
   GlobalKey boundaryKey,
-  String fileName,
-) async {
+  String fileName, {
+  bool resetAfterCapture = true,
+}) async {
   final boundary =
       boundaryKey.currentContext!.findRenderObject()! as RenderRepaintBoundary;
   final bytes = await tester.runAsync<Uint8List>(() async {
@@ -2271,8 +2432,10 @@ Future<void> captureBoundaryToArtifacts(
   final screenshotFile = File(p.join(outputDirectory.path, fileName));
   screenshotFile.writeAsBytesSync(bytes!);
 
-  await tester.pumpWidget(const SizedBox.shrink());
-  await tester.pump();
+  if (resetAfterCapture) {
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+  }
 }
 
 class _NoLostImagePicker implements ArtworkImagePicker {
