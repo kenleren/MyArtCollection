@@ -3,6 +3,7 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 
 import '../l10n/app_localizations.dart';
 import 'app_dependencies.dart';
+import 'app_identity.dart';
 import 'app_router.dart';
 import 'app_routes.dart';
 
@@ -26,7 +27,7 @@ class MyArtCollectionApp extends StatelessWidget {
     );
 
     final app = MaterialApp(
-      title: 'MyArtCollection',
+      title: appDisplayName,
       debugShowCheckedModeBanner: false,
       localizationsDelegates: const [
         AppLocalizations.delegate,

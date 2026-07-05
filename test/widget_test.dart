@@ -7,6 +7,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:my_art_collection/app/ai/on_device_ai_draft_service.dart';
 import 'package:my_art_collection/app/app.dart';
 import 'package:my_art_collection/app/app_dependencies.dart';
+import 'package:my_art_collection/app/app_identity.dart';
 import 'package:my_art_collection/app/app_routes.dart';
 import 'package:my_art_collection/app/config/app_feature_flags.dart';
 import 'package:my_art_collection/app/intake/artwork_image_picker.dart';
@@ -33,7 +34,7 @@ void main() {
     );
     await pumpReady(tester);
 
-    expect(find.text('MyArtCollection'), findsOneWidget);
+    expect(find.text(appDisplayName), findsOneWidget);
     expect(find.text('Private artwork records'), findsOneWidget);
     expect(find.text('AI drafts. You confirm.'), findsOneWidget);
   });

@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import '../../l10n/app_localizations.dart';
 import '../app_dependencies.dart';
+import '../app_identity.dart';
 import '../app_routes.dart';
 import '../intake/artwork_intake_service.dart';
 import '../localization/app_currency_formatter.dart';
@@ -19,7 +20,7 @@ class PrototypeIntroScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return PrototypeScreenFrame(
-      appBarTitle: 'MyArtCollection',
+      appBarTitle: appDisplayName,
       title: 'Private artwork records',
       subtitle: 'AI drafts. You confirm.',
       child: Column(
