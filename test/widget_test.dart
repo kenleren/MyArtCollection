@@ -144,13 +144,6 @@ void main() {
       tester,
       routeName: AppRoutes.collection,
       dependencies: fixture.dependencies,
-      fileName: 'issue-108-csv-entry-mobile.png',
-      ensureVisibleFinder: find.text('Import CSV', skipOffstage: false),
-    );
-    await captureArtifactForApp(
-      tester,
-      routeName: AppRoutes.collection,
-      dependencies: fixture.dependencies,
       fileName: 'issue-109-csv-entry-mobile.png',
       ensureVisibleFinder: find.text('Import CSV', skipOffstage: false),
     );
@@ -159,12 +152,6 @@ void main() {
       dependencies: fixture.dependencies,
       csvPath: visualCsvFile.path,
       fileName: 'issue-109-csv-mapping-mobile.png',
-    );
-    await captureCsvImportPreviewVisualEvidence(
-      tester,
-      dependencies: fixture.dependencies,
-      csvPath: visualCsvFile.path,
-      fileName: 'issue-108-csv-preview-mobile.png',
     );
     await captureCsvImportPreviewVisualEvidence(
       tester,
@@ -187,8 +174,7 @@ void main() {
       dependencies: fixture.dependenciesWithFlags(
         csvImportFilePicker: _SingleCsvPicker(visualCsvFile),
       ),
-      fileName: 'issue-108-csv-success-mobile.png',
-      additionalSuccessFileName: 'issue-109-csv-success-summary-mobile.png',
+      successFileName: 'issue-109-csv-success-summary-mobile.png',
       importedDraftFileName: 'issue-109-imported-draft-mobile.png',
     );
   });
@@ -2343,8 +2329,7 @@ Future<void> captureCsvImportCancelVisualEvidence(
 Future<void> captureCsvImportSuccessVisualEvidence(
   WidgetTester tester, {
   required AppDependencies dependencies,
-  required String fileName,
-  String? additionalSuccessFileName,
+  required String successFileName,
   String? importedDraftFileName,
 }) async {
   await _configureMobileViewport(tester);
@@ -2386,18 +2371,9 @@ Future<void> captureCsvImportSuccessVisualEvidence(
   await captureBoundaryToArtifacts(
     tester,
     boundaryKey,
-    fileName,
-    resetAfterCapture:
-        additionalSuccessFileName == null && importedDraftFileName == null,
+    successFileName,
+    resetAfterCapture: importedDraftFileName == null,
   );
-  if (additionalSuccessFileName != null) {
-    await captureBoundaryToArtifacts(
-      tester,
-      boundaryKey,
-      additionalSuccessFileName,
-      resetAfterCapture: importedDraftFileName == null,
-    );
-  }
   if (importedDraftFileName != null) {
     await tapVisible(tester, find.text('Open first imported record'));
     await pumpLiveData(tester);
