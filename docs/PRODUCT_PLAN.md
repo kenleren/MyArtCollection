@@ -126,21 +126,42 @@ No report yet:
 
 ## Pricing And Entitlements
 
-Initial hypothesis:
+Decision:
 
-- Free: up to 5 artworks, photo intake, AI draft suggestions, manual edits, basic collection view
-- Paid Collector: unlimited artworks, document storage, insurance PDF, full archive export, completeness queue
-- Paid Collector Plus later: larger collections, household sharing, advanced exports, priority document extraction
+- Gate collection growth by artwork volume.
+- Gate variable-cost AI, online research, and document processing by included
+  credits and later optional credit packs.
+- Do not gate manual cataloging, existing record access, record edits, or export
+  safety with AI credits.
 
-Suggested starting price:
+Concise entitlement table:
 
-- USD 8 to 12 monthly
-- USD 79 to 99 yearly
-- Later plus tier at USD 149 to 199 yearly
+| Tier | Artwork volume | Manual/basic product access | AI, research, and document processing |
+| --- | --- | --- | --- |
+| Free | Up to 5 active artworks | Manual records, photos, basic collection/list/detail view, edits, and full export of own data | One-time small trial allowance, such as 5 credits total |
+| Collector | More than 5 active artworks; public copy should avoid promising infinite scale before cost data exists | All Free access, plus reports, completeness queue, document organization, archive export, and paid collection growth | Included monthly pool, such as 25 credits/month shared across AI intake, online research, and document extraction |
+| Optional credits/add-ons | No effect on manual catalog size or access rules | No effect on cataloging, record access, edits, or export safety | Later credit packs for heavier processing users only |
+
+Recommended starting price:
+
+- Collector at USD 5.99/month introductory pricing or USD 49/year.
+- Present annual as the best-value path to answer "few bucks a month" pricing
+  sensitivity without adding a lower starter tier.
+- Defer Collector Plus until real usage data shows a need for household
+  sharing, larger included processing pools, or advanced exports.
 
 Do not price around Google storage volume. Google owns that layer in the user's mind.
 
 Do not make export feel hostage-taking. A cancelled user should still have a clear path to retrieve their data.
+
+Users over the free artwork cap should retain view, edit, and export access to
+existing records. The paywall may stop new active artwork creation until the
+user upgrades or archives records, but it must not lock away their catalog.
+
+Reddit feedback is a product signal, not public copy: gallery-experienced users
+validated a lightweight private-collector gap, while adjacent pricing feedback
+warned that subscription willingness may be closer to a few dollars per month
+than traditional collection-management pricing.
 
 ## Acceptance Checks
 
@@ -182,4 +203,3 @@ Required evidence:
 - Should insurance value be strictly user-entered in MVP? Recommendation: yes.
 - Should household sharing be in MVP? Recommendation: no.
 - Should the brand lean luxury or quiet-premium? Recommendation: quiet-premium.
-
