@@ -180,6 +180,16 @@ boundary. The local `ResearchConsentState.approved` value is a required
 precondition for that mapping, but the free-text `consentSummary` must not be
 serialized into the broker envelope.
 
+Issue [#118](https://github.com/kenleren/MyArtCollection/issues/118) adds only a
+local fake-provider adapter contract for this boundary. The adapter returns a
+stable success/error envelope for parsed JSON plus explicit local auth/app
+identity placeholders, but it is not a deployed endpoint and does not authorize
+mobile wiring. Its error envelopes are fixed vocabulary and must not echo raw
+payload content, raw notes, provider key/env names, stack traces, or
+server-only trace internals. Real Firebase Functions/Auth/App Check, HTTPS
+deployment behavior, durable quota, content-free production logging, and live
+provider validation remain separate gates.
+
 ### Why this is the right first contract
 
 - It narrows what leaves the device more aggressively than the broader

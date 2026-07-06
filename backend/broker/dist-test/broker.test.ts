@@ -11,6 +11,11 @@ import {
   type ProviderClient,
 } from '../src/contracts.js';
 import { createFakeBrokerDependencies, handleResearchRequest } from '../src/broker.js';
+import {
+  handleFakeBrokerAdapterRequest,
+  type FakeBrokerAdapterEnvelope,
+  type FakeBrokerAdapterIdentity,
+} from '../src/adapter.js';
 import { PlaceholderCreditLedger } from '../src/credit_ledger.js';
 
 const baseContext = Object.freeze({
@@ -47,6 +52,47 @@ function request(overrides: Partial<BrokerRequest> = {}): BrokerRequest {
     },
     ...overrides,
   };
+}
+
+function adapterIdentity(
+  overrides: Partial<FakeBrokerAdapterIdentity> = {},
+): FakeBrokerAdapterIdentity {
+  return {
+    auth: {
+      appCheckVerified: true,
+      authVerified: true,
+      uid: 'anonymous-test-uid',
+      authProjectId: 'local-broker-project',
+      signInProvider: 'anonymous',
+    },
+    app: {
+      appId: 'local-ios-app',
+      appProjectId: 'local-broker-project',
+    },
+    quotaSubject: 'quota_subject_v1_aaaaaaaaaaaaaaaa',
+    entitled: true,
+    creditAvailable: true,
+    breakerOpen: false,
+    ...overrides,
+  };
+}
+
+function assertSanitizedEnvelope(envelope: FakeBrokerAdapterEnvelope): void {
+  const serialized = JSON.stringify(envelope);
+  for (const forbidden of [
+    'raw private collector notes',
+    'provider_key',
+    'OPENAI',
+    'API_KEY',
+    'process.env',
+    '.env.local',
+    'orderTrace',
+    'stack',
+    'traceback',
+    'credit_finalize',
+  ]) {
+    assert.equal(serialized.includes(forbidden), false, forbidden);
+  }
 }
 
 function invalidOutput(): BrokerResearchOutput {
@@ -508,11 +554,191 @@ test('broker monthly cap placeholder fails closed before provider call', async (
   assert.equal(deps.creditLedger.records[0].state, 'rejected-before-reserve');
 });
 
+test('adapter valid request returns fake-provider response envelope', async () => {
+  const deps = createFakeBrokerDependencies({
+    now: () => new Date('2026-07-06T12:00:00.000Z'),
+  });
+
+  const envelope = await handleFakeBrokerAdapterRequest(request(), adapterIdentity(), deps);
+
+  assert.equal(envelope.ok, true);
+  assert.equal(envelope.status, 200);
+  assert.equal(envelope.body.status, 'completed');
+  assert.equal(envelope.body.provider, 'fake-provider');
+  assert.equal(envelope.body.model, 'fake-local-model');
+  assert.equal(envelope.body.sources.length, 1);
+  assert.equal(deps.provider.callCount, 1);
+  assert.equal(deps.creditLedger.reserveCount, 1);
+  assertSanitizedEnvelope(envelope);
+});
+
+test('adapter unauthenticated request rejects before broker, ledger, or provider work', async () => {
+  const trace: string[] = [];
+  const deps = createFakeBrokerDependencies({ orderTrace: trace });
+
+  const envelope = await handleFakeBrokerAdapterRequest(
+    request({ consent_status: 'missing', payload_hash: 'not-a-hash' }),
+    adapterIdentity({
+      auth: {
+        appCheckVerified: false,
+        authVerified: false,
+      },
+    }),
+    deps,
+  );
+
+  assert.equal(envelope.ok, false);
+  assert.equal(envelope.status, 401);
+  assert.equal(envelope.body.status, 'rejected');
+  assert.equal(envelope.body.error.code, 'unauthorized');
+  assert.equal(envelope.body.error.stage, 'auth');
+  assert.equal(deps.provider.callCount, 0);
+  assert.equal(deps.creditLedger.reserveCount, 0);
+  assert.equal(deps.creditLedger.records.length, 0);
+  assert.deepEqual(trace, []);
+  assertSanitizedEnvelope(envelope);
+});
+
+test('adapter missing quota subject rejects before broker, ledger, or provider work', async () => {
+  const trace: string[] = [];
+  const deps = createFakeBrokerDependencies({ orderTrace: trace });
+
+  const envelope = await handleFakeBrokerAdapterRequest(
+    request({ consent_status: 'missing', payload_hash: 'not-a-hash' }),
+    adapterIdentity({ quotaSubject: '' }),
+    deps,
+  );
+
+  assert.equal(envelope.ok, false);
+  assert.equal(envelope.status, 401);
+  assert.equal(envelope.body.status, 'rejected');
+  assert.equal(envelope.body.error.code, 'invalid_quota_subject');
+  assert.equal(envelope.body.error.stage, 'auth');
+  assert.equal(deps.provider.callCount, 0);
+  assert.equal(deps.creditLedger.reserveCount, 0);
+  assert.equal(deps.creditLedger.records.length, 0);
+  assert.deepEqual(trace, []);
+  assertSanitizedEnvelope(envelope);
+});
+
+test('adapter validation and quota failures return stable non-2xx envelopes without provider calls', async () => {
+  const cases: Array<{
+    name: string;
+    request: BrokerRequest;
+    identity?: FakeBrokerAdapterIdentity;
+    dependencies?: ReturnType<typeof createFakeBrokerDependencies>;
+    expectedStatus: number;
+    expectedCode: string;
+    expectedEnvelopeStatus?: 'rejected' | 'conflict';
+    expectedLedgerRecords?: number;
+  }> = [
+    {
+      name: 'unsupported MIME',
+      request: request({
+        image: {
+          mime_type: 'image/png' as BrokerRequest['image']['mime_type'],
+          byte_size: 120_000,
+          long_edge_px: 1400,
+        },
+      }),
+      expectedStatus: 400,
+      expectedCode: 'unsupported_image_mime_type',
+    },
+    {
+      name: 'stale consent',
+      request: request({ consent_copy_version: 'research-consent-v0' }),
+      expectedStatus: 403,
+      expectedCode: 'stale_consent',
+    },
+    {
+      name: 'bad payload hash',
+      request: request({ payload_hash: 'not-a-sha-256-hex-digest' }),
+      expectedStatus: 400,
+      expectedCode: 'invalid_payload_hash',
+    },
+    {
+      name: 'cap exceeded',
+      request: request(),
+      dependencies: createFakeBrokerDependencies({
+        creditLedger: new PlaceholderCreditLedger({ perSubjectMonthlyCap: 0 }),
+      }),
+      expectedStatus: 429,
+      expectedCode: 'quota_subject_monthly_cap_exceeded',
+      expectedLedgerRecords: 1,
+    },
+  ];
+
+  for (const current of cases) {
+    const deps = current.dependencies ?? createFakeBrokerDependencies();
+
+    const envelope = await handleFakeBrokerAdapterRequest(
+      current.request,
+      current.identity ?? adapterIdentity(),
+      deps,
+    );
+
+    assert.equal(envelope.ok, false, current.name);
+    assert.equal(envelope.status, current.expectedStatus, current.name);
+    assert.equal(envelope.body.status, current.expectedEnvelopeStatus ?? 'rejected', current.name);
+    assert.equal(envelope.body.provider, 'fake-provider', current.name);
+    assert.equal(envelope.body.error.code, current.expectedCode, current.name);
+    assert.equal(deps.provider.callCount, 0, current.name);
+    assert.equal(deps.creditLedger.reserveCount, 0, current.name);
+    assert.equal(deps.creditLedger.records.length, current.expectedLedgerRecords ?? 0, current.name);
+    assertSanitizedEnvelope(envelope);
+  }
+});
+
+test('adapter idempotency conflict returns stable conflict without another provider call or debit', async () => {
+  const deps = createFakeBrokerDependencies();
+  const first = await handleFakeBrokerAdapterRequest(request(), adapterIdentity(), deps);
+  const conflict = await handleFakeBrokerAdapterRequest(
+    request({ payload_hash: 'b'.repeat(64) }),
+    adapterIdentity(),
+    deps,
+  );
+
+  assert.equal(first.ok, true);
+  assert.equal(conflict.ok, false);
+  assert.equal(conflict.status, 409);
+  assert.equal(conflict.body.status, 'conflict');
+  assert.equal(conflict.body.error.code, 'idempotency_conflict');
+  assert.equal(deps.provider.callCount, 1);
+  assert.equal(deps.creditLedger.reserveCount, 1);
+  assert.equal(deps.creditLedger.finalizeCount, 1);
+  assertSanitizedEnvelope(conflict);
+});
+
+test('adapter rejects malformed callable payload without leaking raw notes or internals', async () => {
+  const deps = createFakeBrokerDependencies();
+  const envelope = await handleFakeBrokerAdapterRequest(
+    {
+      request_id: '11111111-1111-4111-8111-111111111111',
+      raw_notes: 'raw private collector notes',
+      provider_key: 'OPENAI_API_KEY',
+      image: { mime_type: 'image/jpeg', byte_size: 120_000, long_edge_px: 1400 },
+    },
+    adapterIdentity(),
+    deps,
+  );
+
+  assert.equal(envelope.ok, false);
+  assert.equal(envelope.status, 400);
+  assert.equal(envelope.body.status, 'rejected');
+  assert.equal(envelope.body.error.code, 'invalid_request_payload');
+  assert.equal(envelope.body.error.stage, 'adapter');
+  assert.equal(deps.provider.callCount, 0);
+  assert.equal(deps.creditLedger.reserveCount, 0);
+  assertSanitizedEnvelope(envelope);
+});
+
 test('broker scaffold has no secret-value lookup requirement', async () => {
   const brokerSource = await readFile(new URL('../src/broker.js', import.meta.url), 'utf8');
   const fakeProviderSource = await readFile(new URL('../src/fake_provider.js', import.meta.url), 'utf8');
+  const adapterSource = await readFile(new URL('../src/adapter.js', import.meta.url), 'utf8');
   assert.equal(brokerSource.includes('process.env'), false);
   assert.equal(fakeProviderSource.includes('process.env'), false);
+  assert.equal(adapterSource.includes('process.env'), false);
   const deps = createFakeBrokerDependencies();
   const response = await handleResearchRequest(request(), baseContext, deps);
 

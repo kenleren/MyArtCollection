@@ -1,6 +1,6 @@
 # AI Fake Broker Runbook
 
-Status: fake-provider-only local contract for issues #116 and #117.
+Status: fake-provider-only local contract for issues #116, #117, and #118.
 
 This repository now has an isolated broker scaffold in `backend/broker`. It is
 server-side-only code and is not wired into the Flutter app, Firebase Hosting,
@@ -9,6 +9,12 @@ Firebase Functions, Secret Manager, or any provider SDK.
 ## Current behavior
 
 - `handleResearchRequest` accepts a v1-style broker request envelope.
+- `handleFakeBrokerAdapterRequest` is a local server-side
+  HTTP/callable-style adapter around the broker core. It accepts parsed JSON
+  plus explicit local auth/app identity placeholders and returns a stable
+  envelope:
+  - success: `{ ok: true, status: 200, body: BrokerResponse }`,
+  - error: `{ ok: false, status, body: { request_id?, status, provider, error } }`.
 - The only provider implementation is `FakeResearchProvider`.
 - There is no OpenAI SDK, no live provider host, no provider key lookup, and no
   deploy target.
@@ -25,6 +31,18 @@ Firebase Functions, Secret Manager, or any provider SDK.
   finalize placeholder.
 - Missing auth or missing quota subject rejects at the auth stage before
   consent, payload validation, ledger, or provider work.
+- The adapter performs the first local identity check before entering the broker
+  core. Missing App Check/Auth placeholders or missing quota subject therefore
+  produce fixed auth envelopes without broker trace entries, ledger records, or
+  provider calls.
+- Adapter error statuses are deterministic and intentionally coarse:
+  unauthorized/missing quota subject -> `401`, identity/consent/entitlement
+  failures -> `403`, malformed payloads -> `400`, idempotency conflict -> `409`,
+  quota cap failures -> `429`, breaker open -> `503`, and fake provider/output
+  failures -> `502`.
+- Adapter error bodies use fixed messages and stable codes. They must not echo
+  raw request payload, raw notes, provider key/env names, local env file names,
+  stack traces, or the broker's server-only order trace.
 - Idempotency is in-memory and local-test only. For the same `quota_subject`
   and `request_id`, the same `payload_hash` replays the stored response,
   including when a matching request is already in flight. Same quota subject and
@@ -80,6 +98,12 @@ These checks require no provider secret values. They must not read local env
 files, service-account files, signing files, keystores, or Firebase app
 configuration files.
 
+For issue #118, the broker tests cover the adapter success envelope, auth and
+quota-subject pre-broker rejection, unsupported MIME, stale consent, bad
+payload hash, idempotency conflict, cap exceeded, no provider/ledger reserve for
+pre-provider rejects, and response redaction for raw notes, provider env names,
+and trace internals.
+
 ## Remaining live gates
 
 The fake broker does not approve live provider usage. Before any real provider
@@ -89,8 +113,11 @@ path exists, the project still needs:
 - deployment-manager approval for Blaze/backend deployment and rollback,
 - Secret Manager or equivalent server-only secret custody,
 - real Auth/App Check verification against the broker Firebase project,
+- real Firebase Functions or HTTPS hosting for the broker adapter,
 - server-derived quota subjects using a one-way key, not client input,
 - durable entitlement, quota, credit, one-in-flight, and spend accounting,
+- production-safe error mapping and content-free operational logging on the
+  deployed boundary,
 - provider adapter review with `store=false`, hosted web search, source
   allowlists, and structured output validation,
 - log redaction tests proving prompts, images, notes, source URLs, raw tokens,

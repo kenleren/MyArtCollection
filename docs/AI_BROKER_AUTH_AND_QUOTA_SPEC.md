@@ -9,9 +9,10 @@ Related docs:
 - [AI Artwork Research Spec](AI_ART_RESEARCH_SPEC.md)
 - [Firebase Telemetry Privacy Policy](FIREBASE_TELEMETRY_POLICY.md)
 
-## Local fake-broker contract added by #117
+## Local fake-broker contract added by #117 and #118
 
-Issue [#117](https://github.com/kenleren/MyArtCollection/issues/117) adds a
+Issues [#117](https://github.com/kenleren/MyArtCollection/issues/117) and
+[#118](https://github.com/kenleren/MyArtCollection/issues/118) add a
 fake-provider-only implementation contract under `backend/broker`. This is a
 local test harness, not the paid broker and not a Firebase deployment.
 
@@ -30,6 +31,30 @@ The fake broker rejects missing auth or missing quota subject at the auth stage
 before consent, payload validation, ledger reservation, or provider work. This
 does not claim production Auth, App Check, project-audience validation,
 revocation checking, allowlisting, or server-side quota-subject derivation.
+
+The #118 adapter contract adds `handleFakeBrokerAdapterRequest`, a local
+server-side HTTP/callable-style boundary around the broker core. It accepts a
+parsed JSON request plus explicit local auth/app identity placeholders, then
+returns one of two stable envelopes:
+
+| Case | Shape |
+| --- | --- |
+| Success | `{ ok: true, status: 200, body: BrokerResponse }` |
+| Error | `{ ok: false, status, body: { request_id?, status, provider, error: { code, message, stage } } }` |
+
+The adapter deliberately rejects missing App Check/Auth placeholders and missing
+quota subject before calling the broker core. Its status mapping is deterministic
+and coarse: auth placeholder failures are `401`, identity/consent/entitlement
+failures are `403`, malformed payloads are `400`, idempotency conflict is
+`409`, quota cap failures are `429`, breaker-open is `503`, and fake
+provider/output failures are `502`.
+
+Adapter responses must not echo raw request bodies, raw notes, provider key/env
+names, local env file names, stack traces, or the broker's server-only trace.
+This is still a local fake-provider contract only; real Firebase Functions
+Auth/App Check context, callable replay protection, deployed HTTPS behavior,
+content-free logging, durable quota, and live-provider readiness remain
+unimplemented gates.
 
 The local ledger is deterministic and in-memory. It reserves one placeholder
 credit per accepted fake-provider request and records one of four states:
