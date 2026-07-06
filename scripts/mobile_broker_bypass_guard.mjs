@@ -30,16 +30,15 @@ const deniedRules = [
     pattern: /--dart-define=(?:OPENAI|ANTHROPIC|GEMINI|GOOGLE_API_KEY)|String\.fromEnvironment\(['"](?:OPENAI|ANTHROPIC|GEMINI|GOOGLE_API_KEY)/i,
   },
 ];
-const ignoredDirectories = new Set(['.dart_tool', '.gradle', 'build', 'Pods', 'DerivedData', 'google']);
+const ignoredDirectories = new Set(['.dart_tool', '.gradle', 'build', 'Pods', 'DerivedData']);
 const ignoredFileNamePatterns = [
   /^google-services\.json$/i,
   /^GoogleService-Info\.plist$/i,
   /\.env\.local$/i,
-  /service[-_]?account/i,
-  /(?:^|[-_.])keys?(?:[-_.]|$)/i,
-  /(?:^|[-_.])tokens?(?:[-_.]|$)/i,
-  /keystore/i,
-  /signing/i,
+  /service[-_]?account.*\.json$/i,
+  /firebase-adminsdk.*\.json$/i,
+  /^key\.properties$/i,
+  /(?:^|[-_.])signing(?:[-_.]|$).*\.properties$/i,
   /\.(?:jks|keystore|p8|p12|pem|key)$/i,
 ];
 const scannedExtensions = new Set([

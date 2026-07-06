@@ -88,6 +88,24 @@ const forbiddenCases = [
     content: "const key = String.fromEnvironment('OPENAI_API_KEY');\n",
     rule: 'provider key or env name',
   },
+  {
+    name: 'Dart provider dart-define lookup in key-named source',
+    file: 'lib/openai_key.dart',
+    content: "const key = String.fromEnvironment('OPENAI_API_KEY');\n",
+    rule: 'provider key or env name',
+  },
+  {
+    name: 'Dart provider package import in token-named source',
+    file: 'lib/provider_tokens.dart',
+    content: "import 'package:openai/openai.dart';\n",
+    rule: 'provider SDK import or package',
+  },
+  {
+    name: 'Dart provider host in google-named source directory',
+    file: 'lib/google/provider.dart',
+    content: "const endpoint = 'https://api.openai.com/v1/responses';\n",
+    rule: 'direct OpenAI/provider host',
+  },
 ];
 
 test('fixture repo with broker-only mobile config passes', async () => {
