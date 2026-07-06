@@ -45,6 +45,7 @@ void main() {
         artworkId: 'artwork-001',
         consentSummary:
             'User approved selected image and local draft notes for research.',
+        consentState: ResearchConsentState.approved,
         querySummary: 'Oil on canvas with possible signature',
         searchTerms: ['oil', 'canvas'],
       ),
@@ -141,6 +142,7 @@ void main() {
         const OnlineResearchRequest(
           artworkId: 'artwork-001',
           consentSummary: 'User approved research.',
+          consentState: ResearchConsentState.approved,
           querySummary: 'auction-comparable',
           searchTerms: ['auction-comparable'],
         ),
@@ -161,6 +163,304 @@ void main() {
       );
     },
   );
+
+  test('service rejects missing consent before calling client', () async {
+    final job = _researchJob();
+    final client = _RecordingResearchClient(job);
+    final service = OnlineResearchService(
+      repository: repository,
+      client: client,
+    );
+
+    await expectLater(
+      service.runResearch(
+        const OnlineResearchRequest(
+          artworkId: 'artwork-001',
+          consentSummary: 'Caller supplied consent text but no approved state.',
+          querySummary: 'non-ui caller missing consent',
+        ),
+      ),
+      throwsA(isA<ResearchConsentRequiredException>()),
+    );
+
+    expect(client.callCount, 0);
+    expect(await repository.getResearchJob(job.id), isNull);
+  });
+
+  test('service rejects declined consent before calling client', () async {
+    final job = _researchJob();
+    final client = _RecordingResearchClient(job);
+    final service = OnlineResearchService(
+      repository: repository,
+      client: client,
+    );
+
+    await expectLater(
+      service.runResearch(
+        const OnlineResearchRequest(
+          artworkId: 'artwork-001',
+          consentSummary: 'User declined professional-source research.',
+          consentState: ResearchConsentState.declined,
+          querySummary: 'non-ui caller declined consent',
+        ),
+      ),
+      throwsA(isA<ResearchConsentRequiredException>()),
+    );
+
+    expect(client.callCount, 0);
+    expect(await repository.getResearchJob(job.id), isNull);
+  });
+
+  test('missing consent never invokes fake broker endpoint', () async {
+    final endpoint = _RecordingFakeBrokerEndpoint(
+      const FakeBrokerAdapterErrorEnvelope(
+        status: 403,
+        body: BrokerErrorBody(
+          status: 'rejected',
+          provider: 'fake-provider',
+          error: BrokerErrorDetail(
+            code: 'consent_required',
+            message: 'Approved research consent is required.',
+            stage: 'consent',
+          ),
+        ),
+      ),
+    );
+    final service = OnlineResearchService(
+      repository: repository,
+      client: BrokerResearchClient(endpoint: endpoint),
+    );
+
+    await expectLater(
+      service.runResearch(
+        _brokerRequest(consentState: ResearchConsentState.missing),
+      ),
+      throwsA(isA<ResearchConsentRequiredException>()),
+    );
+
+    expect(endpoint.callCount, 0);
+  });
+
+  test('declined consent never invokes fake broker endpoint', () async {
+    final endpoint = _RecordingFakeBrokerEndpoint(
+      const FakeBrokerAdapterErrorEnvelope(
+        status: 403,
+        body: BrokerErrorBody(
+          status: 'rejected',
+          provider: 'fake-provider',
+          error: BrokerErrorDetail(
+            code: 'consent_required',
+            message: 'Approved research consent is required.',
+            stage: 'consent',
+          ),
+        ),
+      ),
+    );
+    final service = OnlineResearchService(
+      repository: repository,
+      client: BrokerResearchClient(endpoint: endpoint),
+    );
+
+    await expectLater(
+      service.runResearch(
+        _brokerRequest(consentState: ResearchConsentState.declined),
+      ),
+      throwsA(isA<ResearchConsentRequiredException>()),
+    );
+
+    expect(endpoint.callCount, 0);
+  });
+
+  test(
+    'direct broker client rejects missing consent before endpoint',
+    () async {
+      final endpoint = _RecordingFakeBrokerEndpoint(
+        const FakeBrokerAdapterErrorEnvelope(
+          status: 403,
+          body: BrokerErrorBody(
+            status: 'rejected',
+            provider: 'fake-provider',
+            error: BrokerErrorDetail(
+              code: 'consent_required',
+              message: 'Approved research consent is required.',
+              stage: 'consent',
+            ),
+          ),
+        ),
+      );
+      final client = BrokerResearchClient(endpoint: endpoint);
+
+      await expectLater(
+        client.research(
+          _brokerRequest(consentState: ResearchConsentState.missing),
+        ),
+        throwsA(isA<ResearchConsentRequiredException>()),
+      );
+
+      expect(endpoint.callCount, 0);
+    },
+  );
+
+  test(
+    'direct broker client rejects declined consent before endpoint',
+    () async {
+      final endpoint = _RecordingFakeBrokerEndpoint(
+        const FakeBrokerAdapterErrorEnvelope(
+          status: 403,
+          body: BrokerErrorBody(
+            status: 'rejected',
+            provider: 'fake-provider',
+            error: BrokerErrorDetail(
+              code: 'consent_required',
+              message: 'Approved research consent is required.',
+              stage: 'consent',
+            ),
+          ),
+        ),
+      );
+      final client = BrokerResearchClient(endpoint: endpoint);
+
+      await expectLater(
+        client.research(
+          _brokerRequest(consentState: ResearchConsentState.declined),
+        ),
+        throwsA(isA<ResearchConsentRequiredException>()),
+      );
+
+      expect(endpoint.callCount, 0);
+    },
+  );
+
+  test('service accepts approved consent from a non-ui caller path', () async {
+    final job = _researchJob();
+    final client = _RecordingResearchClient(job);
+    final service = OnlineResearchService(
+      repository: repository,
+      client: client,
+    );
+
+    final result = await service.runResearch(
+      const OnlineResearchRequest(
+        artworkId: 'artwork-001',
+        consentSummary: 'User approved professional-source research.',
+        consentState: ResearchConsentState.approved,
+        querySummary: 'non-ui caller approved consent',
+      ),
+    );
+
+    expect(result.id, job.id);
+    expect(client.callCount, 1);
+    expect(await repository.getResearchJob(job.id), isNotNull);
+  });
+
+  test('approved consent serializes versioned fake broker request', () async {
+    final endpoint = _RecordingFakeBrokerEndpoint(
+      const FakeBrokerAdapterErrorEnvelope(
+        status: 503,
+        body: BrokerErrorBody(
+          requestId: '123e4567-e89b-12d3-a456-426614174000',
+          status: 'rejected',
+          provider: 'fake-provider',
+          error: BrokerErrorDetail(
+            code: 'broker_breaker_open',
+            message: 'Broker breaker is open.',
+            stage: 'breaker',
+          ),
+        ),
+      ),
+    );
+    final service = OnlineResearchService(
+      repository: repository,
+      client: BrokerResearchClient(
+        endpoint: endpoint,
+        now: () => DateTime.utc(2026, 7, 4, 14),
+      ),
+    );
+
+    final job = await service.runResearch(_brokerRequest());
+    final sent = endpoint.sentRequests.single;
+
+    expect(job.status, ResearchJobStatus.failed);
+    expect(sent['request_id'], '123e4567-e89b-12d3-a456-426614174000');
+    expect(sent['consent_status'], 'approved');
+    expect(sent['consent_scope'], 'image_plus_draft_hints');
+    expect(sent['consent_copy_version'], brokerConsentCopyVersion);
+    expect(sent['payload_contract_version'], brokerPayloadContractVersion);
+    expect(sent['approved_payload_class'], brokerApprovedPayloadClass);
+    expect(sent['payload_hash'], matches(RegExp(r'^[a-f0-9]{64}$')));
+    expect(sent['image'], {
+      'mime_type': 'image/jpeg',
+      'byte_size': 123456,
+      'long_edge_px': 1200,
+    });
+    expect(sent['draft_hints'], {
+      'title_hint': 'Untitled artwork',
+      'artist_hint': 'Unknown',
+      'search_terms': ['oil', 'canvas'],
+    });
+    expect(sent.containsKey('artworkId'), isFalse);
+    expect(sent.containsKey('artwork_id'), isFalse);
+    expect(sent.containsKey('consentSummary'), isFalse);
+    expect(sent.containsKey('consent_summary'), isFalse);
+    expect(sent.containsKey('querySummary'), isFalse);
+    expect(sent.containsKey('query_summary'), isFalse);
+  });
+
+  test('broker error envelopes map to safe failed research fallback', () async {
+    final endpoint = _RecordingFakeBrokerEndpoint(
+      const FakeBrokerAdapterErrorEnvelope(
+        status: 502,
+        body: BrokerErrorBody(
+          requestId: '123e4567-e89b-12d3-a456-426614174000',
+          status: 'rejected',
+          provider: 'fake-provider',
+          error: BrokerErrorDetail(
+            code: 'provider_failure',
+            message:
+                'raw_payload={notes: private owner notes}; PROVIDER_SECRET_ENV; server trace line 12',
+            stage: 'provider',
+          ),
+        ),
+      ),
+    );
+    final service = OnlineResearchService(
+      repository: repository,
+      client: BrokerResearchClient(
+        endpoint: endpoint,
+        now: () => DateTime.utc(2026, 7, 4, 14),
+      ),
+    );
+
+    final job = await service.runResearch(_brokerRequest());
+    final persisted = await repository.getResearchJob(job.id);
+    final visibleText = [
+      job.errorMessage,
+      job.provider,
+      _researchEvidenceText(job),
+      persisted?.errorMessage,
+      persisted?.provider,
+      if (persisted != null) _researchEvidenceText(persisted),
+    ].whereType<String>().join('\n');
+
+    expect(job.status, ResearchJobStatus.failed);
+    expect(job.sourceHits, isEmpty);
+    expect(job.candidateAttributions, isEmpty);
+    expect(
+      job.errorMessage,
+      'Online research could not complete. Try again later.',
+    );
+    expect(persisted, isNotNull);
+    expect(
+      visibleText,
+      isNot(
+        contains(
+          RegExp(
+            'raw_payload|private owner notes|PROVIDER_SECRET_ENV|server trace|line 12',
+          ),
+        ),
+      ),
+    );
+  });
 
   test(
     'fixture client returns no reliable comparable when no sources match',
@@ -387,6 +687,7 @@ void main() {
           const OnlineResearchRequest(
             artworkId: 'artwork-001',
             consentSummary: 'User approved research.',
+            consentState: ResearchConsentState.approved,
             querySummary: 'mismatched comparable citation',
           ),
         ),
@@ -443,6 +744,7 @@ void main() {
       const OnlineResearchRequest(
         artworkId: 'artwork-001',
         consentSummary: 'User approved research.',
+        consentState: ResearchConsentState.approved,
         querySummary: 'poisoned source prose',
       ),
     );
@@ -524,6 +826,7 @@ Future<void> _expectServiceRejects(
       const OnlineResearchRequest(
         artworkId: 'artwork-001',
         consentSummary: 'User approved research.',
+        consentState: ResearchConsentState.approved,
         querySummary: 'malicious fake response',
       ),
     ),
@@ -570,6 +873,32 @@ ResearchJob _researchJob({
   );
 }
 
+OnlineResearchRequest _brokerRequest({
+  ResearchConsentState consentState = ResearchConsentState.approved,
+}) {
+  return OnlineResearchRequest(
+    artworkId: 'artwork-001',
+    consentSummary: 'User approved broker research.',
+    consentState: consentState,
+    querySummary: 'local query summary must not be serialized',
+    searchTerms: const ['oil', 'canvas'],
+    brokerPayload: const BrokerResearchPayload(
+      requestId: '123e4567-e89b-12d3-a456-426614174000',
+      consentScope: BrokerConsentScope.imagePlusDraftHints,
+      image: BrokerImagePayload(
+        mimeType: 'image/jpeg',
+        byteSize: 123456,
+        longEdgePx: 1200,
+      ),
+      draftHints: BrokerDraftHints(
+        titleHint: 'Untitled artwork',
+        artistHint: 'Unknown',
+        searchTerms: ['oil', 'canvas'],
+      ),
+    ),
+  );
+}
+
 String _researchEvidenceText(ResearchJob job) {
   return [
     for (final sourceHit in job.sourceHits) ...[
@@ -599,6 +928,36 @@ class _FakeResearchClient implements OnlineResearchClient {
 
   @override
   Future<ResearchJob> research(OnlineResearchRequest request) async => job;
+}
+
+class _RecordingResearchClient implements OnlineResearchClient {
+  _RecordingResearchClient(this.job);
+
+  final ResearchJob job;
+  var callCount = 0;
+
+  @override
+  Future<ResearchJob> research(OnlineResearchRequest request) async {
+    callCount += 1;
+    return job;
+  }
+}
+
+class _RecordingFakeBrokerEndpoint implements FakeBrokerResearchEndpoint {
+  _RecordingFakeBrokerEndpoint(this.envelope);
+
+  final FakeBrokerAdapterEnvelope envelope;
+  final sentRequests = <Map<String, Object?>>[];
+
+  int get callCount => sentRequests.length;
+
+  @override
+  Future<FakeBrokerAdapterEnvelope> send(
+    Map<String, Object?> brokerRequest,
+  ) async {
+    sentRequests.add(brokerRequest);
+    return envelope;
+  }
 }
 
 final _longEvidenceText = List.filled(

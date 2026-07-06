@@ -176,7 +176,19 @@ The broker request/response DTOs must stay separate from the current local
 `OnlineResearchRequest`. Do not reuse local fields such as `artworkId`,
 `consentSummary`, or `querySummary` as network payload fields. The app must map
 between the local model and the broker envelope explicitly at the device
-boundary.
+boundary. The local `ResearchConsentState.approved` value is a required
+precondition for that mapping, but the free-text `consentSummary` must not be
+serialized into the broker envelope.
+
+Issue [#118](https://github.com/kenleren/MyArtCollection/issues/118) adds only a
+local fake-provider adapter contract for this boundary. The adapter returns a
+stable success/error envelope for parsed JSON plus explicit local auth/app
+identity placeholders, but it is not a deployed endpoint and does not authorize
+mobile wiring. Its error envelopes are fixed vocabulary and must not echo raw
+payload content, raw notes, provider key/env names, stack traces, or
+server-only trace internals. Real Firebase Functions/Auth/App Check, HTTPS
+deployment behavior, durable quota, content-free production logging, and live
+provider validation remain separate gates.
 
 ### Why this is the right first contract
 
@@ -227,6 +239,10 @@ Allowed `consent_scope` values:
 - `image_plus_draft_hints`
 
 No v1 consent scope may authorize raw note text.
+
+`consent_scope` is not optional and is not inferred from UI flow, feature flags,
+or owner-test fixture behavior. A missing, declined, or unsupported consent
+state must fail closed before provider execution.
 
 ### Allowed image payload
 

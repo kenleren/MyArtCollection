@@ -170,6 +170,9 @@ Monetization guardrails:
 - The user must be able to skip online research and still create a record.
 - The app must not send the entire local collection for one-artwork research.
 - Store research job metadata locally with source URLs and timestamps.
+- The app service or broker boundary must reject any professional-source
+  provider run unless the request carries an explicit approved consent state.
+  A free-text consent summary is evidence for review, not authorization.
 
 ### On-Device Drafting
 
@@ -262,6 +265,10 @@ Value comparable records should store:
 - `StubAiDraftService` fallback for unsupported platforms/devices and tests.
 - `OnlineResearchClient` interface for server requests.
 - `ResearchConsentScreen` or modal before first network research.
+- `OnlineResearchService.runResearch` must receive
+  `ResearchConsentState.approved` before it may call an
+  `OnlineResearchClient`; missing or declined state fails closed before the
+  client boundary.
 - Draft review UI extended with source-backed candidates and citations.
 
 ### Android Native Layer
@@ -293,6 +300,11 @@ Input:
 - user-approved image derivative and allowlisted structured hints only,
 - locale/currency preferences through the broker's allowed client-context
   fields.
+
+The current fixture/local owner-test path does not authorize a real network
+provider client. Any real provider or broker implementation must preserve the
+typed consent gate above and pass the separate broker DTO contract in
+`docs/AI_BROKER_PAYLOAD_AND_TELEMETRY_SPEC.md` before any external call.
 
 Output:
 

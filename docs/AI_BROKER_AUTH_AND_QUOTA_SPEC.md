@@ -9,6 +9,89 @@ Related docs:
 - [AI Artwork Research Spec](AI_ART_RESEARCH_SPEC.md)
 - [Firebase Telemetry Privacy Policy](FIREBASE_TELEMETRY_POLICY.md)
 
+## Local fake-broker contract added by #117 and #118
+
+Issues [#117](https://github.com/kenleren/MyArtCollection/issues/117) and
+[#118](https://github.com/kenleren/MyArtCollection/issues/118) add a
+fake-provider-only implementation contract under `backend/broker`. This is a
+local test harness, not the paid broker and not a Firebase deployment.
+
+The local DTO intentionally models the shape of the future trust boundary
+without verifying real tokens:
+
+- `app_check_verified` and `auth_verified` are required booleans supplied by
+  tests.
+- `auth_identity.uid`, `auth_identity.project_id`, `app_identity.app_id`, and
+  `app_identity.project_id` must be non-empty.
+- `auth_identity.sign_in_provider` must be `anonymous`.
+- The auth and app placeholder project IDs must match.
+- `quota_subject` must be a pre-derived-looking `quota_subject_v1_...` value.
+
+The fake broker rejects missing auth or missing quota subject at the auth stage
+before consent, payload validation, ledger reservation, or provider work. This
+does not claim production Auth, App Check, project-audience validation,
+revocation checking, allowlisting, or server-side quota-subject derivation.
+
+The #118 adapter contract adds `handleFakeBrokerAdapterRequest`, a local
+server-side HTTP/callable-style boundary around the broker core. It accepts a
+parsed JSON request plus explicit local auth/app identity placeholders, then
+returns one of two stable envelopes:
+
+| Case | Shape |
+| --- | --- |
+| Success | `{ ok: true, status: 200, body: BrokerResponse }` |
+| Error | `{ ok: false, status, body: { request_id?, status, provider, error: { code, message, stage } } }` |
+
+The adapter deliberately rejects missing App Check/Auth placeholders and missing
+quota subject before calling the broker core. Its status mapping is deterministic
+and coarse: auth placeholder failures are `401`, identity/consent/entitlement
+failures are `403`, malformed payloads are `400`, idempotency conflict is
+`409`, quota cap failures are `429`, breaker-open is `503`, and fake
+provider/output failures are `502`.
+
+Adapter responses must not echo raw request bodies, raw notes, provider key/env
+names, local env file names, stack traces, or the broker's server-only trace.
+This is still a local fake-provider contract only; real Firebase Functions
+Auth/App Check context, callable replay protection, deployed HTTPS behavior,
+content-free logging, durable quota, and live-provider readiness remain
+unimplemented gates.
+
+The local ledger is deterministic and in-memory. It reserves one placeholder
+credit per accepted fake-provider request and records one of four states:
+
+| State | Meaning |
+| --- | --- |
+| `rejected-before-reserve` | A quota cap denied the request before provider work. |
+| `reserved` | A local one-credit reservation exists. |
+| `finalized` | The reservation is spent and counts against subject and broker caps. |
+| `refunded` | The reservation was released and does not count as spent. |
+
+The #117 placeholder accounting rule is intentionally conservative for future
+paid-provider safety:
+
+- consent, payload, entitlement, breaker, idempotency conflict, and cap failures
+  happen before a provider call and do not spend a credit,
+- fake provider output validation failures finalize the reservation and count as
+  spend because provider work already happened,
+- fake provider exceptions refund the reservation,
+- same `quota_subject` plus same `request_id` and `payload_hash` replays the
+  completed result or awaits the matching in-flight result without a second
+  debit or provider call,
+- same `quota_subject` and `request_id` plus changed `payload_hash` fails as a
+  conflict before reserve or provider work,
+- the default local cap placeholders are three exposed credits per quota
+  subject and 100 exposed credits broker-wide,
+- exposed credits include both `reserved` in-flight credits and `finalized`
+  spent credits so concurrent distinct requests cannot exceed a cap before
+  provider work completes; `refunded` and `rejected-before-reserve` records do
+  not count as exposed.
+
+The remaining gates are unchanged: real Firebase Auth/App Check verification,
+wrong-project checks, revocation, server-side quota-subject HMAC derivation,
+durable entitlement and spend ledgers, live provider adapter review, redaction
+tests, deployment-manager approval, and redteam/privacy review are still
+required before any live provider path or paid rollout.
+
 ## Problem statement
 
 Archivale needs a broker access-control model before any paid AI endpoint
@@ -125,6 +208,9 @@ Any approved paid broker implementation must satisfy all of the following:
   project must stay separate.
 - Wrong-project App Check tokens and wrong-project Auth ID tokens must fail
   closed before any provider call.
+- The broker start path must fail closed before any provider call unless the
+  mapped local request has an explicit approved research-consent state and the
+  broker envelope carries an allowed `consent_scope`.
 - The first broker identity model must work without a mandatory user-facing
   account signup flow.
 - Quotas must be keyed to a revocable identity, not to App Check alone and not

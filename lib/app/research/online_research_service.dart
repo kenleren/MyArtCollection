@@ -1,3 +1,8 @@
+import 'dart:collection';
+import 'dart:convert';
+
+import 'package:crypto/crypto.dart';
+
 import '../storage/ai_research_record.dart';
 import '../storage/artwork_record.dart';
 import '../storage/local_artwork_repository.dart';
@@ -7,17 +12,357 @@ class OnlineResearchRequest {
     required this.artworkId,
     required this.consentSummary,
     required this.querySummary,
+    this.consentState = ResearchConsentState.missing,
     this.searchTerms = const [],
+    this.brokerPayload,
   });
 
   final String artworkId;
   final String consentSummary;
   final String querySummary;
+  final ResearchConsentState consentState;
   final List<String> searchTerms;
+  final BrokerResearchPayload? brokerPayload;
 }
+
+enum ResearchConsentState { missing, declined, approved }
 
 abstract class OnlineResearchClient {
   Future<ResearchJob> research(OnlineResearchRequest request);
+}
+
+const brokerConsentCopyVersion = 'research-consent-v1';
+const brokerPayloadContractVersion = 'art-research-payload-v1';
+const brokerApprovedPayloadClass = 'image_only_or_image_plus_draft_hints';
+
+enum BrokerConsentScope {
+  imageOnly('image_only'),
+  imagePlusDraftHints('image_plus_draft_hints');
+
+  const BrokerConsentScope(this.storageValue);
+
+  final String storageValue;
+}
+
+class BrokerImagePayload {
+  const BrokerImagePayload({
+    required this.mimeType,
+    required this.byteSize,
+    required this.longEdgePx,
+  });
+
+  final String mimeType;
+  final int byteSize;
+  final int longEdgePx;
+
+  Map<String, Object?> toJson() {
+    return {
+      'mime_type': mimeType,
+      'byte_size': byteSize,
+      'long_edge_px': longEdgePx,
+    };
+  }
+}
+
+class BrokerDraftHints {
+  const BrokerDraftHints({
+    this.titleHint,
+    this.artistHint,
+    this.searchTerms = const [],
+  });
+
+  final String? titleHint;
+  final String? artistHint;
+  final List<String> searchTerms;
+
+  Map<String, Object?> toJson() {
+    final title = _safeBrokerHint(titleHint);
+    final artist = _safeBrokerHint(artistHint);
+    final terms = _safeBrokerSearchTerms(searchTerms);
+    final json = <String, Object?>{};
+    if (title != null) {
+      json['title_hint'] = title;
+    }
+    if (artist != null) {
+      json['artist_hint'] = artist;
+    }
+    if (terms.isNotEmpty) {
+      json['search_terms'] = terms;
+    }
+    return json;
+  }
+}
+
+class BrokerResearchPayload {
+  const BrokerResearchPayload({
+    required this.requestId,
+    required this.consentScope,
+    required this.image,
+    this.draftHints,
+  });
+
+  final String requestId;
+  final BrokerConsentScope consentScope;
+  final BrokerImagePayload image;
+  final BrokerDraftHints? draftHints;
+
+  Map<String, Object?> toBrokerRequest(ResearchConsentState consentState) {
+    final request = <String, Object?>{
+      'request_id': requestId,
+      'consent_status': consentState.name,
+      'consent_scope': consentScope.storageValue,
+      'consent_copy_version': brokerConsentCopyVersion,
+      'payload_contract_version': brokerPayloadContractVersion,
+      'approved_payload_class': brokerApprovedPayloadClass,
+      'image': image.toJson(),
+      if (draftHints?.toJson() case final hints? when hints.isNotEmpty)
+        'draft_hints': hints,
+    };
+    return {...request, 'payload_hash': _sha256Hex(_canonicalJson(request))};
+  }
+}
+
+abstract interface class FakeBrokerResearchEndpoint {
+  Future<FakeBrokerAdapterEnvelope> send(Map<String, Object?> brokerRequest);
+}
+
+sealed class FakeBrokerAdapterEnvelope {
+  const FakeBrokerAdapterEnvelope();
+}
+
+class FakeBrokerAdapterSuccessEnvelope extends FakeBrokerAdapterEnvelope {
+  const FakeBrokerAdapterSuccessEnvelope({
+    required this.status,
+    required this.body,
+  });
+
+  final int status;
+  final Map<String, Object?> body;
+}
+
+class FakeBrokerAdapterErrorEnvelope extends FakeBrokerAdapterEnvelope {
+  const FakeBrokerAdapterErrorEnvelope({
+    required this.status,
+    required this.body,
+  });
+
+  final int status;
+  final BrokerErrorBody body;
+}
+
+class BrokerErrorBody {
+  const BrokerErrorBody({
+    required this.status,
+    required this.provider,
+    required this.error,
+    this.requestId,
+  });
+
+  final String? requestId;
+  final String status;
+  final String provider;
+  final BrokerErrorDetail error;
+}
+
+class BrokerErrorDetail {
+  const BrokerErrorDetail({
+    required this.code,
+    required this.message,
+    required this.stage,
+  });
+
+  final String code;
+  final String message;
+  final String stage;
+}
+
+class BrokerResearchClient implements OnlineResearchClient {
+  BrokerResearchClient({required this.endpoint, DateTime Function()? now})
+    : _now = now ?? DateTime.now;
+
+  final FakeBrokerResearchEndpoint endpoint;
+  final DateTime Function() _now;
+
+  @override
+  Future<ResearchJob> research(OnlineResearchRequest request) async {
+    if (request.consentState != ResearchConsentState.approved) {
+      throw ResearchConsentRequiredException(request.consentState);
+    }
+
+    final payload = request.brokerPayload;
+    if (payload == null) {
+      return _failedJob(
+        request: request,
+        errorMessage:
+            'Online research is unavailable until broker payload review is ready.',
+      );
+    }
+
+    final envelope = await endpoint.send(
+      payload.toBrokerRequest(request.consentState),
+    );
+    return switch (envelope) {
+      FakeBrokerAdapterSuccessEnvelope(:final body) => _jobFromSuccess(
+        request,
+        body,
+      ),
+      FakeBrokerAdapterErrorEnvelope(:final body) => _failedJob(
+        request: request,
+        requestId: body.requestId,
+        errorMessage: _safeBrokerErrorMessage(body.error.code),
+      ),
+    };
+  }
+
+  ResearchJob _jobFromSuccess(
+    OnlineResearchRequest request,
+    Map<String, Object?> body,
+  ) {
+    final now = _now().toUtc();
+    final requestId = _stringValue(body['request_id']) ?? 'unknown-request';
+    final jobId = 'research-${request.artworkId}-$requestId';
+    final sources = _sourcesFromBody(jobId, body['sources']);
+    return ResearchJob(
+      id: jobId,
+      artworkId: request.artworkId,
+      status: ResearchJobStatus.completed,
+      createdAt: now,
+      updatedAt: now,
+      completedAt: _dateValue(body['completed_at']) ?? now,
+      consentSummary: request.consentSummary,
+      querySummary: request.querySummary,
+      provider: 'archivale-broker-fake-endpoint',
+      sourceHits: sources.values.toList(growable: false),
+      candidateAttributions: _candidatesFromBody(
+        jobId,
+        body['candidate_attributions'],
+        sources,
+      ),
+      comparableValueSignals: _valueSignalsFromBody(
+        jobId,
+        body['comparable_value_signals'],
+        sources,
+      ),
+    );
+  }
+
+  Map<String, ResearchSourceHit> _sourcesFromBody(String jobId, Object? value) {
+    if (value is! List<Object?>) {
+      return const {};
+    }
+    final sources = <String, ResearchSourceHit>{};
+    for (final item in value) {
+      if (item is! Map<Object?, Object?>) {
+        continue;
+      }
+      final sourceId = _stringValue(item['source_id']);
+      if (sourceId == null || sources.containsKey(sourceId)) {
+        continue;
+      }
+      sources[sourceId] = ResearchSourceHit(
+        id: sourceId,
+        researchJobId: jobId,
+        sourceName: _stringValue(item['source_name']) ?? 'Professional source',
+        sourceType: _sourceType(_stringValue(item['source_type'])),
+        confidence: ResearchConfidence.possible,
+        sourceUrl: _stringValue(item['source_url']),
+        title: _stringValue(item['title']),
+        rawSnippet: _stringValue(item['citation_excerpt']),
+      );
+    }
+    return sources;
+  }
+
+  List<CandidateAttribution> _candidatesFromBody(
+    String jobId,
+    Object? value,
+    Map<String, ResearchSourceHit> sources,
+  ) {
+    if (value is! List<Object?>) {
+      return const [];
+    }
+    final candidates = <CandidateAttribution>[];
+    for (final item in value) {
+      if (item is! Map<Object?, Object?>) {
+        continue;
+      }
+      final sourceHitId = _firstKnownSourceRef(item['source_refs'], sources);
+      candidates.add(
+        CandidateAttribution(
+          id:
+              _stringValue(item['candidate_id']) ??
+              '$jobId-candidate-${candidates.length + 1}',
+          researchJobId: jobId,
+          sourceHitId: sourceHitId,
+          title: _stringValue(item['title']),
+          artist: _stringValue(item['artist']),
+          year: _stringValue(item['year']),
+          medium: _stringValue(item['medium']),
+          confidence: _confidence(_stringValue(item['confidence'])),
+          matchReason:
+              _stringValue(item['match_reason']) ??
+              'Broker returned source-backed candidate.',
+          fieldSources: _fieldSources(item['field_sources']),
+        ),
+      );
+    }
+    return candidates;
+  }
+
+  List<ComparableValueSignal> _valueSignalsFromBody(
+    String jobId,
+    Object? value,
+    Map<String, ResearchSourceHit> sources,
+  ) {
+    if (value is! List<Object?>) {
+      return const [];
+    }
+    final signals = <ComparableValueSignal>[];
+    for (final item in value) {
+      if (item is! Map<Object?, Object?>) {
+        continue;
+      }
+      final sourceHitId = _firstKnownSourceRef(item['source_refs'], sources);
+      final source = sourceHitId == null ? null : sources[sourceHitId];
+      final kind = _valueKind(_stringValue(item['kind']));
+      signals.add(
+        ComparableValueSignal(
+          id: '$jobId-value-${signals.length + 1}',
+          researchJobId: jobId,
+          sourceHitId: sourceHitId,
+          kind: kind,
+          label: kind.displayLabel,
+          sourceName: source?.sourceName ?? 'Professional-source search',
+          sourceUrl: source?.sourceUrl,
+          caveat:
+              _stringValue(item['caveat']) ??
+              'Comparable data may not apply to this artwork; confirm with an expert.',
+        ),
+      );
+    }
+    return signals;
+  }
+
+  ResearchJob _failedJob({
+    required OnlineResearchRequest request,
+    required String errorMessage,
+    String? requestId,
+  }) {
+    final now = _now().toUtc();
+    final jobId =
+        'research-${request.artworkId}-${requestId ?? now.microsecondsSinceEpoch}';
+    return ResearchJob(
+      id: jobId,
+      artworkId: request.artworkId,
+      status: ResearchJobStatus.failed,
+      createdAt: now,
+      updatedAt: now,
+      consentSummary: request.consentSummary,
+      querySummary: request.querySummary,
+      provider: 'archivale-broker-fake-endpoint',
+      errorMessage: errorMessage,
+    );
+  }
 }
 
 class OnlineResearchService {
@@ -38,6 +383,7 @@ class OnlineResearchService {
   final ProfessionalSourceAllowlist _allowlist;
 
   Future<ResearchJob> runResearch(OnlineResearchRequest request) async {
+    _requireApprovedResearchConsent(request);
     final job = _TrustedResearchResponse(
       request: request,
       job: await _client.research(request),
@@ -45,6 +391,12 @@ class OnlineResearchService {
     ).sanitize();
     await _repository.upsertResearchJob(job);
     return job;
+  }
+
+  void _requireApprovedResearchConsent(OnlineResearchRequest request) {
+    if (request.consentState != ResearchConsentState.approved) {
+      throw ResearchConsentRequiredException(request.consentState);
+    }
   }
 }
 
@@ -134,6 +486,16 @@ class InvalidResearchResponseException implements Exception {
 
   @override
   String toString() => 'Invalid online research response: $message';
+}
+
+class ResearchConsentRequiredException implements Exception {
+  const ResearchConsentRequiredException(this.consentState);
+
+  final ResearchConsentState consentState;
+
+  @override
+  String toString() =>
+      'Online research requires explicit approved consent: $consentState';
 }
 
 class _TrustedResearchResponse {
@@ -414,6 +776,143 @@ bool _hasText(String? value) => value != null && value.trim().isNotEmpty;
 
 const _unsafeEvidenceTextReplacement =
     'Source text removed because it contained unsupported claims.';
+
+String? _safeBrokerHint(String? value) {
+  if (value == null) {
+    return null;
+  }
+  final normalized = value.replaceAll(RegExp(r'\s+'), ' ').trim();
+  if (normalized.isEmpty || normalized.length > 120) {
+    return null;
+  }
+  if (RegExp(r'https?://|@|[\\<>]').hasMatch(normalized)) {
+    return null;
+  }
+  if (!RegExp(r"^[A-Za-z0-9 .,'&:/()?-]+$").hasMatch(normalized)) {
+    return null;
+  }
+  return normalized;
+}
+
+List<String> _safeBrokerSearchTerms(List<String> values) {
+  final terms = <String>[];
+  var totalLength = 0;
+  for (final value in values) {
+    final term = _safeBrokerHint(value);
+    if (term == null || term.length > 32 || terms.contains(term)) {
+      continue;
+    }
+    if (terms.length == 8 || totalLength + term.length > 128) {
+      break;
+    }
+    terms.add(term);
+    totalLength += term.length;
+  }
+  return terms;
+}
+
+String _canonicalJson(Object? value) => jsonEncode(_canonicalValue(value));
+
+Object? _canonicalValue(Object? value) {
+  if (value is Map) {
+    final sorted = SplayTreeMap<String, Object?>();
+    for (final entry in value.entries) {
+      sorted[entry.key.toString()] = _canonicalValue(entry.value);
+    }
+    return sorted;
+  }
+  if (value is List) {
+    return value.map(_canonicalValue).toList(growable: false);
+  }
+  return value;
+}
+
+String _sha256Hex(String value) =>
+    sha256.convert(utf8.encode(value)).toString();
+
+String _safeBrokerErrorMessage(String code) {
+  return switch (code) {
+    'consent_required' || 'stale_consent' =>
+      'Research consent must be refreshed before online research.',
+    'broker_breaker_open' =>
+      'Online research is temporarily unavailable. Try again later.',
+    'quota_subject_monthly_cap_exceeded' || 'broker_monthly_cap_exceeded' =>
+      'Online research is temporarily unavailable. Try again later.',
+    'entitlement_or_credit_denied' =>
+      'Online research is unavailable for this account.',
+    'unauthorized' ||
+    'missing_auth_subject' ||
+    'invalid_quota_subject' ||
+    'identity_project_mismatch' ||
+    'unsupported_auth_provider' =>
+      'Online research is unavailable in this build.',
+    _ => 'Online research could not complete. Try again later.',
+  };
+}
+
+String? _stringValue(Object? value) {
+  return value is String && value.trim().isNotEmpty ? value.trim() : null;
+}
+
+DateTime? _dateValue(Object? value) {
+  final text = _stringValue(value);
+  return text == null ? null : DateTime.tryParse(text)?.toUtc();
+}
+
+ResearchSourceType _sourceType(String? value) {
+  return switch (value) {
+    'museum' => ResearchSourceType.museumCollection,
+    'auction_house' => ResearchSourceType.auctionHouse,
+    _ => ResearchSourceType.unknown,
+  };
+}
+
+ResearchConfidence _confidence(String? value) {
+  return ResearchConfidence.values.firstWhere(
+    (confidence) => confidence.storageValue == value,
+    orElse: () => ResearchConfidence.insufficientEvidence,
+  );
+}
+
+ComparableValueKind _valueKind(String? value) {
+  return ComparableValueKind.values.firstWhere(
+    (kind) => kind.storageValue == value,
+    orElse: () => ComparableValueKind.noReliableComparable,
+  );
+}
+
+String? _firstKnownSourceRef(
+  Object? value,
+  Map<String, ResearchSourceHit> sources,
+) {
+  if (value is! List<Object?>) {
+    return null;
+  }
+  for (final sourceRef in value) {
+    final sourceId = _stringValue(sourceRef);
+    if (sourceId != null && sources.containsKey(sourceId)) {
+      return sourceId;
+    }
+  }
+  return null;
+}
+
+Map<String, ArtworkFieldSource> _fieldSources(Object? value) {
+  if (value is! Map) {
+    return const {};
+  }
+  final fieldSources = <String, ArtworkFieldSource>{};
+  for (final entry in value.entries) {
+    final key = _stringValue(entry.key);
+    if (key == null) {
+      continue;
+    }
+    fieldSources[key] = _stringValue(entry.value) == 'ai_suggested'
+        ? ArtworkFieldSource.aiSuggested
+        : ArtworkFieldSource.unknown;
+  }
+  return fieldSources;
+}
 
 class FixtureProfessionalSourceResearchClient implements OnlineResearchClient {
   FixtureProfessionalSourceResearchClient({

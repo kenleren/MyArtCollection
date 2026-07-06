@@ -1,0 +1,68 @@
+name: Mobile Broker Bypass Guard
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/mobile-broker-bypass-guard.yml'
+      - 'android/**'
+      - 'ios/**'
+      - 'lib/**'
+      - 'pubspec.yaml'
+      - 'pubspec.lock'
+      - 'Package.swift'
+      - 'Podfile'
+      - '**/Package.swift'
+      - '**/Podfile'
+      - '**/*.pbxproj'
+      - '**/*.toml'
+      - '**/*.xcconfig'
+      - 'scripts/mobile_broker_bypass_guard.mjs'
+      - 'test/mobile_broker_bypass_guard_test.dart'
+      - 'test/mobile_broker_bypass_guard_fixture_test.mjs'
+      - 'README.md'
+      - 'docs/AI_FAKE_BROKER_RUNBOOK.md'
+  push:
+    paths:
+      - '.github/workflows/mobile-broker-bypass-guard.yml'
+      - 'android/**'
+      - 'ios/**'
+      - 'lib/**'
+      - 'pubspec.yaml'
+      - 'pubspec.lock'
+      - 'Package.swift'
+      - 'Podfile'
+      - '**/Package.swift'
+      - '**/Podfile'
+      - '**/*.pbxproj'
+      - '**/*.toml'
+      - '**/*.xcconfig'
+      - 'scripts/mobile_broker_bypass_guard.mjs'
+      - 'test/mobile_broker_bypass_guard_test.dart'
+      - 'test/mobile_broker_bypass_guard_fixture_test.mjs'
+      - 'README.md'
+      - 'docs/AI_FAKE_BROKER_RUNBOOK.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  mobile-broker-bypass-guard:
+    name: Mobile broker bypass guard
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Run mobile broker bypass guard
+        shell: bash
+        run: node scripts/mobile_broker_bypass_guard.mjs
+
+      - name: Run mobile broker bypass guard fixture tests
+        shell: bash
+        run: node --test test/mobile_broker_bypass_guard_fixture_test.mjs
