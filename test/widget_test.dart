@@ -232,6 +232,91 @@ void main() {
     );
   });
 
+  testWidgets('visual evidence captures document affordance states', (
+    WidgetTester tester,
+  ) async {
+    final testDependencies = await tester.runAsync(
+      () async => _LiveDependencyFixture.create(),
+    );
+    final fixture = testDependencies!;
+    addTearDown(() async {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.runAsync(fixture.dispose);
+    });
+
+    await tester.runAsync(() async {
+      await fixture.repository.upsert(
+        _artworkRecord(
+          id: 'document-visual',
+          title: 'Document Visual Artwork',
+          state: ArtworkRecordState.verifiedByYou,
+          source: ArtworkFieldSource.userConfirmed,
+        ),
+      );
+      await fixture.addPrimaryImage(artworkId: 'document-visual');
+    });
+    final supportingSource = await tester.runAsync(
+      () => fixture.writePngSource('document-visual-receipt-photo.png'),
+    );
+    final missingSource = File(p.join(fixture.tempDir.path, 'missing.png'));
+
+    await captureArtifactForApp(
+      tester,
+      routeName: AppRoutes.collectionAdd,
+      fileName: 'issue-130-add-artwork-document-gated.png',
+      ensureVisibleFinder: find.text(
+        'Document upload unavailable',
+        skipOffstage: false,
+      ),
+    );
+    await captureArtifactForApp(
+      tester,
+      routeName: AppRoutes.artworkDetails('document-visual'),
+      dependencies: fixture.dependencies,
+      fileName: 'issue-130-detail-supporting-records-action.png',
+      ensureVisibleFinder: find.text(
+        'Add supporting records',
+        skipOffstage: false,
+      ),
+    );
+    await captureArtifactForApp(
+      tester,
+      routeName: AppRoutes.artworkDocuments('document-visual'),
+      dependencies: fixture.dependencies,
+      fileName: 'issue-130-documents-empty-gated.png',
+      ensureVisibleFinder: find.text(
+        'Missing-file recovery preview',
+        skipOffstage: false,
+      ),
+    );
+    await captureSupportingPhotoActionVisualEvidence(
+      tester,
+      dependencies: fixture.dependenciesWithPicker(
+        _SingleImagePicker(supportingSource!),
+      ),
+      fileName: 'issue-130-supporting-photo-success.png',
+      settledState: find.text('Supporting photo imported'),
+    );
+    await captureSupportingPhotoActionVisualEvidence(
+      tester,
+      dependencies: fixture.dependencies,
+      fileName: 'issue-130-supporting-photo-cancelled.png',
+      settledState: find.textContaining(
+        'Supporting photo import was cancelled.',
+      ),
+    );
+    await captureSupportingPhotoActionVisualEvidence(
+      tester,
+      dependencies: fixture.dependenciesWithPicker(
+        _SingleImagePicker(missingSource),
+      ),
+      fileName: 'issue-130-supporting-photo-missing-file.png',
+      settledState: find.textContaining(
+        'The selected file could not be found.',
+      ),
+    );
+  });
+
   testWidgets('visual evidence captures placeholder confirmation states', (
     WidgetTester tester,
   ) async {
@@ -587,8 +672,8 @@ void main() {
     await tapVisible(tester, find.text('Add supporting records'));
     expect(find.text('Documents'), findsWidgets);
     expect(find.text('gallery-receipt-2025.pdf'), findsOneWidget);
-    expect(find.text('Receipts and documents'), findsOneWidget);
-    expect(find.text('Missing-file state'), findsOneWidget);
+    expect(find.text('Document upload unavailable'), findsOneWidget);
+    expect(find.text('Missing-file recovery preview'), findsOneWidget);
 
     await tapVisible(
       tester,
@@ -853,6 +938,59 @@ void main() {
       expect(find.text('1 supporting record listed.'), findsOneWidget);
     },
   );
+
+  testWidgets('document upload affordances are gated when unavailable', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(
+      const ArchivaleApp(initialRoute: AppRoutes.collectionAdd),
+    );
+    await pumpReady(tester);
+
+    expect(find.text('Document upload unavailable'), findsOneWidget);
+    expect(find.text('Attach document'), findsNothing);
+    expect(find.byIcon(Icons.attach_file), findsOneWidget);
+    expect(
+      find.widgetWithText(OutlinedButton, 'Attach document'),
+      findsNothing,
+    );
+
+    final testDependencies = await tester.runAsync(
+      () async => _LiveDependencyFixture.create(),
+    );
+    final fixture = testDependencies!;
+    addTearDown(() async {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.runAsync(fixture.dispose);
+    });
+
+    await tester.runAsync(() async {
+      await fixture.repository.upsert(
+        _artworkRecord(
+          id: 'document-gated',
+          title: 'Document Gated Artwork',
+          state: ArtworkRecordState.verifiedByYou,
+          source: ArtworkFieldSource.userConfirmed,
+        ),
+      );
+      await fixture.addPrimaryImage(artworkId: 'document-gated');
+    });
+
+    await tester.pumpWidget(
+      ArchivaleApp(
+        initialRoute: AppRoutes.artworkDocuments('document-gated'),
+        dependencies: fixture.dependencies,
+      ),
+    );
+    await pumpLiveData(tester);
+
+    expect(find.text('No supporting records yet'), findsOneWidget);
+    expect(find.text('Take supporting photo'), findsOneWidget);
+    expect(find.text('Import supporting photo'), findsOneWidget);
+    expect(find.text('Document upload unavailable'), findsOneWidget);
+    expect(find.text('Missing-file recovery preview'), findsOneWidget);
+    expect(find.text('Attach document'), findsNothing);
+  });
 
   testWidgets('collection lists local record after repository reload', (
     WidgetTester tester,
@@ -2570,6 +2708,33 @@ Future<void> captureImportActionVisualEvidence(
   );
   await pumpLiveData(tester);
   await tapVisible(tester, find.text(actionLabel));
+  await waitForFinder(tester, settledState);
+  await captureBoundaryToArtifacts(tester, boundaryKey, fileName);
+}
+
+Future<void> captureSupportingPhotoActionVisualEvidence(
+  WidgetTester tester, {
+  required AppDependencies dependencies,
+  required Finder settledState,
+  required String fileName,
+}) async {
+  await _configureMobileViewport(tester);
+
+  final boundaryKey = GlobalKey();
+  await tester.pumpWidget(
+    RepaintBoundary(
+      key: boundaryKey,
+      child: ArchivaleApp(
+        initialRoute: AppRoutes.artworkSupportingPhotoImport('document-visual'),
+        dependencies: dependencies,
+      ),
+    ),
+  );
+  await pumpLiveData(tester);
+  await pressAsyncButton(
+    tester,
+    find.widgetWithText(FilledButton, 'Choose supporting photo'),
+  );
   await waitForFinder(tester, settledState);
   await captureBoundaryToArtifacts(tester, boundaryKey, fileName);
 }

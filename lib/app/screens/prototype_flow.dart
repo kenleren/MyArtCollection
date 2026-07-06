@@ -353,10 +353,11 @@ class AddArtworkScreen extends StatelessWidget {
             routeName: AppRoutes.import,
           ),
           const SizedBox(height: 12),
-          SecondaryActionButton(
+          const _StatusPanel(
             icon: Icons.attach_file,
-            label: l10n.attachDocumentAction,
-            routeName: AppRoutes.artworkDocuments(prototypeArtwork.id),
+            title: 'Document upload unavailable',
+            body:
+                'Create the artwork record first. This build can add supporting photos to that record; dedicated document file upload is not available yet.',
           ),
           const SizedBox(height: 20),
           const _Notice(
@@ -1563,17 +1564,17 @@ class DocumentsScreen extends StatelessWidget {
           ),
           const SizedBox(height: 12),
           const _StatusPanel(
-            icon: Icons.add_circle_outline,
-            title: 'Receipts and documents',
+            icon: Icons.block_outlined,
+            title: 'Document upload unavailable',
             body:
-                'Capture receipts, certificates, auction records, or provenance notes as supporting photos for now. Dedicated document upload will follow.',
+                'This build cannot import receipt or certificate files directly. Use supporting photos for receipts, certificates, auction records, or provenance notes for now.',
           ),
           const SizedBox(height: 12),
           const _StatusPanel(
             icon: Icons.warning_amber_outlined,
-            title: 'Missing-file state',
+            title: 'Missing-file recovery preview',
             body:
-                'If an app-private file is unavailable, the record keeps its attachment metadata and asks you to reattach it.',
+                'Error-state preview: if an app-private file becomes unavailable, the record keeps its attachment metadata and asks you to reattach it.',
           ),
           const SizedBox(height: 20),
           PrimaryActionButton(
