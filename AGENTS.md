@@ -1,9 +1,9 @@
 # Repository Guidance
 
-This repository builds Archivale, a private, local-first art inventory app for
-serious hobby collectors. The product promise is: photograph an artwork, let AI
-draft cautious suggestions, let the collector confirm the facts, attach
-supporting records, and keep the archive exportable.
+This repository builds MyArtCollection, the private, local-first art inventory
+app currently branded publicly as Archivale. The product promise is: photograph
+an artwork, let AI draft cautious suggestions, let the collector confirm the
+facts, attach supporting records, and keep the archive exportable.
 
 ## Product Rules
 
@@ -82,5 +82,7 @@ When changing behavior, check the relevant local docs first:
 - `docs/SECRET_HYGIENE.md`
 - `docs/COPY_TRUST_SPEC.md`
 - `docs/AI_BROKER_AUTH_AND_QUOTA_SPEC.md`
+- `docs/AI_BROKER_PAYLOAD_AND_TELEMETRY_SPEC.md`
 - `docs/COSTED_AI_BACKEND_GATE_SPEC.md`
 - `docs/AI_PROVIDER_DATA_AND_SOURCE_RIGHTS_SPEC.md`
+- `docs/FIREBASE_TELEMETRY_POLICY.md`
