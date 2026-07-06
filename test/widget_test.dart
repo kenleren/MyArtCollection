@@ -12,6 +12,7 @@ import 'package:my_art_collection/app/app.dart';
 import 'package:my_art_collection/app/app_dependencies.dart';
 import 'package:my_art_collection/app/app_routes.dart';
 import 'package:my_art_collection/app/config/app_feature_flags.dart';
+import 'package:my_art_collection/app/import/csv_import_file_picker.dart';
 import 'package:my_art_collection/app/intake/artwork_image_picker.dart';
 import 'package:my_art_collection/app/startup_route.dart';
 import 'package:my_art_collection/app/storage/ai_research_record.dart';
@@ -142,6 +143,136 @@ void main() {
     );
   });
 
+  testWidgets('visual evidence captures required csv import mobile states', (
+    WidgetTester tester,
+  ) async {
+    final testDependencies = await tester.runAsync(
+      () async => _LiveDependencyFixture.create(),
+    );
+    final fixture = testDependencies!;
+    addTearDown(() async {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.runAsync(fixture.dispose);
+    });
+
+    await tester.runAsync(() async {
+      await fixture.repository.upsert(_existingCsvDuplicateRecord());
+    });
+
+    final csvFile = await tester.runAsync(
+      () => fixture.writeTextSource('visual-import.csv', _csvImportCsv),
+    );
+    final visualCsvFile = csvFile!;
+
+    await captureArtifactForApp(
+      tester,
+      routeName: AppRoutes.collection,
+      dependencies: fixture.dependencies,
+      fileName: 'issue-109-csv-entry-mobile.png',
+      ensureVisibleFinder: find.text('Import CSV', skipOffstage: false),
+    );
+    await captureCsvImportMappingVisualEvidence(
+      tester,
+      dependencies: fixture.dependencies,
+      csvPath: visualCsvFile.path,
+      fileName: 'issue-109-csv-mapping-mobile.png',
+    );
+    await captureCsvImportPreviewVisualEvidence(
+      tester,
+      dependencies: fixture.dependencies,
+      csvPath: visualCsvFile.path,
+      fileName: 'issue-109-csv-preview-warning-duplicate-mobile.png',
+      ensureVisibleFinder: find.text(
+        'Duplicate candidate: 1',
+        skipOffstage: false,
+      ),
+    );
+    await captureCsvImportCancelVisualEvidence(
+      tester,
+      dependencies: fixture.dependencies,
+      csvPath: visualCsvFile.path,
+      fileName: 'issue-109-csv-cancel-no-write-mobile.png',
+    );
+    await captureCsvImportSuccessVisualEvidence(
+      tester,
+      dependencies: fixture.dependenciesWithFlags(
+        csvImportFilePicker: _SingleCsvPicker(visualCsvFile),
+      ),
+      successFileName: 'issue-109-csv-success-summary-mobile.png',
+      importedDraftFileName: 'issue-109-imported-draft-mobile.png',
+    );
+  });
+
+  testWidgets('visual evidence captures supporting record mobile states', (
+    WidgetTester tester,
+  ) async {
+    final testDependencies = await tester.runAsync(
+      () async => _LiveDependencyFixture.create(),
+    );
+    final fixture = testDependencies!;
+    addTearDown(() async {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.runAsync(fixture.dispose);
+    });
+
+    await tester.runAsync(() async {
+      await fixture.repository.upsert(
+        _artworkRecord(
+          id: 'supporting-visual',
+          title: 'Supporting Visual Artwork',
+          state: ArtworkRecordState.verifiedByYou,
+          source: ArtworkFieldSource.userConfirmed,
+        ),
+      );
+      await fixture.addPrimaryImage(artworkId: 'supporting-visual');
+      await fixture.addSupportingPhoto(
+        artworkId: 'supporting-visual',
+        fileName: 'supporting-visual-detail.png',
+      );
+    });
+
+    await captureArtifactForApp(
+      tester,
+      routeName: AppRoutes.artworkDocuments('supporting-visual'),
+      dependencies: fixture.dependencies,
+      fileName: 'issue-113-documents-mobile.png',
+      ensureVisibleFinder: find.text(
+        'Import supporting photo',
+        skipOffstage: false,
+      ),
+    );
+    await captureArtifactForApp(
+      tester,
+      routeName: AppRoutes.artworkSupportingPhotoImport('supporting-visual'),
+      dependencies: fixture.dependencies,
+      fileName: 'issue-113-supporting-intake-mobile.png',
+      ensureVisibleFinder: find.text(
+        'Choose supporting photo',
+        skipOffstage: false,
+      ),
+    );
+    await captureArtifactForApp(
+      tester,
+      routeName: AppRoutes.collection,
+      dependencies: fixture.dependencies,
+      fileName: 'issue-113-saved-list-mobile.png',
+      ensureVisibleFinder: find.text(
+        '1 supporting record attached.',
+        skipOffstage: false,
+      ),
+    );
+    await captureArtifactForApp(
+      tester,
+      routeName: AppRoutes.artworkReportPreview('supporting-visual'),
+      dependencies: fixture.dependencies,
+      fileName: 'issue-113-report-preview-mobile.png',
+      ensureVisibleFinder: find.text(
+        '1 supporting record listed.',
+        skipOffstage: false,
+      ),
+    );
+  });
+
   testWidgets('collection shell renders and can open add artwork', (
     WidgetTester tester,
   ) async {
@@ -156,6 +287,7 @@ void main() {
     expect(find.text('Settings'), findsOneWidget);
     expect(find.text('No artworks yet'), findsOneWidget);
     expect(find.text('Blue Interior Study'), findsNothing);
+    expect(find.text('Import CSV'), findsOneWidget);
 
     await tapVisible(tester, find.widgetWithText(FilledButton, 'Add artwork'));
 
@@ -174,6 +306,179 @@ void main() {
     expect(find.textContaining('prove authenticity'), findsNothing);
     expect(find.textContaining('appraise value'), findsNothing);
   });
+
+  testWidgets(
+    'csv import entry shows privacy framing, mapping edits, preview categories, and cancel with no write',
+    (WidgetTester tester) async {
+      final testDependencies = await tester.runAsync(
+        () async => _LiveDependencyFixture.create(),
+      );
+      final fixture = testDependencies!;
+      addTearDown(() async {
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.runAsync(fixture.dispose);
+      });
+
+      await tester.runAsync(() async {
+        await fixture.repository.upsert(_existingCsvDuplicateRecord());
+      });
+
+      final csvFile = await tester.runAsync(
+        () => fixture.writeTextSource('collector-import.csv', _csvImportCsv),
+      );
+
+      await tester.pumpWidget(
+        ArchivaleApp(
+          initialRoute: AppRoutes.collectionImportCsv,
+          dependencies: fixture.dependencies,
+        ),
+      );
+      await pumpLiveData(tester);
+
+      expect(find.text('Import collector CSV'), findsOneWidget);
+      expect(find.text('Private local records only'), findsOneWidget);
+      expect(find.text('Local-only CSV review'), findsOneWidget);
+      expect(find.textContaining('does not connect to Drive'), findsOneWidget);
+      expect(find.text('Choose CSV file'), findsOneWidget);
+      expect(find.text('Load test harness path'), findsOneWidget);
+      expect(find.text('Choose from system picker'), findsNothing);
+
+      await enterVisibleText(
+        tester,
+        find.byKey(const ValueKey('csv-test-harness-path-field')),
+        csvFile!.path,
+      );
+      await pressAsyncButton(
+        tester,
+        find.widgetWithText(OutlinedButton, 'Load test harness path'),
+      );
+      await waitForFinder(
+        tester,
+        find.byKey(const ValueKey('csv-mapping-Work Name')),
+      );
+      await selectDropdownItem(
+        tester,
+        find.byKey(const ValueKey('csv-mapping-Work Name')),
+        'field:title',
+      );
+      await pumpLiveData(tester);
+
+      expect(find.text('Preview categories'), findsOneWidget);
+      expect(find.text('Ready: 1'), findsOneWidget);
+      expect(find.text('Warning: 1'), findsOneWidget);
+      expect(find.text('Duplicate candidate: 1'), findsOneWidget);
+      expect(find.text('Blocked: 1'), findsOneWidget);
+      expect(find.text('Skip'), findsOneWidget);
+      expect(find.text('Import as new'), findsOneWidget);
+
+      await tapVisible(tester, find.text('Cancel without writing'));
+
+      final recordsAfterCancel = await tester.runAsync(fixture.repository.list);
+      expect(recordsAfterCancel!.map((record) => record.id), ['existing-001']);
+      expect(find.text('Choose CSV file'), findsOneWidget);
+      expect(find.text('Preview categories'), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'csv import can load from file picker, confirm writes, and open an imported record',
+    (WidgetTester tester) async {
+      final testDependencies = await tester.runAsync(
+        () async => _LiveDependencyFixture.create(),
+      );
+      final fixture = testDependencies!;
+      addTearDown(() async {
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.runAsync(fixture.dispose);
+      });
+
+      await tester.runAsync(() async {
+        await fixture.repository.upsert(_existingCsvDuplicateRecord());
+      });
+
+      final csvFile = await tester.runAsync(
+        () => fixture.writeTextSource('picker-import.csv', _csvImportCsv),
+      );
+
+      await tester.pumpWidget(
+        ArchivaleApp(
+          initialRoute: AppRoutes.collectionImportCsv,
+          dependencies: fixture.dependenciesWithFlags(
+            csvImportFilePicker: _SingleCsvPicker(csvFile!),
+          ),
+        ),
+      );
+      await pumpLiveData(tester);
+
+      await pressAsyncButton(
+        tester,
+        find.widgetWithText(FilledButton, 'Choose CSV file'),
+      );
+      await waitForFinder(
+        tester,
+        find.byKey(const ValueKey('csv-mapping-Work Name')),
+      );
+      await selectDropdownItem(
+        tester,
+        find.byKey(const ValueKey('csv-mapping-Work Name')),
+        'field:title',
+      );
+      await pumpLiveData(tester);
+      await tapVisible(tester, find.text('Import as new'));
+      await pressAsyncButton(
+        tester,
+        find.widgetWithText(FilledButton, 'Confirm local import'),
+      );
+
+      expect(find.text('Local CSV import complete'), findsOneWidget);
+      expect(find.text('Imported records: 3'), findsOneWidget);
+      expect(find.text('Skipped duplicate candidates: 0'), findsOneWidget);
+      expect(find.text('Imported with warnings: 1'), findsOneWidget);
+      expect(find.text('Blocked rows left unchanged: 1'), findsOneWidget);
+
+      final recordsAfterImport = await tester.runAsync(fixture.repository.list);
+      expect(recordsAfterImport, hasLength(4));
+      expect(
+        recordsAfterImport!
+            .where(
+              (record) =>
+                  record.field(ArtworkFieldKeys.title)?.value == 'Fresh Harbor',
+            )
+            .single
+            .primaryImageAttachmentId,
+        isNull,
+      );
+      final freshHarborRecord = recordsAfterImport
+          .where(
+            (record) =>
+                record.field(ArtworkFieldKeys.title)?.value == 'Fresh Harbor',
+          )
+          .single;
+      expect(freshHarborRecord.recordState, ArtworkRecordState.needsReview);
+      expect(freshHarborRecord.primaryImageAttachmentId, isNull);
+      expect(
+        freshHarborRecord.field(ArtworkFieldKeys.title)?.source,
+        ArtworkFieldSource.documentExtracted,
+      );
+      expect(
+        recordsAfterImport.any(
+          (record) =>
+              record.field(ArtworkFieldKeys.title)?.value == 'Blue Interior' &&
+              record.id != 'existing-001',
+        ),
+        isTrue,
+      );
+
+      await tapVisible(tester, find.text('Open first imported record'));
+      await pumpLiveData(tester);
+
+      expect(find.text('Draft review'), findsWidgets);
+      expect(find.text('Local draft. Please confirm.'), findsOneWidget);
+      expect(find.text('Fresh Harbor'), findsWidgets);
+      expect(find.text('Primary image preview unavailable'), findsOneWidget);
+      expect(find.text('Add evidence photos next'), findsOneWidget);
+    },
+  );
 
   testWidgets('collection shell localizes supported mobile locales', (
     WidgetTester tester,
@@ -241,10 +546,10 @@ void main() {
     expect(find.text('Blue Interior Study'), findsWidgets);
     expect(find.text('Record state: Verified by you'), findsOneWidget);
 
-    await tapVisible(tester, find.text('Attach receipt placeholder'));
+    await tapVisible(tester, find.text('Add supporting records'));
     expect(find.text('Documents'), findsWidgets);
     expect(find.text('gallery-receipt-2025.pdf'), findsOneWidget);
-    expect(find.text('Attach document placeholder'), findsOneWidget);
+    expect(find.text('Receipts and documents'), findsOneWidget);
     expect(find.text('Missing-file state'), findsOneWidget);
 
     await tapVisible(
@@ -345,6 +650,133 @@ void main() {
       findsNothing,
     );
   });
+
+  testWidgets(
+    'existing artwork can import supporting photo without replacing primary image',
+    (WidgetTester tester) async {
+      final testDependencies = await tester.runAsync(
+        () async => _LiveDependencyFixture.create(),
+      );
+      final fixture = testDependencies!;
+      addTearDown(() async {
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.runAsync(fixture.dispose);
+      });
+
+      await tester.runAsync(() async {
+        await fixture.repository.upsert(
+          _artworkRecord(
+            id: 'supporting-ui',
+            title: 'Supporting UI Artwork',
+            state: ArtworkRecordState.verifiedByYou,
+            source: ArtworkFieldSource.userConfirmed,
+          ),
+        );
+        await fixture.addPrimaryImage(artworkId: 'supporting-ui');
+      });
+      final supportingSource = await tester.runAsync(
+        () => fixture.writePngSource('signature-detail.png'),
+      );
+
+      await tester.pumpWidget(
+        ArchivaleApp(
+          initialRoute: AppRoutes.artworkDetails('supporting-ui'),
+          dependencies: fixture.dependenciesWithPicker(
+            _SingleImagePicker(supportingSource!),
+          ),
+        ),
+      );
+      await pumpLiveData(tester);
+
+      expect(find.text('Supporting UI Artwork'), findsWidgets);
+
+      await tapVisible(tester, find.text('Add supporting records'));
+      await pumpLiveData(tester);
+
+      expect(find.text('Documents'), findsWidgets);
+      expect(find.text('No supporting records yet'), findsOneWidget);
+      expect(find.text('Take supporting photo'), findsOneWidget);
+      expect(find.text('Import supporting photo'), findsOneWidget);
+
+      await tapVisible(tester, find.text('Import supporting photo'));
+      await pumpLiveData(tester);
+      expect(find.text('Import supporting photo'), findsWidgets);
+      expect(find.text('Supporting UI Artwork'), findsWidgets);
+      expect(find.text('Artwork-scoped save'), findsOneWidget);
+
+      await pressAsyncButton(
+        tester,
+        find.widgetWithText(FilledButton, 'Choose supporting photo'),
+      );
+
+      expect(find.text('Supporting photo imported'), findsOneWidget);
+      expect(
+        find.text(
+          'Saved as a supporting record. The primary artwork image is unchanged.',
+        ),
+        findsOneWidget,
+      );
+      expect(find.text('View supporting records'), findsOneWidget);
+
+      final savedRecord = await tester.runAsync(
+        () => fixture.repository.get('supporting-ui'),
+      );
+      expect(savedRecord!.primaryImageAttachmentId, 'primary-supporting-ui');
+      final attachments = await tester.runAsync(
+        () => fixture.repository.attachmentsForArtwork('supporting-ui'),
+      );
+      expect(attachments, isNotNull);
+      expect(
+        attachments!
+            .where(
+              (attachment) =>
+                  attachment.role == AttachmentRole.supportingPhoto &&
+                  attachment.type == AttachmentType.photo,
+            )
+            .length,
+        1,
+      );
+      expect(
+        attachments.where(
+          (attachment) => attachment.id == 'primary-supporting-ui',
+        ),
+        hasLength(1),
+      );
+
+      await tapVisible(tester, find.text('View supporting records'));
+      await pumpLiveData(tester);
+
+      expect(find.text('Supporting photo'), findsOneWidget);
+      expect(find.text('signature-detail.png'), findsOneWidget);
+      expect(find.text('No supporting records yet'), findsNothing);
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+      await tester.pumpWidget(
+        ArchivaleApp(
+          initialRoute: AppRoutes.collection,
+          dependencies: fixture.dependencies,
+        ),
+      );
+      await pumpLiveData(tester);
+
+      expect(find.text('Supporting UI Artwork'), findsOneWidget);
+      expect(find.text('1 supporting record attached.'), findsOneWidget);
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+      await tester.pumpWidget(
+        ArchivaleApp(
+          initialRoute: AppRoutes.artworkReportPreview('supporting-ui'),
+          dependencies: fixture.dependencies,
+        ),
+      );
+      await pumpLiveData(tester);
+
+      expect(find.text('Report preview'), findsWidgets);
+      expect(find.text('1 supporting record listed.'), findsOneWidget);
+    },
+  );
 
   testWidgets('collection lists local record after repository reload', (
     WidgetTester tester,
@@ -713,12 +1145,12 @@ void main() {
 
     expect(find.text('Needs Local Review needs review'), findsOneWidget);
     expect(
-      find.text('Needs Local Review needs supporting documents'),
+      find.text('Needs Local Review needs supporting records'),
       findsOneWidget,
     );
     expect(find.text('Complete Local Record needs review'), findsNothing);
     expect(
-      find.text('Complete Local Record needs supporting documents'),
+      find.text('Complete Local Record needs supporting records'),
       findsNothing,
     );
 
@@ -752,7 +1184,7 @@ void main() {
 
     expect(find.text('Needs Local Review needs review'), findsNothing);
     expect(
-      find.text('Needs Local Review needs supporting documents'),
+      find.text('Needs Local Review needs supporting records'),
       findsNothing,
     );
     expect(find.text('No incomplete records'), findsOneWidget);
@@ -971,7 +1403,7 @@ void main() {
     );
     expect(find.text('Sold Incomplete Artwork needs review'), findsNothing);
     expect(
-      find.text('Sold Incomplete Artwork needs supporting documents'),
+      find.text('Sold Incomplete Artwork needs supporting records'),
       findsNothing,
     );
     expect(find.textContaining('Removed Incomplete Artwork'), findsNothing);
@@ -1622,6 +2054,52 @@ Future<void> enterVisibleText(
   await tester.pump();
 }
 
+Future<void> selectDropdownItem(
+  WidgetTester tester,
+  Finder finder,
+  String value,
+) async {
+  await tester.ensureVisible(finder);
+  await tester.pump();
+  final dropdown = tester.widget<DropdownButtonFormField<String>>(finder);
+  dropdown.onChanged!(value);
+  await pumpLiveData(tester);
+}
+
+Future<void> waitForFinder(
+  WidgetTester tester,
+  Finder finder, {
+  int attempts = 20,
+}) async {
+  for (var attempt = 0; attempt < attempts; attempt += 1) {
+    await tester.pump(const Duration(milliseconds: 100));
+    if (finder.evaluate().isNotEmpty) {
+      return;
+    }
+  }
+
+  final visibleTexts = find
+      .byType(Text)
+      .evaluate()
+      .map((element) => element.widget)
+      .whereType<Text>()
+      .map((text) => text.data)
+      .whereType<String>()
+      .toList();
+  fail('Finder not found. Visible text: ${visibleTexts.join(' | ')}');
+}
+
+Future<void> pressAsyncButton(WidgetTester tester, Finder finder) async {
+  await tester.ensureVisible(finder);
+  await tester.pump();
+  await tester.runAsync(() async {
+    final dynamic button = tester.widget(finder);
+    (button.onPressed as VoidCallback?)!.call();
+    await Future<void>.delayed(const Duration(milliseconds: 100));
+  });
+  await pumpLiveData(tester);
+}
+
 Future<void> pumpReady(WidgetTester tester) async {
   await tester.pump();
   await tester.pump(const Duration(milliseconds: 400));
@@ -1666,18 +2144,22 @@ Future<void> loadScreenshotFont() async {
   }
 }
 
-Future<void> captureVisualEvidence(
-  WidgetTester tester, {
-  required String routeName,
-  required ThemeMode themeMode,
-  required String fileName,
-}) async {
+Future<void> _configureMobileViewport(WidgetTester tester) async {
   tester.view.physicalSize = const Size(393, 852);
   tester.view.devicePixelRatio = 1;
   addTearDown(() {
     tester.view.resetPhysicalSize();
     tester.view.resetDevicePixelRatio();
   });
+}
+
+Future<void> captureVisualEvidence(
+  WidgetTester tester, {
+  required String routeName,
+  required ThemeMode themeMode,
+  required String fileName,
+}) async {
+  await _configureMobileViewport(tester);
 
   final boundaryKey = GlobalKey();
   await tester.pumpWidget(
@@ -1706,6 +2188,254 @@ Future<void> captureVisualEvidence(
 
   await tester.pumpWidget(const SizedBox.shrink());
   await tester.pump();
+}
+
+Future<void> captureArtifactForApp(
+  WidgetTester tester, {
+  required String routeName,
+  required String fileName,
+  ThemeMode themeMode = ThemeMode.system,
+  AppDependencies? dependencies,
+  Finder? ensureVisibleFinder,
+}) async {
+  await _configureMobileViewport(tester);
+
+  final boundaryKey = GlobalKey();
+  await tester.pumpWidget(
+    RepaintBoundary(
+      key: boundaryKey,
+      child: ArchivaleApp(
+        initialRoute: routeName,
+        dependencies: dependencies,
+        themeMode: themeMode,
+      ),
+    ),
+  );
+  await pumpLiveData(tester);
+  if (ensureVisibleFinder != null) {
+    await tester.ensureVisible(ensureVisibleFinder);
+    await tester.pump();
+  }
+  await captureBoundaryToArtifacts(tester, boundaryKey, fileName);
+}
+
+Future<void> captureCsvImportPreviewVisualEvidence(
+  WidgetTester tester, {
+  required AppDependencies dependencies,
+  required String csvPath,
+  required String fileName,
+  Finder? ensureVisibleFinder,
+}) async {
+  await _configureMobileViewport(tester);
+
+  final boundaryKey = GlobalKey();
+  await tester.pumpWidget(
+    RepaintBoundary(
+      key: boundaryKey,
+      child: ArchivaleApp(
+        initialRoute: AppRoutes.collectionImportCsv,
+        dependencies: dependencies,
+      ),
+    ),
+  );
+  await pumpLiveData(tester);
+  await enterVisibleText(
+    tester,
+    find.byKey(const ValueKey('csv-test-harness-path-field')),
+    csvPath,
+  );
+  await pressAsyncButton(
+    tester,
+    find.widgetWithText(OutlinedButton, 'Load test harness path'),
+  );
+  await waitForFinder(
+    tester,
+    find.byKey(const ValueKey('csv-mapping-Work Name')),
+  );
+  await selectDropdownItem(
+    tester,
+    find.byKey(const ValueKey('csv-mapping-Work Name')),
+    'field:title',
+  );
+  await pumpLiveData(tester);
+  await tester.ensureVisible(
+    ensureVisibleFinder ?? find.text('Cancel without writing'),
+  );
+  await tester.pump();
+
+  await captureBoundaryToArtifacts(tester, boundaryKey, fileName);
+}
+
+Future<void> captureCsvImportMappingVisualEvidence(
+  WidgetTester tester, {
+  required AppDependencies dependencies,
+  required String csvPath,
+  required String fileName,
+}) async {
+  await _configureMobileViewport(tester);
+
+  final boundaryKey = GlobalKey();
+  await tester.pumpWidget(
+    RepaintBoundary(
+      key: boundaryKey,
+      child: ArchivaleApp(
+        initialRoute: AppRoutes.collectionImportCsv,
+        dependencies: dependencies,
+      ),
+    ),
+  );
+  await pumpLiveData(tester);
+  await enterVisibleText(
+    tester,
+    find.byKey(const ValueKey('csv-test-harness-path-field')),
+    csvPath,
+  );
+  await pressAsyncButton(
+    tester,
+    find.widgetWithText(OutlinedButton, 'Load test harness path'),
+  );
+  await waitForFinder(
+    tester,
+    find.byKey(const ValueKey('csv-mapping-Work Name')),
+  );
+  await tester.ensureVisible(find.text('Header mapping'));
+  await tester.pump();
+
+  await captureBoundaryToArtifacts(tester, boundaryKey, fileName);
+}
+
+Future<void> captureCsvImportCancelVisualEvidence(
+  WidgetTester tester, {
+  required AppDependencies dependencies,
+  required String csvPath,
+  required String fileName,
+}) async {
+  await _configureMobileViewport(tester);
+
+  final boundaryKey = GlobalKey();
+  await tester.pumpWidget(
+    RepaintBoundary(
+      key: boundaryKey,
+      child: ArchivaleApp(
+        initialRoute: AppRoutes.collectionImportCsv,
+        dependencies: dependencies,
+      ),
+    ),
+  );
+  await pumpLiveData(tester);
+  await enterVisibleText(
+    tester,
+    find.byKey(const ValueKey('csv-test-harness-path-field')),
+    csvPath,
+  );
+  await pressAsyncButton(
+    tester,
+    find.widgetWithText(OutlinedButton, 'Load test harness path'),
+  );
+  await waitForFinder(
+    tester,
+    find.byKey(const ValueKey('csv-mapping-Work Name')),
+  );
+  await selectDropdownItem(
+    tester,
+    find.byKey(const ValueKey('csv-mapping-Work Name')),
+    'field:title',
+  );
+  await pumpLiveData(tester);
+  await tapVisible(tester, find.text('Cancel without writing'));
+  await waitForFinder(tester, find.text('Choose CSV file'));
+  await tester.ensureVisible(find.text('Choose CSV file'));
+  await tester.pump();
+
+  await captureBoundaryToArtifacts(tester, boundaryKey, fileName);
+}
+
+Future<void> captureCsvImportSuccessVisualEvidence(
+  WidgetTester tester, {
+  required AppDependencies dependencies,
+  required String successFileName,
+  String? importedDraftFileName,
+}) async {
+  await _configureMobileViewport(tester);
+
+  final boundaryKey = GlobalKey();
+  await tester.pumpWidget(
+    RepaintBoundary(
+      key: boundaryKey,
+      child: ArchivaleApp(
+        initialRoute: AppRoutes.collectionImportCsv,
+        dependencies: dependencies,
+      ),
+    ),
+  );
+  await pumpLiveData(tester);
+  await pressAsyncButton(
+    tester,
+    find.widgetWithText(FilledButton, 'Choose CSV file'),
+  );
+  await waitForFinder(
+    tester,
+    find.byKey(const ValueKey('csv-mapping-Work Name')),
+  );
+  await selectDropdownItem(
+    tester,
+    find.byKey(const ValueKey('csv-mapping-Work Name')),
+    'field:title',
+  );
+  await pumpLiveData(tester);
+  await tapVisible(tester, find.text('Import as new'));
+  await pressAsyncButton(
+    tester,
+    find.widgetWithText(FilledButton, 'Confirm local import'),
+  );
+  await waitForFinder(tester, find.text('Open first imported record'));
+  await tester.ensureVisible(find.text('Open first imported record'));
+  await tester.pump();
+
+  await captureBoundaryToArtifacts(
+    tester,
+    boundaryKey,
+    successFileName,
+    resetAfterCapture: importedDraftFileName == null,
+  );
+  if (importedDraftFileName != null) {
+    await tapVisible(tester, find.text('Open first imported record'));
+    await pumpLiveData(tester);
+    await waitForFinder(tester, find.text('Add evidence photos next'));
+    await tester.ensureVisible(find.text('Primary image preview unavailable'));
+    await tester.pump();
+    await captureBoundaryToArtifacts(
+      tester,
+      boundaryKey,
+      importedDraftFileName,
+    );
+  }
+}
+
+Future<void> captureBoundaryToArtifacts(
+  WidgetTester tester,
+  GlobalKey boundaryKey,
+  String fileName, {
+  bool resetAfterCapture = true,
+}) async {
+  final boundary =
+      boundaryKey.currentContext!.findRenderObject()! as RenderRepaintBoundary;
+  final bytes = await tester.runAsync<Uint8List>(() async {
+    final image = await boundary.toImage(pixelRatio: 2);
+    final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
+    image.dispose();
+    return byteData!.buffer.asUint8List();
+  });
+
+  final outputDirectory = Directory(p.join('artifacts', 'visual'));
+  outputDirectory.createSync(recursive: true);
+  final screenshotFile = File(p.join(outputDirectory.path, fileName));
+  screenshotFile.writeAsBytesSync(bytes!);
+
+  if (resetAfterCapture) {
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+  }
 }
 
 class _NoLostImagePicker implements ArtworkImagePicker {
@@ -1739,12 +2469,14 @@ class _LiveDependencyFixture {
 
   AppDependencies dependenciesWithFlags({
     ArtworkImagePicker? imagePicker,
+    CsvImportFilePicker csvImportFilePicker = const _NoCsvPicker(),
     AppFeatureFlags featureFlags = const AppFeatureFlags(),
   }) {
     return AppDependencies(
       artworkRepository: repository,
       attachmentStore: attachmentStore,
       imagePicker: imagePicker ?? _NoLostImagePicker(),
+      csvImportFilePicker: csvImportFilePicker,
       featureFlags: featureFlags,
       onDeviceAiDraftProvider: onDeviceAiDraftProvider,
     );
@@ -1785,6 +2517,12 @@ class _LiveDependencyFixture {
     return file;
   }
 
+  Future<File> writeTextSource(String fileName, String contents) async {
+    final file = File(p.join(tempDir.path, fileName));
+    await file.writeAsString(contents);
+    return file;
+  }
+
   Future<AttachmentRecord> addPrimaryImage({
     required String artworkId,
     String? attachmentId,
@@ -1801,6 +2539,29 @@ class _LiveDependencyFixture {
       source: ArtworkFieldSource.userConfirmed,
       importedAt: DateTime.utc(2026, 7, 4, 12),
       notes: 'Primary image fixture.',
+    );
+    await repository.addAttachment(attachment);
+    return attachment;
+  }
+
+  Future<AttachmentRecord> addSupportingPhoto({
+    required String artworkId,
+    String? attachmentId,
+    String fileName = 'supporting-photo.png',
+  }) async {
+    final id = attachmentId ?? 'supporting-$artworkId';
+    final source = await writePngSource(fileName);
+    final attachment = await attachmentStore.saveImportedAttachment(
+      artworkId: artworkId,
+      attachmentId: id,
+      sourceFile: source,
+      originalFileName: fileName,
+      mimeType: 'image/png',
+      type: AttachmentType.photo,
+      role: AttachmentRole.supportingPhoto,
+      source: ArtworkFieldSource.userConfirmed,
+      importedAt: DateTime.utc(2026, 7, 5, 12),
+      notes: 'Supporting photo fixture.',
     );
     await repository.addAttachment(attachment);
     return attachment;
@@ -1824,6 +2585,28 @@ class _SingleImagePicker implements ArtworkImagePicker {
 
   @override
   Future<XFile?> retrieveLostImage() async => null;
+}
+
+class _NoCsvPicker implements CsvImportFilePicker {
+  const _NoCsvPicker();
+
+  @override
+  Future<CsvImportFileSelection?> pickCsvFile() async => null;
+}
+
+class _SingleCsvPicker implements CsvImportFilePicker {
+  const _SingleCsvPicker(this.file);
+
+  final File file;
+
+  @override
+  Future<CsvImportFileSelection?> pickCsvFile() async {
+    return CsvImportFileSelection(
+      displayName: p.basename(file.path),
+      path: file.path,
+      bytes: await file.readAsBytes(),
+    );
+  }
 }
 
 class _CompletedAiDraftProvider implements OnDeviceAiDraftProvider {
@@ -1987,6 +2770,42 @@ ResearchJob _researchJob({
         ],
   );
 }
+
+ArtworkRecord _existingCsvDuplicateRecord() {
+  return _artworkRecord(
+    id: 'existing-001',
+    title: 'Blue Interior',
+    state: ArtworkRecordState.verifiedByYou,
+    source: ArtworkFieldSource.userConfirmed,
+    overrides: {
+      ArtworkFieldKeys.artist: ArtworkFieldValue(
+        value: 'A. Maker',
+        source: ArtworkFieldSource.userConfirmed,
+        note: 'Confirmed in test fixture.',
+        lastConfirmedAt: DateTime.utc(2026, 7, 4, 12),
+      ),
+      ArtworkFieldKeys.year: ArtworkFieldValue(
+        value: '2020',
+        source: ArtworkFieldSource.userConfirmed,
+        note: 'Confirmed in test fixture.',
+        lastConfirmedAt: DateTime.utc(2026, 7, 4, 12),
+      ),
+      ArtworkFieldKeys.dimensions: ArtworkFieldValue(
+        value: '40 x 50 cm',
+        source: ArtworkFieldSource.userConfirmed,
+        note: 'Confirmed in test fixture.',
+        lastConfirmedAt: DateTime.utc(2026, 7, 4, 12),
+      ),
+    },
+  );
+}
+
+const _csvImportCsv =
+    'Work Name,Creator,Year,Dimensions,Notes\n'
+    'Fresh Harbor,A. Maker,2020,40 x 50 cm,\n'
+    'Question Mark,,c. 1900,about 40 x 50,Owner note\n'
+    'Blue Interior,A. Maker,2020,40 x 50 cm,\n'
+    ',,1998,40 x 50 cm,\n';
 
 const _testFieldValues = {
   ArtworkFieldKeys.title: 'Fixture title',

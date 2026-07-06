@@ -6,6 +6,7 @@ class AppRoutes {
 
   static const collection = '/collection';
   static const collectionAdd = '/collection/add';
+  static const collectionImportCsv = '/collection/import-csv';
   static const collectionIncomplete = '/collection/incomplete';
   static const collectionReport = '/collection/report';
   static const collectionSettings = '/collection/settings';
@@ -26,6 +27,10 @@ class AppRoutes {
       '${artwork(artworkId)}/details';
   static String artworkDocuments(String artworkId) =>
       '${artwork(artworkId)}/documents';
+  static String artworkSupportingPhotoCapture(String artworkId) =>
+      '${artwork(artworkId)}/supporting-photo/capture';
+  static String artworkSupportingPhotoImport(String artworkId) =>
+      '${artwork(artworkId)}/supporting-photo/import';
   static String artworkReportPreview(String artworkId) =>
       '${artwork(artworkId)}/report-preview';
   static String artworkExport(String artworkId) =>
