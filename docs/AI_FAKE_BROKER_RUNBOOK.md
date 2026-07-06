@@ -1,10 +1,11 @@
 # AI Fake Broker Runbook
 
-Status: fake-provider-only local contract for issues #116, #117, and #118.
+Status: fake-provider-only local contract for issues #116, #117, #118, and
+#119.
 
 This repository now has an isolated broker scaffold in `backend/broker`. It is
-server-side-only code and is not wired into the Flutter app, Firebase Hosting,
-Firebase Functions, Secret Manager, or any provider SDK.
+not wired into Firebase Hosting, Firebase Functions, Secret Manager, or any
+provider SDK.
 
 ## Current behavior
 
@@ -72,6 +73,15 @@ Firebase Functions, Secret Manager, or any provider SDK.
   provider SDKs, provider hosts, provider key/env names, Firebase AI Logic
   direct-client usage, and direct provider network clients. Mobile code may only
   target the Archivale broker endpoint in a future client slice.
+- Issue #119 adds a disabled Flutter broker client boundary that can serialize
+  an approved local research request into the fake adapter envelope shape only
+  when tests explicitly inject a fake endpoint. The production app dependency
+  path still defaults to the existing local fixture client; this slice does not
+  add an HTTP client, live endpoint URL, provider SDK, provider credential, or
+  deployed backend call.
+- In a future gated deployment, mobile may call only the Archivale broker
+  endpoint. That future path still requires the live gates below and must remain
+  behind the existing Remote Config and explicit-consent controls.
 
 ## Local checks
 
