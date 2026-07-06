@@ -2007,6 +2007,16 @@ void main() {
     await tester.pump();
 
     expect(find.text('Comparable source signals'), findsOneWidget);
+    expect(
+      find.text(
+        'No comparable sale or public estimate was available from verified sources.',
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.textContaining('source-backed comparable signal'),
+      findsNothing,
+    );
     expect(find.text('No reliable comparable found'), findsOneWidget);
     expect(find.text('Source: Professional-source search'), findsOneWidget);
     expect(
@@ -2018,6 +2028,94 @@ void main() {
     expect(find.textContaining('Appraised at'), findsNothing);
     expect(find.textContaining('Certified value'), findsNothing);
     expect(find.textContaining('Authentic value'), findsNothing);
+  });
+
+  testWidgets('online research hides comparable estimates without source hits', (
+    WidgetTester tester,
+  ) async {
+    final testDependencies = await tester.runAsync(
+      () async => _LiveDependencyFixture.create(),
+    );
+    final fixture = testDependencies!;
+    addTearDown(() async {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.runAsync(fixture.dispose);
+    });
+
+    await tester.runAsync(() async {
+      await fixture.repository.upsert(
+        _artworkRecord(
+          id: 'unverified-comparable-draft',
+          title: 'Interior Study',
+          state: ArtworkRecordState.needsReview,
+        ),
+      );
+      await fixture.repository.upsertResearchJob(
+        _researchJob(
+          artworkId: 'unverified-comparable-draft',
+          sourceHits: const [],
+          candidateAttributions: const [],
+          comparableValueSignals: const [
+            ComparableValueSignal(
+              id: 'unverified-value-signal',
+              researchJobId: 'research-unverified-comparable-draft',
+              sourceHitId: 'missing-source',
+              kind: ComparableValueKind.publicEstimate,
+              label: 'Market value',
+              sourceName: 'Unverified public estimate',
+              sourceUrl: 'https://estimate.example/value',
+              amountLow: '2200',
+              amountHigh: '2800',
+              currency: 'USD',
+              caveat: 'Comparable data may not apply to this artwork.',
+            ),
+          ],
+        ),
+      );
+    });
+
+    await tester.pumpWidget(
+      ArchivaleApp(
+        initialRoute: AppRoutes.artworkDraft('unverified-comparable-draft'),
+        dependencies: fixture.dependencies,
+      ),
+    );
+    await pumpLiveData(tester);
+
+    expect(find.text('No source-backed match yet'), findsOneWidget);
+    await tester.ensureVisible(find.text('Comparable source signals'));
+    await tester.pump();
+
+    expect(
+      find.text(
+        '1 comparable signal was hidden because linked sources are missing or could not be verified.',
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.textContaining('source-backed comparable signal'),
+      findsNothing,
+    );
+    expect(find.text('No reliable comparable found'), findsOneWidget);
+    expect(find.textContaining('Market value'), findsNothing);
+    expect(find.textContaining('https://estimate.example'), findsNothing);
+    expect(find.textContaining('Comparable amount'), findsNothing);
+    expect(
+      find.text(
+        'Comparable signal hidden because its source could not be verified.',
+      ),
+      findsOneWidget,
+    );
+
+    await captureArtifactForApp(
+      tester,
+      routeName: AppRoutes.artworkDraft('unverified-comparable-draft'),
+      dependencies: fixture.dependencies,
+      ensureVisibleFinder: find.text(
+        '1 comparable signal was hidden because linked sources are missing or could not be verified.',
+      ),
+      fileName: 'issue-128-draft-review-comparable-hidden.png',
+    );
   });
 
   testWidgets('online research displays allowed auction comparable amount', (

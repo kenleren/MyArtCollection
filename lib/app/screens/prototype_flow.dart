@@ -2318,8 +2318,7 @@ class _ComparableSignalsPanel extends StatelessWidget {
       return const SizedBox.shrink();
     }
 
-    final signalCount = signals.length;
-    final signalWord = signalCount == 1 ? 'signal' : 'signals';
+    final summary = _comparableSignalsSummary(signals, sourceHits);
 
     return _Panel(
       child: Column(
@@ -2330,9 +2329,7 @@ class _ComparableSignalsPanel extends StatelessWidget {
             style: Theme.of(context).textTheme.titleMedium,
           ),
           const SizedBox(height: 6),
-          Text(
-            '$signalCount source-backed comparable $signalWord. These are source context only, not an appraisal.',
-          ),
+          Text(summary),
           const SizedBox(height: 12),
           for (final signal in signals) ...[
             _ComparableSignalCard(signal: signal, sourceHits: sourceHits),
@@ -2342,6 +2339,38 @@ class _ComparableSignalsPanel extends StatelessWidget {
       ),
     );
   }
+}
+
+String _comparableSignalsSummary(
+  List<ComparableValueSignal> signals,
+  List<ResearchSourceHit> sourceHits,
+) {
+  var sourceBackedCount = 0;
+  var hiddenCount = 0;
+
+  for (final signal in signals) {
+    final kind = _effectiveComparableKind(signal, sourceHits);
+    if (kind != signal.kind) {
+      hiddenCount += 1;
+      continue;
+    }
+    if (kind == ComparableValueKind.publicEstimate ||
+        kind == ComparableValueKind.comparableSaleSignal) {
+      sourceBackedCount += 1;
+    }
+  }
+
+  if (sourceBackedCount > 0) {
+    final signalWord = sourceBackedCount == 1 ? 'signal' : 'signals';
+    return '$sourceBackedCount source-backed comparable $signalWord. These are source context only, not an appraisal.';
+  }
+
+  if (hiddenCount > 0) {
+    final signalWord = hiddenCount == 1 ? 'signal was' : 'signals were';
+    return '$hiddenCount comparable $signalWord hidden because linked sources are missing or could not be verified.';
+  }
+
+  return 'No comparable sale or public estimate was available from verified sources.';
 }
 
 class _ComparableSignalCard extends StatelessWidget {
