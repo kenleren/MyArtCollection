@@ -10,6 +10,7 @@ enum OnDeviceAiAvailability {
   disabled('disabled'),
   available('available'),
   downloadable('downloadable'),
+  downloading('downloading'),
   unavailable('unavailable');
 
   const OnDeviceAiAvailability(this.storageValue);
@@ -272,6 +273,9 @@ class OnDeviceAiDraftService {
       OnDeviceAiAvailability.downloadable =>
         capability.message ??
             'On-device AI support is downloadable but not ready yet.',
+      OnDeviceAiAvailability.downloading =>
+        capability.message ??
+            'On-device AI support is still downloading. Try again after it finishes.',
       OnDeviceAiAvailability.unavailable =>
         capability.message ??
             'On-device AI is not available on this device or build.',
