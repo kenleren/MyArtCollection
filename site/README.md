@@ -11,6 +11,8 @@ Included routes:
 - `/privacy/`
 - `/support/`
 - `/pricing/`
+- `/blog/`
+- `/blog/collector-records-that-age-well/`
 
 `/updates/` is intentionally omitted in this task because the repo did not have
 public-safe update content ready to publish.
@@ -54,6 +56,23 @@ Future edits to pricing copy should stay deliberate and should be checked
 against `docs/GTM_PLAN.md`, `docs/PRODUCT_PLAN.md`, and
 `docs/COPY_TRUST_SPEC.md`.
 
+## Collector notes
+
+Blog posts are plain static HTML under `site/blog/<slug>/index.html`, with the
+index at `site/blog/index.html`. Each published post should include:
+
+- a page-specific `<title>` and meta description;
+- a link from the blog index;
+- copy that supports collector education without presenting Archivale as an
+  authenticator, appraiser, insurer, certifier, or marketplace authority;
+- footer/support routing through `/support/`, not a plain visible email address
+  as the primary support UI.
+
+Publication approval rule: every new post needs owner approval before it is
+merged or published. Approval should check product truth, privacy posture,
+claims guardrails, and whether the post describes only shipped behavior or
+clearly labeled launch intent.
+
 ## Local preview
 
 From the repository root:
@@ -69,6 +88,8 @@ Then open:
 - `http://127.0.0.1:8000/privacy/`
 - `http://127.0.0.1:8000/support/`
 - `http://127.0.0.1:8000/pricing/`
+- `http://127.0.0.1:8000/blog/`
+- `http://127.0.0.1:8000/blog/collector-records-that-age-well/`
 
 ## Firebase Hosting config
 
@@ -86,7 +107,8 @@ Repo-side Firebase Hosting is intentionally minimal:
 
 Firebase Hosting headers in `firebase.json` use this policy:
 
-- `/`, `/privacy/`, `/support/`, and `/pricing/` send
+- `/`, `/privacy/`, `/support/`, `/pricing/`, `/blog/`, and
+  `/blog/collector-records-that-age-well/` send
   `Cache-Control: public, max-age=0, s-maxage=0, must-revalidate`.
 - Direct HTML file requests matching `/**/*.html` send the same revalidation
   header so route documents do not persist stale HTML after deploy.
@@ -140,6 +162,7 @@ Publishing remains separate from repo config work and needs human-owned Firebase
 Live smoke after a deploy should use both normal browsing and no-cache or
 cache-busted requests. Confirm `https://archivale.app/`,
 `https://archivale.app/privacy/`, `https://archivale.app/support/`, and
-`https://archivale.app/pricing/` return the current Archivale title/body copy,
-not stale MyArtCollection HTML, and confirm response headers match the policy
-above.
+`https://archivale.app/pricing/`, `https://archivale.app/blog/`, and
+`https://archivale.app/blog/collector-records-that-age-well/` return the current
+Archivale title/body copy, not stale MyArtCollection HTML, and confirm response
+headers match the policy above.
