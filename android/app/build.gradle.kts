@@ -83,6 +83,15 @@ android {
         versionCode = flutter.versionCode
         versionName = flutter.versionName
         manifestPlaceholders["crashlyticsCollectionEnabled"] = "false"
+        buildConfigField(
+            "boolean",
+            "MY_ART_ON_DEVICE_AI_ENABLED",
+            dartDefineEnabled("MY_ART_ON_DEVICE_AI_ENABLED").toString(),
+        )
+    }
+
+    buildFeatures {
+        buildConfig = true
     }
 
     buildTypes {
@@ -102,4 +111,9 @@ kotlin {
 
 flutter {
     source = "../.."
+}
+
+dependencies {
+    implementation("com.google.mlkit:genai-prompt:1.0.0-beta2")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
 }

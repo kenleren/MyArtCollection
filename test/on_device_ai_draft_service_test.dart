@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter/services.dart';
 import 'package:my_art_collection/app/ai/on_device_ai_draft_service.dart';
 import 'package:my_art_collection/app/storage/ai_research_record.dart';
 import 'package:my_art_collection/app/storage/artwork_record.dart';
@@ -12,6 +13,8 @@ import 'package:path/path.dart' as p;
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
   late Directory tempDir;
   late LocalArtworkRepository repository;
   late LocalAttachmentStore attachmentStore;
@@ -76,6 +79,74 @@ void main() {
     );
   });
 
+  test('maps unavailable native provider to fixed safe copy', () async {
+    const privateNativeDiagnostic =
+        '/data/user/0/app/files/Portrait of Ada.png native provider is not bundled';
+    final service = OnDeviceAiDraftService(
+      repository: repository,
+      attachmentStore: attachmentStore,
+      provider: const _UnavailableProvider(message: privateNativeDiagnostic),
+      now: _clock(),
+      idFactory: _fixedId('native-missing'),
+    );
+
+    final job = await service.createDraftForPrimaryImage(
+      record: record,
+      primaryImage: primaryImage,
+    );
+
+    expect(job.status, AiDraftJobStatus.unavailable);
+    expect(job.errorMessage, contains('ON_DEVICE_AI_UNAVAILABLE'));
+    expect(job.errorMessage, isNot(contains(privateNativeDiagnostic)));
+    expect(job.visualSummary, isNull);
+  });
+
+  test(
+    'persists downloadable state as not-ready without creating draft',
+    () async {
+      final service = OnDeviceAiDraftService(
+        repository: repository,
+        attachmentStore: attachmentStore,
+        provider: const _UnavailableProvider(
+          availability: OnDeviceAiAvailability.downloadable,
+        ),
+        now: _clock(),
+        idFactory: _fixedId('downloadable'),
+      );
+
+      final job = await service.createDraftForPrimaryImage(
+        record: record,
+        primaryImage: primaryImage,
+      );
+
+      expect(job.status, AiDraftJobStatus.unavailable);
+      expect(job.errorMessage, contains('downloadable'));
+    },
+  );
+
+  test(
+    'persists downloading state as not-ready without creating draft',
+    () async {
+      final service = OnDeviceAiDraftService(
+        repository: repository,
+        attachmentStore: attachmentStore,
+        provider: const _UnavailableProvider(
+          availability: OnDeviceAiAvailability.downloading,
+        ),
+        now: _clock(),
+        idFactory: _fixedId('downloading'),
+      );
+
+      final job = await service.createDraftForPrimaryImage(
+        record: record,
+        primaryImage: primaryImage,
+      );
+
+      expect(job.status, AiDraftJobStatus.unavailable);
+      expect(job.errorMessage, contains('downloading'));
+    },
+  );
+
   test('persists completed private draft without confirming fields', () async {
     final service = OnDeviceAiDraftService(
       repository: repository,
@@ -109,6 +180,154 @@ void main() {
       artwork.field(ArtworkFieldKeys.artist)!.source,
       ArtworkFieldSource.unknown,
     );
+  });
+
+  test(
+    'stores a safe fixed error when available provider throws private text',
+    () async {
+      const privatePath =
+          '/Users/kenleren/Private/Ken/MyArtCollection/private_files/artworks/artwork-001/Portrait of Ada.png';
+      const privateTitle = 'Portrait of Ada with insurance note';
+      const privateModelOutput =
+          '{"visualSummary":"private model dump for Portrait of Ada"}';
+      final service = OnDeviceAiDraftService(
+        repository: repository,
+        attachmentStore: attachmentStore,
+        provider: const _ThrowingAvailableProvider(
+          message: '$privatePath $privateTitle $privateModelOutput',
+        ),
+        now: _clock(),
+        idFactory: _fixedId('private-error'),
+      );
+
+      final job = await service.createDraftForPrimaryImage(
+        record: record,
+        primaryImage: primaryImage,
+      );
+
+      expect(job.status, AiDraftJobStatus.failed);
+      expect(job.errorMessage, contains('ON_DEVICE_AI_DRAFT_FAILED'));
+      expect(job.errorMessage, contains('No photo was sent online'));
+      expect(job.errorMessage, isNot(contains(privatePath)));
+      expect(job.errorMessage, isNot(contains(privateTitle)));
+      expect(job.errorMessage, isNot(contains(privateModelOutput)));
+
+      final stored = await repository.getAiDraftJob('ai-draft-private-error');
+      expect(stored, isNotNull);
+      expect(stored!.errorMessage, job.errorMessage);
+      final displayedBody = '${stored.errorMessage} You can continue manually.';
+      expect(displayedBody, isNot(contains(privatePath)));
+      expect(displayedBody, isNot(contains(privateTitle)));
+      expect(displayedBody, isNot(contains(privateModelOutput)));
+    },
+  );
+
+  test(
+    'passes the app-private local image path to available provider',
+    () async {
+      final provider = _CapturingAvailableProvider(
+        expectedPrivateRoot: attachmentStore.storageRoot.path,
+      );
+      final service = OnDeviceAiDraftService(
+        repository: repository,
+        attachmentStore: attachmentStore,
+        provider: provider,
+        now: _clock(),
+        idFactory: _fixedId('private-path'),
+      );
+
+      final job = await service.createDraftForPrimaryImage(
+        record: record,
+        primaryImage: primaryImage,
+      );
+
+      expect(job.status, AiDraftJobStatus.completed);
+      expect(provider.lastRequest, isNotNull);
+      expect(
+        p.isWithin(
+          attachmentStore.storageRoot.path,
+          provider.lastRequest!.primaryImagePath,
+        ),
+        isTrue,
+      );
+    },
+  );
+
+  test(
+    'method-channel provider maps downloadable and downloading states',
+    () async {
+      final channel = MethodChannel(
+        'my_art_collection_on_device_ai_test_${DateTime.now().microsecondsSinceEpoch}',
+      );
+      final provider = MethodChannelOnDeviceAiDraftProvider(
+        channel: channel,
+        isEnabled: true,
+      );
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+
+      addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+
+      final statuses = <String>['downloadable', 'downloading'];
+      var index = 0;
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        expect(call.method, 'checkAvailability');
+        return <String, Object?>{
+          'availability': statuses[index++],
+          'deviceModel': 'Pixel test device',
+          'message': 'native status ${statuses[index - 1]}',
+        };
+      });
+
+      final downloadable = await provider.checkAvailability();
+      final downloading = await provider.checkAvailability();
+
+      expect(downloadable.availability, OnDeviceAiAvailability.downloadable);
+      expect(downloading.availability, OnDeviceAiAvailability.downloading);
+      expect(downloadable.canRunDraft, isFalse);
+      expect(downloading.canRunDraft, isFalse);
+    },
+  );
+
+  test('method-channel createDraft sends only primary image path', () async {
+    final channel = MethodChannel(
+      'my_art_collection_on_device_ai_test_${DateTime.now().microsecondsSinceEpoch}',
+    );
+    final provider = MethodChannelOnDeviceAiDraftProvider(
+      channel: channel,
+      isEnabled: true,
+    );
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    const privateImagePath = '/app-private/artworks/artwork-001/source.png';
+    Object? outboundArguments;
+
+    addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      expect(call.method, 'createDraft');
+      outboundArguments = call.arguments;
+      return <String, Object?>{
+        'visualSummary': 'Local-only draft.',
+        'searchTerms': <String>['local draft'],
+      };
+    });
+
+    final draft = await provider.createDraft(
+      const OnDeviceAiDraftRequest(primaryImagePath: privateImagePath),
+    );
+
+    expect(draft.visualSummary, 'Local-only draft.');
+    expect(outboundArguments, isA<Map<Object?, Object?>>());
+    final outboundMap = Map<Object?, Object?>.from(
+      outboundArguments! as Map<Object?, Object?>,
+    );
+    expect(
+      outboundMap,
+      equals(<Object?, Object?>{'primaryImagePath': privateImagePath}),
+    );
+    expect(outboundMap.containsKey('artworkId'), isFalse);
+    expect(outboundMap.containsKey('primaryImageAttachmentId'), isFalse);
   });
 }
 
@@ -161,6 +380,30 @@ DateTime Function() _clock() {
 String Function() _fixedId(String id) =>
     () => id;
 
+class _UnavailableProvider implements OnDeviceAiDraftProvider {
+  const _UnavailableProvider({
+    this.availability = OnDeviceAiAvailability.unavailable,
+    this.message,
+  });
+
+  final OnDeviceAiAvailability availability;
+  final String? message;
+
+  @override
+  Future<OnDeviceAiCapability> checkAvailability() async {
+    return OnDeviceAiCapability(
+      availability: availability,
+      deviceModel: 'Pixel not-ready device',
+      message: message,
+    );
+  }
+
+  @override
+  Future<OnDeviceAiDraftResult> createDraft(OnDeviceAiDraftRequest request) {
+    throw StateError('createDraft must not run when status is $availability');
+  }
+}
+
 class _AvailableFakeProvider implements OnDeviceAiDraftProvider {
   const _AvailableFakeProvider();
 
@@ -184,6 +427,58 @@ class _AvailableFakeProvider implements OnDeviceAiDraftProvider {
       mediumHint: 'Print on paper',
       conditionNotes: 'No obvious tears visible in the photo.',
       searchTerms: ['J. Example framed print'],
+    );
+  }
+}
+
+class _ThrowingAvailableProvider implements OnDeviceAiDraftProvider {
+  const _ThrowingAvailableProvider({required this.message});
+
+  final String message;
+
+  @override
+  Future<OnDeviceAiCapability> checkAvailability() async {
+    return const OnDeviceAiCapability(
+      availability: OnDeviceAiAvailability.available,
+      deviceModel: 'Pixel local-only device',
+    );
+  }
+
+  @override
+  Future<OnDeviceAiDraftResult> createDraft(OnDeviceAiDraftRequest request) {
+    throw PlatformException(
+      code: 'NATIVE_PRIVATE_DIAGNOSTIC',
+      message: message,
+      details: <String, Object?>{
+        'primaryImagePath': request.primaryImagePath,
+        'modelOutput': message,
+      },
+    );
+  }
+}
+
+class _CapturingAvailableProvider implements OnDeviceAiDraftProvider {
+  _CapturingAvailableProvider({required this.expectedPrivateRoot});
+
+  final String expectedPrivateRoot;
+  OnDeviceAiDraftRequest? lastRequest;
+
+  @override
+  Future<OnDeviceAiCapability> checkAvailability() async {
+    return const OnDeviceAiCapability(
+      availability: OnDeviceAiAvailability.available,
+      deviceModel: 'Pixel local-only device',
+    );
+  }
+
+  @override
+  Future<OnDeviceAiDraftResult> createDraft(
+    OnDeviceAiDraftRequest request,
+  ) async {
+    lastRequest = request;
+    expect(p.isWithin(expectedPrivateRoot, request.primaryImagePath), isTrue);
+    return const OnDeviceAiDraftResult(
+      visualSummary: 'Local-only image analysis draft.',
     );
   }
 }

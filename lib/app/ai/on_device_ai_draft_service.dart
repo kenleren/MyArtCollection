@@ -10,6 +10,7 @@ enum OnDeviceAiAvailability {
   disabled('disabled'),
   available('available'),
   downloadable('downloadable'),
+  downloading('downloading'),
   unavailable('unavailable');
 
   const OnDeviceAiAvailability(this.storageValue);
@@ -39,15 +40,9 @@ class OnDeviceAiCapability {
 }
 
 class OnDeviceAiDraftRequest {
-  const OnDeviceAiDraftRequest({
-    required this.artworkId,
-    required this.primaryImagePath,
-    required this.primaryImageAttachmentId,
-  });
+  const OnDeviceAiDraftRequest({required this.primaryImagePath});
 
-  final String artworkId;
   final String primaryImagePath;
-  final String primaryImageAttachmentId;
 }
 
 class OnDeviceAiDraftResult {
@@ -126,12 +121,10 @@ class MethodChannelOnDeviceAiDraftProvider implements OnDeviceAiDraftProvider {
       return const DisabledOnDeviceAiDraftProvider().createDraft(request);
     }
 
-    final response = await _channel
-        .invokeMapMethod<String, Object?>('createDraft', {
-          'artworkId': request.artworkId,
-          'primaryImagePath': request.primaryImagePath,
-          'primaryImageAttachmentId': request.primaryImageAttachmentId,
-        });
+    final response = await _channel.invokeMapMethod<String, Object?>(
+      'createDraft',
+      {'primaryImagePath': request.primaryImagePath},
+    );
     return _draftResultFromMap(response);
   }
 
@@ -220,11 +213,7 @@ class OnDeviceAiDraftService {
 
       final imageFile = attachmentStore.fileFor(primaryImage);
       final draft = await provider.createDraft(
-        OnDeviceAiDraftRequest(
-          artworkId: record.id,
-          primaryImagePath: imageFile.path,
-          primaryImageAttachmentId: primaryImage.id,
-        ),
+        OnDeviceAiDraftRequest(primaryImagePath: imageFile.path),
       );
       final completedAt = _now();
 
@@ -248,7 +237,7 @@ class OnDeviceAiDraftService {
           searchTerms: draft.searchTerms,
         ),
       );
-    } on Exception catch (error) {
+    } on Exception {
       final now = _now();
       return persist(
         AiDraftJob(
@@ -259,23 +248,27 @@ class OnDeviceAiDraftService {
           createdAt: startedAt,
           updatedAt: now,
           promptVersion: promptVersion,
-          errorMessage: 'Private AI draft could not run: $error',
+          errorMessage: _safeProviderFailureMessage,
         ),
       );
     }
   }
 
+  static const String _safeProviderFailureMessage =
+      'ON_DEVICE_AI_DRAFT_FAILED: Private AI draft could not run. No photo was sent online.';
+
   static String _availabilityMessage(OnDeviceAiCapability capability) {
     return switch (capability.availability) {
       OnDeviceAiAvailability.disabled =>
-        capability.message ?? 'On-device AI is disabled for this build.',
+        'ON_DEVICE_AI_DISABLED: On-device AI is disabled for this build.',
       OnDeviceAiAvailability.downloadable =>
-        capability.message ??
-            'On-device AI support is downloadable but not ready yet.',
+        'ON_DEVICE_AI_DOWNLOADABLE: On-device AI support is downloadable but not ready yet.',
+      OnDeviceAiAvailability.downloading =>
+        'ON_DEVICE_AI_DOWNLOADING: On-device AI support is still downloading. Try again after it finishes.',
       OnDeviceAiAvailability.unavailable =>
-        capability.message ??
-            'On-device AI is not available on this device or build.',
-      OnDeviceAiAvailability.available => capability.message ?? 'Available.',
+        'ON_DEVICE_AI_UNAVAILABLE: On-device AI is not available on this device or build.',
+      OnDeviceAiAvailability.available =>
+        'ON_DEVICE_AI_AVAILABLE: On-device AI is available.',
     };
   }
 
