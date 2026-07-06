@@ -286,6 +286,41 @@ void main() {
     );
   });
 
+  testWidgets('visual evidence captures import intake failure states', (
+    WidgetTester tester,
+  ) async {
+    final testDependencies = await tester.runAsync(
+      () async => _LiveDependencyFixture.create(),
+    );
+    final fixture = testDependencies!;
+    addTearDown(() async {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.runAsync(fixture.dispose);
+    });
+
+    await captureArtifactForApp(
+      tester,
+      routeName: AppRoutes.import,
+      dependencies: fixture.dependencies,
+      fileName: 'issue-127-01-import-entry.png',
+      ensureVisibleFinder: find.text('Choose from system picker'),
+    );
+    await captureImportActionVisualEvidence(
+      tester,
+      dependencies: fixture.dependencies,
+      actionLabel: 'Choose from system picker',
+      settledState: find.text('Import cancelled'),
+      fileName: 'issue-127-02-import-cancelled.png',
+    );
+    await captureImportActionVisualEvidence(
+      tester,
+      dependencies: fixture.dependencies,
+      actionLabel: 'Recover interrupted import',
+      settledState: find.text('Import needs attention'),
+      fileName: 'issue-127-03-recover-unavailable.png',
+    );
+  });
+
   testWidgets('collection shell renders and can open add artwork', (
     WidgetTester tester,
   ) async {
@@ -531,7 +566,7 @@ void main() {
     await tapVisible(tester, find.widgetWithText(FilledButton, 'Add artwork'));
     await tapVisible(tester, find.text('Import photo'));
     expect(find.text('Photo imported'), findsOneWidget);
-    expect(find.text('Upload-failure state'), findsOneWidget);
+    expect(find.text('Upload-failure state'), findsNothing);
 
     await tapVisible(tester, find.text('Review AI draft'));
     expect(find.text('AI draft review'), findsWidgets);
@@ -592,6 +627,12 @@ void main() {
     );
     await pumpReady(tester);
 
+    expect(find.text('Use system photo picker'), findsOneWidget);
+    expect(find.text('Evidence photo checklist'), findsOneWidget);
+    expect(find.text('Choose from system picker'), findsOneWidget);
+    expect(find.text('Recover interrupted import'), findsOneWidget);
+    expect(find.text('Upload-failure state'), findsNothing);
+
     await tapVisible(tester, find.text('Recover interrupted import'));
 
     expect(find.text('Import needs attention'), findsOneWidget);
@@ -603,6 +644,38 @@ void main() {
     expect(find.textContaining('prints or lithographs'), findsOneWidget);
     expect(find.textContaining('Receipts, certificates'), findsOneWidget);
     expect(find.text('Choose from system picker'), findsOneWidget);
+    expect(find.text('Recover interrupted import'), findsOneWidget);
+    expect(find.text('Upload-failure state'), findsNothing);
+  });
+
+  testWidgets('live import flow shows cancelled picker state', (
+    WidgetTester tester,
+  ) async {
+    final testDependencies = await tester.runAsync(
+      () async => _LiveDependencyFixture.create(),
+    );
+    final fixture = testDependencies!;
+    addTearDown(() async {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.runAsync(fixture.dispose);
+    });
+
+    await tester.pumpWidget(
+      ArchivaleApp(
+        initialRoute: AppRoutes.import,
+        dependencies: fixture.dependencies,
+      ),
+    );
+    await pumpReady(tester);
+
+    await tapVisible(tester, find.text('Choose from system picker'));
+
+    expect(find.text('Import cancelled'), findsOneWidget);
+    expect(find.textContaining('Photo import was cancelled.'), findsOneWidget);
+    expect(find.text('Import needs attention'), findsNothing);
+    expect(find.text('Choose from system picker'), findsOneWidget);
+    expect(find.text('Recover interrupted import'), findsOneWidget);
+    expect(find.text('Upload-failure state'), findsNothing);
   });
 
   testWidgets('live import success displays the saved primary image', (
@@ -2473,6 +2546,31 @@ Future<void> captureArtifactForApp(
     await tester.ensureVisible(ensureVisibleFinder);
     await tester.pump();
   }
+  await captureBoundaryToArtifacts(tester, boundaryKey, fileName);
+}
+
+Future<void> captureImportActionVisualEvidence(
+  WidgetTester tester, {
+  required AppDependencies dependencies,
+  required String actionLabel,
+  required Finder settledState,
+  required String fileName,
+}) async {
+  await _configureMobileViewport(tester);
+
+  final boundaryKey = GlobalKey();
+  await tester.pumpWidget(
+    RepaintBoundary(
+      key: boundaryKey,
+      child: ArchivaleApp(
+        initialRoute: AppRoutes.import,
+        dependencies: dependencies,
+      ),
+    ),
+  );
+  await pumpLiveData(tester);
+  await tapVisible(tester, find.text(actionLabel));
+  await waitForFinder(tester, settledState);
   await captureBoundaryToArtifacts(tester, boundaryKey, fileName);
 }
 

@@ -413,12 +413,6 @@ class _CaptureImportScreenState extends State<CaptureImportScreen> {
             const _EvidencePhotoGuide(),
             const SizedBox(height: 12),
           ],
-          const _StatusPanel(
-            icon: Icons.error_outline,
-            title: 'Upload-failure state',
-            body:
-                'Retry is available when a document or image upload cannot finish.',
-          ),
           const SizedBox(height: 20),
           if (_result == null) ...[
             _ActionButton(
@@ -830,13 +824,6 @@ class _StaticCaptureImportScreen extends StatelessWidget {
             title: isImport ? 'Photo imported' : 'Photo captured',
             body:
                 'Draft created locally. If upload is interrupted, the saved draft can be reviewed later.',
-          ),
-          const SizedBox(height: 12),
-          const _StatusPanel(
-            icon: Icons.error_outline,
-            title: 'Upload-failure state',
-            body:
-                'Retry is available when a document or image upload cannot finish.',
           ),
           const SizedBox(height: 20),
           PrimaryActionButton(
