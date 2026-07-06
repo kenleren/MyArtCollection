@@ -106,6 +106,18 @@ const forbiddenCases = [
     content: "const endpoint = 'https://api.openai.com/v1/responses';\n",
     rule: 'direct OpenAI/provider host',
   },
+  {
+    name: 'lib key properties provider env name',
+    file: 'lib/key.properties',
+    content: 'OPENAI_API_KEY=x\n',
+    rule: 'provider key or env name',
+  },
+  {
+    name: 'lib signing properties provider SDK token',
+    file: 'lib/signing-debug.properties',
+    content: 'provider=openai_dart\n',
+    rule: 'provider SDK import or package',
+  },
 ];
 
 test('fixture repo with broker-only mobile config passes', async () => {
@@ -116,6 +128,7 @@ test('fixture repo with broker-only mobile config passes', async () => {
     await writeFixture(repoRoot, 'android/gradle.properties', 'android.useAndroidX=true\n');
     await writeFixture(repoRoot, 'ios/Flutter/Debug.xcconfig', '#include "Generated.xcconfig"\n');
     await writeFixture(repoRoot, 'android/key.properties', 'OPENAI_API_KEY=not-scanned\n');
+    await writeFixture(repoRoot, 'android/signing-debug.properties', 'OPENAI_API_KEY=not-scanned\n');
     await writeFixture(repoRoot, 'ios/Runner/GoogleService-Info.plist', 'OPENAI_API_KEY=not-scanned\n');
 
     const result = await runGuard(repoRoot);

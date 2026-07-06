@@ -31,16 +31,16 @@ const deniedRules = [
   },
 ];
 const ignoredDirectories = new Set(['.dart_tool', '.gradle', 'build', 'Pods', 'DerivedData']);
-const ignoredFileNamePatterns = [
-  /^google-services\.json$/i,
-  /^GoogleService-Info\.plist$/i,
-  /\.env\.local$/i,
-  /service[-_]?account.*\.json$/i,
-  /firebase-adminsdk.*\.json$/i,
-  /^key\.properties$/i,
-  /(?:^|[-_.])signing(?:[-_.]|$).*\.properties$/i,
-  /\.(?:jks|keystore|p8|p12|pem|key)$/i,
-];
+const ignoredSensitiveRelativePaths = new Set([
+  'android/key.properties',
+  'android/app/key.properties',
+  'android/signing-debug.properties',
+  'android/app/signing-debug.properties',
+  'android/app/debug.keystore',
+  'android/app/upload-keystore.jks',
+  'android/app/google-services.json',
+  'ios/Runner/GoogleService-Info.plist',
+]);
 const scannedExtensions = new Set([
   '.dart',
   '.kt',
@@ -126,7 +126,7 @@ async function scanDirectory(directory) {
 
 function shouldScanFile(filePath) {
   const baseName = path.basename(filePath);
-  if (ignoredFileNamePatterns.some((pattern) => pattern.test(baseName))) {
+  if (ignoredSensitiveRelativePaths.has(toRepoRelativePath(filePath))) {
     return false;
   }
   if (baseName === 'Podfile' || baseName === 'Package.swift') {
@@ -153,7 +153,7 @@ async function scanSingleFile(filePath, { force = false } = {}) {
 }
 
 function scanFile(filePath, content) {
-  const relativePath = path.relative(repoRoot, filePath);
+  const relativePath = toRepoRelativePath(filePath);
   const lines = content.split(/\r?\n/);
   for (const [index, line] of lines.entries()) {
     if (allowedBrokerHosts.has(line.trim())) {
@@ -169,4 +169,8 @@ function scanFile(filePath, content) {
       }
     }
   }
+}
+
+function toRepoRelativePath(filePath) {
+  return path.relative(repoRoot, filePath).split(path.sep).join('/');
 }
