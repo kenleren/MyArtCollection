@@ -38,6 +38,7 @@ export async function handleResearchRequest(
   dependencies: BrokerDependencies = createFakeBrokerDependencies(),
 ): Promise<BrokerResponse> {
   const trace = dependencies.orderTrace;
+  const creditCost = 1;
   const fail = (code: string, message: string, stage: string): BrokerResponse => ({
     request_id: request.request_id,
     status: code === 'idempotency_conflict' ? 'conflict' : 'rejected',
@@ -52,7 +53,11 @@ export async function handleResearchRequest(
   });
 
   trace?.push('auth');
-  if (!context.app_check_verified || !context.auth_verified || context.uid.length === 0) {
+  const authError = validateAuthAndQuotaSubject(context);
+  if (authError !== undefined) {
+    return fail(authError.code, authError.message, 'auth');
+  }
+  if (!context.app_check_verified || !context.auth_verified) {
     return fail('unauthorized', 'Broker auth placeholders failed closed.', 'auth');
   }
 
@@ -87,7 +92,7 @@ export async function handleResearchRequest(
   }
 
   trace?.push('idempotency');
-  const existing = dependencies.idempotency.get(request.request_id);
+  const existing = dependencies.idempotency.get(context.quota_subject, request.request_id);
   if (existing !== undefined) {
     if (existing.payloadHash !== request.payload_hash) {
       return fail(
@@ -96,24 +101,81 @@ export async function handleResearchRequest(
         'idempotency',
       );
     }
-    return { ...existing.response, replayed: true };
+    if (existing.response !== undefined) {
+      return { ...existing.response, replayed: true };
+    }
+    if (existing.inFlight !== undefined) {
+      const response = await existing.inFlight;
+      return { ...response, replayed: true };
+    }
   }
 
-  trace?.push('credit_reserve');
-  dependencies.creditLedger.reserve();
+  const idempotencyEntry = dependencies.idempotency.begin(
+    context.quota_subject,
+    request.request_id,
+    request.payload_hash,
+  );
+  const inFlight = runReservedProviderRequest(
+    request,
+    context.quota_subject,
+    dependencies,
+    fail,
+    trace,
+    creditCost,
+  );
+  dependencies.idempotency.setInFlight(idempotencyEntry, inFlight);
 
+  try {
+    const response = await inFlight;
+    dependencies.idempotency.complete(idempotencyEntry, response);
+    return response;
+  } catch (error) {
+    dependencies.idempotency.forget(context.quota_subject, request.request_id);
+    throw error;
+  }
+}
+
+async function runReservedProviderRequest(
+  request: BrokerRequest,
+  quotaSubject: string,
+  dependencies: BrokerDependencies,
+  fail: (code: string, message: string, stage: string) => BrokerResponse,
+  trace: string[] | undefined,
+  creditCost: number,
+): Promise<BrokerResponse> {
+  trace?.push('credit_reserve');
+  const reservation = dependencies.creditLedger.reserve({
+    requestId: request.request_id,
+    quotaSubject,
+    creditCost,
+  });
+  if (!reservation.ok) {
+    return fail(
+      reservation.code ?? 'quota_denied',
+      reservation.message ?? 'Quota placeholder denied the request.',
+      'credit_reserve',
+    );
+  }
+
+  const record = reservation.record;
   trace?.push('provider');
-  const providerOutput = await dependencies.provider.research(request);
+  let providerOutput: BrokerResearchOutput;
+  try {
+    providerOutput = await dependencies.provider.research(request);
+  } catch {
+    dependencies.creditLedger.refund(record, 'provider_exception');
+    return fail('provider_failure', 'Fake provider failed before output validation.', 'provider');
+  }
 
   trace?.push('output_validation');
   const outputError = validateOutput(providerOutput);
   if (outputError !== undefined) {
-    dependencies.creditLedger.finalize();
+    dependencies.creditLedger.finalize(record);
     return fail(outputError.code, outputError.message, 'output_validation');
   }
 
   trace?.push('credit_finalize');
-  dependencies.creditLedger.finalize();
+  dependencies.creditLedger.finalize(record);
 
   const response: BrokerResponse = {
     request_id: request.request_id,
@@ -127,7 +189,6 @@ export async function handleResearchRequest(
     comparable_value_signals: providerOutput.comparable_value_signals,
     warnings: providerOutput.warnings,
   };
-  dependencies.idempotency.set(request.request_id, request.payload_hash, response);
   return response;
 }
 
@@ -137,6 +198,27 @@ function validatePayload(request: BrokerRequest): { code: string; message: strin
   }
   if (request.image.long_edge_px <= 0 || request.image.long_edge_px > 1600) {
     return { code: 'invalid_image_dimensions', message: 'Image derivative dimensions are outside the v1 bounds.' };
+  }
+  return undefined;
+}
+
+function validateAuthAndQuotaSubject(context: BrokerContext): { code: string; message: string } | undefined {
+  if (
+    context.auth_identity.uid.length === 0 ||
+    context.auth_identity.project_id.length === 0 ||
+    context.app_identity.app_id.length === 0 ||
+    context.app_identity.project_id.length === 0
+  ) {
+    return { code: 'missing_auth_subject', message: 'Broker auth and app identity placeholders are required.' };
+  }
+  if (context.auth_identity.project_id !== context.app_identity.project_id) {
+    return { code: 'identity_project_mismatch', message: 'Broker auth and app identity placeholders must share a project.' };
+  }
+  if (context.auth_identity.sign_in_provider !== 'anonymous') {
+    return { code: 'unsupported_auth_provider', message: 'Only anonymous auth placeholder is allowed locally.' };
+  }
+  if (context.quota_subject.length === 0 || !/^quota_subject_v1_[a-f0-9]{16,}$/.test(context.quota_subject)) {
+    return { code: 'invalid_quota_subject', message: 'A derived quota subject placeholder is required.' };
   }
   return undefined;
 }

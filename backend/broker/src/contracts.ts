@@ -27,9 +27,18 @@ export interface BrokerRequest {
 }
 
 export interface BrokerContext {
-  uid: string;
   app_check_verified: boolean;
   auth_verified: boolean;
+  auth_identity: {
+    uid: string;
+    project_id: string;
+    sign_in_provider: 'anonymous';
+  };
+  app_identity: {
+    app_id: string;
+    project_id: string;
+  };
+  quota_subject: string;
   entitled: boolean;
   credit_available: boolean;
   breaker_open: boolean;
