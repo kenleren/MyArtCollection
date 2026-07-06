@@ -3,8 +3,10 @@ import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const defaultRepoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const repoRoot = resolveRepoRoot(process.argv.slice(2));
 const mobileRoots = ['lib', 'android', 'ios'];
+const rootManifests = ['pubspec.yaml', 'pubspec.lock', 'Package.swift', 'Podfile'];
 const allowedBrokerHosts = new Set(['archivale-broker']);
 const deniedRules = [
   {
@@ -17,7 +19,7 @@ const deniedRules = [
   },
   {
     name: 'provider SDK import or package',
-    pattern: /package:openai\b|from ['"]openai['"]|require\(['"]openai['"]\)|openai_dart|dart_openai|firebase_ai|firebase_vertexai|firebase-ai|firebase-ai-logic/i,
+    pattern: /package:openai\b|from ['"]openai['"]|require\(['"]openai['"]\)|openai_dart|dart_openai|openai-java|openai-swift|\bcom\.openai\b|@anthropic-ai\/sdk|anthropic-java|\bcom\.anthropic\b|@google\/genai|google-genai|firebase_ai|firebase_vertexai|firebase-ai|firebase-ai-logic|pod ['"]OpenAI['"]/i,
   },
   {
     name: 'direct provider network client',
@@ -28,7 +30,18 @@ const deniedRules = [
     pattern: /--dart-define=(?:OPENAI|ANTHROPIC|GEMINI|GOOGLE_API_KEY)|String\.fromEnvironment\(['"](?:OPENAI|ANTHROPIC|GEMINI|GOOGLE_API_KEY)/i,
   },
 ];
-const ignoredDirectories = new Set(['.dart_tool', '.gradle', 'build', 'Pods', 'DerivedData']);
+const ignoredDirectories = new Set(['.dart_tool', '.gradle', 'build', 'Pods', 'DerivedData', 'google']);
+const ignoredFileNamePatterns = [
+  /^google-services\.json$/i,
+  /^GoogleService-Info\.plist$/i,
+  /\.env\.local$/i,
+  /service[-_]?account/i,
+  /(?:^|[-_.])keys?(?:[-_.]|$)/i,
+  /(?:^|[-_.])tokens?(?:[-_.]|$)/i,
+  /keystore/i,
+  /signing/i,
+  /\.(?:jks|keystore|p8|p12|pem|key)$/i,
+];
 const scannedExtensions = new Set([
   '.dart',
   '.kt',
@@ -41,11 +54,18 @@ const scannedExtensions = new Set([
   '.xml',
   '.gradle',
   '.properties',
+  '.xcconfig',
+  '.pbxproj',
+  '.toml',
   '.yaml',
   '.yml',
 ]);
 
 const violations = [];
+
+for (const manifest of rootManifests) {
+  await scanSingleFile(path.join(repoRoot, manifest), { force: true });
+}
 
 for (const mobileRoot of mobileRoots) {
   await scanDirectory(path.join(repoRoot, mobileRoot));
@@ -59,7 +79,22 @@ if (violations.length > 0) {
   process.exit(1);
 }
 
-console.log('Mobile broker bypass guard passed: no direct provider SDK, host, key/env, Firebase AI Logic, or provider network client usage found in lib/, android/, or ios/.');
+console.log('Mobile broker bypass guard passed: no direct provider SDK, host, key/env, Firebase AI Logic, or provider network client usage found in root manifests, lib/, android/, or ios/.');
+
+function resolveRepoRoot(args) {
+  const rootFlagIndex = args.indexOf('--repo-root');
+  if (rootFlagIndex === -1) {
+    return defaultRepoRoot;
+  }
+
+  const value = args[rootFlagIndex + 1];
+  if (!value) {
+    console.error('Usage: node scripts/mobile_broker_bypass_guard.mjs [--repo-root <path>]');
+    process.exit(2);
+  }
+
+  return path.resolve(value);
+}
 
 async function scanDirectory(directory) {
   let entries;
@@ -86,16 +121,36 @@ async function scanDirectory(directory) {
       continue;
     }
 
-    const content = await readFile(fullPath, 'utf8');
-    scanFile(fullPath, content);
+    await scanSingleFile(fullPath);
   }
 }
 
 function shouldScanFile(filePath) {
-  if (path.basename(filePath) === 'Podfile') {
+  const baseName = path.basename(filePath);
+  if (ignoredFileNamePatterns.some((pattern) => pattern.test(baseName))) {
+    return false;
+  }
+  if (baseName === 'Podfile' || baseName === 'Package.swift') {
     return true;
   }
   return scannedExtensions.has(path.extname(filePath));
+}
+
+async function scanSingleFile(filePath, { force = false } = {}) {
+  if (!force && !shouldScanFile(filePath)) {
+    return;
+  }
+
+  let content;
+  try {
+    content = await readFile(filePath, 'utf8');
+  } catch (error) {
+    if (error.code === 'ENOENT') {
+      return;
+    }
+    throw error;
+  }
+  scanFile(filePath, content);
 }
 
 function scanFile(filePath, content) {

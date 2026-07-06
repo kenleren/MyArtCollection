@@ -48,6 +48,7 @@ Mobile broker bypass guard:
 
 ```sh
 node scripts/mobile_broker_bypass_guard.mjs
+node --test test/mobile_broker_bypass_guard_fixture_test.mjs
 flutter test test/mobile_broker_bypass_guard_test.dart
 ```
 

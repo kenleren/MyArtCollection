@@ -69,10 +69,11 @@ provider SDK.
   cap before provider work completes. `refunded` and `rejected-before-reserve`
   records do not count as exposed. These are test contracts only, not durable
   quota or billing controls.
-- The mobile bypass guard scans `lib/`, `android/`, and `ios/` for direct
-  provider SDKs, provider hosts, provider key/env names, Firebase AI Logic
-  direct-client usage, and direct provider network clients. Mobile code may only
-  target the Archivale broker endpoint in a future client slice.
+- The mobile bypass guard scans root Flutter dependency manifests plus `lib/`,
+  `android/`, and `ios/` source, dependency, and native config manifests for
+  direct provider SDKs, provider hosts, provider key/env names, Firebase AI
+  Logic direct-client usage, and direct provider network clients. Mobile code
+  may only target the Archivale broker endpoint in a future client slice.
 - Issue #119 adds a disabled Flutter broker client boundary that can serialize
   an approved local research request into the fake adapter envelope shape only
   when tests explicitly inject a fake endpoint. The production app dependency
@@ -96,6 +97,12 @@ Run the mobile bypass guard directly:
 
 ```sh
 node scripts/mobile_broker_bypass_guard.mjs
+```
+
+Run the negative fixture coverage for dependency and native config manifests:
+
+```sh
+node --test test/mobile_broker_bypass_guard_fixture_test.mjs
 ```
 
 Run the Flutter wrapper test for the guard:
@@ -132,6 +139,10 @@ path exists, the project still needs:
   allowlists, and structured output validation,
 - log redaction tests proving prompts, images, notes, source URLs, raw tokens,
   UIDs, filenames, and secrets cannot enter logs or telemetry,
+- repository branch protection or a ruleset that requires the mobile broker
+  bypass guard workflow before integration; this is a release/admin follow-up
+  because repository settings cannot be safely proven or changed from this code
+  branch,
 - independent task review and redteam/privacy review.
 
 Hard blocks remain: no deploy, no Blaze enablement, no provider/billing
