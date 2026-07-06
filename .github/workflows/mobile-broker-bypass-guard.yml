@@ -1,0 +1,46 @@
+name: Mobile Broker Bypass Guard
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/mobile-broker-bypass-guard.yml'
+      - 'android/**'
+      - 'ios/**'
+      - 'lib/**'
+      - 'scripts/mobile_broker_bypass_guard.mjs'
+      - 'test/mobile_broker_bypass_guard_test.dart'
+      - 'README.md'
+      - 'docs/AI_FAKE_BROKER_RUNBOOK.md'
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/mobile-broker-bypass-guard.yml'
+      - 'android/**'
+      - 'ios/**'
+      - 'lib/**'
+      - 'scripts/mobile_broker_bypass_guard.mjs'
+      - 'test/mobile_broker_bypass_guard_test.dart'
+      - 'README.md'
+      - 'docs/AI_FAKE_BROKER_RUNBOOK.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  mobile-broker-bypass-guard:
+    name: Mobile broker bypass guard
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Run mobile broker bypass guard
+        shell: bash
+        run: node scripts/mobile_broker_bypass_guard.mjs

@@ -44,6 +44,13 @@ flutter analyze
 flutter test
 ```
 
+Mobile broker bypass guard:
+
+```sh
+node scripts/mobile_broker_bypass_guard.mjs
+flutter test test/mobile_broker_bypass_guard_test.dart
+```
+
 Run the app:
 
 ```sh
