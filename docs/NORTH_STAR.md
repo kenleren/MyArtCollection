@@ -2,7 +2,7 @@
 
 ## Product Position
 
-MyArtCollection is a private AI-assisted art inventory for serious hobby collectors.
+Archivale is a private AI-assisted art inventory for serious hobby collectors.
 
 It helps collectors turn photos, receipts, certificates, appraisals, and scattered notes into clean, private, exportable artwork records.
 

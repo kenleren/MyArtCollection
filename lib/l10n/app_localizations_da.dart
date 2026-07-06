@@ -9,7 +9,7 @@ class AppLocalizationsDa extends AppLocalizations {
   AppLocalizationsDa([String locale = 'da']) : super(locale);
 
   @override
-  String get appTitle => 'MyArtCollection';
+  String get appTitle => 'Archivale';
 
   @override
   String get collectionTab => 'Samling';

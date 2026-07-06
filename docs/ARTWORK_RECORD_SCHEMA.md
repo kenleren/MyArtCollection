@@ -1,6 +1,6 @@
 # Artwork Record Schema
 
-This document defines the MVP artwork record model, attachment model, provenance labels, validation rules, and export/report mappings for MyArtCollection.
+This document defines the MVP artwork record model, attachment model, provenance labels, validation rules, and export/report mappings for Archivale.
 
 ## Scope And Rules
 
@@ -96,6 +96,7 @@ Attachment metadata:
 - `attachment_id`
 - `artwork_id`
 - `attachment_type`
+- `attachment_role`
 - `file_name`
 - `mime_type`
 - `file_size_bytes`
@@ -117,8 +118,17 @@ Attachment source states:
 
 Attachment rules:
 
-- A photo attachment may be the primary artwork image or a supporting reference image.
-- Receipt, certificate, appraisal, auction record, and provenance note attachments are supporting records only.
+- `attachment_type` preserves the media or document subtype.
+- `attachment_role` determines whether the row is the `primary_artwork_photo`,
+  a `supporting_photo`, or a `supporting_document`.
+- A photo attachment may be the primary artwork image only when its role is
+  `primary_artwork_photo` and its id is referenced by `primary_image_attachment_id`.
+- Supporting photo rows keep `attachment_type: photo` and use
+  `attachment_role: supporting_photo`.
+- Receipt, certificate, appraisal, auction record, and provenance note attachments use `attachment_role: supporting_document`.
+- Legacy attachment rows without roles are compatible: the photo row referenced
+  by `primary_image_attachment_id` is primary, other photo rows are supporting
+  photos, and non-photo rows are supporting documents.
 - The attachment label must not claim proof of authenticity.
 - The app may extract text from a document, but extracted text is still reviewable and may be wrong.
 

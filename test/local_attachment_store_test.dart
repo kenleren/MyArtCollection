@@ -68,6 +68,7 @@ void main() {
       expect(reloaded, hasLength(1));
       expect(reloaded.single.artworkId, 'artwork-001');
       expect(reloaded.single.type, AttachmentType.receipt);
+      expect(reloaded.single.role, AttachmentRole.supportingDocument);
       expect(reloaded.single.fileName, 'gallery-receipt-2025.pdf');
       expect(reloaded.single.mimeType, 'application/pdf');
       expect(reloaded.single.source, ArtworkFieldSource.userConfirmed);
@@ -96,6 +97,64 @@ void main() {
     expect(await store.exists(attachment), isFalse);
     expect(await repository.getAttachment('attachment-image'), isNotNull);
   });
+
+  test(
+    'persists supporting photos without overwriting the primary artwork photo',
+    () async {
+      await repository.upsert(
+        _record('artwork-001', primaryImageAttachmentId: 'attachment-primary'),
+      );
+
+      final primarySource = File(p.join(tempDir.path, 'primary.jpg'));
+      await primarySource.writeAsBytes([1, 1, 1]);
+      final primary = await store.saveImportedAttachment(
+        artworkId: 'artwork-001',
+        attachmentId: 'attachment-primary',
+        sourceFile: primarySource,
+        originalFileName: 'primary.jpg',
+        mimeType: 'image/jpeg',
+        type: AttachmentType.photo,
+        source: ArtworkFieldSource.userConfirmed,
+        importedAt: DateTime.utc(2026, 7, 4, 10),
+      );
+      await repository.addAttachment(primary);
+
+      final supportingSource = File(p.join(tempDir.path, 'detail.png'));
+      await supportingSource.writeAsBytes([2, 2, 2]);
+      final supporting = await store.saveImportedAttachment(
+        artworkId: 'artwork-001',
+        attachmentId: 'attachment-supporting',
+        sourceFile: supportingSource,
+        originalFileName: 'condition-detail.png',
+        mimeType: 'image/png',
+        type: AttachmentType.photo,
+        role: AttachmentRole.supportingPhoto,
+        source: ArtworkFieldSource.userConfirmed,
+        importedAt: DateTime.utc(2026, 7, 4, 11),
+        notes: 'Detail image supports condition notes.',
+      );
+      await repository.addAttachment(supporting);
+
+      final reloadedRecord = await repository.get('artwork-001');
+      expect(reloadedRecord!.primaryImageAttachmentId, 'attachment-primary');
+
+      final attachments = await repository.attachmentsForArtwork('artwork-001');
+      expect(
+        attachments
+            .singleWhere((attachment) => attachment.id == 'attachment-primary')
+            .role,
+        AttachmentRole.primaryArtworkPhoto,
+      );
+      expect(
+        attachments
+            .singleWhere(
+              (attachment) => attachment.id == 'attachment-supporting',
+            )
+            .role,
+        AttachmentRole.supportingPhoto,
+      );
+    },
+  );
 
   test('rejects unsupported MIME types and over-limit imports', () async {
     await expectLater(
@@ -170,12 +229,13 @@ void main() {
   });
 }
 
-ArtworkRecord _record(String id) {
+ArtworkRecord _record(String id, {String? primaryImageAttachmentId}) {
   final now = DateTime.utc(2026, 7, 4, 9);
 
   return ArtworkRecord(
     id: id,
     recordState: ArtworkRecordState.draft,
+    primaryImageAttachmentId: primaryImageAttachmentId,
     createdAt: now,
     updatedAt: now,
     fields: const {

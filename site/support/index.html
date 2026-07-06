@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Support | Archivale: Art Records</title>
+    <meta
+      name="description"
+      content="Support and early access contact for Archivale: Art Records."
+    >
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <header class="site-header">
+      <a class="brand" href="/" aria-label="Archivale home"><img src="/assets/archivale-logo.svg" alt="" width="180" height="60"></a>
+      <nav class="nav" aria-label="Primary">
+        <a href="/">Home</a>
+        <a href="/pricing/">Pricing</a>
+        <a href="/privacy/">Privacy</a>
+        <a aria-current="page" href="/support/">Support</a>
+      </nav>
+    </header>
+
+    <main>
+      <section class="page-intro">
+        <p class="eyebrow">Early access and support</p>
+        <h1>Want to test the collector workflow?</h1>
+        <p class="lead">
+          Send a note if you want early access, have a store/privacy question, or
+          want to share what you currently use to manage your collection.
+        </p>
+        <div class="cta-row">
+          <a class="button" href="#support-form">Open the form</a>
+          <a class="button-secondary" href="/pricing/">View launch pricing</a>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">Support inbox</p>
+            <h2>One direct route.</h2>
+          </div>
+          <p>
+            The launch site uses a static form that opens your mail client. A
+            silent in-browser submission can be added later with a backend form
+            endpoint.
+          </p>
+        </div>
+        <form
+          id="support-form"
+          class="support-form"
+          action="mailto:ken.leren@icloud.com"
+          method="post"
+          enctype="text/plain"
+        >
+          <div>
+            <label for="topic">Topic</label>
+            <select id="topic" name="Topic">
+              <option>Early access</option>
+              <option>Privacy question</option>
+              <option>Pricing question</option>
+              <option>Collector feedback</option>
+            </select>
+          </div>
+          <div>
+            <label for="name">Name</label>
+            <input id="name" name="Name" autocomplete="name" placeholder="Your name">
+          </div>
+          <div>
+            <label for="email">Email</label>
+            <input id="email" name="Email" type="email" autocomplete="email" placeholder="you@example.com">
+          </div>
+          <div>
+            <label for="collection">Collection type</label>
+            <input id="collection" name="Collection type" placeholder="Paintings, prints, sculpture...">
+          </div>
+          <div class="form-full">
+            <label for="message">What should we know?</label>
+            <textarea
+              id="message"
+              name="Message"
+              rows="7"
+              placeholder="Tell us what you collect, what you use today, and what would make Archivale worth testing."
+            ></textarea>
+          </div>
+          <div class="form-full form-actions">
+            <button class="button" type="submit">Send request</button>
+            <p class="muted-note">
+              This opens your email app with the form contents. No message is
+              sent silently from the website.
+            </p>
+          </div>
+        </form>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="footer-card">
+        <p>Support inbox owner: Archivale. Messages are sent through the form above.</p>
+      </div>
+    </footer>
+  </body>
+</html>

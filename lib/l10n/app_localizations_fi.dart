@@ -9,7 +9,7 @@ class AppLocalizationsFi extends AppLocalizations {
   AppLocalizationsFi([String locale = 'fi']) : super(locale);
 
   @override
-  String get appTitle => 'MyArtCollection';
+  String get appTitle => 'Archivale';
 
   @override
   String get collectionTab => 'Kokoelma';

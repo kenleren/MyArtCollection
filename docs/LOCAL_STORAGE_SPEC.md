@@ -54,6 +54,7 @@ Suggested fields:
 - opaque `attachment_id`
 - opaque `artwork_id`
 - attachment kind or subtype
+- attachment role: primary artwork photo, supporting photo, or supporting document
 - original file name
 - MIME type
 - byte size
@@ -155,6 +156,8 @@ Rules:
 - Size limits apply per file, not per artwork.
 - The app should reject over-limit imports with a clear user-facing reason.
 - The app should preserve the original file class when possible instead of silently converting it into a different user import.
+- Image attachments retain their image subtype while `attachment_role`
+  distinguishes the primary artwork photo from supporting reference photos.
 - A file that arrives with an unrecognized MIME type should be rejected for the prototype unless a later spec explicitly widens support.
 
 Generated PDFs and ZIP exports are not user imports.
@@ -193,6 +196,10 @@ Required assumptions:
 - The prototype should tolerate additive schema changes.
 - Existing records should default additive lifecycle/status columns to safe
   current-state values such as `active`.
+- Legacy attachment rows without `attachment_role` must be backfilled so the
+  row referenced by `artworks.primary_image_attachment_id` is
+  `primary_artwork_photo`, other `photo` rows are `supporting_photo`, and
+  non-photo rows are `supporting_document`.
 - Downgrades and production-grade migration guarantees are out of scope for this issue.
 
 Testing assumptions for later implementation:

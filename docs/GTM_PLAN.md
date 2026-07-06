@@ -169,15 +169,45 @@ Avoid first:
 - Museum associations
 - Generic productivity influencers
 
-## Pricing Hypothesis
+## Pricing And Entitlement Decision
 
-Start simple:
+Use a simple artwork-volume subscription with a separate usage pool for
+variable-cost AI, online research, and document processing.
 
-- Free: up to 5 artworks
-- Collector: USD 8 to 12 monthly or USD 79 to 99 yearly
-- Collector Plus later: USD 149 to 199 yearly
+Reddit feedback from a former gallery director and a collections-management
+adjacent commenter supports the private collector gap, especially for smaller
+collections underserved by gallery-focused tools. The same signal also points
+to real subscription sensitivity: the product should feel cheap enough to try
+while still preserving paid value for growing collections and higher-cost
+automation.
 
-Paid value should be tied to collection growth, documents, reports, exports, and completeness, not raw storage.
+| Tier | Artwork volume | Manual records, photos, view/edit, export | AI, research, and document processing |
+| --- | --- | --- | --- |
+| Free | Up to 5 active artworks | Included; users can view, edit, and export their own records | One-time small trial allowance, such as 5 credits total |
+| Collector | More than 5 active artworks; no hard MVP limit documented publicly | Included, plus reports, completeness queue, document organization, and archive export | Included monthly pool, such as 25 credits/month across AI intake, online research, and document extraction |
+| Optional credits/add-ons | Does not change manual cataloging access | Does not gate record access, manual edits, or export | Later credit packs for heavier AI, research, and document processing only |
+
+Recommended starting price posture:
+
+- Collector: USD 5.99/month introductory price or USD 49/year.
+- Keep the annual plan prominent so the effective monthly price answers the
+  "few bucks a month" concern.
+- Revisit USD 8 to 12/month or USD 79 to 99/year only after conversion,
+  retention, and processing-cost evidence supports it.
+
+Safety and trust rules:
+
+- Do not price around Google storage volume. Google owns that layer in the
+  user's mind.
+- Do not make export feel hostage-taking. Users must have a clear path to
+  retrieve their data even after cancellation.
+- Users who exceed the free artwork cap can still view, edit, and export
+  existing records. The cap should limit adding more active artworks, not
+  access to their catalog.
+- AI credits must never gate manual cataloging, existing record access, record
+  edits, or export safety.
+- Optional credit packs are for variable-cost automation only, not basic app
+  ownership.
 
 ## Validation Plan
 
@@ -224,4 +254,3 @@ Next-best pivot:
 - Artlogic collector management: https://artlogic.net/products/collector/management
 - CLZ Comics pricing: https://clz.com/comics/comic-collection
 - Google One plans: https://one.google.com/about/plans
-

@@ -21,11 +21,46 @@ enum AttachmentType {
   }
 }
 
+enum AttachmentRole {
+  primaryArtworkPhoto('primary_artwork_photo'),
+  supportingPhoto('supporting_photo'),
+  supportingDocument('supporting_document');
+
+  const AttachmentRole(this.storageValue);
+
+  final String storageValue;
+
+  static AttachmentRole fromStorage(String? value, AttachmentType type) {
+    if (value == null) {
+      return defaultFor(type);
+    }
+
+    return AttachmentRole.values.firstWhere(
+      (role) => role.storageValue == value,
+      orElse: () => defaultFor(type),
+    );
+  }
+
+  static AttachmentRole defaultFor(AttachmentType type) {
+    return switch (type) {
+      AttachmentType.photo => AttachmentRole.primaryArtworkPhoto,
+      AttachmentType.receipt ||
+      AttachmentType.certificate ||
+      AttachmentType.appraisal ||
+      AttachmentType.auctionRecord ||
+      AttachmentType.provenanceNote ||
+      AttachmentType.otherSupportingDocument =>
+        AttachmentRole.supportingDocument,
+    };
+  }
+}
+
 class AttachmentRecord {
-  const AttachmentRecord({
+  AttachmentRecord({
     required this.id,
     required this.artworkId,
     required this.type,
+    AttachmentRole? role,
     required this.fileName,
     required this.mimeType,
     required this.fileSizeBytes,
@@ -36,11 +71,12 @@ class AttachmentRecord {
     this.capturedAt,
     this.extractionSummary,
     this.notes,
-  });
+  }) : role = role ?? AttachmentRole.defaultFor(type);
 
   final String id;
   final String artworkId;
   final AttachmentType type;
+  final AttachmentRole role;
   final String fileName;
   final String mimeType;
   final int fileSizeBytes;
@@ -52,5 +88,12 @@ class AttachmentRecord {
   final String? extractionSummary;
   final String? notes;
 
-  bool get isPrimaryImageCandidate => type == AttachmentType.photo;
+  bool get isPrimaryImageCandidate =>
+      type == AttachmentType.photo &&
+      role == AttachmentRole.primaryArtworkPhoto;
+
+  bool get isSupportingPhoto =>
+      type == AttachmentType.photo && role == AttachmentRole.supportingPhoto;
+
+  bool get isSupportingDocument => role == AttachmentRole.supportingDocument;
 }

@@ -123,7 +123,7 @@ abstract class AppLocalizations {
   /// No description provided for @appTitle.
   ///
   /// In en, this message translates to:
-  /// **'MyArtCollection'**
+  /// **'Archivale'**
   String get appTitle;
 
   /// No description provided for @collectionTab.

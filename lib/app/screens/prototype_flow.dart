@@ -19,7 +19,7 @@ class PrototypeIntroScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return PrototypeScreenFrame(
-      appBarTitle: 'MyArtCollection',
+      appBarTitle: 'Archivale',
       title: 'Private artwork records',
       subtitle: 'AI drafts. You confirm.',
       child: Column(

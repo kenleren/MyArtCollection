@@ -1,6 +1,6 @@
 # Firebase Telemetry Privacy Policy
 
-This policy defines what MyArtCollection may send to Firebase telemetry tools
+This policy defines what Archivale may send to Firebase telemetry tools
 before any Firebase telemetry SDK is enabled. It preserves the local-first
 storage model and prevents artwork metadata from leaking into operational logs.
 

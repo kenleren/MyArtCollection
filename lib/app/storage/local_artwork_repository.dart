@@ -15,7 +15,7 @@ class LocalArtworkRepository {
   final Database _database;
 
   static const _databaseName = 'my_art_collection.db';
-  static const _schemaVersion = 5;
+  static const _schemaVersion = 6;
 
   static Future<LocalArtworkRepository> open() async {
     final directory = await getApplicationDocumentsDirectory();
@@ -94,6 +94,12 @@ class LocalArtworkRepository {
         'ALTER TABLE artwork_fields ADD COLUMN money_currency_code TEXT',
       );
     }
+    if (oldVersion >= 2 && oldVersion < 6) {
+      await db.execute(
+        "ALTER TABLE attachments ADD COLUMN attachment_role TEXT NOT NULL DEFAULT 'supporting_document'",
+      );
+      await _backfillAttachmentRoles(db);
+    }
   }
 
   static Future<void> _createAttachmentsSchema(Database db) async {
@@ -102,6 +108,7 @@ class LocalArtworkRepository {
         attachment_id TEXT PRIMARY KEY,
         artwork_id TEXT NOT NULL,
         attachment_type TEXT NOT NULL,
+        attachment_role TEXT NOT NULL,
         file_name TEXT NOT NULL,
         mime_type TEXT NOT NULL,
         file_size_bytes INTEGER NOT NULL,
@@ -121,6 +128,26 @@ class LocalArtworkRepository {
     await db.execute(
       'CREATE INDEX attachments_artwork_idx ON attachments (artwork_id)',
     );
+  }
+
+  static Future<void> _backfillAttachmentRoles(Database db) async {
+    await db.rawUpdate('''
+      UPDATE attachments
+      SET attachment_role = 'primary_artwork_photo'
+      WHERE attachment_type = 'photo'
+        AND attachment_id IN (
+          SELECT primary_image_attachment_id
+          FROM artworks
+          WHERE primary_image_attachment_id IS NOT NULL
+        )
+    ''');
+
+    await db.rawUpdate('''
+      UPDATE attachments
+      SET attachment_role = 'supporting_photo'
+      WHERE attachment_type = 'photo'
+        AND attachment_role != 'primary_artwork_photo'
+    ''');
   }
 
   static Future<void> _createAiResearchSchema(Database db) async {
@@ -501,6 +528,7 @@ class LocalArtworkRepository {
       'attachment_id': attachment.id,
       'artwork_id': attachment.artworkId,
       'attachment_type': attachment.type.storageValue,
+      'attachment_role': attachment.role.storageValue,
       'file_name': attachment.fileName,
       'mime_type': attachment.mimeType,
       'file_size_bytes': attachment.fileSizeBytes,
@@ -649,10 +677,13 @@ class LocalArtworkRepository {
   }
 
   AttachmentRecord _attachmentFromRow(Map<String, Object?> row) {
+    final type = AttachmentType.fromStorage(row['attachment_type'] as String);
+
     return AttachmentRecord(
       id: row['attachment_id'] as String,
       artworkId: row['artwork_id'] as String,
-      type: AttachmentType.fromStorage(row['attachment_type'] as String),
+      type: type,
+      role: AttachmentRole.fromStorage(row['attachment_role'] as String?, type),
       fileName: row['file_name'] as String,
       mimeType: row['mime_type'] as String,
       fileSizeBytes: row['file_size_bytes'] as int,

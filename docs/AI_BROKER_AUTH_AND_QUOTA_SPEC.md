@@ -11,7 +11,7 @@ Related docs:
 
 ## Problem statement
 
-MyArtCollection needs a broker access-control model before any paid AI endpoint
+Archivale needs a broker access-control model before any paid AI endpoint
 exists. The first paid AI path is expected to be a thin Firebase-hosted broker
 that sends explicit user-approved research requests to OpenAI Responses API web
 search using `gpt-5.4` with high reasoning by default. Before that path is

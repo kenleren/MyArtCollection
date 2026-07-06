@@ -12,7 +12,7 @@ Related docs:
 
 ## Problem statement
 
-MyArtCollection needs a broker request/response contract before any paid AI
+Archivale needs a broker request/response contract before any paid AI
 research path exists. The first approved provider path from [#42](https://github.com/kenleren/MyArtCollection/issues/42)
 is a thin Firebase-hosted broker that calls OpenAI Responses API hosted
 `web_search` with `gpt-5.4` and high reasoning by default. Before that can be
@@ -95,7 +95,7 @@ Primary sources:
 
 ### Inference from the vendor docs
 
-The vendor docs do not define MyArtCollection's exact application schema. They
+The vendor docs do not define Archivale's exact application schema. They
 do establish that OpenAI can return citation annotations and can enforce a
 schema-constrained output. From that, this spec recommends a two-layer broker
 contract:
@@ -329,7 +329,7 @@ For the first paid OpenAI path, the broker request to OpenAI must:
 
 Additional provider-side rules:
 
-- Domain filtering must enforce the MyArtCollection professional-source
+- Domain filtering must enforce the Archivale professional-source
   allowlist before user-visible output is accepted.
 - The broker must not ask OpenAI to return or preserve full page text, raw HTML,
   or broad source dumps.

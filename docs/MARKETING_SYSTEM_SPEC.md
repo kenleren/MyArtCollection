@@ -6,7 +6,7 @@ Project item: `PVTI_lAHOB7LvFM4BcaDXzgxs9Fk`
 
 ## Problem
 
-MyArtCollection needs a repeatable marketing workflow for SEO and collector-community learning, but the repo's trust model is stricter than normal growth tooling:
+Archivale needs a repeatable marketing workflow for SEO and collector-community learning, but the repo's trust model is stricter than normal growth tooling:
 
 - the product is privacy-first,
 - the app must avoid authenticity, appraisal, and valuation claims,

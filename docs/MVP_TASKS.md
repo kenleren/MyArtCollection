@@ -1,10 +1,10 @@
 # MVP Task Breakdown
 
-This is the initial task map for MyArtCollection. The GitHub Project is verified at:
+This is the initial task map for Archivale. The GitHub Project is verified at:
 
 https://github.com/users/kenleren/projects/1
 
-Current status: the Project exists and is named `MyArtCollection`, but it has no items yet.
+Current status: the Project exists and is named `Archivale`, but it has no items yet.
 
 ## Recommended Sequencing
 
