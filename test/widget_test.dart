@@ -1,7 +1,10 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:my_art_collection/app/ai/on_device_ai_draft_service.dart';
@@ -20,9 +23,10 @@ import 'package:path/path.dart' as p;
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 void main() {
-  setUpAll(() {
+  setUpAll(() async {
     sqfliteFfiInit();
     databaseFactory = databaseFactoryFfi;
+    await loadScreenshotFont();
   });
 
   testWidgets('intro screen shows brand once and value heading once', (
@@ -34,6 +38,108 @@ void main() {
     expect(find.text('Archivale'), findsOneWidget);
     expect(find.text('Private artwork records'), findsOneWidget);
     expect(find.text('AI drafts. You confirm.'), findsOneWidget);
+  });
+
+  testWidgets('app provides system-aware light and dark Material themes', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(const ArchivaleApp(initialRoute: AppRoutes.splash));
+    await pumpReady(tester);
+
+    final materialApp = tester.widget<MaterialApp>(find.byType(MaterialApp));
+    expect(materialApp.themeMode, ThemeMode.system);
+    expect(materialApp.darkTheme, isNotNull);
+
+    await tester.pumpWidget(
+      const ArchivaleApp(
+        initialRoute: AppRoutes.splash,
+        themeMode: ThemeMode.dark,
+      ),
+    );
+    await pumpReady(tester);
+
+    final headingContext = tester.element(find.text('Private artwork records'));
+    final theme = Theme.of(headingContext);
+    expect(theme.brightness, Brightness.dark);
+    expect(theme.colorScheme.primary, const Color(0xFFD9BE78));
+    expect(theme.scaffoldBackgroundColor, const Color(0xFF090B0B));
+  });
+
+  testWidgets('visual evidence covers refreshed core mobile screens', (
+    WidgetTester tester,
+  ) async {
+    await captureVisualEvidence(
+      tester,
+      routeName: AppRoutes.splash,
+      themeMode: ThemeMode.light,
+      fileName: 'light_intro.png',
+    );
+    await captureVisualEvidence(
+      tester,
+      routeName: AppRoutes.collection,
+      themeMode: ThemeMode.light,
+      fileName: 'light_collection.png',
+    );
+    await captureVisualEvidence(
+      tester,
+      routeName: AppRoutes.collectionAdd,
+      themeMode: ThemeMode.light,
+      fileName: 'light_add_artwork.png',
+    );
+    await captureVisualEvidence(
+      tester,
+      routeName: AppRoutes.artworkDraft('sample-001'),
+      themeMode: ThemeMode.light,
+      fileName: 'light_draft_review.png',
+    );
+    await captureVisualEvidence(
+      tester,
+      routeName: AppRoutes.artworkReportPreview('sample-001'),
+      themeMode: ThemeMode.light,
+      fileName: 'light_report_preview.png',
+    );
+    await captureVisualEvidence(
+      tester,
+      routeName: AppRoutes.collectionSettings,
+      themeMode: ThemeMode.light,
+      fileName: 'light_settings.png',
+    );
+    await captureVisualEvidence(
+      tester,
+      routeName: AppRoutes.splash,
+      themeMode: ThemeMode.dark,
+      fileName: 'dark_intro.png',
+    );
+    await captureVisualEvidence(
+      tester,
+      routeName: AppRoutes.collection,
+      themeMode: ThemeMode.dark,
+      fileName: 'dark_collection.png',
+    );
+    await captureVisualEvidence(
+      tester,
+      routeName: AppRoutes.artworkDraft('sample-001'),
+      themeMode: ThemeMode.dark,
+      fileName: 'dark_draft_review.png',
+    );
+    await captureVisualEvidence(
+      tester,
+      routeName: AppRoutes.artworkReportPreview('sample-001'),
+      themeMode: ThemeMode.dark,
+      fileName: 'dark_report_preview.png',
+    );
+    await captureVisualEvidence(
+      tester,
+      routeName: AppRoutes.artworkExport('sample-001'),
+      themeMode: ThemeMode.dark,
+      fileName: 'dark_export_preview.png',
+    );
+    await captureVisualEvidence(
+      tester,
+      routeName: AppRoutes.collectionSettings,
+      themeMode: ThemeMode.dark,
+      fileName: 'dark_settings.png',
+    );
   });
 
   testWidgets('collection shell renders and can open add artwork', (
@@ -749,7 +855,7 @@ void main() {
         findsOneWidget,
       );
 
-      await tapVisible(tester, find.text('Sold'));
+      await tapVisible(tester, find.widgetWithText(ActionChip, 'Sold'));
       await pumpLiveData(tester);
       expect(
         find.text('This artwork is retained in your records but marked sold.'),
@@ -761,21 +867,21 @@ void main() {
       );
       expect(saved?.lifecycleStatus, ArtworkLifecycleStatus.sold);
 
-      await tapVisible(tester, find.text('Lost'));
+      await tapVisible(tester, find.widgetWithText(ActionChip, 'Lost'));
       await pumpLiveData(tester);
       saved = await tester.runAsync<ArtworkRecord?>(
         () => fixture.repository.get('lifecycle-ui'),
       );
       expect(saved?.lifecycleStatus, ArtworkLifecycleStatus.lost);
 
-      await tapVisible(tester, find.text('Stolen'));
+      await tapVisible(tester, find.widgetWithText(ActionChip, 'Stolen'));
       await pumpLiveData(tester);
       saved = await tester.runAsync<ArtworkRecord?>(
         () => fixture.repository.get('lifecycle-ui'),
       );
       expect(saved?.lifecycleStatus, ArtworkLifecycleStatus.stolen);
 
-      await tapVisible(tester, find.text('Removed'));
+      await tapVisible(tester, find.widgetWithText(ActionChip, 'Removed'));
       expect(find.text('Remove from current holdings?'), findsOneWidget);
       await tester.tap(find.text('Cancel'));
       await pumpReady(tester);
@@ -784,7 +890,7 @@ void main() {
       );
       expect(saved?.lifecycleStatus, ArtworkLifecycleStatus.stolen);
 
-      await tapVisible(tester, find.text('Removed'));
+      await tapVisible(tester, find.widgetWithText(ActionChip, 'Removed'));
       expect(find.text('Remove from current holdings?'), findsOneWidget);
       await tester.tap(find.text('Mark removed'));
       await pumpLiveData(tester);
@@ -1030,7 +1136,7 @@ void main() {
     expect(find.text('Manual Artist'), findsOneWidget);
     expect(find.text('1998'), findsWidgets);
     expect(
-      find.text('8 of 8 core fields are user-confirmed or reviewed.'),
+      find.text('8 of 8 core fields are user-confirmed or document-reviewed.'),
       findsOneWidget,
     );
     expect(find.text('NOK 12,000'), findsOneWidget);
@@ -1528,6 +1634,78 @@ Future<void> pumpLiveData(WidgetTester tester) async {
   );
   await tester.pump();
   await tester.pump(const Duration(milliseconds: 400));
+}
+
+Future<void> loadScreenshotFont() async {
+  const materialIconPath =
+      '/opt/homebrew/share/flutter/bin/cache/artifacts/material_fonts/MaterialIcons-Regular.otf';
+  final materialIconFile = File(materialIconPath);
+  if (materialIconFile.existsSync()) {
+    final iconBytes = await materialIconFile.readAsBytes();
+    final iconLoader = FontLoader('MaterialIcons')
+      ..addFont(Future<ByteData>.value(ByteData.sublistView(iconBytes)));
+    await iconLoader.load();
+  }
+
+  const fontPaths = [
+    '/System/Library/Fonts/SFNS.ttf',
+    '/Library/Fonts/Arial.ttf',
+  ];
+
+  for (final path in fontPaths) {
+    final file = File(path);
+    if (!file.existsSync()) {
+      continue;
+    }
+
+    final bytes = await file.readAsBytes();
+    final loader = FontLoader('Roboto')
+      ..addFont(Future<ByteData>.value(ByteData.sublistView(bytes)));
+    await loader.load();
+    return;
+  }
+}
+
+Future<void> captureVisualEvidence(
+  WidgetTester tester, {
+  required String routeName,
+  required ThemeMode themeMode,
+  required String fileName,
+}) async {
+  tester.view.physicalSize = const Size(393, 852);
+  tester.view.devicePixelRatio = 1;
+  addTearDown(() {
+    tester.view.resetPhysicalSize();
+    tester.view.resetDevicePixelRatio();
+  });
+
+  final boundaryKey = GlobalKey();
+  await tester.pumpWidget(
+    RepaintBoundary(
+      key: boundaryKey,
+      child: ArchivaleApp(initialRoute: routeName, themeMode: themeMode),
+    ),
+  );
+  await pumpReady(tester);
+
+  final boundary =
+      boundaryKey.currentContext!.findRenderObject()! as RenderRepaintBoundary;
+  final bytes = await tester.runAsync<Uint8List>(() async {
+    final image = await boundary.toImage(pixelRatio: 2);
+    final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
+    image.dispose();
+    return byteData!.buffer.asUint8List();
+  });
+
+  final outputDirectory = Directory(
+    p.join('.dart_tool', 'issue132_visual_evidence'),
+  );
+  outputDirectory.createSync(recursive: true);
+  final screenshotFile = File(p.join(outputDirectory.path, fileName));
+  screenshotFile.writeAsBytesSync(bytes!);
+
+  await tester.pumpWidget(const SizedBox.shrink());
+  await tester.pump();
 }
 
 class _NoLostImagePicker implements ArtworkImagePicker {

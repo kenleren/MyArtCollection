@@ -44,7 +44,7 @@ class AppShell extends StatelessWidget {
     final activeTab = _activeTab(tabs);
 
     return Scaffold(
-      appBar: AppBar(title: Text(activeTab.title)),
+      appBar: AppBar(title: const Text('Archivale')),
       body: SafeArea(child: _ShellBody(currentRoute: currentRoute)),
       bottomNavigationBar: NavigationBar(
         selectedIndex: tabs.indexOf(activeTab),

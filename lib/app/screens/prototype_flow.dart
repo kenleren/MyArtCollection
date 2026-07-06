@@ -632,8 +632,6 @@ class _DraftReviewScreenState extends State<DraftReviewScreen> {
           const SizedBox(height: 16),
           _PrimaryImageForArtwork(artworkId: widget.artwork.id),
           const SizedBox(height: 16),
-          const _EvidencePhotoGuide(isFollowUp: true),
-          const SizedBox(height: 16),
           _AiDraftStatusPanel(isBusy: false, draftJob: widget.aiDraftJob),
           const SizedBox(height: 16),
           _OnlineResearchPanel(
@@ -655,6 +653,8 @@ class _DraftReviewScreenState extends State<DraftReviewScreen> {
             onAcceptField: _acceptResearchField,
             onRejectField: _rejectResearchField,
           ),
+          const SizedBox(height: 16),
+          const _EvidencePhotoGuide(isFollowUp: true),
           const SizedBox(height: 16),
           for (final field in fields) ...[
             FieldSourceTile(field: field),
@@ -1375,10 +1375,10 @@ class PrototypeScreenFrame extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: Text(appBarTitle ?? title)),
+      appBar: AppBar(title: Text(appBarTitle ?? 'Archivale')),
       body: SafeArea(
         child: ListView(
-          padding: const EdgeInsets.all(20),
+          padding: const EdgeInsets.fromLTRB(20, 12, 20, 28),
           children: [
             _Heading(title: title, subtitle: subtitle),
             const SizedBox(height: 20),
@@ -1397,7 +1397,7 @@ class FieldSourceTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colors = _sourceColors(field.source);
+    final colors = _sourceColors(context, field.source);
 
     return _Panel(
       child: Column(
@@ -1432,7 +1432,7 @@ class DocumentTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colors = _sourceColors(document.source);
+    final colors = _sourceColors(context, document.source);
 
     return _Panel(
       child: Column(
@@ -1652,27 +1652,41 @@ class _EvidencePhotoGuide extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 12),
-          const _EvidenceGuideItem(
-            icon: Icons.crop_free_outlined,
-            text:
-                'Full front image, plus close-ups of the signature or maker marks.',
-          ),
-          const _EvidenceGuideItem(
-            icon: Icons.tag_outlined,
-            text: 'Edition number for prints or lithographs, such as 70/250.',
-          ),
-          const _EvidenceGuideItem(
-            icon: Icons.flip_to_back_outlined,
-            text: 'Back, frame, label, sticker, stamp, and hanging hardware.',
-          ),
-          const _EvidenceGuideItem(
-            icon: Icons.straighten_outlined,
-            text: 'Dimensions, medium/material, condition, and frame details.',
-          ),
-          const _EvidenceGuideItem(
-            icon: Icons.description_outlined,
-            text: 'Receipts, certificates, gallery, auction, or estate papers.',
-          ),
+          if (isFollowUp) ...[
+            const _EvidenceGuideItem(
+              icon: Icons.crop_free_outlined,
+              text:
+                  'Close-ups of the signature or maker marks, frame labels, stickers, and reverse-side notes.',
+            ),
+            const _EvidenceGuideItem(
+              icon: Icons.description_outlined,
+              text: 'Receipts, certificates, auction, or provenance papers.',
+            ),
+          ] else ...[
+            const _EvidenceGuideItem(
+              icon: Icons.crop_free_outlined,
+              text:
+                  'Full front image, plus close-ups of the signature or maker marks.',
+            ),
+            const _EvidenceGuideItem(
+              icon: Icons.tag_outlined,
+              text: 'Edition number for prints or lithographs, such as 70/250.',
+            ),
+            const _EvidenceGuideItem(
+              icon: Icons.flip_to_back_outlined,
+              text: 'Back, frame, label, sticker, stamp, and hanging hardware.',
+            ),
+            const _EvidenceGuideItem(
+              icon: Icons.straighten_outlined,
+              text:
+                  'Dimensions, medium/material, condition, and frame details.',
+            ),
+            const _EvidenceGuideItem(
+              icon: Icons.description_outlined,
+              text:
+                  'Receipts, certificates, gallery, auction, or estate papers.',
+            ),
+          ],
           const SizedBox(height: 8),
           const Text(
             'These details support a private record and later research; they do not confirm attribution or value.',
@@ -2030,7 +2044,7 @@ class _ComparableSignalCard extends StatelessWidget {
 
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: const Color(0xFFFAFAF8),
+        color: _nestedPanelColor(context),
         borderRadius: BorderRadius.circular(8),
         border: Border.all(color: Theme.of(context).colorScheme.outlineVariant),
       ),
@@ -2271,7 +2285,7 @@ class _CandidateCitationCard extends StatelessWidget {
           const SizedBox(height: 10),
           _SourceBadge(
             source: PrototypeSource.aiSuggested,
-            colors: _sourceColors(PrototypeSource.aiSuggested),
+            colors: _sourceColors(context, PrototypeSource.aiSuggested),
           ),
           const SizedBox(height: 12),
           if (sourceHit != null) ...[
@@ -2340,7 +2354,7 @@ class _CandidateFieldRow extends StatelessWidget {
 
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: const Color(0xFFFAFAF8),
+        color: _nestedPanelColor(context),
         borderRadius: BorderRadius.circular(8),
         border: Border.all(color: Theme.of(context).colorScheme.outlineVariant),
       ),
@@ -2363,7 +2377,7 @@ class _CandidateFieldRow extends StatelessWidget {
               children: [
                 _SourceBadge(
                   source: PrototypeSource.aiSuggested,
-                  colors: _sourceColors(PrototypeSource.aiSuggested),
+                  colors: _sourceColors(context, PrototypeSource.aiSuggested),
                 ),
                 Text(status),
               ],
@@ -2482,12 +2496,26 @@ class _Heading extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(title, style: Theme.of(context).textTheme.headlineSmall),
-        const SizedBox(height: 6),
-        Text(subtitle, style: Theme.of(context).textTheme.titleMedium),
+        Text(
+          'Archivale: Art Records',
+          style: Theme.of(context).textTheme.labelMedium?.copyWith(
+            color: colorScheme.primary,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+        const SizedBox(height: 7),
+        Text(title, style: Theme.of(context).textTheme.headlineMedium),
+        const SizedBox(height: 7),
+        Text(
+          subtitle,
+          style: Theme.of(
+            context,
+          ).textTheme.titleSmall?.copyWith(color: colorScheme.onSurfaceVariant),
+        ),
       ],
     );
   }
@@ -2498,21 +2526,31 @@ class _ArtworkHero extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = _artworkHeroColors(context);
+
     return AspectRatio(
       aspectRatio: 4 / 3,
       child: DecoratedBox(
         decoration: BoxDecoration(
-          color: const Color(0xFFE9E1D4),
+          color: colors.background,
           borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: const Color(0xFF8A6F4D)),
+          border: Border.all(color: colors.border),
+          boxShadow: _panelShadow(context),
         ),
         child: Stack(
           children: [
-            Positioned.fill(child: CustomPaint(painter: _ArtworkPainter())),
+            Positioned.fill(
+              child: CustomPaint(painter: _ArtworkPainter(colors)),
+            ),
+            const Positioned(
+              top: 14,
+              left: 14,
+              child: _MiniLabel(text: 'Private record'),
+            ),
             const Positioned(
               left: 14,
               bottom: 12,
-              child: _MiniLabel(text: 'Example artwork image'),
+              child: _MiniLabel(text: 'Collector record example'),
             ),
           ],
         ),
@@ -2585,6 +2623,7 @@ class _PrimaryArtworkImagePreview extends StatelessWidget {
   Widget build(BuildContext context) {
     final file = this.file;
     final canAttemptImage = file != null && file.existsSync();
+    final colors = Theme.of(context).colorScheme;
 
     return ClipRRect(
       borderRadius: BorderRadius.circular(8),
@@ -2592,8 +2631,8 @@ class _PrimaryArtworkImagePreview extends StatelessWidget {
         aspectRatio: isCompact ? 16 / 9 : 4 / 3,
         child: DecoratedBox(
           decoration: BoxDecoration(
-            color: const Color(0xFFEFF3F6),
-            border: Border.all(color: const Color(0xFFC6D0D8)),
+            color: colors.surfaceContainerHighest,
+            border: Border.all(color: colors.outlineVariant),
           ),
           child: canAttemptImage
               ? Image.file(
@@ -2617,18 +2656,26 @@ class _PrimaryImagePlaceholder extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const Center(
+    final colorScheme = Theme.of(context).colorScheme;
+    return Center(
       key: _PrimaryArtworkImagePreview.placeholderKey,
       child: Padding(
-        padding: EdgeInsets.all(16),
+        padding: const EdgeInsets.all(16),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.broken_image_outlined, size: 36),
-            SizedBox(height: 8),
+            Icon(
+              Icons.collections_bookmark_outlined,
+              size: 38,
+              color: colorScheme.primary,
+            ),
+            const SizedBox(height: 8),
             Text(
               'Primary image preview unavailable',
               textAlign: TextAlign.center,
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                color: colorScheme.onSurfaceVariant,
+              ),
             ),
           ],
         ),
@@ -2638,41 +2685,84 @@ class _PrimaryImagePlaceholder extends StatelessWidget {
 }
 
 class _ArtworkPainter extends CustomPainter {
+  const _ArtworkPainter(this.colors);
+
+  final _ArtworkHeroColors colors;
+
   @override
   void paint(Canvas canvas, Size size) {
-    canvas.drawRect(
-      Offset.zero & size,
-      Paint()..color = const Color(0xFFECE4D8),
+    canvas.drawRect(Offset.zero & size, Paint()..color = colors.wall);
+    final frameRect = Rect.fromLTWH(
+      size.width * .18,
+      size.height * .17,
+      size.width * .64,
+      size.height * .58,
     );
-    final artRect = Rect.fromLTWH(
-      size.width * .2,
-      size.height * .14,
-      size.width * .6,
-      size.height * .62,
+    final matRect = frameRect.deflate(size.shortestSide * .035);
+    final artRect = matRect.deflate(size.shortestSide * .055);
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(frameRect, const Radius.circular(3)),
+      Paint()..color = colors.frame,
     );
-    canvas.drawRect(artRect, Paint()..color = const Color(0xFF244E73));
-    canvas.drawRect(
-      artRect.deflate(8),
-      Paint()..color = const Color(0xFFC45A46),
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(matRect, const Radius.circular(2)),
+      Paint()..color = colors.mat,
+    );
+    canvas.drawRect(artRect, Paint()..color = colors.artwork);
+    canvas.drawPath(
+      Path()
+        ..moveTo(artRect.left, artRect.bottom)
+        ..lineTo(artRect.left + artRect.width * .34, artRect.top)
+        ..lineTo(artRect.left + artRect.width * .58, artRect.bottom)
+        ..close(),
+      Paint()..color = colors.inner,
+    );
+    canvas.drawPath(
+      Path()
+        ..moveTo(artRect.left + artRect.width * .42, artRect.bottom)
+        ..lineTo(artRect.right, artRect.top + artRect.height * .18)
+        ..lineTo(artRect.right, artRect.bottom)
+        ..close(),
+      Paint()..color = colors.accent.withValues(alpha: .86),
     );
     canvas.drawOval(
       Rect.fromCircle(
-        center: Offset(size.width * .48, size.height * .42),
-        radius: size.shortestSide * .13,
+        center: Offset(
+          artRect.left + artRect.width * .68,
+          artRect.top + artRect.height * .27,
+        ),
+        radius: size.shortestSide * .055,
       ),
-      Paint()..color = const Color(0xFFF2D16B),
+      Paint()..color = colors.accent,
     );
-    canvas.drawRect(
-      artRect,
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(frameRect.deflate(4), const Radius.circular(2)),
       Paint()
-        ..color = const Color(0xFF5D4631)
+        ..color = colors.frameLine
         ..style = PaintingStyle.stroke
-        ..strokeWidth = 10,
+        ..strokeWidth = 2,
+    );
+    final ledgerTop = size.height * .8;
+    canvas.drawLine(
+      Offset(size.width * .18, ledgerTop),
+      Offset(size.width * .82, ledgerTop),
+      Paint()
+        ..color = colors.frameLine
+        ..strokeWidth = 1.4,
+    );
+    canvas.drawLine(
+      Offset(size.width * .25, ledgerTop + 12),
+      Offset(size.width * .57, ledgerTop + 12),
+      Paint()
+        ..color = colors.frameLine.withValues(alpha: .58)
+        ..strokeWidth = 1,
     );
   }
 
   @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+  bool shouldRepaint(covariant _ArtworkPainter oldDelegate) {
+    return oldDelegate.colors != colors;
+  }
 }
 
 class _Panel extends StatelessWidget {
@@ -2684,11 +2774,12 @@ class _Panel extends StatelessWidget {
   Widget build(BuildContext context) {
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: _panelColor(context),
         borderRadius: BorderRadius.circular(8),
         border: Border.all(color: Theme.of(context).colorScheme.outlineVariant),
+        boxShadow: _panelShadow(context),
       ),
-      child: Padding(padding: const EdgeInsets.all(14), child: child),
+      child: Padding(padding: const EdgeInsets.all(16), child: child),
     );
   }
 }
@@ -2711,6 +2802,7 @@ class _SourceBadge extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
         child: Text(
           _localizedSourceLabel(context, source),
+          overflow: TextOverflow.ellipsis,
           style: Theme.of(
             context,
           ).textTheme.labelSmall?.copyWith(color: colors.foreground),
@@ -2738,7 +2830,33 @@ class _BadgeColors {
   final Color foreground;
 }
 
-_BadgeColors _sourceColors(PrototypeSource source) {
+_BadgeColors _sourceColors(BuildContext context, PrototypeSource source) {
+  final isDark = Theme.of(context).brightness == Brightness.dark;
+  if (isDark) {
+    return switch (source) {
+      PrototypeSource.userConfirmed => const _BadgeColors(
+        Color(0xFF183326),
+        Color(0xFF6FA27A),
+        Color(0xFFD2ECD7),
+      ),
+      PrototypeSource.documentExtracted => const _BadgeColors(
+        Color(0xFF172E3B),
+        Color(0xFF75A6C7),
+        Color(0xFFD5E8F4),
+      ),
+      PrototypeSource.aiSuggested => const _BadgeColors(
+        Color(0xFF3A2B12),
+        Color(0xFFD0A75C),
+        Color(0xFFFFE4AA),
+      ),
+      PrototypeSource.unknown => const _BadgeColors(
+        Color(0xFF302A36),
+        Color(0xFFA698B4),
+        Color(0xFFE9DDF2),
+      ),
+    };
+  }
+
   return switch (source) {
     PrototypeSource.userConfirmed => const _BadgeColors(
       Color(0xFFE7F3EA),
@@ -2788,15 +2906,38 @@ class _ProgressStrip extends StatelessWidget {
             decoration: BoxDecoration(
               color: index <= activeIndex
                   ? colorScheme.primaryContainer
-                  : Colors.white,
+                  : _panelColor(context),
               borderRadius: BorderRadius.circular(999),
-              border: Border.all(color: colorScheme.outlineVariant),
+              border: Border.all(
+                color: index <= activeIndex
+                    ? colorScheme.primary
+                    : colorScheme.outlineVariant,
+              ),
             ),
             child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-              child: Text(
-                _steps[index],
-                style: Theme.of(context).textTheme.labelMedium,
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    '${index + 1}',
+                    style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                      color: index <= activeIndex
+                          ? colorScheme.primary
+                          : colorScheme.onSurfaceVariant,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  Text(
+                    _steps[index],
+                    style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                      color: index <= activeIndex
+                          ? colorScheme.onPrimaryContainer
+                          : colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ],
               ),
             ),
           ),
@@ -2817,8 +2958,8 @@ class _Notice extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(icon),
-          const SizedBox(width: 10),
+          _IconMedallion(icon: icon),
+          const SizedBox(width: 12),
           Expanded(child: Text(text)),
         ],
       ),
@@ -2849,13 +2990,17 @@ class _EmptyCollectionPanel extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          const _ArtworkHero(),
+          const SizedBox(height: 14),
           Text(
             'No artworks yet',
-            style: Theme.of(context).textTheme.titleMedium,
+            style: Theme.of(context).textTheme.titleLarge,
           ),
           const SizedBox(height: 6),
-          const Text('Add artwork to start your first record.'),
-          const SizedBox(height: 12),
+          const Text(
+            'Start with one artwork photo, then keep evidence, source labels, documents, and report notes together.',
+          ),
+          const SizedBox(height: 16),
           PrimaryActionButton(
             icon: Icons.add_a_photo_outlined,
             label: 'Add artwork',
@@ -2886,7 +3031,19 @@ class _CollectionRecordPanel extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(title, style: Theme.of(context).textTheme.titleMedium),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Text(
+                  title,
+                  style: Theme.of(context).textTheme.titleLarge,
+                ),
+              ),
+              const SizedBox(width: 10),
+              _IconMedallion(icon: Icons.collections_bookmark_outlined),
+            ],
+          ),
           const SizedBox(height: 6),
           Wrap(
             spacing: 8,
@@ -2896,12 +3053,12 @@ class _CollectionRecordPanel extends StatelessWidget {
               _LifecycleBadge(status: lifecycleStatus),
             ],
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 12),
           _PrimaryArtworkImagePreview(
             file: summary.primaryImageFile,
             isCompact: true,
           ),
-          const SizedBox(height: 10),
+          const SizedBox(height: 12),
           _StatusLine(
             icon: Icons.photo_library_outlined,
             text: record.primaryImageAttachmentId == null
@@ -3192,21 +3349,40 @@ class _CompletenessPanel extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('Completeness', style: Theme.of(context).textTheme.titleMedium),
-          const SizedBox(height: 8),
-          LinearProgressIndicator(value: progress),
-          const SizedBox(height: 8),
-          Text(
-            '$reviewedCount of $totalCount core fields are user-confirmed or reviewed.',
+          Row(
+            children: [
+              const _IconMedallion(icon: Icons.fact_check_outlined),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  'Record completeness',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+              ),
+              Text(
+                '$reviewedCount/$totalCount',
+                style: Theme.of(context).textTheme.labelLarge,
+              ),
+            ],
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 12),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(999),
+            child: LinearProgressIndicator(value: progress, minHeight: 8),
+          ),
+          const SizedBox(height: 10),
+          Text(
+            '$reviewedCount of $totalCount core fields are user-confirmed or document-reviewed.',
+          ),
+          const SizedBox(height: 10),
           const _StatusLine(
             icon: Icons.verified_user_outlined,
             text: 'Record state: Verified by you',
           ),
           const _StatusLine(
             icon: Icons.inventory_2_outlined,
-            text: 'Missing documents is a completeness note, not a blocker.',
+            text:
+                'Supporting documents enrich the archive when available; they are tracked separately from confirmed fields.',
           ),
         ],
       ),
@@ -3226,6 +3402,8 @@ class _ReportSummary extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          const _ReportDocumentHeader(),
+          const SizedBox(height: 14),
           Text(
             artwork.title.value,
             style: Theme.of(context).textTheme.titleLarge,
@@ -3274,8 +3452,8 @@ class _StatusPanel extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(icon),
-          const SizedBox(width: 10),
+          _IconMedallion(icon: icon),
+          const SizedBox(width: 12),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -3287,6 +3465,59 @@ class _StatusPanel extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _ReportDocumentHeader extends StatelessWidget {
+  const _ReportDocumentHeader();
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: colorScheme.primaryContainer.withValues(alpha: .62),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: colorScheme.primary.withValues(alpha: .45)),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Row(
+          children: [
+            _IconMedallion(icon: Icons.picture_as_pdf_outlined),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                'Private art-record report',
+                style: Theme.of(context).textTheme.titleSmall,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _IconMedallion extends StatelessWidget {
+  const _IconMedallion({required this.icon});
+
+  final IconData icon;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: colorScheme.primaryContainer,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: colorScheme.primary.withValues(alpha: .35)),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(8),
+        child: Icon(icon, size: 20, color: colorScheme.primary),
       ),
     );
   }
@@ -3846,13 +4077,93 @@ class _MiniLabel extends StatelessWidget {
   Widget build(BuildContext context) {
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: .88),
+        color: Theme.of(context).colorScheme.surface.withValues(alpha: .88),
         borderRadius: BorderRadius.circular(999),
       ),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-        child: Text(text, style: Theme.of(context).textTheme.labelSmall),
+        child: Text(
+          text,
+          style: Theme.of(context).textTheme.labelSmall?.copyWith(
+            color: Theme.of(context).colorScheme.onSurface,
+          ),
+        ),
       ),
     );
   }
+}
+
+Color _panelColor(BuildContext context) {
+  final colors = Theme.of(context).colorScheme;
+  if (Theme.of(context).brightness == Brightness.dark) {
+    return Color.alphaBlend(
+      colors.primary.withValues(alpha: .06),
+      colors.surface,
+    );
+  }
+  return const Color(0xFFFFFCF6);
+}
+
+Color _nestedPanelColor(BuildContext context) {
+  final colors = Theme.of(context).colorScheme;
+  if (Theme.of(context).brightness == Brightness.dark) {
+    return Color.alphaBlend(
+      colors.secondary.withValues(alpha: .06),
+      colors.surface,
+    );
+  }
+  return const Color(0xFFF8F0E3);
+}
+
+List<BoxShadow> _panelShadow(BuildContext context) {
+  if (Theme.of(context).brightness == Brightness.dark) {
+    return const [];
+  }
+  return [
+    BoxShadow(
+      color: Colors.black.withValues(alpha: .05),
+      offset: const Offset(0, 10),
+      blurRadius: 28,
+    ),
+  ];
+}
+
+typedef _ArtworkHeroColors = ({
+  Color background,
+  Color border,
+  Color wall,
+  Color mat,
+  Color artwork,
+  Color inner,
+  Color accent,
+  Color frame,
+  Color frameLine,
+});
+
+_ArtworkHeroColors _artworkHeroColors(BuildContext context) {
+  if (Theme.of(context).brightness == Brightness.dark) {
+    return const (
+      background: Color(0xFF151B18),
+      border: Color(0xFF66563B),
+      wall: Color(0xFF151B18),
+      mat: Color(0xFFE6DCC8),
+      artwork: Color(0xFF1E3E39),
+      inner: Color(0xFF8B5E46),
+      accent: Color(0xFFD9BE78),
+      frame: Color(0xFF6C5630),
+      frameLine: Color(0xFFEAD7A6),
+    );
+  }
+
+  return const (
+    background: Color(0xFFF0E5D3),
+    border: Color(0xFFC8A15A),
+    wall: Color(0xFFF0E5D3),
+    mat: Color(0xFFFFFAEF),
+    artwork: Color(0xFF24466F),
+    inner: Color(0xFF1D6A5E),
+    accent: Color(0xFFD9B66F),
+    frame: Color(0xFF57432C),
+    frameLine: Color(0xFFECD7A4),
+  );
 }
