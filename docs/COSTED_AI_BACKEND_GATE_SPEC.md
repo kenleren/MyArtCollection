@@ -420,8 +420,10 @@ Before a paid beta is exposed to any tester, #49 must define and verify:
   beyond the accepted provider terms must be disabled or explicitly accepted in
   #52 before rollout.
 - Zero Data Retention eligibility and tradeoffs must be recorded in #52 before
-  rollout. If ZDR is unavailable, the decision record must state why the
-  provider retention behavior is acceptable for beta collector content.
+  rollout. For MVP collector-content OpenAI calls, ZDR approval for the exact
+  rollout org/project is required; `store=false`, Secret Manager, owner
+  allowlists, cost approval, and deployment-manager approval do not waive this
+  gate.
 - OpenAI data handling, model training/evals storage settings, prompt cache
   retention, web-search source/result retention, and ZDR compatibility must be
   documented in #52 before live collector content is sent through OpenAI.

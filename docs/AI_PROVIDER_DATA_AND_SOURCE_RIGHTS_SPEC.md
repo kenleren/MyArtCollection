@@ -107,7 +107,8 @@ They do show that the first acceptable live-content path needs more than
 `store=false`. It also needs:
 
 1. provider-side sharing controls kept off,
-2. explicit approval for ZDR or a documented accepted fallback,
+2. OpenAI Zero Data Retention approval for the exact rollout org/project before
+   any MVP collector-content OpenAI call,
 3. minimal request content because hosted search touches third parties,
 4. per-source rights enforcement instead of a single blanket allowlist.
 
@@ -116,6 +117,8 @@ They do show that the first acceptable live-content path needs more than
 - No implementation in this issue.
 - No approval for direct mobile vendor calls.
 - No approval to send live collector content under default provider settings.
+- No approval to use OpenAI Modified Abuse Monitoring as an MVP
+  collector-content fallback.
 - No approval for Google Search grounding, Gemini datasets sharing, or auction
   house sources in the first paid path.
 - No legal conclusion that every museum or art source in the current code
@@ -154,13 +157,13 @@ They do show that the first acceptable live-content path needs more than
   - `store=false`,
   - no stateful features,
   - no broadened tool surface.
-- If OpenAI ZDR is not approved, the only acceptable fallback for limited beta
-  consideration is:
-  - OpenAI Modified Abuse Monitoring approved,
-  - `store=false`,
-  - `prompt_cache_retention="in_memory"` on `gpt-5.4`,
-  - explicit human acceptance that this is not true zero retention because
-    short-lived caching and third-party search retention still exist.
+- For MVP collector-content research, OpenAI Zero Data Retention approval for
+  the exact rollout organization/project is mandatory before live OpenAI calls.
+- `store=false`, Secret Manager storage, owner allowlists, cost approval, and
+  deployment-manager approval do not waive the ZDR gate.
+- OpenAI Modified Abuse Monitoring is not an accepted MVP collector-content
+  fallback. It may be reconsidered only by a later separate human-owned issue
+  with explicit redteam/privacy review that changes this decision.
 - OpenAI default 30-day abuse-monitoring retention without ZDR or Modified
   Abuse Monitoring is not acceptable for live collector content.
 
@@ -225,7 +228,7 @@ They do show that the first acceptable live-content path needs more than
   of:
   - paid-service mode,
   - OpenAI sharing controls disabled,
-  - ZDR approval or explicitly accepted fallback,
+  - OpenAI ZDR approval for the exact rollout org/project,
   - `store=false`,
   - prompt-cache decision,
   - professional-source rights matrix,
@@ -237,7 +240,7 @@ They do show that the first acceptable live-content path needs more than
 | Option | Summary | Pros | Cons | Outcome |
 | --- | --- | --- | --- | --- |
 | A. OpenAI with approved ZDR, `store=false`, hosted `web_search`, `gpt-5.4`, high reasoning | Strictest first paid path that still matches repo preference | Best fit for live-content privacy posture; reduces retained provider content; keeps preferred product path | Requires approval process and may constrain future capabilities | Recommended |
-| B. OpenAI with Modified Abuse Monitoring, `store=false`, `prompt_cache_retention="in_memory"` | Accepted fallback if ZDR is unavailable | Can still avoid default 30-day abuse logs and broad app-state retention | Not zero retention; still leaves short-lived cache and third-party search retention | Accept only with explicit human sign-off for limited beta |
+| B. OpenAI with Modified Abuse Monitoring, `store=false`, `prompt_cache_retention="in_memory"` | Future non-MVP decision context only; not an accepted MVP collector-content fallback | Could avoid default 30-day abuse logs and broad app-state retention if later approved | Not zero retention; still leaves short-lived cache and third-party search retention | Reject for MVP collector content unless a later human-owned issue plus redteam/privacy review changes this decision |
 | C. OpenAI default API settings plus `store=false` | Minimal operational work | Easiest to implement | Still leaves default abuse-monitoring retention; not strong enough for live collector content | Reject |
 | D. Gemini with Google Search grounding | Google-native alternate | Paid prompts/responses are not training data by default | Search grounding stores prompt/context/output for 30 days and cannot be disabled; current API surfaces also add state/logging tradeoffs | Reject for first live-content path |
 | E. Do not send live collector content yet | Delay provider use until controls are approved | Lowest privacy and rights risk | Delays real-provider research | Correct outcome until this spec and the sibling blockers are accepted |
@@ -253,8 +256,9 @@ Decision:
    OpenAI Responses API, hosted `web_search`, `gpt-5.4`, high reasoning,
    `store=false`, OpenAI ZDR approval, strict professional-source allowlist,
    and license-aware citation handling.
-3. Allow Option B only as a written human exception for a tightly controlled
-   beta if ZDR is unavailable and redteam accepts the residual risk.
+3. Do not allow Option B for MVP collector content. Modified Abuse Monitoring is
+   future non-MVP decision context only unless a later human-owned issue plus
+   redteam/privacy review explicitly changes this ZDR-only gate.
 4. Defer Google/Gemini provider search and grounding until a separate approved
    review accepts their unavoidable storage tradeoffs.
 
@@ -262,8 +266,9 @@ Decision:
 
 Revisit this recommendation if:
 
-- OpenAI refuses ZDR and humans do not accept Modified Abuse Monitoring plus
-  in-memory caching as sufficient for beta,
+- OpenAI refuses ZDR and humans choose to defer live collector-content research
+  or open a later human-owned issue plus redteam/privacy review to reconsider
+  the MVP ZDR-only decision,
 - OpenAI changes `gpt-5.4` cache behavior so `in_memory` is no longer
   available,
 - or the product later requires source classes whose rights posture is too
@@ -292,8 +297,8 @@ Before live collector content is allowed:
    accepted so only approved app/user identities can reach the broker.
 4. [#51](https://github.com/kenleren/MyArtCollection/issues/51) must be
    accepted so the broker payload remains minimal and telemetry-safe.
-5. This issue must be accepted with a human answer to the ZDR versus Modified
-   Abuse Monitoring decision.
+5. This issue must be accepted with evidence that OpenAI ZDR is approved for the
+   exact rollout org/project; MAM is not an accepted MVP fallback.
 6. `$codex-redteam-review` is mandatory before any live-provider beta.
 
 ## Acceptance checks
@@ -301,8 +306,11 @@ Before live collector content is allowed:
 - A concise provider-data spec exists at this path.
 - Paid-service mode is required.
 - OpenAI sharing/dataset/training controls are required to remain disabled.
-- ZDR is the target decision, with Modified Abuse Monitoring plus documented
-  residual-risk acceptance as the only fallback candidate.
+- ZDR approval for the exact rollout org/project is mandatory before MVP live
+  collector-content OpenAI calls.
+- Modified Abuse Monitoring is not an accepted MVP collector-content fallback
+  unless a later human-owned issue plus redteam/privacy review explicitly
+  changes that decision.
 - `store=false` is mandatory.
 - Prompt-cache retention policy is explicit.
 - Web-search source/result retention handling is explicit.
@@ -318,7 +326,7 @@ Before live collector content is allowed:
 
 1. Human/provider admin task:
    confirm OpenAI paid org/project ownership, disable all sharing toggles, and
-   request ZDR or Modified Abuse Monitoring.
+   request ZDR for the exact rollout org/project.
    - Follow-up owner: human
    - Review: `$codex-redteam-review`
 
@@ -347,9 +355,9 @@ Before live collector content is allowed:
 
 ## Open decisions for humans
 
-1. Is live collector content strictly blocked until OpenAI ZDR is approved, or
-   is Modified Abuse Monitoring plus `store=false` plus in-memory caching
-   acceptable for a limited beta?
+1. If OpenAI ZDR is refused for the exact rollout org/project, should humans
+   defer live collector-content research or open a later human-owned issue plus
+   redteam/privacy review to reconsider the MVP ZDR-only decision?
 2. Should `harvardartmuseums.org` remain metadata-only, or be fully removed
    from the paid-production allowlist until explicit written permission exists?
 3. Does the first paid beta allow Europeana previews only when the per-item
