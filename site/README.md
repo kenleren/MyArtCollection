@@ -13,6 +13,7 @@ Included routes:
 - `/pricing/`
 - `/blog/`
 - `/blog/collector-records-that-age-well/`
+- `/blog/how-to-document-artwork-for-insurance-conversations/`
 
 `/updates/` is intentionally omitted in this task because the repo did not have
 public-safe update content ready to publish.
@@ -90,6 +91,7 @@ Then open:
 - `http://127.0.0.1:8000/pricing/`
 - `http://127.0.0.1:8000/blog/`
 - `http://127.0.0.1:8000/blog/collector-records-that-age-well/`
+- `http://127.0.0.1:8000/blog/how-to-document-artwork-for-insurance-conversations/`
 
 ## Firebase Hosting config
 
@@ -107,8 +109,9 @@ Repo-side Firebase Hosting is intentionally minimal:
 
 Firebase Hosting headers in `firebase.json` use this policy:
 
-- `/`, `/privacy/`, `/support/`, `/pricing/`, `/blog/`, and
-  `/blog/collector-records-that-age-well/` send
+- `/`, `/privacy/`, `/support/`, `/pricing/`, `/blog/`,
+  `/blog/collector-records-that-age-well/`, and
+  `/blog/how-to-document-artwork-for-insurance-conversations/` send
   `Cache-Control: public, max-age=0, s-maxage=0, must-revalidate`.
 - Direct HTML file requests matching `/**/*.html` send the same revalidation
   header so route documents do not persist stale HTML after deploy.
@@ -161,8 +164,9 @@ Publishing remains separate from repo config work and needs human-owned Firebase
 
 Live smoke after a deploy should use both normal browsing and no-cache or
 cache-busted requests. Confirm `https://archivale.app/`,
-`https://archivale.app/privacy/`, `https://archivale.app/support/`, and
-`https://archivale.app/pricing/`, `https://archivale.app/blog/`, and
-`https://archivale.app/blog/collector-records-that-age-well/` return the current
-Archivale title/body copy, not stale MyArtCollection HTML, and confirm response
-headers match the policy above.
+`https://archivale.app/privacy/`, `https://archivale.app/support/`,
+`https://archivale.app/pricing/`, `https://archivale.app/blog/`,
+`https://archivale.app/blog/collector-records-that-age-well/`, and
+`https://archivale.app/blog/how-to-document-artwork-for-insurance-conversations/`
+return the current Archivale title/body copy, not stale MyArtCollection HTML,
+and confirm response headers match the policy above.
