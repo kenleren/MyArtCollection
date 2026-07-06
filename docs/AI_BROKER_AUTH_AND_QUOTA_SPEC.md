@@ -54,8 +54,12 @@ paid-provider safety:
   debit or provider call,
 - same `quota_subject` and `request_id` plus changed `payload_hash` fails as a
   conflict before reserve or provider work,
-- the default local cap placeholders are three finalized credits per quota
-  subject and 100 finalized credits broker-wide.
+- the default local cap placeholders are three exposed credits per quota
+  subject and 100 exposed credits broker-wide,
+- exposed credits include both `reserved` in-flight credits and `finalized`
+  spent credits so concurrent distinct requests cannot exceed a cap before
+  provider work completes; `refunded` and `rejected-before-reserve` records do
+  not count as exposed.
 
 The remaining gates are unchanged: real Firebase Auth/App Check verification,
 wrong-project checks, revocation, server-side quota-subject HMAC derivation,

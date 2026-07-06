@@ -302,6 +302,30 @@ test('malformed payload body rejects before credit reserve or provider call', as
   assert.deepEqual(trace, ['auth', 'consent', 'payload_receipt', 'entitlement', 'breaker', 'payload']);
 });
 
+test('unsupported image MIME type rejects before credit reserve or provider call', async () => {
+  const trace: string[] = [];
+  const deps = createFakeBrokerDependencies({ orderTrace: trace });
+
+  const response = await handleResearchRequest(
+    request({
+      image: {
+        mime_type: 'image/png' as BrokerRequest['image']['mime_type'],
+        byte_size: 120_000,
+        long_edge_px: 1400,
+      },
+    }),
+    baseContext,
+    deps,
+  );
+
+  assert.equal(response.status, 'rejected');
+  assert.equal(response.error?.code, 'unsupported_image_mime_type');
+  assert.equal(response.error?.stage, 'payload');
+  assert.equal(deps.provider.callCount, 0);
+  assert.equal(deps.creditLedger.records.length, 0);
+  assert.deepEqual(trace, ['auth', 'consent', 'payload_receipt', 'entitlement', 'breaker', 'payload']);
+});
+
 test('same request id with a changed payload hash returns conflict without another provider call', async () => {
   const deps = createFakeBrokerDependencies();
   const first = await handleResearchRequest(request(), baseContext, deps);
@@ -350,6 +374,72 @@ test('concurrent same request id and payload hash shares one in-flight provider 
   assert.equal(deps.creditLedger.reserveCount, 1);
   assert.equal(deps.creditLedger.finalizeCount, 1);
   assert.equal(deps.creditLedger.spentCreditsFor(baseContext.quota_subject), 1);
+});
+
+test('concurrent distinct requests under subject cap reserve only one in-flight credit', async () => {
+  const provider = new SlowProvider();
+  const deps = createFakeBrokerDependencies({
+    provider,
+    creditLedger: new PlaceholderCreditLedger({ perSubjectMonthlyCap: 1, brokerMonthlyCap: 100 }),
+  });
+
+  const first = handleResearchRequest(request(), baseContext, deps);
+  const second = await handleResearchRequest(
+    request({
+      request_id: '22222222-2222-4222-8222-222222222222',
+      payload_hash: 'b'.repeat(64),
+    }),
+    baseContext,
+    deps,
+  );
+  provider.resolve();
+  const firstResponse = await first;
+
+  assert.equal(firstResponse.status, 'completed');
+  assert.equal(second.status, 'rejected');
+  assert.equal(second.error?.code, 'quota_subject_monthly_cap_exceeded');
+  assert.equal(second.error?.stage, 'credit_reserve');
+  assert.equal(provider.callCount, 1);
+  assert.equal(deps.creditLedger.reserveCount, 1);
+  assert.equal(deps.creditLedger.finalizeCount, 1);
+  assert.equal(deps.creditLedger.exposedCreditsFor(baseContext.quota_subject), 1);
+  assert.deepEqual(deps.creditLedger.records.map((record) => record.state), [
+    'finalized',
+    'rejected-before-reserve',
+  ]);
+});
+
+test('concurrent distinct requests under broker cap reserve only one in-flight credit', async () => {
+  const provider = new SlowProvider();
+  const deps = createFakeBrokerDependencies({
+    provider,
+    creditLedger: new PlaceholderCreditLedger({ perSubjectMonthlyCap: 100, brokerMonthlyCap: 1 }),
+  });
+
+  const first = handleResearchRequest(request(), baseContext, deps);
+  const second = await handleResearchRequest(
+    request({
+      request_id: '22222222-2222-4222-8222-222222222222',
+      payload_hash: 'b'.repeat(64),
+    }),
+    { ...baseContext, quota_subject: 'quota_subject_v1_bbbbbbbbbbbbbbbb' },
+    deps,
+  );
+  provider.resolve();
+  const firstResponse = await first;
+
+  assert.equal(firstResponse.status, 'completed');
+  assert.equal(second.status, 'rejected');
+  assert.equal(second.error?.code, 'broker_monthly_cap_exceeded');
+  assert.equal(second.error?.stage, 'credit_reserve');
+  assert.equal(provider.callCount, 1);
+  assert.equal(deps.creditLedger.reserveCount, 1);
+  assert.equal(deps.creditLedger.finalizeCount, 1);
+  assert.equal(deps.creditLedger.exposedCredits, 1);
+  assert.deepEqual(deps.creditLedger.records.map((record) => record.state), [
+    'finalized',
+    'rejected-before-reserve',
+  ]);
 });
 
 test('provider output validation failure finalizes the reservation and counts spend', async () => {

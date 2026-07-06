@@ -58,14 +58,30 @@ export class PlaceholderCreditLedger {
       .reduce((total, record) => total + record.creditCost, 0);
   }
 
+  get exposedCredits(): number {
+    return this.records
+      .filter((record) => record.state === 'reserved' || record.state === 'finalized')
+      .reduce((total, record) => total + record.creditCost, 0);
+  }
+
   spentCreditsFor(quotaSubject: string): number {
     return this.records
       .filter((record) => record.state === 'finalized' && record.quotaSubject === quotaSubject)
       .reduce((total, record) => total + record.creditCost, 0);
   }
 
+  exposedCreditsFor(quotaSubject: string): number {
+    return this.records
+      .filter(
+        (record) =>
+          record.quotaSubject === quotaSubject &&
+          (record.state === 'reserved' || record.state === 'finalized'),
+      )
+      .reduce((total, record) => total + record.creditCost, 0);
+  }
+
   reserve(input: ReserveCreditInput): ReserveCreditResult {
-    const perSubjectProjected = this.spentCreditsFor(input.quotaSubject) + input.creditCost;
+    const perSubjectProjected = this.exposedCreditsFor(input.quotaSubject) + input.creditCost;
     if (perSubjectProjected > this.perSubjectMonthlyCap) {
       return this.rejectBeforeReserve(
         input,
@@ -74,7 +90,7 @@ export class PlaceholderCreditLedger {
       );
     }
 
-    const brokerProjected = this.spentCredits + input.creditCost;
+    const brokerProjected = this.exposedCredits + input.creditCost;
     if (brokerProjected > this.brokerMonthlyCap) {
       return this.rejectBeforeReserve(
         input,

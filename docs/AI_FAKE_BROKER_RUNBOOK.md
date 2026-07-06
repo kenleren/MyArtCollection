@@ -44,9 +44,12 @@ Firebase Functions, Secret Manager, or any provider SDK.
   spent. Consent, malformed payload, idempotency conflict, entitlement, breaker,
   and cap failures happen before provider work.
 - The cap placeholders fail closed before provider calls. Defaults are three
-  finalized credits per quota subject and 100 finalized credits broker-wide for
-  the in-memory month bucket. These are test contracts only, not durable quota
-  or billing controls.
+  exposed credits per quota subject and 100 exposed credits broker-wide for the
+  in-memory month bucket. Exposure includes both `reserved` in-flight credits
+  and `finalized` spent credits so concurrent distinct requests cannot exceed a
+  cap before provider work completes. `refunded` and `rejected-before-reserve`
+  records do not count as exposed. These are test contracts only, not durable
+  quota or billing controls.
 - The mobile bypass guard scans `lib/`, `android/`, and `ios/` for direct
   provider SDKs, provider hosts, provider key/env names, Firebase AI Logic
   direct-client usage, and direct provider network clients. Mobile code may only

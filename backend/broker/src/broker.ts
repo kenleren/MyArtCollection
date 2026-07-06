@@ -193,6 +193,9 @@ async function runReservedProviderRequest(
 }
 
 function validatePayload(request: BrokerRequest): { code: string; message: string } | undefined {
+  if (request.image.mime_type !== 'image/jpeg' && request.image.mime_type !== 'image/webp') {
+    return { code: 'unsupported_image_mime_type', message: 'Image derivative MIME type is not allowed.' };
+  }
   if (request.image.byte_size <= 0 || request.image.byte_size > 1_500_000) {
     return { code: 'invalid_image_size', message: 'Image derivative size is outside the v1 bounds.' };
   }
