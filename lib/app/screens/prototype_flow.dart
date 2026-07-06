@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 import '../../l10n/app_localizations.dart';
 import '../app_dependencies.dart';
 import '../app_routes.dart';
@@ -260,11 +261,55 @@ class _IncompleteQueueContent extends StatelessWidget {
   }
 }
 
-class ReportsHomeScreen extends StatelessWidget {
+class ReportsHomeScreen extends StatefulWidget {
   const ReportsHomeScreen({super.key});
 
   @override
+  State<ReportsHomeScreen> createState() => _ReportsHomeScreenState();
+}
+
+class _ReportsHomeScreenState extends State<ReportsHomeScreen> {
+  Future<List<_LocalArtworkSummary>>? _records;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final dependencies = _maybeDependencies(context);
+    _records ??= dependencies == null ? null : _loadLocalArtwork(dependencies);
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final dependencies = _maybeDependencies(context);
+    if (dependencies != null) {
+      return FutureBuilder<List<_LocalArtworkSummary>>(
+        future: _records,
+        builder: (context, snapshot) {
+          return _ReportsHomeContent(records: snapshot.data ?? const []);
+        },
+      );
+    }
+
+    return const _ReportsHomeContent(records: []);
+  }
+}
+
+class _ReportsHomeContent extends StatelessWidget {
+  const _ReportsHomeContent({required this.records});
+
+  final List<_LocalArtworkSummary> records;
+
+  @override
+  Widget build(BuildContext context) {
+    final locale = Localizations.maybeLocaleOf(context) ?? const Locale('en');
+    final firstSummary = records.isEmpty ? null : records.first;
+    final firstArtwork = firstSummary == null
+        ? null
+        : prototypeArtworkFromRecord(
+            firstSummary.record,
+            attachments: firstSummary.attachments,
+            locale: locale,
+          );
     return ListView(
       padding: const EdgeInsets.all(20),
       children: [
@@ -273,19 +318,28 @@ class ReportsHomeScreen extends StatelessWidget {
           subtitle: 'Generate an insurance-ready PDF',
         ),
         const SizedBox(height: 16),
-        _ReportSummary(artwork: prototypeArtwork),
-        const SizedBox(height: 16),
-        PrimaryActionButton(
-          icon: Icons.picture_as_pdf_outlined,
-          label: 'Artwork report',
-          routeName: AppRoutes.artworkReportPreview(prototypeArtwork.id),
-        ),
-        const SizedBox(height: 12),
-        SecondaryActionButton(
-          icon: Icons.archive_outlined,
-          label: 'Export your archive',
-          routeName: AppRoutes.artworkExport(prototypeArtwork.id),
-        ),
+        if (firstArtwork == null)
+          const _StatusPanel(
+            icon: Icons.inventory_2_outlined,
+            title: 'No local records available',
+            body:
+                'Add or import an artwork before generating report or archive previews.',
+          )
+        else ...[
+          _ReportSummary(artwork: firstArtwork),
+          const SizedBox(height: 16),
+          PrimaryActionButton(
+            icon: Icons.picture_as_pdf_outlined,
+            label: 'Artwork report',
+            routeName: AppRoutes.artworkReportPreview(firstArtwork.id),
+          ),
+          const SizedBox(height: 12),
+          SecondaryActionButton(
+            icon: Icons.archive_outlined,
+            label: 'Export your archive',
+            routeName: AppRoutes.artworkExport(firstArtwork.id),
+          ),
+        ],
       ],
     );
   }
@@ -310,15 +364,16 @@ class SettingsHomeScreen extends StatelessWidget {
         SizedBox(height: 12),
         _StatusPanel(
           icon: Icons.cloud_off_outlined,
-          title: 'Disconnect backup',
-          body: 'Disconnect Google Drive without changing local records.',
+          title: 'Backup connection unavailable',
+          body:
+              'Google Drive backup is not connected in this build; local records stay on this device.',
         ),
         SizedBox(height: 12),
         _StatusPanel(
           icon: Icons.ios_share_outlined,
-          title: 'Export your archive',
+          title: 'Archive export preview only',
           body:
-              'Includes confirmed fields, attached documents, and report date.',
+              'Open a saved artwork report to preview export contents. Full archive export is not enabled from settings yet.',
         ),
       ],
     );
@@ -3749,6 +3804,10 @@ class _ReportSummary extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context);
+    final locale = Localizations.maybeLocaleOf(context) ?? const Locale('en');
+    final reportDate = DateFormat.yMMMMd(
+      locale.toLanguageTag(),
+    ).format(DateTime.now());
     return _Panel(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -3760,7 +3819,7 @@ class _ReportSummary extends StatelessWidget {
             style: Theme.of(context).textTheme.titleLarge,
           ),
           const SizedBox(height: 8),
-          const Text('Report date: July 3, 2026'),
+          Text('Report date: $reportDate'),
           const SizedBox(height: 8),
           const _StatusLine(
             icon: Icons.check_circle_outline,

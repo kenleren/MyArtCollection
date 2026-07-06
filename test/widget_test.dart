@@ -441,6 +441,79 @@ void main() {
   });
 
   testWidgets(
+    'reports tab summarizes local records instead of sample artwork',
+    (WidgetTester tester) async {
+      final testDependencies = await tester.runAsync(
+        () async => _LiveDependencyFixture.create(),
+      );
+      final fixture = testDependencies!;
+      addTearDown(() async {
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.runAsync(fixture.dispose);
+      });
+
+      await tester.runAsync(() async {
+        await fixture.repository.upsert(
+          _artworkRecord(
+            id: 'local-report-record',
+            title: 'Untitled artwork',
+            state: ArtworkRecordState.verifiedByYou,
+            source: ArtworkFieldSource.userConfirmed,
+          ),
+        );
+      });
+
+      await tester.pumpWidget(
+        ArchivaleApp(
+          initialRoute: AppRoutes.collectionReport,
+          dependencies: fixture.dependencies,
+        ),
+      );
+      await pumpLiveData(tester);
+
+      expect(find.text('Reports'), findsWidgets);
+      expect(find.text('Untitled artwork'), findsOneWidget);
+      expect(find.text('Blue Interior Study'), findsNothing);
+      expect(find.text('Artwork report'), findsOneWidget);
+      expect(find.text('Export your archive'), findsOneWidget);
+
+      await tapVisible(tester, find.text('Artwork report'));
+      await pumpLiveData(tester);
+
+      expect(find.text('Report preview'), findsWidgets);
+      expect(find.text('Untitled artwork'), findsOneWidget);
+      expect(find.textContaining('Report date:'), findsOneWidget);
+      expect(find.text('Report date: July 3, 2026'), findsNothing);
+    },
+  );
+
+  testWidgets('reports tab gates report actions when no local records exist', (
+    WidgetTester tester,
+  ) async {
+    final testDependencies = await tester.runAsync(
+      () async => _LiveDependencyFixture.create(),
+    );
+    final fixture = testDependencies!;
+    addTearDown(() async {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.runAsync(fixture.dispose);
+    });
+
+    await tester.pumpWidget(
+      ArchivaleApp(
+        initialRoute: AppRoutes.collectionReport,
+        dependencies: fixture.dependencies,
+      ),
+    );
+    await pumpLiveData(tester);
+
+    expect(find.text('No local records available'), findsOneWidget);
+    expect(find.text('Blue Interior Study'), findsNothing);
+    expect(find.text('Artwork report'), findsNothing);
+    expect(find.text('Export your archive'), findsNothing);
+  });
+
+  testWidgets(
     'csv import entry shows privacy framing, mapping edits, preview categories, and cancel with no write',
     (WidgetTester tester) async {
       final testDependencies = await tester.runAsync(
@@ -2498,10 +2571,90 @@ void main() {
 
       expect(find.text('Settings'), findsWidgets);
       expect(find.text('Privacy and storage'), findsWidgets);
-      expect(find.text('Disconnect backup'), findsOneWidget);
+      expect(find.text('Backup connection unavailable'), findsOneWidget);
+      expect(find.text('Archive export preview only'), findsOneWidget);
+      expect(find.text('Disconnect backup'), findsNothing);
       expect(find.text('No artworks yet'), findsNothing);
     }
   });
+
+  testWidgets(
+    'visual evidence covers issue 131 report export settings states',
+    (WidgetTester tester) async {
+      final testDependencies = await tester.runAsync(
+        () async => _LiveDependencyFixture.create(),
+      );
+      final fixture = testDependencies!;
+      addTearDown(() async {
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.runAsync(fixture.dispose);
+      });
+
+      await tester.runAsync(() async {
+        await fixture.repository.upsert(
+          _artworkRecord(
+            id: 'issue-131-report-record',
+            title: 'Issue 131 Local Record',
+            state: ArtworkRecordState.verifiedByYou,
+            source: ArtworkFieldSource.userConfirmed,
+          ),
+        );
+        await fixture.addSupportingPhoto(
+          artworkId: 'issue-131-report-record',
+          fileName: 'issue-131-receipt.png',
+        );
+      });
+
+      await captureArtifactForApp(
+        tester,
+        routeName: AppRoutes.collectionReport,
+        dependencies: fixture.dependencies,
+        themeMode: ThemeMode.light,
+        fileName: 'issue-131-reports-light.png',
+        ensureVisibleFinder: find.text('Issue 131 Local Record'),
+      );
+      await captureArtifactForApp(
+        tester,
+        routeName: AppRoutes.artworkExport('issue-131-report-record'),
+        dependencies: fixture.dependencies,
+        themeMode: ThemeMode.light,
+        fileName: 'issue-131-export-light.png',
+        ensureVisibleFinder: find.text('Export record package'),
+      );
+      await captureArtifactForApp(
+        tester,
+        routeName: AppRoutes.collectionSettings,
+        dependencies: fixture.dependencies,
+        themeMode: ThemeMode.light,
+        fileName: 'issue-131-settings-light.png',
+        ensureVisibleFinder: find.text('Archive export preview only'),
+      );
+      await captureArtifactForApp(
+        tester,
+        routeName: AppRoutes.collectionReport,
+        dependencies: fixture.dependencies,
+        themeMode: ThemeMode.dark,
+        fileName: 'issue-131-reports-dark.png',
+        ensureVisibleFinder: find.text('Issue 131 Local Record'),
+      );
+      await captureArtifactForApp(
+        tester,
+        routeName: AppRoutes.artworkExport('issue-131-report-record'),
+        dependencies: fixture.dependencies,
+        themeMode: ThemeMode.dark,
+        fileName: 'issue-131-export-dark.png',
+        ensureVisibleFinder: find.text('Export record package'),
+      );
+      await captureArtifactForApp(
+        tester,
+        routeName: AppRoutes.collectionSettings,
+        dependencies: fixture.dependencies,
+        themeMode: ThemeMode.dark,
+        fileName: 'issue-131-settings-dark.png',
+        ensureVisibleFinder: find.text('Archive export preview only'),
+      );
+    },
+  );
 }
 
 Future<void> tapVisible(WidgetTester tester, Finder finder) async {
