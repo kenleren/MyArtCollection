@@ -112,9 +112,33 @@ void main() {
     );
     await captureVisualEvidence(
       tester,
+      routeName: AppRoutes.collection,
+      themeMode: ThemeMode.dark,
+      fileName: 'dark_collection.png',
+    );
+    await captureVisualEvidence(
+      tester,
+      routeName: AppRoutes.artworkDraft('sample-001'),
+      themeMode: ThemeMode.dark,
+      fileName: 'dark_draft_review.png',
+    );
+    await captureVisualEvidence(
+      tester,
       routeName: AppRoutes.artworkReportPreview('sample-001'),
       themeMode: ThemeMode.dark,
       fileName: 'dark_report_preview.png',
+    );
+    await captureVisualEvidence(
+      tester,
+      routeName: AppRoutes.artworkExport('sample-001'),
+      themeMode: ThemeMode.dark,
+      fileName: 'dark_export_preview.png',
+    );
+    await captureVisualEvidence(
+      tester,
+      routeName: AppRoutes.collectionSettings,
+      themeMode: ThemeMode.dark,
+      fileName: 'dark_settings.png',
     );
   });
 
@@ -1674,7 +1698,7 @@ Future<void> captureVisualEvidence(
   });
 
   final outputDirectory = Directory(
-    p.join('.dart_tool', 'issue102_visual_evidence'),
+    p.join('.dart_tool', 'issue132_visual_evidence'),
   );
   outputDirectory.createSync(recursive: true);
   final screenshotFile = File(p.join(outputDirectory.path, fileName));
