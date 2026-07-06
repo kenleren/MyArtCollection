@@ -185,6 +185,10 @@ class BrokerResearchClient implements OnlineResearchClient {
 
   @override
   Future<ResearchJob> research(OnlineResearchRequest request) async {
+    if (request.consentState != ResearchConsentState.approved) {
+      throw ResearchConsentRequiredException(request.consentState);
+    }
+
     final payload = request.brokerPayload;
     if (payload == null) {
       return _failedJob(

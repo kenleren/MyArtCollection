@@ -271,6 +271,66 @@ void main() {
     expect(endpoint.callCount, 0);
   });
 
+  test(
+    'direct broker client rejects missing consent before endpoint',
+    () async {
+      final endpoint = _RecordingFakeBrokerEndpoint(
+        const FakeBrokerAdapterErrorEnvelope(
+          status: 403,
+          body: BrokerErrorBody(
+            status: 'rejected',
+            provider: 'fake-provider',
+            error: BrokerErrorDetail(
+              code: 'consent_required',
+              message: 'Approved research consent is required.',
+              stage: 'consent',
+            ),
+          ),
+        ),
+      );
+      final client = BrokerResearchClient(endpoint: endpoint);
+
+      await expectLater(
+        client.research(
+          _brokerRequest(consentState: ResearchConsentState.missing),
+        ),
+        throwsA(isA<ResearchConsentRequiredException>()),
+      );
+
+      expect(endpoint.callCount, 0);
+    },
+  );
+
+  test(
+    'direct broker client rejects declined consent before endpoint',
+    () async {
+      final endpoint = _RecordingFakeBrokerEndpoint(
+        const FakeBrokerAdapterErrorEnvelope(
+          status: 403,
+          body: BrokerErrorBody(
+            status: 'rejected',
+            provider: 'fake-provider',
+            error: BrokerErrorDetail(
+              code: 'consent_required',
+              message: 'Approved research consent is required.',
+              stage: 'consent',
+            ),
+          ),
+        ),
+      );
+      final client = BrokerResearchClient(endpoint: endpoint);
+
+      await expectLater(
+        client.research(
+          _brokerRequest(consentState: ResearchConsentState.declined),
+        ),
+        throwsA(isA<ResearchConsentRequiredException>()),
+      );
+
+      expect(endpoint.callCount, 0);
+    },
+  );
+
   test('service accepts approved consent from a non-ui caller path', () async {
     final job = _researchJob();
     final client = _RecordingResearchClient(job);
