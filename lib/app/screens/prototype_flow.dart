@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 import '../../l10n/app_localizations.dart';
 import '../app_dependencies.dart';
 import '../app_routes.dart';
@@ -260,11 +261,55 @@ class _IncompleteQueueContent extends StatelessWidget {
   }
 }
 
-class ReportsHomeScreen extends StatelessWidget {
+class ReportsHomeScreen extends StatefulWidget {
   const ReportsHomeScreen({super.key});
 
   @override
+  State<ReportsHomeScreen> createState() => _ReportsHomeScreenState();
+}
+
+class _ReportsHomeScreenState extends State<ReportsHomeScreen> {
+  Future<List<_LocalArtworkSummary>>? _records;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final dependencies = _maybeDependencies(context);
+    _records ??= dependencies == null ? null : _loadLocalArtwork(dependencies);
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final dependencies = _maybeDependencies(context);
+    if (dependencies != null) {
+      return FutureBuilder<List<_LocalArtworkSummary>>(
+        future: _records,
+        builder: (context, snapshot) {
+          return _ReportsHomeContent(records: snapshot.data ?? const []);
+        },
+      );
+    }
+
+    return const _ReportsHomeContent(records: []);
+  }
+}
+
+class _ReportsHomeContent extends StatelessWidget {
+  const _ReportsHomeContent({required this.records});
+
+  final List<_LocalArtworkSummary> records;
+
+  @override
+  Widget build(BuildContext context) {
+    final locale = Localizations.maybeLocaleOf(context) ?? const Locale('en');
+    final firstSummary = records.isEmpty ? null : records.first;
+    final firstArtwork = firstSummary == null
+        ? null
+        : prototypeArtworkFromRecord(
+            firstSummary.record,
+            attachments: firstSummary.attachments,
+            locale: locale,
+          );
     return ListView(
       padding: const EdgeInsets.all(20),
       children: [
@@ -273,19 +318,28 @@ class ReportsHomeScreen extends StatelessWidget {
           subtitle: 'Generate an insurance-ready PDF',
         ),
         const SizedBox(height: 16),
-        _ReportSummary(artwork: prototypeArtwork),
-        const SizedBox(height: 16),
-        PrimaryActionButton(
-          icon: Icons.picture_as_pdf_outlined,
-          label: 'Artwork report',
-          routeName: AppRoutes.artworkReportPreview(prototypeArtwork.id),
-        ),
-        const SizedBox(height: 12),
-        SecondaryActionButton(
-          icon: Icons.archive_outlined,
-          label: 'Export your archive',
-          routeName: AppRoutes.artworkExport(prototypeArtwork.id),
-        ),
+        if (firstArtwork == null)
+          const _StatusPanel(
+            icon: Icons.inventory_2_outlined,
+            title: 'No local records available',
+            body:
+                'Add or import an artwork before generating report or archive previews.',
+          )
+        else ...[
+          _ReportSummary(artwork: firstArtwork),
+          const SizedBox(height: 16),
+          PrimaryActionButton(
+            icon: Icons.picture_as_pdf_outlined,
+            label: 'Artwork report',
+            routeName: AppRoutes.artworkReportPreview(firstArtwork.id),
+          ),
+          const SizedBox(height: 12),
+          SecondaryActionButton(
+            icon: Icons.archive_outlined,
+            label: 'Export your archive',
+            routeName: AppRoutes.artworkExport(firstArtwork.id),
+          ),
+        ],
       ],
     );
   }
@@ -310,15 +364,16 @@ class SettingsHomeScreen extends StatelessWidget {
         SizedBox(height: 12),
         _StatusPanel(
           icon: Icons.cloud_off_outlined,
-          title: 'Disconnect backup',
-          body: 'Disconnect Google Drive without changing local records.',
+          title: 'Backup connection unavailable',
+          body:
+              'Google Drive backup is not connected in this build; local records stay on this device.',
         ),
         SizedBox(height: 12),
         _StatusPanel(
           icon: Icons.ios_share_outlined,
-          title: 'Export your archive',
+          title: 'Archive export preview only',
           body:
-              'Includes confirmed fields, attached documents, and report date.',
+              'Open a saved artwork report to preview export contents. Full archive export is not enabled from settings yet.',
         ),
       ],
     );
@@ -353,10 +408,11 @@ class AddArtworkScreen extends StatelessWidget {
             routeName: AppRoutes.import,
           ),
           const SizedBox(height: 12),
-          SecondaryActionButton(
+          const _StatusPanel(
             icon: Icons.attach_file,
-            label: l10n.attachDocumentAction,
-            routeName: AppRoutes.artworkDocuments(prototypeArtwork.id),
+            title: 'Document upload unavailable',
+            body:
+                'Create the artwork record first. This build can add supporting photos to that record; dedicated document file upload is not available yet.',
           ),
           const SizedBox(height: 20),
           const _Notice(
@@ -413,12 +469,6 @@ class _CaptureImportScreenState extends State<CaptureImportScreen> {
             const _EvidencePhotoGuide(),
             const SizedBox(height: 12),
           ],
-          const _StatusPanel(
-            icon: Icons.error_outline,
-            title: 'Upload-failure state',
-            body:
-                'Retry is available when a document or image upload cannot finish.',
-          ),
           const SizedBox(height: 20),
           if (_result == null) ...[
             _ActionButton(
@@ -831,13 +881,6 @@ class _StaticCaptureImportScreen extends StatelessWidget {
             body:
                 'Draft created locally. If upload is interrupted, the saved draft can be reviewed later.',
           ),
-          const SizedBox(height: 12),
-          const _StatusPanel(
-            icon: Icons.error_outline,
-            title: 'Upload-failure state',
-            body:
-                'Retry is available when a document or image upload cannot finish.',
-          ),
           const SizedBox(height: 20),
           PrimaryActionButton(
             icon: Icons.rate_review_outlined,
@@ -1102,10 +1145,11 @@ class _ArtworkDetailsScreenState extends State<ArtworkDetailsScreen> {
       artwork.purchasePrice,
       ...completenessFields.skip(5),
     ];
+    final recordStateLabel = _prototypeRecordStateLabel(completenessFields);
 
     return PrototypeScreenFrame(
       title: artwork.title.value,
-      subtitle: 'Verified by you',
+      subtitle: recordStateLabel,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -1127,7 +1171,10 @@ class _ArtworkDetailsScreenState extends State<ArtworkDetailsScreen> {
             },
           ),
           const SizedBox(height: 16),
-          _CompletenessPanel(fields: completenessFields),
+          _CompletenessPanel(
+            fields: completenessFields,
+            recordStateLabel: recordStateLabel,
+          ),
           const SizedBox(height: 16),
           for (final field in displayedFields) ...[
             FieldSourceTile(field: field),
@@ -1479,18 +1526,26 @@ class _ArtworkEditScreenState extends State<ArtworkEditScreen> {
           continue;
         }
 
+        final previousValue = record.field(field.key);
+        final isPlaceholder = _isPlaceholderCoreFieldValue(field.key, value);
+        final shouldConfirm = !isPlaceholder;
         fields[field.key] = ArtworkFieldValue(
           value: value,
-          source: ArtworkFieldSource.userConfirmed,
-          note: 'Edited and confirmed by you.',
-          lastConfirmedAt: now,
+          source: shouldConfirm
+              ? ArtworkFieldSource.userConfirmed
+              : (previousValue?.source ?? ArtworkFieldSource.unknown),
+          note: shouldConfirm
+              ? 'Edited and confirmed by you.'
+              : (previousValue?.note ??
+                    'Placeholder value still needs user confirmation.'),
+          lastConfirmedAt: shouldConfirm ? now : previousValue?.lastConfirmedAt,
           moneyAmount: normalizedAmount,
           moneyCurrencyCode: normalizedCurrency,
         );
       }
 
       final updatedRecord = record.copyWith(
-        recordState: _hasCompleteConfirmedCoreFields(fields)
+        recordState: _hasCompleteReviewedCoreFields(fields)
             ? ArtworkRecordState.verifiedByYou
             : ArtworkRecordState.needsReview,
         updatedAt: now,
@@ -1564,17 +1619,17 @@ class DocumentsScreen extends StatelessWidget {
           ),
           const SizedBox(height: 12),
           const _StatusPanel(
-            icon: Icons.add_circle_outline,
-            title: 'Receipts and documents',
+            icon: Icons.block_outlined,
+            title: 'Document upload unavailable',
             body:
-                'Capture receipts, certificates, auction records, or provenance notes as supporting photos for now. Dedicated document upload will follow.',
+                'This build cannot import receipt or certificate files directly. Use supporting photos for receipts, certificates, auction records, or provenance notes for now.',
           ),
           const SizedBox(height: 12),
           const _StatusPanel(
             icon: Icons.warning_amber_outlined,
-            title: 'Missing-file state',
+            title: 'Missing-file recovery preview',
             body:
-                'If an app-private file is unavailable, the record keeps its attachment metadata and asks you to reattach it.',
+                'Error-state preview: if an app-private file becomes unavailable, the record keeps its attachment metadata and asks you to reattach it.',
           ),
           const SizedBox(height: 20),
           PrimaryActionButton(
@@ -2306,8 +2361,7 @@ class _ComparableSignalsPanel extends StatelessWidget {
       return const SizedBox.shrink();
     }
 
-    final signalCount = signals.length;
-    final signalWord = signalCount == 1 ? 'signal' : 'signals';
+    final summary = _comparableSignalsSummary(signals, sourceHits);
 
     return _Panel(
       child: Column(
@@ -2318,9 +2372,7 @@ class _ComparableSignalsPanel extends StatelessWidget {
             style: Theme.of(context).textTheme.titleMedium,
           ),
           const SizedBox(height: 6),
-          Text(
-            '$signalCount source-backed comparable $signalWord. These are source context only, not an appraisal.',
-          ),
+          Text(summary),
           const SizedBox(height: 12),
           for (final signal in signals) ...[
             _ComparableSignalCard(signal: signal, sourceHits: sourceHits),
@@ -2330,6 +2382,38 @@ class _ComparableSignalsPanel extends StatelessWidget {
       ),
     );
   }
+}
+
+String _comparableSignalsSummary(
+  List<ComparableValueSignal> signals,
+  List<ResearchSourceHit> sourceHits,
+) {
+  var sourceBackedCount = 0;
+  var hiddenCount = 0;
+
+  for (final signal in signals) {
+    final kind = _effectiveComparableKind(signal, sourceHits);
+    if (kind != signal.kind) {
+      hiddenCount += 1;
+      continue;
+    }
+    if (kind == ComparableValueKind.publicEstimate ||
+        kind == ComparableValueKind.comparableSaleSignal) {
+      sourceBackedCount += 1;
+    }
+  }
+
+  if (sourceBackedCount > 0) {
+    final signalWord = sourceBackedCount == 1 ? 'signal' : 'signals';
+    return '$sourceBackedCount source-backed comparable $signalWord. These are source context only, not an appraisal.';
+  }
+
+  if (hiddenCount > 0) {
+    final signalWord = hiddenCount == 1 ? 'signal was' : 'signals were';
+    return '$hiddenCount comparable $signalWord hidden because linked sources are missing or could not be verified.';
+  }
+
+  return 'No comparable sale or public estimate was available from verified sources.';
 }
 
 class _ComparableSignalCard extends StatelessWidget {
@@ -3351,6 +3435,7 @@ class _CollectionRecordPanel extends StatelessWidget {
     final supportingCount = summary.supportingAttachmentCount;
     final incompleteCount = summary.incompleteItems.length;
     final lifecycleStatus = record.lifecycleStatus;
+    final recordStateLabel = _recordStateLabel(record);
 
     return _Panel(
       child: Column(
@@ -3374,7 +3459,7 @@ class _CollectionRecordPanel extends StatelessWidget {
             spacing: 8,
             runSpacing: 8,
             children: [
-              _RecordStateBadge(label: record.recordState.label),
+              _RecordStateBadge(label: recordStateLabel),
               _LifecycleBadge(status: lifecycleStatus),
             ],
           ),
@@ -3652,19 +3737,17 @@ class _IncompleteItem {
 }
 
 class _CompletenessPanel extends StatelessWidget {
-  const _CompletenessPanel({required this.fields});
+  const _CompletenessPanel({
+    required this.fields,
+    required this.recordStateLabel,
+  });
 
   final List<PrototypeField> fields;
+  final String recordStateLabel;
 
   @override
   Widget build(BuildContext context) {
-    final reviewedCount = fields
-        .where(
-          (field) =>
-              field.source == PrototypeSource.userConfirmed ||
-              field.source == PrototypeSource.documentExtracted,
-        )
-        .length;
+    final reviewedCount = fields.where(_isReviewedPrototypeField).length;
     final totalCount = fields.length;
     final progress = totalCount == 0 ? 0.0 : reviewedCount / totalCount;
 
@@ -3698,9 +3781,9 @@ class _CompletenessPanel extends StatelessWidget {
             '$reviewedCount of $totalCount core fields are user-confirmed or document-reviewed.',
           ),
           const SizedBox(height: 10),
-          const _StatusLine(
+          _StatusLine(
             icon: Icons.verified_user_outlined,
-            text: 'Record state: Verified by you',
+            text: 'Record state: $recordStateLabel',
           ),
           const _StatusLine(
             icon: Icons.inventory_2_outlined,
@@ -3721,6 +3804,10 @@ class _ReportSummary extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context);
+    final locale = Localizations.maybeLocaleOf(context) ?? const Locale('en');
+    final reportDate = DateFormat.yMMMMd(
+      locale.toLanguageTag(),
+    ).format(DateTime.now());
     return _Panel(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -3732,7 +3819,7 @@ class _ReportSummary extends StatelessWidget {
             style: Theme.of(context).textTheme.titleLarge,
           ),
           const SizedBox(height: 8),
-          const Text('Report date: July 3, 2026'),
+          Text('Report date: $reportDate'),
           const SizedBox(height: 8),
           const _StatusLine(
             icon: Icons.check_circle_outline,
@@ -4003,9 +4090,12 @@ List<_IncompleteItem> _incompleteItems(
 
 List<ArtworkFieldValue> _fieldsNeedingReview(ArtworkRecord record) {
   return _coreFieldKeys
-      .map(record.field)
-      .whereType<ArtworkFieldValue>()
-      .where((field) => field.source != ArtworkFieldSource.userConfirmed)
+      .map((key) => MapEntry(key, record.field(key)))
+      .where((entry) {
+        final field = entry.value;
+        return field != null && !_isReviewedCoreField(field, key: entry.key);
+      })
+      .map((entry) => entry.value!)
       .toList(growable: false);
 }
 
@@ -4014,8 +4104,7 @@ String _reviewSafeRoute(ArtworkRecord record) {
     return AppRoutes.artworkDetails(record.id);
   }
 
-  if (record.recordState == ArtworkRecordState.verifiedByYou &&
-      _fieldsNeedingReview(record).isEmpty) {
+  if (_isVerifiedRecord(record)) {
     return AppRoutes.artworkDetails(record.id);
   }
 
@@ -4029,7 +4118,8 @@ List<String> _missingCoreFields(ArtworkRecord record) {
         final value = field?.value.trim();
         return value == null ||
             value.isEmpty ||
-            field?.source == ArtworkFieldSource.unknown;
+            field?.source == ArtworkFieldSource.unknown ||
+            _isPlaceholderCoreFieldValue(key, value);
       })
       .toList(growable: false);
 }
@@ -4115,13 +4205,89 @@ class _EditableArtworkField {
   final bool usesStructuredMoney;
 }
 
-bool _hasCompleteConfirmedCoreFields(Map<String, ArtworkFieldValue> fields) {
+bool _hasCompleteReviewedCoreFields(Map<String, ArtworkFieldValue> fields) {
   return _coreFieldKeys.every((key) {
     final field = fields[key];
-    return field != null &&
-        field.value.trim().isNotEmpty &&
-        field.source == ArtworkFieldSource.userConfirmed;
+    return field != null && _isReviewedCoreField(field, key: key);
   });
+}
+
+bool _isVerifiedRecord(ArtworkRecord record) {
+  return record.recordState == ArtworkRecordState.verifiedByYou &&
+      _hasCompleteReviewedCoreFields(record.fields);
+}
+
+String _recordStateLabel(ArtworkRecord record) {
+  if (_isVerifiedRecord(record)) {
+    return ArtworkRecordState.verifiedByYou.label;
+  }
+  return record.recordState == ArtworkRecordState.verifiedByYou
+      ? ArtworkRecordState.needsReview.label
+      : record.recordState.label;
+}
+
+bool _isReviewedCoreField(ArtworkFieldValue field, {required String key}) {
+  final value = field.value.trim();
+  if (value.isEmpty || _isPlaceholderCoreFieldValue(key, value)) {
+    return false;
+  }
+  return field.source == ArtworkFieldSource.userConfirmed ||
+      field.source == ArtworkFieldSource.documentExtracted;
+}
+
+String _prototypeRecordStateLabel(List<PrototypeField> fields) {
+  return fields.every(_isReviewedPrototypeField)
+      ? ArtworkRecordState.verifiedByYou.label
+      : ArtworkRecordState.needsReview.label;
+}
+
+bool _isReviewedPrototypeField(PrototypeField field) {
+  final value = field.value.trim();
+  if (value.isEmpty || _isPlaceholderPrototypeFieldValue(field.label, value)) {
+    return false;
+  }
+  return field.source == PrototypeSource.userConfirmed ||
+      field.source == PrototypeSource.documentExtracted;
+}
+
+bool _isPlaceholderCoreFieldValue(String key, String value) {
+  final normalized = _normalizePlaceholderValue(value);
+  return switch (key) {
+    ArtworkFieldKeys.title => normalized == 'untitled artwork',
+    ArtworkFieldKeys.artist => normalized == 'unknown',
+    ArtworkFieldKeys.year =>
+      normalized == 'unknown' || normalized == 'could not determine',
+    ArtworkFieldKeys.medium ||
+    ArtworkFieldKeys.dimensions ||
+    ArtworkFieldKeys.currentLocation ||
+    ArtworkFieldKeys.conditionNotes =>
+      normalized == 'needs review' || normalized == 'unknown',
+    ArtworkFieldKeys.insuranceValue =>
+      normalized == 'not set' ||
+          normalized == 'needs review' ||
+          normalized == 'unknown',
+    _ => false,
+  };
+}
+
+bool _isPlaceholderPrototypeFieldValue(String label, String value) {
+  final normalizedLabel = label.trim().toLowerCase();
+  final key = switch (normalizedLabel) {
+    'title' => ArtworkFieldKeys.title,
+    'artist' => ArtworkFieldKeys.artist,
+    'year' => ArtworkFieldKeys.year,
+    'medium' => ArtworkFieldKeys.medium,
+    'dimensions' => ArtworkFieldKeys.dimensions,
+    'current location' => ArtworkFieldKeys.currentLocation,
+    'user-provided insurance value' => ArtworkFieldKeys.insuranceValue,
+    'condition notes' => ArtworkFieldKeys.conditionNotes,
+    _ => '',
+  };
+  return key.isNotEmpty && _isPlaceholderCoreFieldValue(key, value);
+}
+
+String _normalizePlaceholderValue(String value) {
+  return value.trim().toLowerCase().replaceAll(RegExp(r'\s+'), ' ');
 }
 
 class ArtworkRouteData {
