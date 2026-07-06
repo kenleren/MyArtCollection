@@ -1102,10 +1102,11 @@ class _ArtworkDetailsScreenState extends State<ArtworkDetailsScreen> {
       artwork.purchasePrice,
       ...completenessFields.skip(5),
     ];
+    final recordStateLabel = _prototypeRecordStateLabel(completenessFields);
 
     return PrototypeScreenFrame(
       title: artwork.title.value,
-      subtitle: 'Verified by you',
+      subtitle: recordStateLabel,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -1127,7 +1128,10 @@ class _ArtworkDetailsScreenState extends State<ArtworkDetailsScreen> {
             },
           ),
           const SizedBox(height: 16),
-          _CompletenessPanel(fields: completenessFields),
+          _CompletenessPanel(
+            fields: completenessFields,
+            recordStateLabel: recordStateLabel,
+          ),
           const SizedBox(height: 16),
           for (final field in displayedFields) ...[
             FieldSourceTile(field: field),
@@ -1479,18 +1483,26 @@ class _ArtworkEditScreenState extends State<ArtworkEditScreen> {
           continue;
         }
 
+        final previousValue = record.field(field.key);
+        final isPlaceholder = _isPlaceholderCoreFieldValue(field.key, value);
+        final shouldConfirm = !isPlaceholder;
         fields[field.key] = ArtworkFieldValue(
           value: value,
-          source: ArtworkFieldSource.userConfirmed,
-          note: 'Edited and confirmed by you.',
-          lastConfirmedAt: now,
+          source: shouldConfirm
+              ? ArtworkFieldSource.userConfirmed
+              : (previousValue?.source ?? ArtworkFieldSource.unknown),
+          note: shouldConfirm
+              ? 'Edited and confirmed by you.'
+              : (previousValue?.note ??
+                    'Placeholder value still needs user confirmation.'),
+          lastConfirmedAt: shouldConfirm ? now : previousValue?.lastConfirmedAt,
           moneyAmount: normalizedAmount,
           moneyCurrencyCode: normalizedCurrency,
         );
       }
 
       final updatedRecord = record.copyWith(
-        recordState: _hasCompleteConfirmedCoreFields(fields)
+        recordState: _hasCompleteReviewedCoreFields(fields)
             ? ArtworkRecordState.verifiedByYou
             : ArtworkRecordState.needsReview,
         updatedAt: now,
@@ -3351,6 +3363,7 @@ class _CollectionRecordPanel extends StatelessWidget {
     final supportingCount = summary.supportingAttachmentCount;
     final incompleteCount = summary.incompleteItems.length;
     final lifecycleStatus = record.lifecycleStatus;
+    final recordStateLabel = _recordStateLabel(record);
 
     return _Panel(
       child: Column(
@@ -3374,7 +3387,7 @@ class _CollectionRecordPanel extends StatelessWidget {
             spacing: 8,
             runSpacing: 8,
             children: [
-              _RecordStateBadge(label: record.recordState.label),
+              _RecordStateBadge(label: recordStateLabel),
               _LifecycleBadge(status: lifecycleStatus),
             ],
           ),
@@ -3652,19 +3665,17 @@ class _IncompleteItem {
 }
 
 class _CompletenessPanel extends StatelessWidget {
-  const _CompletenessPanel({required this.fields});
+  const _CompletenessPanel({
+    required this.fields,
+    required this.recordStateLabel,
+  });
 
   final List<PrototypeField> fields;
+  final String recordStateLabel;
 
   @override
   Widget build(BuildContext context) {
-    final reviewedCount = fields
-        .where(
-          (field) =>
-              field.source == PrototypeSource.userConfirmed ||
-              field.source == PrototypeSource.documentExtracted,
-        )
-        .length;
+    final reviewedCount = fields.where(_isReviewedPrototypeField).length;
     final totalCount = fields.length;
     final progress = totalCount == 0 ? 0.0 : reviewedCount / totalCount;
 
@@ -3698,9 +3709,9 @@ class _CompletenessPanel extends StatelessWidget {
             '$reviewedCount of $totalCount core fields are user-confirmed or document-reviewed.',
           ),
           const SizedBox(height: 10),
-          const _StatusLine(
+          _StatusLine(
             icon: Icons.verified_user_outlined,
-            text: 'Record state: Verified by you',
+            text: 'Record state: $recordStateLabel',
           ),
           const _StatusLine(
             icon: Icons.inventory_2_outlined,
@@ -4003,9 +4014,12 @@ List<_IncompleteItem> _incompleteItems(
 
 List<ArtworkFieldValue> _fieldsNeedingReview(ArtworkRecord record) {
   return _coreFieldKeys
-      .map(record.field)
-      .whereType<ArtworkFieldValue>()
-      .where((field) => field.source != ArtworkFieldSource.userConfirmed)
+      .map((key) => MapEntry(key, record.field(key)))
+      .where((entry) {
+        final field = entry.value;
+        return field != null && !_isReviewedCoreField(field, key: entry.key);
+      })
+      .map((entry) => entry.value!)
       .toList(growable: false);
 }
 
@@ -4014,8 +4028,7 @@ String _reviewSafeRoute(ArtworkRecord record) {
     return AppRoutes.artworkDetails(record.id);
   }
 
-  if (record.recordState == ArtworkRecordState.verifiedByYou &&
-      _fieldsNeedingReview(record).isEmpty) {
+  if (_isVerifiedRecord(record)) {
     return AppRoutes.artworkDetails(record.id);
   }
 
@@ -4029,7 +4042,8 @@ List<String> _missingCoreFields(ArtworkRecord record) {
         final value = field?.value.trim();
         return value == null ||
             value.isEmpty ||
-            field?.source == ArtworkFieldSource.unknown;
+            field?.source == ArtworkFieldSource.unknown ||
+            _isPlaceholderCoreFieldValue(key, value);
       })
       .toList(growable: false);
 }
@@ -4115,13 +4129,89 @@ class _EditableArtworkField {
   final bool usesStructuredMoney;
 }
 
-bool _hasCompleteConfirmedCoreFields(Map<String, ArtworkFieldValue> fields) {
+bool _hasCompleteReviewedCoreFields(Map<String, ArtworkFieldValue> fields) {
   return _coreFieldKeys.every((key) {
     final field = fields[key];
-    return field != null &&
-        field.value.trim().isNotEmpty &&
-        field.source == ArtworkFieldSource.userConfirmed;
+    return field != null && _isReviewedCoreField(field, key: key);
   });
+}
+
+bool _isVerifiedRecord(ArtworkRecord record) {
+  return record.recordState == ArtworkRecordState.verifiedByYou &&
+      _hasCompleteReviewedCoreFields(record.fields);
+}
+
+String _recordStateLabel(ArtworkRecord record) {
+  if (_isVerifiedRecord(record)) {
+    return ArtworkRecordState.verifiedByYou.label;
+  }
+  return record.recordState == ArtworkRecordState.verifiedByYou
+      ? ArtworkRecordState.needsReview.label
+      : record.recordState.label;
+}
+
+bool _isReviewedCoreField(ArtworkFieldValue field, {required String key}) {
+  final value = field.value.trim();
+  if (value.isEmpty || _isPlaceholderCoreFieldValue(key, value)) {
+    return false;
+  }
+  return field.source == ArtworkFieldSource.userConfirmed ||
+      field.source == ArtworkFieldSource.documentExtracted;
+}
+
+String _prototypeRecordStateLabel(List<PrototypeField> fields) {
+  return fields.every(_isReviewedPrototypeField)
+      ? ArtworkRecordState.verifiedByYou.label
+      : ArtworkRecordState.needsReview.label;
+}
+
+bool _isReviewedPrototypeField(PrototypeField field) {
+  final value = field.value.trim();
+  if (value.isEmpty || _isPlaceholderPrototypeFieldValue(field.label, value)) {
+    return false;
+  }
+  return field.source == PrototypeSource.userConfirmed ||
+      field.source == PrototypeSource.documentExtracted;
+}
+
+bool _isPlaceholderCoreFieldValue(String key, String value) {
+  final normalized = _normalizePlaceholderValue(value);
+  return switch (key) {
+    ArtworkFieldKeys.title => normalized == 'untitled artwork',
+    ArtworkFieldKeys.artist => normalized == 'unknown',
+    ArtworkFieldKeys.year =>
+      normalized == 'unknown' || normalized == 'could not determine',
+    ArtworkFieldKeys.medium ||
+    ArtworkFieldKeys.dimensions ||
+    ArtworkFieldKeys.currentLocation ||
+    ArtworkFieldKeys.conditionNotes =>
+      normalized == 'needs review' || normalized == 'unknown',
+    ArtworkFieldKeys.insuranceValue =>
+      normalized == 'not set' ||
+          normalized == 'needs review' ||
+          normalized == 'unknown',
+    _ => false,
+  };
+}
+
+bool _isPlaceholderPrototypeFieldValue(String label, String value) {
+  final normalizedLabel = label.trim().toLowerCase();
+  final key = switch (normalizedLabel) {
+    'title' => ArtworkFieldKeys.title,
+    'artist' => ArtworkFieldKeys.artist,
+    'year' => ArtworkFieldKeys.year,
+    'medium' => ArtworkFieldKeys.medium,
+    'dimensions' => ArtworkFieldKeys.dimensions,
+    'current location' => ArtworkFieldKeys.currentLocation,
+    'user-provided insurance value' => ArtworkFieldKeys.insuranceValue,
+    'condition notes' => ArtworkFieldKeys.conditionNotes,
+    _ => '',
+  };
+  return key.isNotEmpty && _isPlaceholderCoreFieldValue(key, value);
+}
+
+String _normalizePlaceholderValue(String value) {
+  return value.trim().toLowerCase().replaceAll(RegExp(r'\s+'), ' ');
 }
 
 class ArtworkRouteData {

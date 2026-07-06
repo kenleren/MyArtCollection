@@ -232,6 +232,60 @@ void main() {
     );
   });
 
+  testWidgets('visual evidence captures placeholder confirmation states', (
+    WidgetTester tester,
+  ) async {
+    final testDependencies = await tester.runAsync(
+      () async => _LiveDependencyFixture.create(),
+    );
+    final fixture = testDependencies!;
+    addTearDown(() async {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.runAsync(fixture.dispose);
+    });
+
+    await tester.runAsync(() async {
+      await fixture.repository.upsert(_placeholderDraftRecord());
+      await fixture.addPrimaryImage(artworkId: 'placeholder-draft');
+    });
+
+    await captureArtifactForApp(
+      tester,
+      routeName: AppRoutes.artworkEdit('placeholder-draft'),
+      dependencies: fixture.dependencies,
+      ensureVisibleFinder: find.text('Save user-confirmed fields'),
+      fileName: 'issue-129-01-edit-placeholder-draft.png',
+    );
+
+    await capturePlaceholderSaveVisualEvidence(
+      tester,
+      dependencies: fixture.dependencies,
+      fileName: 'issue-129-02-after-save-draft.png',
+    );
+
+    await captureArtifactForApp(
+      tester,
+      routeName: AppRoutes.artworkDetails('placeholder-draft'),
+      dependencies: fixture.dependencies,
+      ensureVisibleFinder: find.text('Record state: Needs review'),
+      fileName: 'issue-129-03-detail-needs-review.png',
+    );
+
+    await captureArtifactForApp(
+      tester,
+      routeName: AppRoutes.collectionIncomplete,
+      dependencies: fixture.dependencies,
+      fileName: 'issue-129-04-incomplete-queue.png',
+    );
+
+    await captureArtifactForApp(
+      tester,
+      routeName: AppRoutes.artworkReportPreview('placeholder-draft'),
+      dependencies: fixture.dependencies,
+      fileName: 'issue-129-05-report-preview.png',
+    );
+  });
+
   testWidgets('collection shell renders and can open add artwork', (
     WidgetTester tester,
   ) async {
@@ -487,9 +541,13 @@ void main() {
     expect(find.text('Unknown'), findsOneWidget);
 
     await tapVisible(tester, find.text('Confirm suggested fields'));
-    expect(find.text('Verified by you'), findsWidgets);
+    expect(find.text('Verified by you'), findsNothing);
     expect(find.text('Blue Interior Study'), findsWidgets);
-    expect(find.text('Record state: Verified by you'), findsOneWidget);
+    expect(find.text('Record state: Needs review'), findsOneWidget);
+    expect(
+      find.text('3 of 8 core fields are user-confirmed or document-reviewed.'),
+      findsOneWidget,
+    );
 
     await tapVisible(tester, find.text('Add supporting records'));
     expect(find.text('Documents'), findsWidgets);
@@ -871,7 +929,8 @@ void main() {
     );
     await tester.pump();
 
-    expect(find.text('Verified by you'), findsWidgets);
+    expect(find.text('Verified by you'), findsNothing);
+    expect(find.text('Record state: Needs review'), findsOneWidget);
     expect(find.text('Photo Preview Artwork'), findsWidgets);
     expect(
       find.byKey(const ValueKey('primary-artwork-image-preview')),
@@ -1352,6 +1411,161 @@ void main() {
       findsNothing,
     );
     expect(find.textContaining('Removed Incomplete Artwork'), findsNothing);
+  });
+
+  testWidgets('saving unchanged placeholder draft does not verify defaults', (
+    WidgetTester tester,
+  ) async {
+    final testDependencies = await tester.runAsync(
+      () async => _LiveDependencyFixture.create(),
+    );
+    final fixture = testDependencies!;
+    addTearDown(() async {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.runAsync(fixture.dispose);
+    });
+
+    await tester.runAsync(() async {
+      await fixture.repository.upsert(_placeholderDraftRecord());
+      await fixture.addPrimaryImage(artworkId: 'placeholder-draft');
+    });
+
+    await tester.pumpWidget(
+      ArchivaleApp(
+        initialRoute: AppRoutes.artworkEdit('placeholder-draft'),
+        dependencies: fixture.dependencies,
+      ),
+    );
+    await pumpLiveData(tester);
+
+    expect(find.text('Untitled artwork'), findsOneWidget);
+    expect(find.text('Unknown'), findsOneWidget);
+    expect(find.text('Needs review'), findsWidgets);
+
+    await tapVisible(tester, find.text('Save user-confirmed fields'));
+    await pumpLiveData(tester);
+
+    final saved = await tester.runAsync(
+      () => fixture.repository.get('placeholder-draft'),
+    );
+    expect(saved, isNotNull);
+    expect(saved!.recordState, ArtworkRecordState.needsReview);
+    expect(
+      saved.field(ArtworkFieldKeys.title)?.source,
+      ArtworkFieldSource.unknown,
+    );
+    expect(saved.field(ArtworkFieldKeys.title)?.lastConfirmedAt, isNull);
+    expect(
+      saved.field(ArtworkFieldKeys.conditionNotes)?.source,
+      ArtworkFieldSource.unknown,
+    );
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+    await tester.pumpWidget(
+      ArchivaleApp(
+        initialRoute: AppRoutes.artworkDetails('placeholder-draft'),
+        dependencies: fixture.dependencies,
+      ),
+    );
+    await pumpLiveData(tester);
+    await tester.runAsync(
+      () async => Future<void>.delayed(const Duration(milliseconds: 500)),
+    );
+    await tester.pump();
+
+    expect(find.text('Record state: Needs review'), findsOneWidget);
+    expect(
+      find.text('0 of 8 core fields are user-confirmed or document-reviewed.'),
+      findsOneWidget,
+    );
+    expect(find.text('Verified by you'), findsNothing);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+    await tester.pumpWidget(
+      ArchivaleApp(
+        initialRoute: AppRoutes.collectionIncomplete,
+        dependencies: fixture.dependencies,
+      ),
+    );
+    await pumpLiveData(tester);
+
+    expect(find.text('Untitled artwork needs review'), findsOneWidget);
+    expect(find.text('Untitled artwork has missing values'), findsOneWidget);
+  });
+
+  testWidgets('partially edited placeholder draft stays in review', (
+    WidgetTester tester,
+  ) async {
+    final testDependencies = await tester.runAsync(
+      () async => _LiveDependencyFixture.create(),
+    );
+    final fixture = testDependencies!;
+    addTearDown(() async {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.runAsync(fixture.dispose);
+    });
+
+    await tester.runAsync(() async {
+      await fixture.repository.upsert(
+        _placeholderDraftRecord(id: 'partial-placeholder-draft'),
+      );
+      await fixture.addPrimaryImage(artworkId: 'partial-placeholder-draft');
+    });
+
+    await tester.pumpWidget(
+      ArchivaleApp(
+        initialRoute: AppRoutes.artworkEdit('partial-placeholder-draft'),
+        dependencies: fixture.dependencies,
+      ),
+    );
+    await pumpLiveData(tester);
+
+    await enterVisibleText(
+      tester,
+      find.byKey(const ValueKey('artwork-edit-title')),
+      'Confirmed Partial Title',
+    );
+    await tapVisible(tester, find.text('Save user-confirmed fields'));
+    await pumpLiveData(tester);
+
+    final saved = await tester.runAsync(
+      () => fixture.repository.get('partial-placeholder-draft'),
+    );
+    expect(saved, isNotNull);
+    expect(saved!.recordState, ArtworkRecordState.needsReview);
+    expect(
+      saved.field(ArtworkFieldKeys.title)?.source,
+      ArtworkFieldSource.userConfirmed,
+    );
+    expect(
+      saved.field(ArtworkFieldKeys.artist)?.source,
+      ArtworkFieldSource.unknown,
+    );
+    expect(saved.field(ArtworkFieldKeys.artist)?.lastConfirmedAt, isNull);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+    await tester.pumpWidget(
+      ArchivaleApp(
+        initialRoute: AppRoutes.artworkDetails('partial-placeholder-draft'),
+        dependencies: fixture.dependencies,
+      ),
+    );
+    await pumpLiveData(tester);
+    await tester.runAsync(
+      () async => Future<void>.delayed(const Duration(milliseconds: 500)),
+    );
+    await tester.pump();
+
+    expect(find.text('Confirmed Partial Title'), findsWidgets);
+    expect(find.text('Record state: Needs review'), findsOneWidget);
+    expect(
+      find.text('1 of 8 core fields are user-confirmed or document-reviewed.'),
+      findsOneWidget,
+    );
+    expect(find.text('Verified by you'), findsNothing);
   });
 
   testWidgets('manual edits persist as user-confirmed local fields', (
@@ -2164,6 +2378,37 @@ Future<void> captureArtifactForApp(
   await captureBoundaryToArtifacts(tester, boundaryKey, fileName);
 }
 
+Future<void> capturePlaceholderSaveVisualEvidence(
+  WidgetTester tester, {
+  required AppDependencies dependencies,
+  required String fileName,
+}) async {
+  await _configureMobileViewport(tester);
+
+  final boundaryKey = GlobalKey();
+  await tester.pumpWidget(
+    RepaintBoundary(
+      key: boundaryKey,
+      child: ArchivaleApp(
+        initialRoute: AppRoutes.artworkEdit('placeholder-draft'),
+        dependencies: dependencies,
+      ),
+    ),
+  );
+  await pumpLiveData(tester);
+  await tapVisible(tester, find.text('Save user-confirmed fields'));
+  await pumpLiveData(tester);
+  await tester.runAsync(
+    () async => Future<void>.delayed(const Duration(milliseconds: 500)),
+  );
+  await tester.pump();
+  await waitForFinder(tester, find.text('Draft review'), attempts: 60);
+  await tester.ensureVisible(find.text('Untitled artwork'));
+  await tester.pump();
+
+  await captureBoundaryToArtifacts(tester, boundaryKey, fileName);
+}
+
 Future<void> captureCsvImportPreviewVisualEvidence(
   WidgetTester tester, {
   required AppDependencies dependencies,
@@ -2504,6 +2749,35 @@ ArtworkRecord _artworkRecord({
                     ? now
                     : null,
               ),
+    },
+  );
+}
+
+ArtworkRecord _placeholderDraftRecord({String id = 'placeholder-draft'}) {
+  final now = DateTime.utc(2026, 7, 4, 12);
+  const placeholders = {
+    ArtworkFieldKeys.title: 'Untitled artwork',
+    ArtworkFieldKeys.artist: 'Unknown',
+    ArtworkFieldKeys.year: 'Could not determine',
+    ArtworkFieldKeys.medium: 'Needs review',
+    ArtworkFieldKeys.dimensions: 'Needs review',
+    ArtworkFieldKeys.currentLocation: 'Needs review',
+    ArtworkFieldKeys.insuranceValue: 'Not set',
+    ArtworkFieldKeys.conditionNotes: 'Needs review',
+  };
+  return ArtworkRecord(
+    id: id,
+    recordState: ArtworkRecordState.needsReview,
+    primaryImageAttachmentId: 'primary-$id',
+    createdAt: now,
+    updatedAt: now,
+    fields: {
+      for (final entry in placeholders.entries)
+        entry.key: ArtworkFieldValue(
+          value: entry.value,
+          source: ArtworkFieldSource.unknown,
+          note: 'Placeholder fixture.',
+        ),
     },
   );
 }
