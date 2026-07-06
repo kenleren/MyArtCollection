@@ -5,6 +5,98 @@
       "firebase.json",
       "**/.*",
       "**/node_modules/**"
+    ],
+    "headers": [
+      {
+        "source": "/",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "public, max-age=0, s-maxage=0, must-revalidate"
+          }
+        ]
+      },
+      {
+        "source": "/privacy/",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "public, max-age=0, s-maxage=0, must-revalidate"
+          }
+        ]
+      },
+      {
+        "source": "/support/",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "public, max-age=0, s-maxage=0, must-revalidate"
+          }
+        ]
+      },
+      {
+        "source": "/pricing/",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "public, max-age=0, s-maxage=0, must-revalidate"
+          }
+        ]
+      },
+      {
+        "source": "/blog/",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "public, max-age=0, s-maxage=0, must-revalidate"
+          }
+        ]
+      },
+      {
+        "source": "/blog/collector-records-that-age-well/",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "public, max-age=0, s-maxage=0, must-revalidate"
+          }
+        ]
+      },
+      {
+        "source": "/blog/how-to-document-artwork-for-insurance-conversations/",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "public, max-age=0, s-maxage=0, must-revalidate"
+          }
+        ]
+      },
+      {
+        "source": "/**/*.html",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "public, max-age=0, s-maxage=0, must-revalidate"
+          }
+        ]
+      },
+      {
+        "source": "/styles.css",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "public, max-age=3600, must-revalidate"
+          }
+        ]
+      },
+      {
+        "source": "/assets/**",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "public, max-age=3600, must-revalidate"
+          }
+        ]
+      }
     ]
   }
 }
