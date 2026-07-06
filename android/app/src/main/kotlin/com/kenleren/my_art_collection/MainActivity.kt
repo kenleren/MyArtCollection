@@ -40,7 +40,7 @@ class MainActivity : FlutterActivity() {
                         try {
                             result.success(nativeOnDeviceAiProvider().checkAvailability())
                         } catch (error: Exception) {
-                            result.success(unavailableCapability("On-device AI status check failed: ${error.safeMessage()}"))
+                            result.success(unavailableCapability("On-device AI status check failed."))
                         }
                     }
                 }
@@ -66,11 +66,15 @@ class MainActivity : FlutterActivity() {
                         try {
                             result.success(nativeOnDeviceAiProvider().createDraft(primaryImagePath))
                         } catch (error: OnDeviceAiNotReadyException) {
-                            result.error("ON_DEVICE_AI_NOT_READY", error.message, null)
+                            result.error(
+                                "ON_DEVICE_AI_NOT_READY",
+                                "On-device AI is not ready yet.",
+                                null,
+                            )
                         } catch (error: Exception) {
                             result.error(
                                 "ON_DEVICE_AI_FAILED",
-                                "On-device AI draft failed: ${error.safeMessage()}",
+                                "On-device AI draft failed.",
                                 null,
                             )
                         }
@@ -224,6 +228,3 @@ private fun JSONObject.optionalStringArray(name: String): List<String> {
         .mapNotNull { index -> array.optString(index).trim().takeIf { it.isNotBlank() } }
         .take(5)
 }
-
-private fun Exception.safeMessage(): String =
-    message?.lineSequence()?.firstOrNull()?.take(160) ?: javaClass.simpleName
