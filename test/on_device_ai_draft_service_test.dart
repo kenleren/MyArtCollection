@@ -147,6 +147,30 @@ void main() {
     },
   );
 
+  test('persists download-failed state as sanitized not-ready copy', () async {
+    const privateDownloadDiagnostic =
+        'AICore download failed for /data/user/0/app/files/private-image.png';
+    final service = OnDeviceAiDraftService(
+      repository: repository,
+      attachmentStore: attachmentStore,
+      provider: const _UnavailableProvider(
+        availability: OnDeviceAiAvailability.downloadFailed,
+        message: privateDownloadDiagnostic,
+      ),
+      now: _clock(),
+      idFactory: _fixedId('download-failed'),
+    );
+
+    final job = await service.createDraftForPrimaryImage(
+      record: record,
+      primaryImage: primaryImage,
+    );
+
+    expect(job.status, AiDraftJobStatus.unavailable);
+    expect(job.errorMessage, contains('ON_DEVICE_AI_DOWNLOAD_FAILED'));
+    expect(job.errorMessage, isNot(contains(privateDownloadDiagnostic)));
+  });
+
   test('persists completed private draft without confirming fields', () async {
     final service = OnDeviceAiDraftService(
       repository: repository,
@@ -329,6 +353,35 @@ void main() {
     expect(outboundMap.containsKey('artworkId'), isFalse);
     expect(outboundMap.containsKey('primaryImageAttachmentId'), isFalse);
   });
+
+  test('method-channel downloadModel maps download-failed state', () async {
+    final channel = MethodChannel(
+      'my_art_collection_on_device_ai_test_${DateTime.now().microsecondsSinceEpoch}',
+    );
+    final provider = MethodChannelOnDeviceAiDraftProvider(
+      channel: channel,
+      isEnabled: true,
+    );
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+
+    addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      expect(call.method, 'downloadModel');
+      return <String, Object?>{
+        'availability': 'download_failed',
+        'deviceModel': 'Pixel test device',
+        'message': 'native status download_failed',
+      };
+    });
+
+    final capability = await provider.downloadModel();
+
+    expect(capability.availability, OnDeviceAiAvailability.downloadFailed);
+    expect(capability.canRunDraft, isFalse);
+    expect(capability.canStartDownload, isTrue);
+  });
 }
 
 ArtworkRecord _record() {
@@ -399,6 +452,11 @@ class _UnavailableProvider implements OnDeviceAiDraftProvider {
   }
 
   @override
+  Future<OnDeviceAiCapability> downloadModel() async {
+    return checkAvailability();
+  }
+
+  @override
   Future<OnDeviceAiDraftResult> createDraft(OnDeviceAiDraftRequest request) {
     throw StateError('createDraft must not run when status is $availability');
   }
@@ -413,6 +471,11 @@ class _AvailableFakeProvider implements OnDeviceAiDraftProvider {
       availability: OnDeviceAiAvailability.available,
       deviceModel: 'Pixel test device',
     );
+  }
+
+  @override
+  Future<OnDeviceAiCapability> downloadModel() async {
+    return checkAvailability();
   }
 
   @override
@@ -445,6 +508,11 @@ class _ThrowingAvailableProvider implements OnDeviceAiDraftProvider {
   }
 
   @override
+  Future<OnDeviceAiCapability> downloadModel() async {
+    return checkAvailability();
+  }
+
+  @override
   Future<OnDeviceAiDraftResult> createDraft(OnDeviceAiDraftRequest request) {
     throw PlatformException(
       code: 'NATIVE_PRIVATE_DIAGNOSTIC',
@@ -469,6 +537,11 @@ class _CapturingAvailableProvider implements OnDeviceAiDraftProvider {
       availability: OnDeviceAiAvailability.available,
       deviceModel: 'Pixel local-only device',
     );
+  }
+
+  @override
+  Future<OnDeviceAiCapability> downloadModel() async {
+    return checkAvailability();
   }
 
   @override
