@@ -1422,6 +1422,15 @@ class _ArtworkDetailsScreenState extends State<ArtworkDetailsScreen> {
       if (record == null) {
         throw StateError('Record not found');
       }
+      if (record.lifecycleStatus != ArtworkLifecycleStatus.active &&
+          status == ArtworkLifecycleStatus.active) {
+        final gate = await _loadCreationGate(dependencies);
+        if (!gate.canAddRequestedArtworkCount) {
+          throw StateError(
+            'This plan has no room for another active artwork. Existing records stay viewable, editable, and exportable.',
+          );
+        }
+      }
       final updatedRecord = record.copyWith(
         lifecycleStatus: status,
         updatedAt: DateTime.now().toUtc(),

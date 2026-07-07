@@ -2127,6 +2127,89 @@ void main() {
     },
   );
 
+  testWidgets(
+    'free plan blocks lifecycle reactivation when active limit is reached',
+    (WidgetTester tester) async {
+      final testDependencies = await tester.runAsync(
+        () async => _LiveDependencyFixture.create(),
+      );
+      final fixture = testDependencies!;
+      addTearDown(() async {
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.runAsync(fixture.dispose);
+      });
+
+      await tester.runAsync(() async {
+        for (var index = 0; index < 5; index += 1) {
+          await fixture.repository.upsert(
+            _artworkRecord(
+              id: 'lifecycle-active-free-$index',
+              title: 'Lifecycle Active Free $index',
+              state: ArtworkRecordState.verifiedByYou,
+              source: ArtworkFieldSource.userConfirmed,
+            ),
+          );
+        }
+        await fixture.repository.upsert(
+          _artworkRecord(
+            id: 'lifecycle-sold-free',
+            title: 'Lifecycle Sold Free',
+            state: ArtworkRecordState.verifiedByYou,
+            lifecycleStatus: ArtworkLifecycleStatus.sold,
+            source: ArtworkFieldSource.userConfirmed,
+          ),
+        );
+      });
+
+      await tester.pumpWidget(
+        ArchivaleApp(
+          initialRoute: AppRoutes.artworkDetails('lifecycle-sold-free'),
+          dependencies: fixture.dependencies,
+        ),
+      );
+      await pumpLiveData(tester);
+
+      await waitForFinder(tester, find.text('Lifecycle status'));
+      await pumpLiveData(tester);
+      expect(find.text('Lifecycle status'), findsOneWidget);
+      await waitForFinder(
+        tester,
+        find.text(
+          'This artwork is retained in your records but marked sold.',
+          skipOffstage: false,
+        ),
+        attempts: 60,
+      );
+      expect(find.widgetWithText(ActionChip, 'Active'), findsOneWidget);
+
+      await tapVisible(tester, find.widgetWithText(ActionChip, 'Active'));
+      await pumpLiveData(tester);
+
+      final records = await tester.runAsync<List<ArtworkRecord>>(
+        fixture.repository.list,
+      );
+      final savedRecords = records!;
+      final activeCount = savedRecords
+          .where(
+            (record) => record.lifecycleStatus == ArtworkLifecycleStatus.active,
+          )
+          .length;
+      final soldRecord = savedRecords.firstWhere(
+        (record) => record.id == 'lifecycle-sold-free',
+      );
+
+      expect(activeCount, 5);
+      expect(soldRecord.lifecycleStatus, ArtworkLifecycleStatus.sold);
+      expect(
+        find.textContaining(
+          'This plan has no room for another active artwork',
+          skipOffstage: false,
+        ),
+        findsOneWidget,
+      );
+    },
+  );
+
   testWidgets('incomplete queue separates non-active lifecycle records', (
     WidgetTester tester,
   ) async {
