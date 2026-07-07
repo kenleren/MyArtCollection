@@ -183,17 +183,20 @@ automation.
 
 | Tier | Artwork volume | Manual records, photos, view/edit, export | AI, research, and document processing |
 | --- | --- | --- | --- |
-| Free | Up to 5 active artworks | Included; users can view, edit, and export their own records | One-time small trial allowance, such as 5 credits total |
-| Collector | More than 5 active artworks; no hard MVP limit documented publicly | Included, plus reports, completeness queue, document organization, and archive export | Included monthly pool, such as 25 credits/month across AI intake, online research, and document extraction |
+| Free | Up to 5 active artworks | Included; users can view, edit, and export their own records | 1 AI credit/month |
+| Starter | Up to 50 active artworks | Included, plus enough room for a small personal collection | 10 AI credits/month |
+| Collector | Up to 200 active artworks | Included, plus room for a growing private collection | 50 AI credits/month |
+| Archive | Unlimited active artworks | Included with no active-artwork cap | 200 AI credits/month |
 | Optional credits/add-ons | Does not change manual cataloging access | Does not gate record access, manual edits, or export | Later credit packs for heavier AI, research, and document processing only |
 
 Recommended starting price posture:
 
-- Collector: USD 5.99/month introductory price or USD 49/year.
-- Keep the annual plan prominent so the effective monthly price answers the
-  "few bucks a month" concern.
-- Revisit USD 8 to 12/month or USD 79 to 99/year only after conversion,
-  retention, and processing-cost evidence supports it.
+- Free: USD 0.
+- Starter: USD 2.99/month.
+- Collector: USD 4.99/month.
+- Archive: USD 9.99/month.
+- Revisit annual plans only after conversion, retention, and support-cost
+  evidence supports the discount structure.
 
 Safety and trust rules:
 

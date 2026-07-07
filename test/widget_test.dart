@@ -11,6 +11,7 @@ import 'package:my_art_collection/app/ai/on_device_ai_draft_service.dart';
 import 'package:my_art_collection/app/app.dart';
 import 'package:my_art_collection/app/app_dependencies.dart';
 import 'package:my_art_collection/app/app_routes.dart';
+import 'package:my_art_collection/app/billing/entitlement_plan.dart';
 import 'package:my_art_collection/app/config/app_feature_flags.dart';
 import 'package:my_art_collection/app/import/csv_import_file_picker.dart';
 import 'package:my_art_collection/app/intake/artwork_image_picker.dart';
@@ -481,6 +482,220 @@ void main() {
     expect(find.textContaining('appraise value'), findsNothing);
   });
 
+  testWidgets('free plan gates new artwork growth without hiding records', (
+    WidgetTester tester,
+  ) async {
+    final testDependencies = await tester.runAsync(
+      () async => _LiveDependencyFixture.create(),
+    );
+    final fixture = testDependencies!;
+    addTearDown(() async {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.runAsync(fixture.dispose);
+    });
+
+    await tester.runAsync(() async {
+      for (var index = 1; index <= 5; index += 1) {
+        await fixture.repository.upsert(
+          _artworkRecord(
+            id: 'free-limit-$index',
+            title: 'Free Limit Artwork $index',
+            state: ArtworkRecordState.verifiedByYou,
+            source: ArtworkFieldSource.userConfirmed,
+          ),
+        );
+      }
+    });
+
+    await tester.pumpWidget(
+      ArchivaleApp(
+        initialRoute: AppRoutes.collection,
+        dependencies: fixture.dependencies,
+      ),
+    );
+    await pumpLiveData(tester);
+
+    expect(find.text('Free Limit Artwork 1'), findsOneWidget);
+    expect(
+      find.textContaining('Free plan: 5 of 5 active records'),
+      findsOneWidget,
+    );
+    await tester.scrollUntilVisible(find.text('Free plan limit reached'), 300);
+    await tester.pump();
+
+    expect(find.text('Free plan limit reached'), findsOneWidget);
+    expect(
+      find.textContaining('Existing records stay viewable'),
+      findsOneWidget,
+    );
+    expect(find.widgetWithText(FilledButton, 'Add artwork'), findsNothing);
+    expect(find.text('Import CSV'), findsNothing);
+  });
+
+  testWidgets('direct add route respects the free active-artwork cap', (
+    WidgetTester tester,
+  ) async {
+    final testDependencies = await tester.runAsync(
+      () async => _LiveDependencyFixture.create(),
+    );
+    final fixture = testDependencies!;
+    addTearDown(() async {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.runAsync(fixture.dispose);
+    });
+
+    await tester.runAsync(() async {
+      for (var index = 1; index <= 5; index += 1) {
+        await fixture.repository.upsert(
+          _artworkRecord(
+            id: 'direct-free-limit-$index',
+            title: 'Direct Free Limit Artwork $index',
+            state: ArtworkRecordState.verifiedByYou,
+            source: ArtworkFieldSource.userConfirmed,
+          ),
+        );
+      }
+    });
+
+    await tester.pumpWidget(
+      ArchivaleApp(
+        initialRoute: AppRoutes.collectionAdd,
+        dependencies: fixture.dependencies,
+      ),
+    );
+    await pumpLiveData(tester);
+
+    expect(find.text('Add artwork'), findsWidgets);
+    expect(find.text('Free plan limit reached'), findsOneWidget);
+    expect(find.text('Take photo'), findsNothing);
+    expect(find.text('Import photo'), findsNothing);
+  });
+
+  testWidgets('free plan ignores retained inactive records for add gates', (
+    WidgetTester tester,
+  ) async {
+    final testDependencies = await tester.runAsync(
+      () async => _LiveDependencyFixture.create(),
+    );
+    final fixture = testDependencies!;
+    addTearDown(() async {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.runAsync(fixture.dispose);
+    });
+
+    await tester.runAsync(() async {
+      for (var index = 1; index <= 4; index += 1) {
+        await fixture.repository.upsert(
+          _artworkRecord(
+            id: 'active-free-$index',
+            title: 'Active Free Artwork $index',
+            state: ArtworkRecordState.verifiedByYou,
+            source: ArtworkFieldSource.userConfirmed,
+          ),
+        );
+      }
+      await fixture.repository.upsert(
+        _artworkRecord(
+          id: 'removed-free-record',
+          title: 'Removed Free Record',
+          state: ArtworkRecordState.verifiedByYou,
+          lifecycleStatus: ArtworkLifecycleStatus.removed,
+          source: ArtworkFieldSource.userConfirmed,
+        ),
+      );
+    });
+
+    await tester.pumpWidget(
+      ArchivaleApp(
+        initialRoute: AppRoutes.collection,
+        dependencies: fixture.dependencies,
+      ),
+    );
+    await pumpLiveData(tester);
+
+    expect(
+      find.textContaining('Free plan: 4 of 5 active records'),
+      findsOneWidget,
+    );
+    await tester.scrollUntilVisible(find.text('Removed Free Record'), 300);
+    await tester.pump();
+    expect(find.text('Removed Free Record'), findsOneWidget);
+    await tester.scrollUntilVisible(
+      find.widgetWithText(FilledButton, 'Add artwork'),
+      300,
+    );
+    await tester.pump();
+    expect(find.widgetWithText(FilledButton, 'Add artwork'), findsOneWidget);
+
+    await tapVisible(tester, find.widgetWithText(FilledButton, 'Add artwork'));
+
+    expect(find.text('Take photo'), findsOneWidget);
+    expect(find.text('Import photo'), findsOneWidget);
+    expect(find.text('Free plan limit reached'), findsNothing);
+  });
+
+  testWidgets(
+    'direct import rechecks plan before writing a stale sixth record',
+    (WidgetTester tester) async {
+      final testDependencies = await tester.runAsync(
+        () async => _LiveDependencyFixture.create(),
+      );
+      final fixture = testDependencies!;
+      addTearDown(() async {
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.runAsync(fixture.dispose);
+      });
+
+      await tester.runAsync(() async {
+        for (var index = 1; index <= 4; index += 1) {
+          await fixture.repository.upsert(
+            _artworkRecord(
+              id: 'stale-free-$index',
+              title: 'Stale Free Artwork $index',
+              state: ArtworkRecordState.verifiedByYou,
+              source: ArtworkFieldSource.userConfirmed,
+            ),
+          );
+        }
+      });
+      final sourceImage = await tester.runAsync(
+        () => fixture.writePngSource('stale-import.png'),
+      );
+
+      await tester.pumpWidget(
+        ArchivaleApp(
+          initialRoute: AppRoutes.import,
+          dependencies: fixture.dependenciesWithPicker(
+            _SingleImagePicker(sourceImage!),
+          ),
+        ),
+      );
+      await pumpLiveData(tester);
+
+      expect(find.text('Choose from system picker'), findsOneWidget);
+
+      await tester.runAsync(() async {
+        await fixture.repository.upsert(
+          _artworkRecord(
+            id: 'stale-free-fifth',
+            title: 'Stale Free Fifth Artwork',
+            state: ArtworkRecordState.verifiedByYou,
+            source: ArtworkFieldSource.userConfirmed,
+          ),
+        );
+      });
+
+      await tapVisible(tester, find.text('Choose from system picker'));
+      await pumpLiveData(tester);
+
+      expect(find.text('Free plan limit reached'), findsOneWidget);
+      expect(find.text('Photo imported'), findsNothing);
+
+      final records = await tester.runAsync(fixture.repository.list);
+      expect(records, hasLength(5));
+    },
+  );
+
   testWidgets(
     'reports tab summarizes local records instead of sample artwork',
     (WidgetTester tester) async {
@@ -726,6 +941,218 @@ void main() {
       expect(find.text('Add evidence photos next'), findsOneWidget);
     },
   );
+
+  testWidgets('csv import blocks writes that exceed the free artwork cap', (
+    WidgetTester tester,
+  ) async {
+    final testDependencies = await tester.runAsync(
+      () async => _LiveDependencyFixture.create(),
+    );
+    final fixture = testDependencies!;
+    addTearDown(() async {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.runAsync(fixture.dispose);
+    });
+
+    await tester.runAsync(() async {
+      for (var index = 1; index <= 4; index += 1) {
+        await fixture.repository.upsert(
+          _artworkRecord(
+            id: 'csv-free-limit-$index',
+            title: 'CSV Free Limit Artwork $index',
+            state: ArtworkRecordState.verifiedByYou,
+            source: ArtworkFieldSource.userConfirmed,
+          ),
+        );
+      }
+    });
+
+    final csvFile = await tester.runAsync(
+      () => fixture.writeTextSource('over-limit-import.csv', _csvImportCsv),
+    );
+
+    await tester.pumpWidget(
+      ArchivaleApp(
+        initialRoute: AppRoutes.collectionImportCsv,
+        dependencies: fixture.dependencies,
+      ),
+    );
+    await pumpLiveData(tester);
+
+    await enterVisibleText(
+      tester,
+      find.byKey(const ValueKey('csv-test-harness-path-field')),
+      csvFile!.path,
+    );
+    await pressAsyncButton(
+      tester,
+      find.widgetWithText(OutlinedButton, 'Load test harness path'),
+    );
+    await waitForFinder(
+      tester,
+      find.byKey(const ValueKey('csv-mapping-Work Name')),
+    );
+    await selectDropdownItem(
+      tester,
+      find.byKey(const ValueKey('csv-mapping-Work Name')),
+      'field:title',
+    );
+    await pumpLiveData(tester);
+
+    expect(find.text('Plan limit before import'), findsOneWidget);
+    expect(
+      find.textContaining('This import would add 3 active artworks'),
+      findsOneWidget,
+    );
+    expect(
+      find.widgetWithText(FilledButton, 'Confirm local import'),
+      findsNothing,
+    );
+
+    final recordsAfterBlockedImport = await tester.runAsync(
+      fixture.repository.list,
+    );
+    expect(recordsAfterBlockedImport, hasLength(4));
+  });
+
+  testWidgets('csv import counts only active existing records for plan gates', (
+    WidgetTester tester,
+  ) async {
+    final testDependencies = await tester.runAsync(
+      () async => _LiveDependencyFixture.create(),
+    );
+    final fixture = testDependencies!;
+    addTearDown(() async {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.runAsync(fixture.dispose);
+    });
+
+    await tester.runAsync(() async {
+      for (var index = 1; index <= 4; index += 1) {
+        await fixture.repository.upsert(
+          _artworkRecord(
+            id: 'csv-active-free-$index',
+            title: 'CSV Active Free Artwork $index',
+            state: ArtworkRecordState.verifiedByYou,
+            source: ArtworkFieldSource.userConfirmed,
+          ),
+        );
+      }
+      await fixture.repository.upsert(
+        _artworkRecord(
+          id: 'csv-sold-free-record',
+          title: 'CSV Sold Free Record',
+          state: ArtworkRecordState.verifiedByYou,
+          lifecycleStatus: ArtworkLifecycleStatus.sold,
+          source: ArtworkFieldSource.userConfirmed,
+        ),
+      );
+    });
+
+    final csvFile = await tester.runAsync(
+      () => fixture.writeTextSource(
+        'one-active-import.csv',
+        'Work Name\nOne More Active Artwork\n',
+      ),
+    );
+
+    await tester.pumpWidget(
+      ArchivaleApp(
+        initialRoute: AppRoutes.collectionImportCsv,
+        dependencies: fixture.dependencies,
+      ),
+    );
+    await pumpLiveData(tester);
+
+    await enterVisibleText(
+      tester,
+      find.byKey(const ValueKey('csv-test-harness-path-field')),
+      csvFile!.path,
+    );
+    await pressAsyncButton(
+      tester,
+      find.widgetWithText(OutlinedButton, 'Load test harness path'),
+    );
+    await waitForFinder(
+      tester,
+      find.byKey(const ValueKey('csv-mapping-Work Name')),
+    );
+    await selectDropdownItem(
+      tester,
+      find.byKey(const ValueKey('csv-mapping-Work Name')),
+      'field:title',
+    );
+    await pumpLiveData(tester);
+
+    expect(find.text('Plan limit before import'), findsNothing);
+    await pressAsyncButton(
+      tester,
+      find.widgetWithText(FilledButton, 'Confirm local import'),
+    );
+
+    expect(find.text('Local CSV import complete'), findsOneWidget);
+    final records = await tester.runAsync(fixture.repository.list);
+    expect(records, hasLength(6));
+    expect(
+      records!
+          .where(
+            (record) => record.lifecycleStatus == ArtworkLifecycleStatus.active,
+          )
+          .length,
+      5,
+    );
+  });
+
+  testWidgets('visual evidence covers Play billing gate states', (
+    WidgetTester tester,
+  ) async {
+    final testDependencies = await tester.runAsync(
+      () async => _LiveDependencyFixture.create(),
+    );
+    final fixture = testDependencies!;
+    addTearDown(() async {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.runAsync(fixture.dispose);
+    });
+
+    await tester.runAsync(() async {
+      for (var index = 1; index <= 5; index += 1) {
+        await fixture.repository.upsert(
+          _artworkRecord(
+            id: 'billing-visual-$index',
+            title: 'Billing Visual Artwork $index',
+            state: ArtworkRecordState.verifiedByYou,
+            source: ArtworkFieldSource.userConfirmed,
+          ),
+        );
+      }
+    });
+
+    await captureCollectionLimitVisualEvidence(
+      tester,
+      dependencies: fixture.dependencies,
+      fileName: 'issue-139-collection-limit-light.png',
+    );
+    await captureArtifactForApp(
+      tester,
+      routeName: AppRoutes.collectionAdd,
+      dependencies: fixture.dependencies,
+      themeMode: ThemeMode.light,
+      fileName: 'issue-139-add-artwork-limit-light.png',
+      ensureVisibleFinder: find.text('Free plan limit reached'),
+    );
+
+    final csvFile = await tester.runAsync(
+      () => fixture.writeTextSource('billing-limit-import.csv', _csvImportCsv),
+    );
+    await captureCsvImportPreviewVisualEvidence(
+      tester,
+      dependencies: fixture.dependencies,
+      csvPath: csvFile!.path,
+      fileName: 'issue-139-csv-limit-light.png',
+      ensureVisibleFinder: find.text('Plan limit before import'),
+    );
+  });
 
   testWidgets('collection shell localizes supported mobile locales', (
     WidgetTester tester,
@@ -2895,6 +3322,30 @@ Future<void> captureArtifactForApp(
   await captureBoundaryToArtifacts(tester, boundaryKey, fileName);
 }
 
+Future<void> captureCollectionLimitVisualEvidence(
+  WidgetTester tester, {
+  required AppDependencies dependencies,
+  required String fileName,
+}) async {
+  await _configureMobileViewport(tester);
+
+  final boundaryKey = GlobalKey();
+  await tester.pumpWidget(
+    RepaintBoundary(
+      key: boundaryKey,
+      child: ArchivaleApp(
+        initialRoute: AppRoutes.collection,
+        dependencies: dependencies,
+        themeMode: ThemeMode.light,
+      ),
+    ),
+  );
+  await pumpLiveData(tester);
+  await tester.scrollUntilVisible(find.text('Free plan limit reached'), 300);
+  await tester.pump();
+  await captureBoundaryToArtifacts(tester, boundaryKey, fileName);
+}
+
 Future<void> captureImportActionVisualEvidence(
   WidgetTester tester, {
   required AppDependencies dependencies,
@@ -3230,6 +3681,7 @@ class _LiveDependencyFixture {
     ArtworkImagePicker? imagePicker,
     CsvImportFilePicker csvImportFilePicker = const _NoCsvPicker(),
     AppFeatureFlags featureFlags = const AppFeatureFlags(),
+    EntitlementService entitlementService = const FixedEntitlementService(),
   }) {
     return AppDependencies(
       artworkRepository: repository,
@@ -3237,6 +3689,7 @@ class _LiveDependencyFixture {
       imagePicker: imagePicker ?? _NoLostImagePicker(),
       csvImportFilePicker: csvImportFilePicker,
       featureFlags: featureFlags,
+      entitlementService: entitlementService,
       onDeviceAiDraftProvider: onDeviceAiDraftProvider,
     );
   }
