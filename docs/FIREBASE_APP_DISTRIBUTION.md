@@ -39,6 +39,14 @@ flutter build apk --release \
   --dart-define=MY_ART_COLLECTION_INTERNAL_BETA_CRASHLYTICS=true
 ```
 
+This release APK path is now fail-closed on Android release signing. Before any
+real `--release` APK build, the operator must provide complete signing inputs
+through exactly one supported source contract: ignored `android/key.properties`,
+`MY_ART_COLLECTION_ANDROID_RELEASE_*` Gradle properties, or
+`MY_ART_COLLECTION_ANDROID_RELEASE_*` environment variables. The build must not
+fall back to the Android debug key, and mixed-source release-signing inputs are
+rejected to keep local and CI behavior aligned.
+
 ## One-Time Firebase Setup
 
 1. Create or choose a Firebase project.
@@ -52,6 +60,12 @@ flutter build apk --release \
 6. Download the Android `google-services.json` and place it only at
    `android/app/google-services.json` on the local machine that performs the
    internal beta build.
+7. Separately provide Android release-signing inputs outside source control
+   before any `flutter build apk --release` run. Phase 1 supports ignored
+   `android/key.properties`, `MY_ART_COLLECTION_ANDROID_RELEASE_*` Gradle
+   properties, or `MY_ART_COLLECTION_ANDROID_RELEASE_*` environment variables.
+   Use only one source contract per build. Keep keystores and secret values
+   outside repo evidence.
 
 Do not commit `google-services.json`, service-account JSON, Firebase tokens, or
 tester email lists.
@@ -61,7 +75,8 @@ human-owned Firebase app/config for `app.archivale`. Agents must not inspect,
 copy, or validate the local Firebase config file.
 
 See [Secret Hygiene](SECRET_HYGIENE.md) for the repository guardrail, ignored
-legacy `/google/` boundary, and Firebase service-account rotation gate.
+legacy `/google/` boundary, Android release-signing handling, and Firebase
+service-account rotation gate.
 
 The Android Gradle Firebase plugins are applied only when the Gradle environment
 has `MY_ART_COLLECTION_FIREBASE_ANDROID=true`. Crashlytics runtime collection
@@ -143,7 +158,9 @@ scripts/firebase_app_distribution_upload.sh
 
 The script fails before upload when `FIREBASE_APP_ID` or `APK_PATH` is missing,
 the APK is missing, or the Firebase CLI is unavailable. It does not default to a
-debug APK; pass the exact artifact intended for the tester release.
+debug APK; pass the exact artifact intended for the tester release. The release
+APK build also fails closed when Android release-signing inputs are absent or
+incomplete.
 
 ## Release Evidence
 
@@ -156,6 +173,9 @@ Record these on the linked Project issue for each real upload:
 - release notes file or summary
 - Firebase release id or console link
 - install verification result from at least one tester/device
+
+Do not include keystore names, secret file paths, passwords, aliases, inline
+secret-bearing commands, or raw signing output in the issue evidence.
 
 ## Revoke / Rollback
 
@@ -181,4 +201,5 @@ To remove Crashlytics from an internal beta path:
 
 This repository can prepare and validate the APK and upload command safely.
 A real Firebase upload still requires configured Firebase project access,
-credentials outside the repository, and explicit release evidence.
+credentials outside the repository, Android release-signing inputs outside the
+repository, and explicit release evidence.

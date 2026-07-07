@@ -73,7 +73,9 @@ Android beta distribution is documented in
 tester delivery layer by default. Crashlytics can be enabled only for Android
 internal beta crash triage with an explicit release build flag; local/debug
 collection remains off. Credential handling and repository secret scanning are
-documented in [Secret Hygiene](docs/SECRET_HYGIENE.md).
+documented in [Secret Hygiene](docs/SECRET_HYGIENE.md). Play-ready Android
+release APK/AAB builds now require owner-provided release-signing inputs
+outside the repository and fail closed when those inputs are absent.
 
 Primary audience:
 

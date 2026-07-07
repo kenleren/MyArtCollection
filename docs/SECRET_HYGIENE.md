@@ -1,8 +1,8 @@
 # Secret Hygiene
 
-This repository treats Firebase credentials, tester lists, and local Firebase
-debug output as non-source artifacts. They must stay out of Git history and out
-of pull request logs.
+This repository treats Firebase credentials, Android release-signing material,
+tester lists, and local debug output as non-source artifacts. They must stay
+out of Git history and out of pull request logs.
 
 ## Firebase Credential Rules
 
@@ -19,18 +19,45 @@ of pull request logs.
 - Do not paste credential values into issue comments, release notes, CI logs,
   screenshots, or scanner baselines.
 
+## Android Release Signing Rules
+
+- Keep Android release-signing inputs outside tracked source control. The
+  supported Phase 1 contract is exactly one of:
+  - ignored `android/key.properties`
+  - `MY_ART_COLLECTION_ANDROID_RELEASE_*` Gradle properties
+  - `MY_ART_COLLECTION_ANDROID_RELEASE_*` environment variables
+  Do not mix sources inside one release build. If both Gradle properties and
+  environment variables are present for the same key with different values, the
+  Android release build fails closed.
+- Do not commit, print, validate, move, screenshot, or paste keystores, upload
+  keys, signing passwords, aliases, or secret-bearing property files.
+- Do not expose secret file paths, `storeFile` values, full signing commands
+  with inline secrets, or CI variable values in issue comments, docs, PR text,
+  screenshots, or logs.
+- Sanitized evidence may name the contract only at the level of:
+  `android/key.properties`, `MY_ART_COLLECTION_ANDROID_RELEASE_*`, build type,
+  artifact type (`APK` or `AAB`), branch, commit, version, and pass/fail
+  outcome.
+- Real signed-artifact verification remains a Phase 2 owner-run step until the
+  upload-key strategy, secret storage owner, alias contract, and first signed
+  build operator are explicitly decided.
+
 ## Secret Scan
 
-Run the repository guardrail before pushing Firebase or release-process changes:
+Run the repository guardrail before pushing Firebase, release-signing, or
+release-process changes:
 
 ```sh
 scripts/secret_scan.sh
 ```
 
-The wrapper first blocks tracked Firebase credential/config paths, then runs
-Gitleaks with `.gitleaks.toml` and full redaction enabled. If Gitleaks is not
-installed, the wrapper fails closed with install guidance instead of silently
-skipping the scan.
+The wrapper first blocks tracked Firebase credential/config paths and tracked
+Android signing paths such as `android/key.properties`, `*.keystore`, `*.jks`,
+and rotated backup variants such as `*.jks.old`. It then blocks tracked signing
+credential assignments, including copied assignments in Markdown docs, before
+running Gitleaks with `.gitleaks.toml` and full redaction enabled. If Gitleaks
+is not installed, the wrapper fails closed with install guidance instead of
+silently skipping the scan.
 
 The GitHub Actions `Secret Scan` workflow installs the pinned Gitleaks release,
 verifies the release archive checksum, and runs the same wrapper against full
