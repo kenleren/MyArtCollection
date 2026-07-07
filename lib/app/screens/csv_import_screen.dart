@@ -1115,9 +1115,14 @@ Future<_CsvImportPlanGate> _loadCsvImportPlanGate({
   required int selectedImportRowCount,
 }) async {
   final records = await dependencies.artworkRepository.list();
+  final activeArtworkCount = records
+      .where(
+        (record) => record.lifecycleStatus == ArtworkLifecycleStatus.active,
+      )
+      .length;
   final entitlementState = await dependencies.entitlementService.currentState();
   return _CsvImportPlanGate(
-    currentActiveArtworkCount: records.length,
+    currentActiveArtworkCount: activeArtworkCount,
     selectedImportRowCount: selectedImportRowCount,
     entitlementState: entitlementState,
   );

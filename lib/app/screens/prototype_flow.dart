@@ -139,6 +139,7 @@ class _CollectionHomeScreenState extends State<CollectionHomeScreen> {
           final data = snapshot.data ?? _CollectionHomeData.empty;
           return _CollectionHomeContent(
             records: data.records,
+            currentActiveArtworkCount: data.currentActiveArtworkCount,
             entitlementState: data.entitlementState,
           );
         },
@@ -147,6 +148,7 @@ class _CollectionHomeScreenState extends State<CollectionHomeScreen> {
 
     return const _CollectionHomeContent(
       records: [],
+      currentActiveArtworkCount: 0,
       entitlementState: EntitlementState(plan: EntitlementPlans.free),
     );
   }
@@ -155,10 +157,12 @@ class _CollectionHomeScreenState extends State<CollectionHomeScreen> {
 class _CollectionHomeContent extends StatelessWidget {
   const _CollectionHomeContent({
     required this.records,
+    required this.currentActiveArtworkCount,
     required this.entitlementState,
   });
 
   final List<_LocalArtworkSummary> records;
+  final int currentActiveArtworkCount;
   final EntitlementState entitlementState;
 
   @override
@@ -166,7 +170,7 @@ class _CollectionHomeContent extends StatelessWidget {
     final l10n = AppLocalizations.of(context);
     final plan = entitlementState.plan;
     final canAddArtwork = plan.canAddActiveArtworks(
-      currentActiveArtworkCount: records.length,
+      currentActiveArtworkCount: currentActiveArtworkCount,
     );
     return ListView(
       padding: const EdgeInsets.all(20),
@@ -177,7 +181,7 @@ class _CollectionHomeContent extends StatelessWidget {
         ),
         const SizedBox(height: 16),
         _LimitHint(
-          currentActiveArtworkCount: records.length,
+          currentActiveArtworkCount: currentActiveArtworkCount,
           entitlementState: entitlementState,
         ),
         const SizedBox(height: 16),
@@ -202,7 +206,7 @@ class _CollectionHomeContent extends StatelessWidget {
             ),
           ] else
             _BillingGatePanel(
-              currentActiveArtworkCount: records.length,
+              currentActiveArtworkCount: currentActiveArtworkCount,
               entitlementState: entitlementState,
             ),
           const SizedBox(height: 12),
@@ -649,16 +653,20 @@ class _CaptureImportScreenState extends State<CaptureImportScreen> {
 
   Future<void> _runIntake() async {
     await _withBusyState(() async {
-      final service = AppDependencyScope.of(context).createIntakeService();
+      final dependencies = AppDependencyScope.of(context);
+      await _ensureCanCreateArtwork(dependencies);
+      final service = dependencies.createIntakeService();
       return _isImport ? service.importImage() : service.captureImage();
     });
   }
 
   Future<void> _recoverLostImage() async {
     await _withBusyState(() async {
-      final recovered = await AppDependencyScope.of(
-        context,
-      ).createIntakeService().recoverLostImage();
+      final dependencies = AppDependencyScope.of(context);
+      await _ensureCanCreateArtwork(dependencies);
+      final recovered = await dependencies
+          .createIntakeService()
+          .recoverLostImage();
       if (recovered == null) {
         throw const ArtworkIntakeException(
           ArtworkIntakeFailure.sourceUnavailable,
@@ -667,6 +675,23 @@ class _CaptureImportScreenState extends State<CaptureImportScreen> {
       }
       return recovered;
     });
+  }
+
+  Future<void> _ensureCanCreateArtwork(AppDependencies dependencies) async {
+    final gate = await _loadCreationGate(dependencies);
+    if (mounted) {
+      setState(() {
+        _creationGate = Future.value(gate);
+      });
+    }
+    if (gate.canAddRequestedArtworkCount) {
+      return;
+    }
+
+    throw const ArtworkIntakeException(
+      ArtworkIntakeFailure.sourceUnavailable,
+      'This plan has no room for another active artwork. Existing records stay viewable, editable, and exportable.',
+    );
   }
 
   Future<void> _withBusyState(
@@ -4180,15 +4205,18 @@ Future<List<_LocalArtworkSummary>> _loadLocalArtwork(
 class _CollectionHomeData {
   const _CollectionHomeData({
     required this.records,
+    required this.currentActiveArtworkCount,
     required this.entitlementState,
   });
 
   static const empty = _CollectionHomeData(
     records: [],
+    currentActiveArtworkCount: 0,
     entitlementState: EntitlementState(plan: EntitlementPlans.free),
   );
 
   final List<_LocalArtworkSummary> records;
+  final int currentActiveArtworkCount;
   final EntitlementState entitlementState;
 }
 
@@ -4215,9 +4243,16 @@ Future<_CollectionHomeData> _loadCollectionHomeData(
   AppDependencies dependencies,
 ) async {
   final records = await _loadLocalArtwork(dependencies);
+  final activeArtworkCount = records
+      .where(
+        (summary) =>
+            summary.record.lifecycleStatus == ArtworkLifecycleStatus.active,
+      )
+      .length;
   final entitlementState = await dependencies.entitlementService.currentState();
   return _CollectionHomeData(
     records: records,
+    currentActiveArtworkCount: activeArtworkCount,
     entitlementState: entitlementState,
   );
 }
@@ -4227,9 +4262,14 @@ Future<_CreationGate> _loadCreationGate(
   int requestedAdditionalArtworkCount = 1,
 }) async {
   final records = await dependencies.artworkRepository.list();
+  final activeArtworkCount = records
+      .where(
+        (record) => record.lifecycleStatus == ArtworkLifecycleStatus.active,
+      )
+      .length;
   final entitlementState = await dependencies.entitlementService.currentState();
   return _CreationGate(
-    currentActiveArtworkCount: records.length,
+    currentActiveArtworkCount: activeArtworkCount,
     entitlementState: entitlementState,
     requestedAdditionalArtworkCount: requestedAdditionalArtworkCount,
   );
