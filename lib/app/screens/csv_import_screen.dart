@@ -5,6 +5,7 @@ import 'package:path/path.dart' as p;
 
 import '../app_dependencies.dart';
 import '../app_routes.dart';
+import '../billing/entitlement_plan.dart';
 import '../import/csv_artwork_import_service.dart';
 import '../import/csv_import_file_picker.dart';
 import '../storage/artwork_record.dart';
@@ -126,27 +127,13 @@ class _CsvImportScreenState extends State<CsvImportScreen> {
             ],
             if (summary == null) ...[
               const SizedBox(height: 16),
-              SizedBox(
-                width: double.infinity,
-                child: FilledButton.icon(
-                  onPressed:
-                      _isSaving || !_hasRowsSelectedForImport(preview)
-                      ? null
-                      : _confirmImport,
-                  icon: const Icon(Icons.check_circle_outline),
-                  label: Text(
-                    _isSaving ? 'Saving locally...' : 'Confirm local import',
-                  ),
-                ),
-              ),
-              const SizedBox(height: 12),
-              SizedBox(
-                width: double.infinity,
-                child: OutlinedButton.icon(
-                  onPressed: _isSaving ? null : _resetFlow,
-                  icon: const Icon(Icons.close),
-                  label: const Text('Cancel without writing'),
-                ),
+              _CsvConfirmActions(
+                dependencies: dependencies,
+                selectedImportRowCount: _selectedImportRowCount(preview),
+                isSaving: _isSaving,
+                hasRowsSelected: _hasRowsSelectedForImport(preview),
+                onConfirm: _confirmImport,
+                onCancel: _resetFlow,
               ),
             ],
           ],
@@ -204,7 +191,8 @@ class _CsvImportScreenState extends State<CsvImportScreen> {
           decoration: const InputDecoration(
             labelText: 'Test harness path',
             hintText: '/path/to/collector-import.csv',
-            helperText: 'Optional local file path for simulator or widget-test QA.',
+            helperText:
+                'Optional local file path for simulator or widget-test QA.',
           ),
         ),
         const SizedBox(height: 12),
@@ -226,10 +214,7 @@ class _CsvImportScreenState extends State<CsvImportScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          'Header mapping',
-          style: Theme.of(context).textTheme.titleMedium,
-        ),
+        Text('Header mapping', style: Theme.of(context).textTheme.titleMedium),
         const SizedBox(height: 6),
         const Text(
           'Adjust any header before importing. Columns can map to canonical fields, stay as unresolved references, append to notes, or be skipped.',
@@ -286,7 +271,8 @@ class _CsvImportScreenState extends State<CsvImportScreen> {
         ),
         _CsvInlineStatus(
           icon: Icons.copy_all_outlined,
-          text: 'Duplicate candidate: ${categories[_PreviewCategory.duplicate]}',
+          text:
+              'Duplicate candidate: ${categories[_PreviewCategory.duplicate]}',
         ),
         _CsvInlineStatus(
           icon: Icons.block_outlined,
@@ -482,11 +468,13 @@ class _CsvImportScreenState extends State<CsvImportScreen> {
 
     try {
       final dependencies = AppDependencyScope.of(context);
-      final preview = dependencies.createCsvArtworkImportService().previewFromBytes(
-        selectedFile.bytes,
-        existingRecords: await dependencies.artworkRepository.list(),
-        headerMappings: headerMappings,
-      );
+      final preview = dependencies
+          .createCsvArtworkImportService()
+          .previewFromBytes(
+            selectedFile.bytes,
+            existingRecords: await dependencies.artworkRepository.list(),
+            headerMappings: headerMappings,
+          );
       if (!mounted) {
         return;
       }
@@ -551,7 +539,22 @@ class _CsvImportScreenState extends State<CsvImportScreen> {
     });
 
     try {
-      final repository = AppDependencyScope.of(context).artworkRepository;
+      final dependencies = AppDependencyScope.of(context);
+      final planGate = await _loadCsvImportPlanGate(
+        dependencies: dependencies,
+        selectedImportRowCount: _selectedImportRowCount(preview),
+      );
+      if (!planGate.canImport) {
+        if (!mounted) {
+          return;
+        }
+        setState(() {
+          _errorMessage = planGate.limitMessage;
+        });
+        return;
+      }
+
+      final repository = dependencies.artworkRepository;
       final importedIds = <String>[];
       for (final row in preview.rows) {
         if (!_shouldImportRow(row)) {
@@ -608,13 +611,18 @@ class _CsvImportScreenState extends State<CsvImportScreen> {
     return preview.rows.any(_shouldImportRow);
   }
 
+  int _selectedImportRowCount(CsvArtworkImportPreview preview) {
+    return preview.rows.where(_shouldImportRow).length;
+  }
+
   bool _shouldImportRow(CsvArtworkImportRowPreview row) {
     final category = _rowCategory(row);
     if (category == _PreviewCategory.blocked || row.record == null) {
       return false;
     }
     if (category == _PreviewCategory.duplicate) {
-      return _duplicateChoices[row.rowNumber] == _DuplicateImportChoice.importAsNew;
+      return _duplicateChoices[row.rowNumber] ==
+          _DuplicateImportChoice.importAsNew;
     }
     return true;
   }
@@ -649,10 +657,7 @@ class _CsvMappingRow extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          header,
-          style: Theme.of(context).textTheme.labelLarge,
-        ),
+        Text(header, style: Theme.of(context).textTheme.labelLarge),
         const SizedBox(height: 8),
         DropdownButtonFormField<String>(
           key: ValueKey('csv-mapping-$header'),
@@ -743,9 +748,7 @@ class _CsvPreviewRowCard extends StatelessWidget {
                 ..add(duplicateChoice),
               onSelectionChanged: onDuplicateChoiceChanged == null
                   ? null
-                  : (selection) => onDuplicateChoiceChanged!(
-                      selection.first,
-                    ),
+                  : (selection) => onDuplicateChoiceChanged!(selection.first),
               showSelectedIcon: false,
             ),
           ],
@@ -845,10 +848,7 @@ class _CsvPanel extends StatelessWidget {
         borderRadius: BorderRadius.circular(8),
         border: Border.all(color: theme.colorScheme.outlineVariant),
       ),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: child,
-      ),
+      child: Padding(padding: const EdgeInsets.all(16), child: child),
     );
   }
 }
@@ -981,6 +981,146 @@ enum _PreviewCategory {
   const _PreviewCategory(this.label);
 
   final String label;
+}
+
+class _CsvConfirmActions extends StatelessWidget {
+  const _CsvConfirmActions({
+    required this.dependencies,
+    required this.selectedImportRowCount,
+    required this.isSaving,
+    required this.hasRowsSelected,
+    required this.onConfirm,
+    required this.onCancel,
+  });
+
+  final AppDependencies dependencies;
+  final int selectedImportRowCount;
+  final bool isSaving;
+  final bool hasRowsSelected;
+  final VoidCallback onConfirm;
+  final VoidCallback onCancel;
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<_CsvImportPlanGate>(
+      future: _loadCsvImportPlanGate(
+        dependencies: dependencies,
+        selectedImportRowCount: selectedImportRowCount,
+      ),
+      builder: (context, snapshot) {
+        final planGate = snapshot.data;
+        if (hasRowsSelected && planGate != null && !planGate.canImport) {
+          return Column(
+            children: [
+              _CsvPanel(
+                child: _CsvPanelBody(
+                  icon: Icons.workspace_premium_outlined,
+                  title: 'Plan limit before import',
+                  body: planGate.limitMessage,
+                ),
+              ),
+              const SizedBox(height: 12),
+              _CancelImportButton(isSaving: isSaving, onCancel: onCancel),
+            ],
+          );
+        }
+
+        final isCheckingPlan = hasRowsSelected && planGate == null;
+        return Column(
+          children: [
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton.icon(
+                onPressed: isSaving || !hasRowsSelected || isCheckingPlan
+                    ? null
+                    : onConfirm,
+                icon: const Icon(Icons.check_circle_outline),
+                label: Text(
+                  isSaving
+                      ? 'Saving locally...'
+                      : isCheckingPlan
+                      ? 'Checking plan...'
+                      : 'Confirm local import',
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            _CancelImportButton(isSaving: isSaving, onCancel: onCancel),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _CancelImportButton extends StatelessWidget {
+  const _CancelImportButton({required this.isSaving, required this.onCancel});
+
+  final bool isSaving;
+  final VoidCallback onCancel;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: double.infinity,
+      child: OutlinedButton.icon(
+        onPressed: isSaving ? null : onCancel,
+        icon: const Icon(Icons.close),
+        label: const Text('Cancel without writing'),
+      ),
+    );
+  }
+}
+
+class _CsvImportPlanGate {
+  const _CsvImportPlanGate({
+    required this.currentActiveArtworkCount,
+    required this.selectedImportRowCount,
+    required this.entitlementState,
+  });
+
+  final int currentActiveArtworkCount;
+  final int selectedImportRowCount;
+  final EntitlementState entitlementState;
+
+  bool get canImport {
+    return entitlementState.plan.canAddActiveArtworks(
+      currentActiveArtworkCount: currentActiveArtworkCount,
+      additionalArtworkCount: selectedImportRowCount,
+    );
+  }
+
+  String get limitMessage {
+    final plan = entitlementState.plan;
+    var upgradePlan = EntitlementPlans.archive;
+    for (final candidate in EntitlementPlans.all) {
+      if (candidate.id == plan.id) {
+        continue;
+      }
+      if (candidate.canAddActiveArtworks(
+        currentActiveArtworkCount: currentActiveArtworkCount,
+        additionalArtworkCount: selectedImportRowCount,
+      )) {
+        upgradePlan = candidate;
+        break;
+      }
+    }
+
+    return 'This import would add $selectedImportRowCount active artwork${selectedImportRowCount == 1 ? '' : 's'} to $currentActiveArtworkCount existing active artwork${currentActiveArtworkCount == 1 ? '' : 's'}. Existing records remain editable and exportable. Upgrade to ${upgradePlan.name} (${upgradePlan.priceLabel}) when Play Billing is connected.';
+  }
+}
+
+Future<_CsvImportPlanGate> _loadCsvImportPlanGate({
+  required AppDependencies dependencies,
+  required int selectedImportRowCount,
+}) async {
+  final records = await dependencies.artworkRepository.list();
+  final entitlementState = await dependencies.entitlementService.currentState();
+  return _CsvImportPlanGate(
+    currentActiveArtworkCount: records.length,
+    selectedImportRowCount: selectedImportRowCount,
+    entitlementState: entitlementState,
+  );
 }
 
 class _CsvMappingOption {

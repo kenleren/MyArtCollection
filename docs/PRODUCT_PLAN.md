@@ -138,17 +138,20 @@ Concise entitlement table:
 
 | Tier | Artwork volume | Manual/basic product access | AI, research, and document processing |
 | --- | --- | --- | --- |
-| Free | Up to 5 active artworks | Manual records, photos, basic collection/list/detail view, edits, and full export of own data | One-time small trial allowance, such as 5 credits total |
-| Collector | More than 5 active artworks; public copy should avoid promising infinite scale before cost data exists | All Free access, plus reports, completeness queue, document organization, archive export, and paid collection growth | Included monthly pool, such as 25 credits/month shared across AI intake, online research, and document extraction |
+| Free | Up to 5 active artworks | Manual records, photos, basic collection/list/detail view, edits, and full export of own data | 1 AI credit/month |
+| Starter | Up to 50 active artworks | All Free access, plus room for a small personal collection | 10 AI credits/month |
+| Collector | Up to 200 active artworks | All Starter access, plus room for a growing private collection | 50 AI credits/month |
+| Archive | Unlimited active artworks | All Collector access, plus no active-artwork cap | 200 AI credits/month |
 | Optional credits/add-ons | No effect on manual catalog size or access rules | No effect on cataloging, record access, edits, or export safety | Later credit packs for heavier processing users only |
 
 Recommended starting price:
 
-- Collector at USD 5.99/month introductory pricing or USD 49/year.
-- Present annual as the best-value path to answer "few bucks a month" pricing
-  sensitivity without adding a lower starter tier.
-- Defer Collector Plus until real usage data shows a need for household
-  sharing, larger included processing pools, or advanced exports.
+- Free at USD 0.
+- Starter at USD 2.99/month.
+- Collector at USD 4.99/month.
+- Archive at USD 9.99/month.
+- Keep annual plans as follow-up pricing work after monthly conversion and
+  support costs are better understood.
 
 Do not price around Google storage volume. Google owns that layer in the user's mind.
 

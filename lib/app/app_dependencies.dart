@@ -1,6 +1,7 @@
 import 'package:flutter/widgets.dart';
 
 import 'ai/on_device_ai_draft_service.dart';
+import 'billing/entitlement_plan.dart';
 import 'config/app_feature_flags.dart';
 import 'import/csv_artwork_import_service.dart';
 import 'import/csv_import_file_picker.dart';
@@ -18,6 +19,7 @@ class AppDependencies {
     required this.imagePicker,
     this.csvImportFilePicker = const SystemCsvImportFilePicker(),
     this.featureFlags = const AppFeatureFlags(),
+    this.entitlementService = const FixedEntitlementService(),
     this.onDeviceAiDraftProvider = const DisabledOnDeviceAiDraftProvider(),
     this.onlineResearchClient,
   });
@@ -27,6 +29,7 @@ class AppDependencies {
   final ArtworkImagePicker imagePicker;
   final CsvImportFilePicker csvImportFilePicker;
   final AppFeatureFlags featureFlags;
+  final EntitlementService entitlementService;
   final OnDeviceAiDraftProvider onDeviceAiDraftProvider;
   final OnlineResearchClient? onlineResearchClient;
 

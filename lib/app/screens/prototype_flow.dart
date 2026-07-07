@@ -5,6 +5,7 @@ import 'package:intl/intl.dart';
 import '../../l10n/app_localizations.dart';
 import '../app_dependencies.dart';
 import '../app_routes.dart';
+import '../billing/entitlement_plan.dart';
 import '../intake/artwork_intake_service.dart';
 import '../intake/supporting_attachment_service.dart';
 import '../localization/app_currency_formatter.dart';
@@ -117,39 +118,56 @@ class CollectionHomeScreen extends StatefulWidget {
 }
 
 class _CollectionHomeScreenState extends State<CollectionHomeScreen> {
-  Future<List<_LocalArtworkSummary>>? _records;
+  Future<_CollectionHomeData>? _data;
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
     final dependencies = _maybeDependencies(context);
-    _records ??= dependencies == null ? null : _loadLocalArtwork(dependencies);
+    _data ??= dependencies == null
+        ? null
+        : _loadCollectionHomeData(dependencies);
   }
 
   @override
   Widget build(BuildContext context) {
     final dependencies = _maybeDependencies(context);
     if (dependencies != null) {
-      return FutureBuilder<List<_LocalArtworkSummary>>(
-        future: _records,
+      return FutureBuilder<_CollectionHomeData>(
+        future: _data,
         builder: (context, snapshot) {
-          return _CollectionHomeContent(records: snapshot.data ?? const []);
+          final data = snapshot.data ?? _CollectionHomeData.empty;
+          return _CollectionHomeContent(
+            records: data.records,
+            entitlementState: data.entitlementState,
+          );
         },
       );
     }
 
-    return const _CollectionHomeContent(records: []);
+    return const _CollectionHomeContent(
+      records: [],
+      entitlementState: EntitlementState(plan: EntitlementPlans.free),
+    );
   }
 }
 
 class _CollectionHomeContent extends StatelessWidget {
-  const _CollectionHomeContent({required this.records});
+  const _CollectionHomeContent({
+    required this.records,
+    required this.entitlementState,
+  });
 
   final List<_LocalArtworkSummary> records;
+  final EntitlementState entitlementState;
 
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context);
+    final plan = entitlementState.plan;
+    final canAddArtwork = plan.canAddActiveArtworks(
+      currentActiveArtworkCount: records.length,
+    );
     return ListView(
       padding: const EdgeInsets.all(20),
       children: [
@@ -158,26 +176,35 @@ class _CollectionHomeContent extends StatelessWidget {
           subtitle: 'Private record overview',
         ),
         const SizedBox(height: 16),
-        const _LimitHint(),
+        _LimitHint(
+          currentActiveArtworkCount: records.length,
+          entitlementState: entitlementState,
+        ),
         const SizedBox(height: 16),
         if (records.isEmpty)
-          const _EmptyCollectionPanel()
+          _EmptyCollectionPanel(entitlementState: entitlementState)
         else ...[
           for (final summary in records) ...[
             _CollectionRecordPanel(summary: summary),
             const SizedBox(height: 12),
           ],
-          PrimaryActionButton(
-            icon: Icons.add_a_photo_outlined,
-            label: l10n.addArtworkAction,
-            routeName: AppRoutes.collectionAdd,
-          ),
-          const SizedBox(height: 12),
-          const SecondaryActionButton(
-            icon: Icons.table_view_outlined,
-            label: 'Import CSV',
-            routeName: AppRoutes.collectionImportCsv,
-          ),
+          if (canAddArtwork) ...[
+            PrimaryActionButton(
+              icon: Icons.add_a_photo_outlined,
+              label: l10n.addArtworkAction,
+              routeName: AppRoutes.collectionAdd,
+            ),
+            const SizedBox(height: 12),
+            const SecondaryActionButton(
+              icon: Icons.table_view_outlined,
+              label: 'Import CSV',
+              routeName: AppRoutes.collectionImportCsv,
+            ),
+          ] else
+            _BillingGatePanel(
+              currentActiveArtworkCount: records.length,
+              entitlementState: entitlementState,
+            ),
           const SizedBox(height: 12),
         ],
         const SizedBox(height: 32),
@@ -350,26 +377,39 @@ class SettingsHomeScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final dependencies = _maybeDependencies(context);
     return ListView(
       padding: const EdgeInsets.all(20),
-      children: const [
-        _Heading(title: 'Settings', subtitle: 'Privacy and storage'),
-        SizedBox(height: 16),
-        _StatusPanel(
+      children: [
+        const _Heading(title: 'Settings', subtitle: 'Privacy and storage'),
+        const SizedBox(height: 16),
+        if (dependencies != null) ...[
+          FutureBuilder<EntitlementState>(
+            future: dependencies.entitlementService.currentState(),
+            builder: (context, snapshot) {
+              final entitlementState =
+                  snapshot.data ??
+                  const EntitlementState(plan: EntitlementPlans.free);
+              return _PlanStatusPanel(entitlementState: entitlementState);
+            },
+          ),
+          const SizedBox(height: 12),
+        ],
+        const _StatusPanel(
           icon: Icons.lock_outline,
           title: 'Private record',
           body:
               'Back up your records in your Google account or keep local-only.',
         ),
-        SizedBox(height: 12),
-        _StatusPanel(
+        const SizedBox(height: 12),
+        const _StatusPanel(
           icon: Icons.cloud_off_outlined,
           title: 'Backup connection unavailable',
           body:
               'Google Drive backup is not connected in this build; local records stay on this device.',
         ),
-        SizedBox(height: 12),
-        _StatusPanel(
+        const SizedBox(height: 12),
+        const _StatusPanel(
           icon: Icons.ios_share_outlined,
           title: 'Archive export preview only',
           body:
@@ -380,20 +420,71 @@ class SettingsHomeScreen extends StatelessWidget {
   }
 }
 
+class _PlanStatusPanel extends StatelessWidget {
+  const _PlanStatusPanel({required this.entitlementState});
+
+  final EntitlementState entitlementState;
+
+  @override
+  Widget build(BuildContext context) {
+    final plan = entitlementState.plan;
+    final billingCopy = switch (entitlementState.billingStatus) {
+      EntitlementBillingStatus.available =>
+        'Play Billing is available for this build.',
+      EntitlementBillingStatus.unavailable =>
+        'Play Billing is unavailable on this device or build.',
+      EntitlementBillingStatus.notConfigured =>
+        'Play Billing products are not connected in this build yet.',
+    };
+
+    return _StatusPanel(
+      icon: Icons.workspace_premium_outlined,
+      title: '${plan.name} plan',
+      body:
+          '${plan.activeArtworkLimitLabel}, ${plan.aiCreditsLabel}. $billingCopy Existing records remain editable and exportable.',
+    );
+  }
+}
+
 class AddArtworkScreen extends StatelessWidget {
   const AddArtworkScreen({super.key});
 
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context);
+    final dependencies = _maybeDependencies(context);
     return PrototypeScreenFrame(
       title: l10n.addArtworkAction,
       subtitle: 'Start a new private record',
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const _ProgressStrip(activeIndex: 0),
-          const SizedBox(height: 20),
+      child: dependencies == null
+          ? const _AddArtworkActions()
+          : FutureBuilder<_CreationGate>(
+              future: _loadCreationGate(dependencies),
+              builder: (context, snapshot) {
+                return _AddArtworkActions(gate: snapshot.data);
+              },
+            ),
+    );
+  }
+}
+
+class _AddArtworkActions extends StatelessWidget {
+  const _AddArtworkActions({this.gate});
+
+  final _CreationGate? gate;
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
+    final gate = this.gate;
+    final isAllowed = gate == null || gate.canAddRequestedArtworkCount;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const _ProgressStrip(activeIndex: 0),
+        const SizedBox(height: 20),
+        if (isAllowed) ...[
           const _EvidencePhotoGuide(),
           const SizedBox(height: 16),
           PrimaryActionButton(
@@ -407,20 +498,24 @@ class AddArtworkScreen extends StatelessWidget {
             label: l10n.importPhotoAction,
             routeName: AppRoutes.import,
           ),
-          const SizedBox(height: 12),
-          const _StatusPanel(
-            icon: Icons.attach_file,
-            title: 'Document upload unavailable',
-            body:
-                'Create the artwork record first. This build can add supporting photos to that record; dedicated document file upload is not available yet.',
+        ] else
+          _BillingGatePanel(
+            currentActiveArtworkCount: gate.currentActiveArtworkCount,
+            entitlementState: gate.entitlementState,
           ),
-          const SizedBox(height: 20),
-          const _Notice(
-            icon: Icons.auto_awesome,
-            text: 'AI-suggested values stay separate until you confirm them.',
-          ),
-        ],
-      ),
+        const SizedBox(height: 12),
+        const _StatusPanel(
+          icon: Icons.attach_file,
+          title: 'Document upload unavailable',
+          body:
+              'Create the artwork record first. This build can add supporting photos to that record; dedicated document file upload is not available yet.',
+        ),
+        const SizedBox(height: 20),
+        const _Notice(
+          icon: Icons.auto_awesome,
+          text: 'AI-suggested values stay separate until you confirm them.',
+        ),
+      ],
     );
   }
 }
@@ -435,6 +530,7 @@ class CaptureImportScreen extends StatefulWidget {
 }
 
 class _CaptureImportScreenState extends State<CaptureImportScreen> {
+  Future<_CreationGate>? _creationGate;
   ArtworkIntakeResult? _result;
   AiDraftJob? _aiDraftJob;
   ArtworkIntakeException? _failure;
@@ -444,11 +540,57 @@ class _CaptureImportScreenState extends State<CaptureImportScreen> {
   bool get _isImport => widget.mode == 'import';
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final dependencies = _maybeDependencies(context);
+    _creationGate ??= dependencies == null
+        ? null
+        : _loadCreationGate(dependencies);
+  }
+
+  @override
   Widget build(BuildContext context) {
     if (_maybeDependencies(context) == null) {
       return _StaticCaptureImportScreen(mode: widget.mode);
     }
 
+    final creationGate = _creationGate;
+    if (creationGate != null && _result == null) {
+      return FutureBuilder<_CreationGate>(
+        future: creationGate,
+        builder: (context, snapshot) {
+          final gate = snapshot.data;
+          if (gate == null) {
+            return PrototypeScreenFrame(
+              title: _isImport ? 'Import photo' : 'Take photo',
+              subtitle: 'Checking plan',
+              child: const _StatusPanel(
+                icon: Icons.workspace_premium_outlined,
+                title: 'Checking collection plan',
+                body:
+                    'Confirming whether this plan has room for a new active artwork.',
+              ),
+            );
+          }
+          if (!gate.canAddRequestedArtworkCount) {
+            return PrototypeScreenFrame(
+              title: _isImport ? 'Import photo' : 'Take photo',
+              subtitle: 'Plan limit',
+              child: _BillingGatePanel(
+                currentActiveArtworkCount: gate.currentActiveArtworkCount,
+                entitlementState: gate.entitlementState,
+              ),
+            );
+          }
+          return _buildIntakeFrame();
+        },
+      );
+    }
+
+    return _buildIntakeFrame();
+  }
+
+  Widget _buildIntakeFrame() {
     return PrototypeScreenFrame(
       title: _isImport ? 'Import photo' : 'Take photo',
       subtitle: 'Primary artwork image',
@@ -1707,7 +1849,10 @@ class ExportPreviewScreen extends StatelessWidget {
         children: [
           _ReportSummary(artwork: artwork),
           const SizedBox(height: 16),
-          const _LimitHint(),
+          const _LimitHint(
+            currentActiveArtworkCount: 0,
+            entitlementState: EntitlementState(plan: EntitlementPlans.free),
+          ),
           const SizedBox(height: 16),
           const _StatusPanel(
             icon: Icons.archive_outlined,
@@ -3372,24 +3517,50 @@ class _Notice extends StatelessWidget {
 }
 
 class _LimitHint extends StatelessWidget {
-  const _LimitHint();
+  const _LimitHint({
+    required this.currentActiveArtworkCount,
+    required this.entitlementState,
+  });
+
+  final int currentActiveArtworkCount;
+  final EntitlementState entitlementState;
 
   @override
   Widget build(BuildContext context) {
-    return const _StatusPanel(
+    final plan = entitlementState.plan;
+    final remaining = plan.remainingActiveArtworkSlots(
+      currentActiveArtworkCount,
+    );
+    final usage = plan.activeArtworkLimit == null
+        ? '$currentActiveArtworkCount active records'
+        : '$currentActiveArtworkCount of ${plan.activeArtworkLimit} active records';
+    final remainingCopy = remaining == null
+        ? 'Your current plan has no active artwork cap.'
+        : remaining == 0
+        ? 'Upgrade to add more active artworks; existing records remain editable and exportable.'
+        : '$remaining active artwork slot${remaining == 1 ? '' : 's'} left before upgrade.';
+
+    return _StatusPanel(
       icon: Icons.workspace_premium_outlined,
-      title: 'Free limit preview',
+      title: '${plan.name} plan: $usage',
       body:
-          'The first records are free. Export stays clear and available for your archive.',
+          '$remainingCopy ${plan.aiCreditsLabel} are included for approved AI features.',
     );
   }
 }
 
 class _EmptyCollectionPanel extends StatelessWidget {
-  const _EmptyCollectionPanel();
+  const _EmptyCollectionPanel({required this.entitlementState});
+
+  final EntitlementState entitlementState;
 
   @override
   Widget build(BuildContext context) {
+    final plan = entitlementState.plan;
+    final canAddArtwork = plan.canAddActiveArtworks(
+      currentActiveArtworkCount: 0,
+    );
+
     return _Panel(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -3405,19 +3576,57 @@ class _EmptyCollectionPanel extends StatelessWidget {
             'Start with one artwork photo, then keep evidence, source labels, documents, and report notes together.',
           ),
           const SizedBox(height: 16),
-          PrimaryActionButton(
-            icon: Icons.add_a_photo_outlined,
-            label: 'Add artwork',
-            routeName: AppRoutes.collectionAdd,
-          ),
-          const SizedBox(height: 12),
-          const SecondaryActionButton(
-            icon: Icons.table_view_outlined,
-            label: 'Import CSV',
-            routeName: AppRoutes.collectionImportCsv,
-          ),
+          if (canAddArtwork) ...[
+            PrimaryActionButton(
+              icon: Icons.add_a_photo_outlined,
+              label: 'Add artwork',
+              routeName: AppRoutes.collectionAdd,
+            ),
+            const SizedBox(height: 12),
+            const SecondaryActionButton(
+              icon: Icons.table_view_outlined,
+              label: 'Import CSV',
+              routeName: AppRoutes.collectionImportCsv,
+            ),
+          ] else
+            _BillingGatePanel(
+              currentActiveArtworkCount: 0,
+              entitlementState: entitlementState,
+            ),
         ],
       ),
+    );
+  }
+}
+
+class _BillingGatePanel extends StatelessWidget {
+  const _BillingGatePanel({
+    required this.currentActiveArtworkCount,
+    required this.entitlementState,
+  });
+
+  final int currentActiveArtworkCount;
+  final EntitlementState entitlementState;
+
+  @override
+  Widget build(BuildContext context) {
+    final plan = entitlementState.plan;
+    final nextPlans = EntitlementPlans.all
+        .where(
+          (candidate) => candidate.canAddActiveArtworks(
+            currentActiveArtworkCount: currentActiveArtworkCount,
+          ),
+        )
+        .where((candidate) => candidate.id != plan.id)
+        .toList(growable: false);
+    final suggestedPlan = nextPlans.isEmpty
+        ? EntitlementPlans.archive
+        : nextPlans.first;
+    return _StatusPanel(
+      icon: Icons.workspace_premium_outlined,
+      title: '${plan.name} plan limit reached',
+      body:
+          'You have $currentActiveArtworkCount active artwork${currentActiveArtworkCount == 1 ? '' : 's'} and need room for another active artwork. Existing records stay viewable, editable, and exportable. Upgrade to ${suggestedPlan.name} (${suggestedPlan.priceLabel}) when Play Billing is connected.',
     );
   }
 }
@@ -3966,6 +4175,64 @@ Future<List<_LocalArtworkSummary>> _loadLocalArtwork(
   }
 
   return summaries;
+}
+
+class _CollectionHomeData {
+  const _CollectionHomeData({
+    required this.records,
+    required this.entitlementState,
+  });
+
+  static const empty = _CollectionHomeData(
+    records: [],
+    entitlementState: EntitlementState(plan: EntitlementPlans.free),
+  );
+
+  final List<_LocalArtworkSummary> records;
+  final EntitlementState entitlementState;
+}
+
+class _CreationGate {
+  const _CreationGate({
+    required this.currentActiveArtworkCount,
+    required this.entitlementState,
+    this.requestedAdditionalArtworkCount = 1,
+  });
+
+  final int currentActiveArtworkCount;
+  final EntitlementState entitlementState;
+  final int requestedAdditionalArtworkCount;
+
+  bool get canAddRequestedArtworkCount {
+    return entitlementState.plan.canAddActiveArtworks(
+      currentActiveArtworkCount: currentActiveArtworkCount,
+      additionalArtworkCount: requestedAdditionalArtworkCount,
+    );
+  }
+}
+
+Future<_CollectionHomeData> _loadCollectionHomeData(
+  AppDependencies dependencies,
+) async {
+  final records = await _loadLocalArtwork(dependencies);
+  final entitlementState = await dependencies.entitlementService.currentState();
+  return _CollectionHomeData(
+    records: records,
+    entitlementState: entitlementState,
+  );
+}
+
+Future<_CreationGate> _loadCreationGate(
+  AppDependencies dependencies, {
+  int requestedAdditionalArtworkCount = 1,
+}) async {
+  final records = await dependencies.artworkRepository.list();
+  final entitlementState = await dependencies.entitlementService.currentState();
+  return _CreationGate(
+    currentActiveArtworkCount: records.length,
+    entitlementState: entitlementState,
+    requestedAdditionalArtworkCount: requestedAdditionalArtworkCount,
+  );
 }
 
 Future<File?> _primaryImageFileForArtwork(
