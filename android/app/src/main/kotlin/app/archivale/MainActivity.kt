@@ -1,4 +1,4 @@
-package com.kenleren.my_art_collection
+package app.archivale
 
 import android.graphics.BitmapFactory
 import android.os.Build
@@ -28,7 +28,7 @@ class MainActivity : FlutterActivity() {
 
         MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
-            "com.kenleren.my_art_collection/on_device_ai",
+            "app.archivale/on_device_ai",
         ).setMethodCallHandler { call, result ->
             when (call.method) {
                 "checkAvailability" -> {

@@ -94,9 +94,7 @@ class MethodChannelOnDeviceAiDraftProvider implements OnDeviceAiDraftProvider {
   MethodChannelOnDeviceAiDraftProvider({
     MethodChannel? channel,
     this.isEnabled = const bool.fromEnvironment('MY_ART_ON_DEVICE_AI_ENABLED'),
-  }) : _channel =
-           channel ??
-           const MethodChannel('com.kenleren.my_art_collection/on_device_ai');
+  }) : _channel = channel ?? const MethodChannel('app.archivale/on_device_ai');
 
   final MethodChannel _channel;
   final bool isEnabled;

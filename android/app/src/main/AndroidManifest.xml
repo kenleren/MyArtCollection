@@ -4,7 +4,7 @@
     <uses-sdk tools:overrideLibrary="com.google.mlkit.genai.prompt,com.google.mlkit.genai.common" />
 
     <application
-        android:label="Archivale"
+        android:label="Archivale: Art Records"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity
