@@ -5,7 +5,7 @@ script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(git -C "$script_dir/.." rev-parse --show-toplevel)"
 cd "$repo_root"
 
-forbidden_path_pattern='(^|/)(android/key\.properties|google-services\.json|GoogleService-Info\.plist|firebase-debug\.log|[^/]*service[_.-]?account[^/]*\.json|[^/]*firebase-adminsdk[^/]*\.json|[^/]*firebase[^/]*token[^/]*|[^/]*tester[^/]*(list|email)[^/]*|[^/]*(list|email)[^/]*tester[^/]*|[^/]*\.keystore|[^/]*\.jks)$'
+forbidden_path_pattern='(^|/)(android/key\.properties|google-services\.json|GoogleService-Info\.plist|firebase-debug\.log|[^/]*service[_.-]?account[^/]*\.json|[^/]*firebase-adminsdk[^/]*\.json|[^/]*firebase[^/]*token[^/]*|[^/]*tester[^/]*(list|email)[^/]*|[^/]*(list|email)[^/]*tester[^/]*|[^/]*\.(keystore|jks)(\.[^/]*)?)$'
 tracked_forbidden_paths="$(git ls-files | grep -Ei "$forbidden_path_pattern" || true)"
 
 if [[ -n "$tracked_forbidden_paths" ]]; then
@@ -24,12 +24,11 @@ tracked_signing_content="$(
     '*.gradle' \
     '*.gradle.kts' \
     '*.sh' \
+    '*.md' \
     '.env' \
     '.env.*' \
     '*.yaml' \
     '*.yml' \
-    ':(exclude)README.md' \
-    ':(exclude)docs/**' \
     ':(exclude).gitleaks.toml' \
     ':(exclude)scripts/secret_scan.sh' \
     ':(exclude)android/app/build.gradle.kts' || true

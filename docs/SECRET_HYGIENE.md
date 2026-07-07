@@ -52,11 +52,12 @@ scripts/secret_scan.sh
 ```
 
 The wrapper first blocks tracked Firebase credential/config paths and tracked
-Android signing paths such as `android/key.properties`, `*.keystore`, and
-`*.jks`. It then blocks tracked signing credential assignments before running
-Gitleaks with `.gitleaks.toml` and full redaction enabled. If Gitleaks is not
-installed, the wrapper fails closed with install guidance instead of silently
-skipping the scan.
+Android signing paths such as `android/key.properties`, `*.keystore`, `*.jks`,
+and rotated backup variants such as `*.jks.old`. It then blocks tracked signing
+credential assignments, including copied assignments in Markdown docs, before
+running Gitleaks with `.gitleaks.toml` and full redaction enabled. If Gitleaks
+is not installed, the wrapper fails closed with install guidance instead of
+silently skipping the scan.
 
 The GitHub Actions `Secret Scan` workflow installs the pinned Gitleaks release,
 verifies the release archive checksum, and runs the same wrapper against full
