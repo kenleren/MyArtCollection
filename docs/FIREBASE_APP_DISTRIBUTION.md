@@ -20,7 +20,7 @@ environment gate.
 
 ## Android App
 
-- Android package id: `com.kenleren.my_art_collection`
+- Android package id: `app.archivale`
 - Debug APK path: `build/app/outputs/flutter-apk/app-debug.apk`
 - Debug build command, with Crashlytics off:
 
@@ -42,7 +42,7 @@ flutter build apk --release \
 ## One-Time Firebase Setup
 
 1. Create or choose a Firebase project.
-2. Add an Android app with package id `com.kenleren.my_art_collection`.
+2. Add an Android app with package id `app.archivale`.
 3. Copy the Firebase Android app id from Project settings. It usually starts
    with `1:` and is not the Android package id.
 4. Create a tester group such as `internal-testers`.
@@ -55,6 +55,10 @@ flutter build apk --release \
 
 Do not commit `google-services.json`, service-account JSON, Firebase tokens, or
 tester email lists.
+After the Android package rename, any Firebase Android app or
+`google-services.json` created for the legacy package must be replaced by a
+human-owned Firebase app/config for `app.archivale`. Agents must not inspect,
+copy, or validate the local Firebase config file.
 
 See [Secret Hygiene](SECRET_HYGIENE.md) for the repository guardrail, ignored
 legacy `/google/` boundary, and Firebase service-account rotation gate.
