@@ -1,17 +1,60 @@
 import { onRequest } from "firebase-functions/v2/https";
 
-import { createBetaSignupHttpHandler } from "./beta_signup.js";
-import { createInMemoryBetaSignupQueue } from "./in_memory_queue.js";
+import {
+  createBetaSignupHttpHandler,
+  type MinimalRequest,
+  type MinimalResponse,
+} from "./beta_signup.js";
+import type { BetaSignupQueue } from "./contracts.js";
 
 const COLLECTION_ENABLED_ENV = "BETA_SIGNUP_HTTP_ENABLED";
 const QUEUE_MODE_ENV = "BETA_SIGNUP_QUEUE_MODE";
-const betaSignupQueue = createInMemoryBetaSignupQueue();
-const betaSignupHandler = createBetaSignupHttpHandler({
-  queue: betaSignupQueue,
-});
+
+function createConfiguredDurableBetaSignupQueue(
+  _env: NodeJS.ProcessEnv = process.env,
+): BetaSignupQueue | null {
+  return null;
+}
 
 export function isBetaSignupCollectionEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
-  return env[COLLECTION_ENABLED_ENV] === "true" && env[QUEUE_MODE_ENV] === "durable";
+  return (
+    env[COLLECTION_ENABLED_ENV] === "true" &&
+    env[QUEUE_MODE_ENV] === "durable" &&
+    createConfiguredDurableBetaSignupQueue(env) !== null
+  );
+}
+
+function sendDisabledResponse(response: MinimalResponse): void {
+  response.setHeader("Content-Type", "application/json; charset=utf-8");
+  response.setHeader("X-Content-Type-Options", "nosniff");
+  response.setHeader("Cache-Control", "no-store");
+  response.status(503).end(
+    JSON.stringify({
+      ok: false,
+      error: "beta_signup_disabled",
+    }),
+  );
+}
+
+export function createBetaSignupFirebaseRequestHandler(
+  env: NodeJS.ProcessEnv = process.env,
+) {
+  return async function betaSignupFirebaseRequestHandler(
+    request: MinimalRequest,
+    response: MinimalResponse,
+  ): Promise<void> {
+    const queue = createConfiguredDurableBetaSignupQueue(env);
+    if (
+      env[COLLECTION_ENABLED_ENV] !== "true" ||
+      env[QUEUE_MODE_ENV] !== "durable" ||
+      queue === null
+    ) {
+      sendDisabledResponse(response);
+      return;
+    }
+
+    await createBetaSignupHttpHandler({ queue })(request, response);
+  };
 }
 
 export const betaSignup = onRequest(
@@ -22,20 +65,5 @@ export const betaSignup = onRequest(
     timeoutSeconds: 10,
     memory: "256MiB",
   },
-  async (request, response) => {
-    if (!isBetaSignupCollectionEnabled()) {
-      response.setHeader("Content-Type", "application/json; charset=utf-8");
-      response.setHeader("X-Content-Type-Options", "nosniff");
-      response.setHeader("Cache-Control", "no-store");
-      response.status(503).send(
-        JSON.stringify({
-          ok: false,
-          error: "beta_signup_disabled",
-        }),
-      );
-      return;
-    }
-
-    await betaSignupHandler(request, response);
-  },
+  createBetaSignupFirebaseRequestHandler(),
 );

@@ -10,7 +10,10 @@ import {
   type BetaSignupQueueRecord,
   type InMemoryBetaSignupQueue,
 } from "../src/index.js";
-import { isBetaSignupCollectionEnabled } from "../src/firebase.js";
+import {
+  createBetaSignupFirebaseRequestHandler,
+  isBetaSignupCollectionEnabled,
+} from "../src/firebase.js";
 
 const NOW_MS = Date.UTC(2026, 6, 8, 12, 0, 0);
 
@@ -85,6 +88,61 @@ async function submit(
     },
   });
 
+  return response;
+}
+
+function createRequest(
+  body: unknown,
+  headers: Record<string, string | undefined> = {},
+) {
+  const request = Readable.from([]) as Readable & {
+    method?: string;
+    headers: Record<string, string>;
+    body?: unknown;
+    socket: { remoteAddress: string };
+  };
+  request.method = "POST";
+  request.headers = {
+    "content-type": "application/json",
+    host: "archivale.app",
+    origin: "https://archivale.app",
+    "user-agent": "node-test",
+    "x-forwarded-for": "203.0.113.10",
+    ...headers,
+  };
+  request.body = body;
+  request.socket = { remoteAddress: "203.0.113.10" };
+  return request;
+}
+
+function createResponse(): TestResponse {
+  return {
+    statusCode: 200,
+    headers: {},
+    body: "",
+    json: {},
+  };
+}
+
+async function submitViaFirebase(
+  env: NodeJS.ProcessEnv,
+  body: unknown,
+  headers: Record<string, string | undefined> = {},
+): Promise<TestResponse> {
+  const response = createResponse();
+  await createBetaSignupFirebaseRequestHandler(env)(createRequest(body, headers), {
+    status(code: number) {
+      response.statusCode = code;
+      return this;
+    },
+    setHeader(name: string, value: string) {
+      response.headers[name] = value;
+    },
+    end(bodyText: string) {
+      response.body = bodyText;
+      response.json = JSON.parse(bodyText) as Record<string, unknown>;
+    },
+  });
   return response;
 }
 
@@ -228,6 +286,28 @@ test("firebase collection gate stays disabled until explicit durable settings ex
       BETA_SIGNUP_HTTP_ENABLED: "true",
       BETA_SIGNUP_QUEUE_MODE: "durable",
     }),
-    true,
+    false,
   );
+});
+
+test("firebase export returns disabled by default and when durable mode lacks a durable adapter", async () => {
+  const disabledByDefault = await submitViaFirebase({}, validPayload());
+  assert.equal(disabledByDefault.statusCode, 503);
+  assert.deepEqual(disabledByDefault.json, {
+    ok: false,
+    error: "beta_signup_disabled",
+  });
+
+  const disabledWithoutDurableAdapter = await submitViaFirebase(
+    {
+      BETA_SIGNUP_HTTP_ENABLED: "true",
+      BETA_SIGNUP_QUEUE_MODE: "durable",
+    },
+    validPayload({ email: "firebase-disabled@example.com" }),
+  );
+  assert.equal(disabledWithoutDurableAdapter.statusCode, 503);
+  assert.deepEqual(disabledWithoutDurableAdapter.json, {
+    ok: false,
+    error: "beta_signup_disabled",
+  });
 });

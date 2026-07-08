@@ -66,10 +66,11 @@ beta_signup_disabled` unless both of these non-default settings are present:
 - `BETA_SIGNUP_HTTP_ENABLED=true`
 - `BETA_SIGNUP_QUEUE_MODE=durable`
 
-Those flags are a deployment-manager gate only. This repo does not include the
-required durable queue/deletion implementation yet, so enabling them without a
-separate reviewed backend change would be incorrect. No deploy is authorized by
-this package. A real deploy still requires task review, redteam/privacy review,
-visual review, deployment-manager approval, owner approval for the Firebase
-project and billing posture, App Check or reCAPTCHA decision, budget alert
-evidence, durable queue/deletion implementation, and explicit deploy approval.
+Those flags are a deployment-manager gate only. This repo does not include a
+durable queue/deletion implementation yet, so the Firebase export still returns
+`503 beta_signup_disabled` even when both flags are set. No deploy is
+authorized by this package. A real deploy still requires task review,
+redteam/privacy review, visual review, deployment-manager approval, owner
+approval for the Firebase project and billing posture, App Check or reCAPTCHA
+decision, budget alert evidence, durable queue/deletion implementation, and
+explicit deploy approval.
