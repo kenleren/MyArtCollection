@@ -327,7 +327,7 @@ void main() {
       dependencies: fixture.dependencies,
       fileName: 'issue-130-documents-empty-gated.png',
       ensureVisibleFinder: find.text(
-        'Missing-file recovery preview',
+        'Attachment needs attention',
         skipOffstage: false,
       ),
     );
@@ -1228,7 +1228,7 @@ void main() {
     expect(find.text('Documents'), findsWidgets);
     expect(find.text('gallery-receipt-2025.pdf'), findsOneWidget);
     expect(find.text('Document upload unavailable'), findsOneWidget);
-    expect(find.text('Missing-file recovery preview'), findsOneWidget);
+    expect(find.text('Attachment needs attention'), findsOneWidget);
 
     await tapVisible(
       tester,
@@ -1543,7 +1543,7 @@ void main() {
     expect(find.text('Take supporting photo'), findsOneWidget);
     expect(find.text('Import supporting photo'), findsOneWidget);
     expect(find.text('Document upload unavailable'), findsOneWidget);
-    expect(find.text('Missing-file recovery preview'), findsOneWidget);
+    expect(find.text('Attachment needs attention'), findsOneWidget);
     expect(find.text('Attach document'), findsNothing);
   });
 
@@ -2700,7 +2700,7 @@ void main() {
     expect(find.text('Research online'), findsNothing);
     expect(find.text('Research consent'), findsNothing);
     expect(find.text('Source-backed candidates'), findsNothing);
-    expect(find.text('Professional-source research disabled'), findsOneWidget);
+    expect(find.text('Online research unavailable'), findsOneWidget);
   });
 
   testWidgets('online research requires consent and shows cited candidates', (

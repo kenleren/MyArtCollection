@@ -512,7 +512,7 @@ class _AddArtworkActions extends StatelessWidget {
           icon: Icons.attach_file,
           title: 'Document upload unavailable',
           body:
-              'Create the artwork record first. This build can add supporting photos to that record; dedicated document file upload is not available yet.',
+              'Create the artwork record first, then add supporting photos. Receipt and certificate file upload is not available yet.',
         ),
         const SizedBox(height: 20),
         const _Notice(
@@ -1799,14 +1799,14 @@ class DocumentsScreen extends StatelessWidget {
             icon: Icons.block_outlined,
             title: 'Document upload unavailable',
             body:
-                'This build cannot import receipt or certificate files directly. Use supporting photos for receipts, certificates, auction records, or provenance notes for now.',
+                'Receipt and certificate file upload is not available yet. For now, add supporting photos of receipts, certificates, auction records, or provenance notes.',
           ),
           const SizedBox(height: 12),
           const _StatusPanel(
             icon: Icons.warning_amber_outlined,
-            title: 'Missing-file recovery preview',
+            title: 'Attachment needs attention',
             body:
-                'Error-state preview: if an app-private file becomes unavailable, the record keeps its attachment metadata and asks you to reattach it.',
+                'If a private attachment file becomes unavailable, its record details stay saved and Archivale asks you to attach the file again.',
           ),
           const SizedBox(height: 20),
           PrimaryActionButton(
@@ -2315,9 +2315,9 @@ class _OnlineResearchPanel extends StatelessWidget {
 
       return const _StatusPanel(
         icon: Icons.travel_explore_outlined,
-        title: 'Professional-source research disabled',
+        title: 'Online research unavailable',
         body:
-            'This build hides online research. Keep the local draft and use documents or manual review.',
+            'Online research is not available in this release. Keep the local draft and use documents or manual review.',
       );
     }
 
