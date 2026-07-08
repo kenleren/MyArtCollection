@@ -62,6 +62,15 @@
         ]
       },
       {
+        "source": "/blog/how-to-organize-provenance-records-private-art-collection/",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "public, max-age=0, s-maxage=0, must-revalidate"
+          }
+        ]
+      },
+      {
         "source": "/blog/how-to-document-artwork-for-insurance-conversations/",
         "headers": [
           {
