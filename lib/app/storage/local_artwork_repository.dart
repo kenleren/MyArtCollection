@@ -8,6 +8,19 @@ import 'ai_research_record.dart';
 import 'attachment_record.dart';
 import 'artwork_record.dart';
 
+class LocalArtworkInsertConflictException implements Exception {
+  LocalArtworkInsertConflictException(Iterable<String> artworkIds)
+    : artworkIds = List.unmodifiable(artworkIds);
+
+  final List<String> artworkIds;
+
+  @override
+  String toString() {
+    final ids = artworkIds.join(', ');
+    return 'Artwork records already exist or repeat in this import: $ids';
+  }
+}
+
 class LocalArtworkRepository {
   LocalArtworkRepository._(this._database);
   LocalArtworkRepository.forDatabase(this._database);
@@ -266,7 +279,36 @@ class LocalArtworkRepository {
 
   Future<void> close() => _database.close();
 
-  Future<void> create(ArtworkRecord record) => upsert(record);
+  Future<void> create(ArtworkRecord record) => createAll([record]);
+
+  Future<void> createAll(Iterable<ArtworkRecord> records) async {
+    final batch = List<ArtworkRecord>.unmodifiable(records);
+    if (batch.isEmpty) {
+      return;
+    }
+
+    final batchIds = <String>{};
+    final repeatedBatchIds = <String>{};
+    for (final record in batch) {
+      if (!batchIds.add(record.id)) {
+        repeatedBatchIds.add(record.id);
+      }
+    }
+    if (repeatedBatchIds.isNotEmpty) {
+      throw LocalArtworkInsertConflictException(repeatedBatchIds);
+    }
+
+    await _database.transaction((txn) async {
+      final existingIds = await _existingArtworkIds(txn, batchIds);
+      if (existingIds.isNotEmpty) {
+        throw LocalArtworkInsertConflictException(existingIds);
+      }
+
+      for (final record in batch) {
+        await _insertRecord(txn, record);
+      }
+    });
+  }
 
   Future<void> upsert(ArtworkRecord record) async {
     await _database.transaction((txn) async {
@@ -286,6 +328,28 @@ class LocalArtworkRepository {
         await txn.insert('artwork_fields', _fieldRow(record.id, entry));
       }
     });
+  }
+
+  Future<void> _insertRecord(Transaction txn, ArtworkRecord record) async {
+    await txn.insert('artworks', _recordRow(record));
+
+    for (final entry in record.fields.entries) {
+      await txn.insert('artwork_fields', _fieldRow(record.id, entry));
+    }
+  }
+
+  Future<Set<String>> _existingArtworkIds(
+    Transaction txn,
+    Set<String> artworkIds,
+  ) async {
+    final rows = await txn.query(
+      'artworks',
+      columns: ['artwork_id'],
+      where: 'artwork_id IN (${List.filled(artworkIds.length, '?').join(',')})',
+      whereArgs: artworkIds.toList(growable: false),
+    );
+
+    return rows.map((row) => row['artwork_id'] as String).toSet();
   }
 
   Future<ArtworkRecord?> get(String id) async {

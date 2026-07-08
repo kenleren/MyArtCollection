@@ -555,7 +555,7 @@ class _CsvImportScreenState extends State<CsvImportScreen> {
       }
 
       final repository = dependencies.artworkRepository;
-      final importedIds = <String>[];
+      final recordsToImport = <ArtworkRecord>[];
       for (final row in preview.rows) {
         if (!_shouldImportRow(row)) {
           continue;
@@ -566,9 +566,12 @@ class _CsvImportScreenState extends State<CsvImportScreen> {
           continue;
         }
 
-        await repository.create(record);
-        importedIds.add(record.id);
+        recordsToImport.add(record);
       }
+      await repository.createAll(recordsToImport);
+      final importedIds = recordsToImport
+          .map((record) => record.id)
+          .toList(growable: false);
 
       if (!mounted) {
         return;

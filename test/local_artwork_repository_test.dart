@@ -188,6 +188,96 @@ void main() {
     expect(await repository.list(), isEmpty);
   });
 
+  test('create is insert-only and leaves existing records unchanged', () async {
+    await repository.create(_record('artwork-001', title: 'Original title'));
+
+    await expectLater(
+      repository.create(_record('artwork-001', title: 'Replacement title')),
+      throwsA(isA<LocalArtworkInsertConflictException>()),
+    );
+
+    final reloaded = await repository.get('artwork-001');
+    expect(reloaded!.field(ArtworkFieldKeys.title)?.value, 'Original title');
+  });
+
+  test('createAll inserts a batch successfully', () async {
+    await repository.createAll([
+      _record('artwork-001', title: 'First imported work'),
+      _record('artwork-002', title: 'Second imported work'),
+    ]);
+
+    final records = await repository.list();
+
+    expect(records, hasLength(2));
+    expect(
+      records.map((record) => record.field(ArtworkFieldKeys.title)?.value),
+      unorderedEquals(['First imported work', 'Second imported work']),
+    );
+  });
+
+  test('createAll rejects repeated batch ids without writing', () async {
+    await expectLater(
+      repository.createAll([
+        _record('artwork-001', title: 'First imported work'),
+        _record('artwork-001', title: 'Repeated imported work'),
+      ]),
+      throwsA(isA<LocalArtworkInsertConflictException>()),
+    );
+
+    expect(await repository.list(), isEmpty);
+  });
+
+  test(
+    'createAll rejects existing id collisions without changing records',
+    () async {
+      await repository.create(_record('artwork-001', title: 'Original title'));
+
+      await expectLater(
+        repository.createAll([
+          _record('artwork-002', title: 'New imported work'),
+          _record('artwork-001', title: 'Colliding imported work'),
+        ]),
+        throwsA(isA<LocalArtworkInsertConflictException>()),
+      );
+
+      final records = await repository.list();
+
+      expect(records, hasLength(1));
+      expect(records.single.id, 'artwork-001');
+      expect(
+        records.single.field(ArtworkFieldKeys.title)?.value,
+        'Original title',
+      );
+    },
+  );
+
+  test('createAll rolls back when a later insert fails', () async {
+    await repository.close();
+    final rawDatabase = await databaseFactoryFfi.openDatabase(databasePath);
+    await rawDatabase.execute('''
+      CREATE TRIGGER fail_imported_artwork
+      BEFORE INSERT ON artworks
+      WHEN NEW.artwork_id = 'artwork-fails'
+      BEGIN
+        SELECT RAISE(ABORT, 'injected batch failure');
+      END
+    ''');
+    await rawDatabase.close();
+    repository = LocalArtworkRepository.forDatabase(
+      await LocalArtworkRepository.openAt(databasePath),
+    );
+
+    await expectLater(
+      repository.createAll([
+        _record('artwork-001', title: 'First imported work'),
+        _record('artwork-fails', title: 'Failing imported work'),
+      ]),
+      throwsA(isA<Exception>()),
+    );
+
+    expect(await repository.list(), isEmpty);
+  });
+
   test(
     'round-trips canonical import fields and existing money metadata',
     () async {

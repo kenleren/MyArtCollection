@@ -326,10 +326,7 @@ void main() {
       final row = preview.rows.single;
       expect(row.record!.field(ArtworkFieldKeys.title)?.value, 'Blue Interior');
       expect(row.record!.field(ArtworkFieldKeys.artist)?.value, 'A. Maker');
-      expect(
-        row.record!.field(ArtworkFieldKeys.notes),
-        isNull,
-      );
+      expect(row.record!.field(ArtworkFieldKeys.notes), isNull);
       expect(preview.skippedColumns, ['Reference Link']);
     });
   });
@@ -383,6 +380,18 @@ void main() {
         );
       },
     );
+
+    test('does not write warning preview records before confirmation', () async {
+      final preview = _service().previewFromString(
+        'Title,Year,Purchase Price\nAmbiguous import,c. 1900,"\$1,000-\$2,000"\n',
+        existingRecords: await repository.list(),
+      );
+      final after = await repository.list();
+
+      expect(preview.importableRows, hasLength(1));
+      expect(preview.rows.single.warnings, isNotEmpty);
+      expect(after, isEmpty);
+    });
   });
 }
 
