@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Request beta access | Archivale: Art Records</title>
+    <meta
+      name="description"
+      content="Request manual beta access for Archivale: Art Records. Submissions are reviewed manually and do not automatically add anyone to tester systems."
+    >
+    <link rel="stylesheet" href="/styles.css">
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "WebPage",
+        "@id": "https://archivale.app/beta/#webpage",
+        "url": "https://archivale.app/beta/",
+        "name": "Request beta access | Archivale: Art Records",
+        "description": "Request manual beta access for Archivale: Art Records. Submissions are reviewed manually and do not automatically add anyone to tester systems.",
+        "isPartOf": {
+          "@type": "WebSite",
+          "@id": "https://archivale.app/#website",
+          "name": "Archivale: Art Records",
+          "url": "https://archivale.app/"
+        },
+        "about": {
+          "@type": "SoftwareApplication",
+          "@id": "https://archivale.app/#app",
+          "name": "Archivale: Art Records"
+        }
+      }
+    </script>
+    <script src="/scripts/beta-signup.js" defer></script>
+  </head>
+  <body>
+    <header class="site-header">
+      <a class="brand" href="/" aria-label="Archivale home"><img src="/assets/archivale-logo.svg" alt="" width="180" height="60"></a>
+      <nav class="nav" aria-label="Primary">
+        <a href="/">Home</a>
+        <a href="/pricing/">Pricing</a>
+        <a href="/blog/">Notes</a>
+        <a href="/privacy/">Privacy</a>
+        <a href="/support/">Support</a>
+      </nav>
+    </header>
+
+    <main>
+      <section class="page-intro beta-intro">
+        <p class="eyebrow">Manual beta queue</p>
+        <h1>Request beta access.</h1>
+        <p class="lead">
+          Archivale is inviting a small number of testers. Submitting this form
+          asks to be considered; it does not automatically add you to Firebase
+          App Distribution, Google Play testing, or any tester list.
+        </p>
+      </section>
+
+      <section class="section beta-section">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">Beta interest form</p>
+            <h2>Minimal details, manual review.</h2>
+          </div>
+          <p>
+            Share only contact details needed for beta coordination. Do not
+            include artwork, document, price, location, provenance, or collection
+            details.
+          </p>
+        </div>
+
+        <form
+          id="beta-signup-form"
+          class="support-form beta-form"
+          action="/api/forms/beta-signup"
+          method="post"
+          novalidate
+        >
+          <div class="form-full form-status" id="beta-signup-status" role="status" aria-live="polite" hidden></div>
+          <div class="honeypot" aria-hidden="true">
+            <label for="website">Website</label>
+            <input id="website" name="website" tabindex="-1" autocomplete="off">
+          </div>
+          <input type="hidden" name="sourceRoute" value="/beta/">
+          <input type="hidden" name="consentVersion" value="beta-signup-2026-07-08">
+          <input type="hidden" name="retentionVersion" value="beta-signup-retention-2026-07-08">
+          <input type="hidden" name="submittedAtClientMs" value="">
+
+          <div>
+            <label for="beta-email">Email</label>
+            <input
+              id="beta-email"
+              name="email"
+              type="email"
+              autocomplete="email"
+              maxlength="254"
+              required
+              placeholder="you@example.com"
+            >
+          </div>
+          <div>
+            <label for="beta-name">Name</label>
+            <input
+              id="beta-name"
+              name="name"
+              autocomplete="name"
+              maxlength="80"
+              placeholder="Optional"
+            >
+          </div>
+          <fieldset class="form-full segmented-field">
+            <legend>Platform</legend>
+            <label><input type="radio" name="platform" value="android" required> Android</label>
+            <label><input type="radio" name="platform" value="ios"> iOS</label>
+            <label><input type="radio" name="platform" value="both"> Both</label>
+          </fieldset>
+          <div>
+            <label for="beta-country">Country or time zone</label>
+            <input
+              id="beta-country"
+              name="country"
+              autocomplete="country-name"
+              maxlength="80"
+              placeholder="Optional"
+            >
+          </div>
+          <div class="form-full">
+            <label for="beta-notes">Anything we should know?</label>
+            <textarea
+              id="beta-notes"
+              name="notes"
+              rows="5"
+              maxlength="500"
+              placeholder="Optional. Do not include artwork, document, price, or collection details."
+            ></textarea>
+          </div>
+          <div class="form-full consent-row">
+            <label>
+              <input id="beta-consent" name="consent" type="checkbox" value="true" required>
+              <span>I agree that Archivale may use my email and optional details to contact me about beta testing. I understand access is manually approved and I can request deletion through the support page.</span>
+            </label>
+          </div>
+          <div class="form-full form-actions">
+            <button class="button" type="submit">Request beta access</button>
+            <p class="muted-note">
+              Pending beta-interest records are retained for up to 90 days unless
+              Archivale is actively contacting you. This site has no automatic
+              tester enrollment.
+            </p>
+          </div>
+        </form>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="footer-card">
+        <p>
+          Beta access is manually reviewed. Privacy and deletion details are on
+          <a href="/privacy/">the privacy page</a>.
+        </p>
+      </div>
+    </footer>
+  </body>
+</html>

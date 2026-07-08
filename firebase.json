@@ -44,6 +44,15 @@
         ]
       },
       {
+        "source": "/beta/",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "public, max-age=0, s-maxage=0, must-revalidate"
+          }
+        ]
+      },
+      {
         "source": "/blog/",
         "headers": [
           {
@@ -116,6 +125,15 @@
         ]
       },
       {
+        "source": "/scripts/**",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "public, max-age=3600, must-revalidate"
+          }
+        ]
+      },
+      {
         "source": "/assets/**",
         "headers": [
           {
@@ -123,6 +141,15 @@
             "value": "public, max-age=3600, must-revalidate"
           }
         ]
+      }
+    ],
+    "rewrites": [
+      {
+        "source": "/api/forms/beta-signup",
+        "function": {
+          "functionId": "betaSignup",
+          "region": "us-central1"
+        }
       }
     ]
   }

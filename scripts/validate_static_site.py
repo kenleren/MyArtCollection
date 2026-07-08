@@ -14,10 +14,14 @@ from urllib.parse import unquote, urlparse
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SITE_ROOT = REPO_ROOT / "site"
 PUBLIC_ORIGIN = "https://archivale.app"
+ALLOWED_FORM_ACTIONS = {
+    "/api/forms/beta-signup",
+}
 
 EXPECTED_SCHEMA_ROUTES = {
     "/",
     "/pricing/",
+    "/beta/",
     "/support/",
     "/privacy/",
     "/blog/",
@@ -230,9 +234,17 @@ def validate_links_and_assets(path: Path, parser: SiteParser) -> list[str]:
     for tag, attrs in parser.tags:
         if tag == "script":
             script_type = (attrs.get("type") or "").lower()
-            if attrs.get("src"):
-                errors.append(f"{route}: script src is not allowed")
-            if script_type != "application/ld+json":
+            script_src = attrs.get("src")
+            if script_src:
+                parsed_script_src = urlparse(script_src)
+                if (
+                    parsed_script_src.scheme
+                    or parsed_script_src.netloc
+                    or not parsed_script_src.path.startswith("/scripts/")
+                    or not parsed_script_src.path.endswith(".js")
+                ):
+                    errors.append(f"{route}: script src is not an allowed local script")
+            elif script_type != "application/ld+json":
                 errors.append(f"{route}: non-JSON-LD script is not allowed")
 
         for attr in ("href", "src", "action"):
@@ -241,6 +253,8 @@ def validate_links_and_assets(path: Path, parser: SiteParser) -> list[str]:
                 continue
 
             parsed = urlparse(value)
+            if attr == "action" and parsed.path in ALLOWED_FORM_ACTIONS:
+                continue
             if parsed.scheme in {"mailto", "tel"}:
                 continue
 

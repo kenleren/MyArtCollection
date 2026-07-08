@@ -45,15 +45,15 @@
 
     <main>
       <section class="page-intro">
-        <p class="eyebrow">Early access and support</p>
-        <h1>Want to test the collector workflow?</h1>
+        <p class="eyebrow">Support</p>
+        <h1>Have a store or privacy question?</h1>
         <p class="lead">
-          Send a note if you want early access, have a store/privacy question, or
-          want to share what you currently use to manage your collection.
+          Use the support route for questions and deletion requests. Beta access
+          requests now use the dedicated manual beta queue.
         </p>
         <div class="cta-row">
-          <a class="button" href="#support-form">Open the form</a>
-          <a class="button-secondary" href="/pricing/">View launch pricing</a>
+          <a class="button" href="/beta/">Request beta access</a>
+          <a class="button-secondary" href="#support-form">Open support form</a>
         </div>
       </section>
 
@@ -64,8 +64,9 @@
             <h2>One direct route.</h2>
           </div>
           <p>
-            Send early access requests, privacy questions, pricing questions,
-            or collector feedback directly by email from this page.
+            General support still uses a static form that opens your mail
+            client. Beta signup submissions are handled separately through the
+            first-party backend queue.
           </p>
         </div>
         <form
@@ -81,7 +82,7 @@
               <option>Early access</option>
               <option>Privacy question</option>
               <option>Pricing question</option>
-              <option>Collector feedback</option>
+              <option>Support request</option>
             </select>
           </div>
           <div>
@@ -92,17 +93,13 @@
             <label for="email">Email</label>
             <input id="email" name="Email" type="email" autocomplete="email" placeholder="you@example.com">
           </div>
-          <div>
-            <label for="collection">Collection type</label>
-            <input id="collection" name="Collection type" placeholder="Paintings, prints, sculpture...">
-          </div>
           <div class="form-full">
             <label for="message">What should we know?</label>
             <textarea
               id="message"
               name="Message"
               rows="7"
-              placeholder="Tell us what you collect, what you use today, and what would make Archivale worth testing."
+              placeholder="Describe your support question. Do not include artwork, document, price, or collection details."
             ></textarea>
           </div>
           <div class="form-full form-actions">

@@ -6,7 +6,7 @@
     <title>Privacy | Archivale: Art Records</title>
     <meta
       name="description"
-      content="Privacy summary for Archivale: Art Records, a private local-first art record app."
+      content="Privacy summary for Archivale: Art Records, including the manual beta signup queue."
     >
     <link rel="stylesheet" href="/styles.css">
     <script type="application/ld+json">
@@ -16,7 +16,7 @@
         "@id": "https://archivale.app/privacy/#webpage",
         "url": "https://archivale.app/privacy/",
         "name": "Privacy | Archivale: Art Records",
-        "description": "Privacy summary for Archivale: Art Records, a private local-first art record app.",
+        "description": "Privacy summary for Archivale: Art Records, including the manual beta signup queue.",
         "isPartOf": {
           "@type": "WebSite",
           "@id": "https://archivale.app/#website",
@@ -51,7 +51,7 @@
         <p class="lead">
           Archivale is positioned as a local-first private art-record archive. Public
           claims stay careful: records are user-confirmed, AI does not certify
-          facts, and future services will be described only when they ship.
+          facts, and beta signup is a manual interest queue, not automatic access.
         </p>
       </section>
 
@@ -94,12 +94,24 @@
                 <td data-label="What happens here">None included on this public website.</td>
               </tr>
               <tr>
-                <td data-label="Area">Forms</td>
-                <td data-label="What happens here">Support messages are prepared in your email app so you can review them before sending.</td>
+                <td data-label="Area">Beta signup</td>
+                <td data-label="What happens here">The beta form sends email, optional name, platform interest, optional country or time zone, optional notes, consent version, retention version, source route, client submit timestamp, and a hidden spam field to a first-party backend queue for manual review.</td>
+              </tr>
+              <tr>
+                <td data-label="Area">Manual approval</td>
+                <td data-label="What happens here">A beta-interest record does not create an account and does not automatically add anyone to Firebase App Distribution, Google Play testing, Auth, Remote Config, or tester lists.</td>
+              </tr>
+              <tr>
+                <td data-label="Area">Retention and deletion</td>
+                <td data-label="What happens here">Pending beta-interest records are retained for up to 90 days unless Archivale is actively contacting the person. Rejected records are retained for up to 30 days for audit and abuse review. Honeypot spam records are not queued by the repo handler. Deletion requests are routed through support and targeted for manual handling within 30 days.</td>
               </tr>
               <tr>
                 <td data-label="Area">Accounts</td>
                 <td data-label="What happens here">No account creation or login is exposed on this site.</td>
+              </tr>
+              <tr>
+                <td data-label="Area">Abuse protection caveat</td>
+                <td data-label="What happens here">The repo-side handler includes validation, same-origin checks where feasible, honeypot handling, duplicate suppression, and rate-limit hooks. Production deployment still needs an approved App Check or reCAPTCHA posture, durable queue/deletion implementation, and deployment review before collecting real submissions.</td>
               </tr>
               <tr>
                 <td data-label="Area">Privacy owner</td>

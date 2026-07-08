@@ -11,6 +11,7 @@ Included routes:
 - `/privacy/`
 - `/support/`
 - `/pricing/`
+- `/beta/`
 - `/blog/`
 - `/blog/collector-records-that-age-well/`
 - `/blog/how-to-organize-provenance-records-private-art-collection/`
@@ -23,11 +24,14 @@ public-safe update content ready to publish.
 
 ## Boundaries
 
-- Static HTML and CSS only.
+- Static HTML, CSS, and first-party local JavaScript only.
 - No deploy, DNS change, Firebase Hosting mutation, or external publication.
-- No analytics, cookies, trackers, JavaScript frameworks, or backend form
-  endpoint.
+- No analytics, cookies, trackers, JavaScript frameworks, external scripts, or
+  third-party form tools.
 - Support uses a static form that opens the user's mail client.
+- Beta signup uses the repo-side first-party endpoint
+  `/api/forms/beta-signup`, backed by the separate `backend/forms` package.
+  Submissions are manual beta-interest records only, not beta access.
 
 ## Copy posture
 
@@ -42,6 +46,40 @@ Guardrails used here:
   appraisal certainty, official insurance approval, or guaranteed attribution.
 - Backup, reports, exports, and AI-assisted behavior should only be described in
   ways that remain compatible with the current accepted product direction.
+
+## Beta signup posture
+
+The `/beta/` page collects only:
+
+- email, required;
+- name, optional;
+- platform interest: Android, iOS, or both;
+- country or time zone, optional;
+- notes, optional and capped at 500 characters;
+- consent and copy/retention versions;
+- source route, client submit timestamp, and a hidden honeypot field.
+
+The beta form must not ask for artwork, document, price, location, provenance,
+photo, value, or collection details. Public copy must say that beta access is
+manually approved and that submitting the form does not automatically add anyone
+to Firebase App Distribution, Google Play testing, Auth, Remote Config, or
+tester lists.
+
+Retention copy for publication:
+
+- pending beta-interest records: up to 90 days unless Archivale is actively
+  contacting the person;
+- rejected records: up to 30 days for audit and abuse review;
+- honeypot spam: not queued by the repo handler;
+- deletion requests: routed through support with a 30-day manual handling
+  target.
+
+The current backend package is buildable and testable without secrets, but its
+default queue is in-memory only. Before collecting real submissions, a separate
+reviewed change must add an approved durable queue/deletion adapter and record
+the App Check or reCAPTCHA posture. Deployment still requires task review,
+redteam/privacy review, visual review, deployment-manager approval, and explicit
+human deploy approval.
 
 ## Pricing rationale
 
@@ -93,6 +131,7 @@ Then open:
 - `http://127.0.0.1:8000/privacy/`
 - `http://127.0.0.1:8000/support/`
 - `http://127.0.0.1:8000/pricing/`
+- `http://127.0.0.1:8000/beta/`
 - `http://127.0.0.1:8000/blog/`
 - `http://127.0.0.1:8000/blog/collector-records-that-age-well/`
 - `http://127.0.0.1:8000/blog/how-to-organize-provenance-records-private-art-collection/`
@@ -116,7 +155,7 @@ Repo-side Firebase Hosting is intentionally minimal:
 
 Firebase Hosting headers in `firebase.json` use this policy:
 
-- `/`, `/privacy/`, `/support/`, `/pricing/`, `/blog/`,
+- `/`, `/privacy/`, `/support/`, `/pricing/`, `/beta/`, `/blog/`,
   `/blog/collector-records-that-age-well/`,
   `/blog/how-to-organize-provenance-records-private-art-collection/`,
   `/blog/how-to-document-artwork-for-insurance-conversations/`,
@@ -125,7 +164,7 @@ Firebase Hosting headers in `firebase.json` use this policy:
   `Cache-Control: public, max-age=0, s-maxage=0, must-revalidate`.
 - Direct HTML file requests matching `/**/*.html` send the same revalidation
   header so route documents do not persist stale HTML after deploy.
-- `/styles.css` and `/assets/**` send
+- `/styles.css`, `/scripts/**`, and `/assets/**` send
   `Cache-Control: public, max-age=3600, must-revalidate`.
 
 The asset policy allows ordinary short browser and edge caching without
@@ -150,8 +189,9 @@ python3 -m json.tool firebase.json
 ### Static site validation
 
 Validate static HTML shape, inline JSON-LD parsing, local `href`/`src`
-resolution, trust-copy guardrails for structured data, disallowed scripts or
-external assets, and expected route smoke coverage from the repository root:
+resolution, first-party local script references, trust-copy guardrails for
+structured data, disallowed external assets, and expected route smoke coverage
+from the repository root:
 
 ```sh
 python3 scripts/validate_static_site.py
@@ -171,6 +211,12 @@ Then open the local URL printed by the emulator and confirm the same public rout
 - `/privacy/`
 - `/support/`
 - `/pricing/`
+- `/beta/`
+
+For a full beta signup emulator path, the `backend/forms` Functions package
+must also be built and wired into a Firebase emulator configuration. The
+committed Hosting rewrite is only repo-side configuration; do not deploy it
+until the backend review and deployment gates are approved.
 
 ### Human-owned publish steps
 
@@ -191,6 +237,7 @@ match the policy above:
 - `https://archivale.app/privacy/`
 - `https://archivale.app/support/`
 - `https://archivale.app/pricing/`
+- `https://archivale.app/beta/`
 - `https://archivale.app/blog/`
 - `https://archivale.app/blog/collector-records-that-age-well/`
 - `https://archivale.app/blog/how-to-organize-provenance-records-private-art-collection/`
