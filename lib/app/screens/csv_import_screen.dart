@@ -189,10 +189,9 @@ class _CsvImportScreenState extends State<CsvImportScreen> {
           controller: _testHarnessPathController,
           enabled: !isBusy,
           decoration: const InputDecoration(
-            labelText: 'Test harness path',
+            labelText: 'Local CSV path',
             hintText: '/path/to/collector-import.csv',
-            helperText:
-                'Optional local file path for simulator or widget-test QA.',
+            helperText: 'Optional local file path for importing a CSV.',
           ),
         ),
         const SizedBox(height: 12),
@@ -201,7 +200,7 @@ class _CsvImportScreenState extends State<CsvImportScreen> {
           child: OutlinedButton.icon(
             onPressed: isBusy ? null : _loadFromHarnessPath,
             icon: const Icon(Icons.terminal_outlined),
-            label: const Text('Load test harness path'),
+            label: const Text('Load local path'),
           ),
         ),
       ],
@@ -415,7 +414,7 @@ class _CsvImportScreenState extends State<CsvImportScreen> {
         return;
       }
       setState(() {
-        _errorMessage = 'Could not read the test harness path. $error';
+        _errorMessage = 'Could not read the local CSV path. $error';
       });
     } finally {
       if (mounted) {

@@ -802,7 +802,7 @@ void main() {
       expect(find.text('Local-only CSV review'), findsOneWidget);
       expect(find.textContaining('does not connect to Drive'), findsOneWidget);
       expect(find.text('Choose CSV file'), findsOneWidget);
-      expect(find.text('Load test harness path'), findsOneWidget);
+      expect(find.text('Load local path'), findsOneWidget);
       expect(find.text('Choose from system picker'), findsNothing);
 
       await enterVisibleText(
@@ -812,7 +812,7 @@ void main() {
       );
       await pressAsyncButton(
         tester,
-        find.widgetWithText(OutlinedButton, 'Load test harness path'),
+        find.widgetWithText(OutlinedButton, 'Load local path'),
       );
       await waitForFinder(
         tester,
@@ -986,7 +986,7 @@ void main() {
     );
     await pressAsyncButton(
       tester,
-      find.widgetWithText(OutlinedButton, 'Load test harness path'),
+      find.widgetWithText(OutlinedButton, 'Load local path'),
     );
     await waitForFinder(
       tester,
@@ -1071,7 +1071,7 @@ void main() {
     );
     await pressAsyncButton(
       tester,
-      find.widgetWithText(OutlinedButton, 'Load test harness path'),
+      find.widgetWithText(OutlinedButton, 'Load local path'),
     );
     await waitForFinder(
       tester,
@@ -3539,7 +3539,7 @@ Future<void> captureCsvImportPreviewVisualEvidence(
   );
   await pressAsyncButton(
     tester,
-    find.widgetWithText(OutlinedButton, 'Load test harness path'),
+    find.widgetWithText(OutlinedButton, 'Load local path'),
   );
   await waitForFinder(
     tester,
@@ -3585,7 +3585,7 @@ Future<void> captureCsvImportMappingVisualEvidence(
   );
   await pressAsyncButton(
     tester,
-    find.widgetWithText(OutlinedButton, 'Load test harness path'),
+    find.widgetWithText(OutlinedButton, 'Load local path'),
   );
   await waitForFinder(
     tester,
@@ -3623,7 +3623,7 @@ Future<void> captureCsvImportCancelVisualEvidence(
   );
   await pressAsyncButton(
     tester,
-    find.widgetWithText(OutlinedButton, 'Load test harness path'),
+    find.widgetWithText(OutlinedButton, 'Load local path'),
   );
   await waitForFinder(
     tester,

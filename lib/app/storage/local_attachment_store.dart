@@ -71,7 +71,7 @@ class LocalAttachmentStore {
     if (maxBytes == null) {
       throw AttachmentImportException(
         AttachmentImportFailure.unsupportedMimeType,
-        '$mimeType files are not supported in this prototype.',
+        '$mimeType files are not supported for attachment storage.',
       );
     }
 
@@ -79,7 +79,7 @@ class LocalAttachmentStore {
     if (fileSizeBytes > maxBytes) {
       throw AttachmentImportException(
         AttachmentImportFailure.fileTooLarge,
-        'Selected file exceeds the prototype limit for $mimeType.',
+        'Selected file exceeds the attachment limit for $mimeType.',
       );
     }
 

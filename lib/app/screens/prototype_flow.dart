@@ -102,7 +102,7 @@ class PrototypePrivacyScreen extends StatelessWidget {
           ),
           SizedBox(height: 12),
           Text(
-            'The prototype keeps the first record local and labels every AI or document-derived value for review.',
+            'Your first record stays local, and every AI or document-derived value is labeled for review.',
           ),
         ],
       ),
@@ -1714,7 +1714,7 @@ class _ArtworkEditScreenState extends State<ArtworkEditScreen> {
           note: shouldConfirm
               ? 'Edited and confirmed by you.'
               : (previousValue?.note ??
-                    'Placeholder value still needs user confirmation.'),
+                    'This field still needs user confirmation.'),
           lastConfirmedAt: shouldConfirm ? now : previousValue?.lastConfirmedAt,
           moneyAmount: normalizedAmount,
           moneyCurrencyCode: normalizedCurrency,

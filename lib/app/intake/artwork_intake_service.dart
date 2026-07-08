@@ -168,7 +168,7 @@ class ArtworkIntakeService {
         ArtworkFieldKeys.title: ArtworkFieldValue(
           value: 'Untitled artwork',
           source: ArtworkFieldSource.unknown,
-          note: 'Local draft placeholder. Confirm or edit after review.',
+          note: 'Local draft. Confirm or edit after review.',
         ),
         ArtworkFieldKeys.artist: ArtworkFieldValue(
           value: 'Unknown',
