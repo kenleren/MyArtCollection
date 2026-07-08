@@ -12,10 +12,22 @@
     submittedAtField.value = String(loadedAt);
   }
 
+  if (!status.hasAttribute("tabindex")) {
+    status.setAttribute("tabindex", "-1");
+  }
+
   function showStatus(kind, message) {
     status.hidden = false;
     status.textContent = message;
     status.dataset.kind = kind;
+    window.requestAnimationFrame(function () {
+      try {
+        status.focus({ preventScroll: true });
+      } catch (error) {
+        status.focus();
+      }
+      status.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    });
   }
 
   function value(name) {

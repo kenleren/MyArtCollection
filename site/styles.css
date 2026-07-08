@@ -804,6 +804,12 @@ th {
   padding: 0.85rem 0.95rem;
   color: var(--paper);
   background: rgba(255, 255, 255, 0.07);
+  scroll-margin-top: 1.5rem;
+}
+
+.form-status:focus {
+  outline: 2px solid rgba(241, 191, 96, 0.88);
+  outline-offset: 3px;
 }
 
 .form-status[data-kind="success"] {

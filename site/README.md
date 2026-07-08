@@ -29,9 +29,11 @@ public-safe update content ready to publish.
 - No analytics, cookies, trackers, JavaScript frameworks, external scripts, or
   third-party form tools.
 - Support uses a static form that opens the user's mail client.
-- Beta signup uses the repo-side first-party endpoint
+- The beta page is wired for the reserved first-party route
   `/api/forms/beta-signup`, backed by the separate `backend/forms` package.
-  Submissions are manual beta-interest records only, not beta access.
+  Public Hosting keeps that route disabled by default until a durable queue and
+  explicit deployment gate are approved. When enabled in a reviewed deploy,
+  submissions are manual beta-interest records only, not beta access.
 
 ## Copy posture
 
@@ -75,11 +77,12 @@ Retention copy for publication:
   target.
 
 The current backend package is buildable and testable without secrets, but its
-default queue is in-memory only. Before collecting real submissions, a separate
-reviewed change must add an approved durable queue/deletion adapter and record
-the App Check or reCAPTCHA posture. Deployment still requires task review,
-redteam/privacy review, visual review, deployment-manager approval, and explicit
-human deploy approval.
+test queue is in-memory only and the public route is disabled by default.
+Before collecting real submissions, a separate reviewed change must add an
+approved durable queue/deletion adapter, record the App Check or reCAPTCHA
+posture, and explicitly open the deployment gate. Deployment still requires
+task review, redteam/privacy review, visual review, deployment-manager
+approval, and explicit human deploy approval.
 
 ## Pricing rationale
 
@@ -144,6 +147,7 @@ Then open:
 Repo-side Firebase Hosting is intentionally minimal:
 
 - `firebase.json` serves the `site/` directory only.
+- `firebase.json` does not include the beta-signup Hosting rewrite by default.
 - Public HTML routes are configured to revalidate on every request.
 - Static CSS, image, and logo assets use short-lived cache headers so brand
   fixes and rollback verification are not hidden by long browser or edge cache
@@ -214,9 +218,10 @@ Then open the local URL printed by the emulator and confirm the same public rout
 - `/beta/`
 
 For a full beta signup emulator path, the `backend/forms` Functions package
-must also be built and wired into a Firebase emulator configuration. The
-committed Hosting rewrite is only repo-side configuration; do not deploy it
-until the backend review and deployment gates are approved.
+must also be built, given a durable queue implementation, and wired into a
+Firebase emulator configuration with the explicit deployment gate enabled. Do
+not expose the route publicly until the backend review and deployment gates are
+approved.
 
 ### Human-owned publish steps
 

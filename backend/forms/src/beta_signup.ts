@@ -73,7 +73,8 @@ export function createBetaSignupHttpHandler(options: BetaSignupHandlerOptions) {
 
     const origin = header(request, "origin");
     const host = header(request, "x-forwarded-host") ?? header(request, "host");
-    if (!isAllowedOrigin(origin, host, allowedOrigins)) {
+    const forwardedProto = header(request, "x-forwarded-proto");
+    if (!isAllowedOrigin(origin, host, forwardedProto, allowedOrigins)) {
       sendJson(response, 403, { ok: false, error: "forbidden" });
       return;
     }
@@ -101,13 +102,9 @@ export function createBetaSignupHttpHandler(options: BetaSignupHandlerOptions) {
     }
 
     await options.queue.enqueue(
-      toQueueRecord(validation.payload, validation.normalizedEmail, {
-        origin,
-        userAgent: header(request, "user-agent"),
-        submitterKey,
-        nowMs: nowMs(),
-      }),
+      toQueueRecord(validation.payload, validation.normalizedEmail, nowMs()),
       nowMs(),
+      { rateLimitKey: submitterKey },
     );
 
     sendJson(response, 201, { ok: true, status: "queued" });
@@ -195,12 +192,7 @@ function validatePayload(body: unknown, nowMs: number, minSubmitDelayMs: number)
 function toQueueRecord(
   payload: BetaSignupPayload,
   normalizedEmail: string,
-  meta: {
-    origin?: string;
-    userAgent?: string;
-    submitterKey?: string;
-    nowMs: number;
-  },
+  nowMs: number,
 ): BetaSignupQueueRecord {
   return {
     formType: "beta_signup",
@@ -214,12 +206,7 @@ function toQueueRecord(
     retentionVersion: payload.retentionVersion,
     sourceRoute: payload.sourceRoute,
     status: "pending",
-    submittedAtIso: new Date(meta.nowMs).toISOString(),
-    requestMeta: {
-      ...(meta.origin ? { origin: meta.origin } : {}),
-      ...(meta.userAgent ? { userAgent: meta.userAgent } : {}),
-      ...(meta.submitterKey ? { submitterKey: meta.submitterKey } : {}),
-    },
+    submittedAtIso: new Date(nowMs).toISOString(),
   };
 }
 
@@ -296,10 +283,11 @@ function isJsonContentType(value: string | undefined): boolean {
 function isAllowedOrigin(
   origin: string | undefined,
   host: string | undefined,
+  forwardedProto: string | undefined,
   allowedOrigins: Set<string>,
 ): boolean {
   if (!origin) {
-    return true;
+    return false;
   }
   if (allowedOrigins.has(origin)) {
     return true;
@@ -308,10 +296,28 @@ function isAllowedOrigin(
     return false;
   }
   try {
-    return new URL(origin).host === host;
+    const originUrl = new URL(origin);
+    const protocols = allowedHostProtocols(host, forwardedProto);
+    return protocols.some((protocol) => originUrl.origin === `${protocol}://${host}`);
   } catch {
     return false;
   }
+}
+
+function allowedHostProtocols(host: string, forwardedProto: string | undefined): string[] {
+  const forwarded = forwardedProto?.split(",")[0]?.trim().toLowerCase();
+  if (forwarded === "http" || forwarded === "https") {
+    return [forwarded];
+  }
+  if (
+    host.startsWith("localhost:") ||
+    host === "localhost" ||
+    host.startsWith("127.0.0.1:") ||
+    host === "127.0.0.1"
+  ) {
+    return ["http"];
+  }
+  return ["https"];
 }
 
 function submitterKeyFor(request: MinimalRequest): string | undefined {

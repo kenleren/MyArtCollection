@@ -95,7 +95,7 @@
               </tr>
               <tr>
                 <td data-label="Area">Beta signup</td>
-                <td data-label="What happens here">The beta form sends email, optional name, platform interest, optional country or time zone, optional notes, consent version, retention version, source route, client submit timestamp, and a hidden spam field to a first-party backend queue for manual review.</td>
+                <td data-label="What happens here">The beta page includes a first-party form UI, but default public Hosting config does not collect submissions yet. When enabled in a separately reviewed deploy, the queue will accept email, optional name, platform interest, optional country or time zone, optional notes, consent version, retention version, source route, client submit timestamp, and a hidden spam field for manual review. The repo handler does not persist raw IP, browser origin, or user-agent in queued records.</td>
               </tr>
               <tr>
                 <td data-label="Area">Manual approval</td>
@@ -103,7 +103,7 @@
               </tr>
               <tr>
                 <td data-label="Area">Retention and deletion</td>
-                <td data-label="What happens here">Pending beta-interest records are retained for up to 90 days unless Archivale is actively contacting the person. Rejected records are retained for up to 30 days for audit and abuse review. Honeypot spam records are not queued by the repo handler. Deletion requests are routed through support and targeted for manual handling within 30 days.</td>
+                <td data-label="What happens here">When beta collection is enabled in a reviewed deploy, pending beta-interest records are retained for up to 90 days unless Archivale is actively contacting the person. Rejected records are retained for up to 30 days for audit and abuse review. Honeypot spam records are not queued by the repo handler. Deletion requests are routed through support and targeted for manual handling within 30 days.</td>
               </tr>
               <tr>
                 <td data-label="Area">Accounts</td>
@@ -111,7 +111,7 @@
               </tr>
               <tr>
                 <td data-label="Area">Abuse protection caveat</td>
-                <td data-label="What happens here">The repo-side handler includes validation, same-origin checks where feasible, honeypot handling, duplicate suppression, and rate-limit hooks. Production deployment still needs an approved App Check or reCAPTCHA posture, durable queue/deletion implementation, and deployment review before collecting real submissions.</td>
+                <td data-label="What happens here">The repo-side handler includes validation, required same-origin checks, honeypot handling, duplicate suppression, and short-lived rate-limit hooks that are not written into queued records. Production deployment still needs an approved App Check or reCAPTCHA posture, durable queue/deletion implementation, and deployment review before collecting real submissions.</td>
               </tr>
               <tr>
                 <td data-label="Area">Privacy owner</td>

@@ -2,6 +2,7 @@
   "name": "@archivale/forms-backend",
   "version": "0.0.0",
   "private": true,
+  "main": "build/src/index.js",
   "description": "Repo-side beta signup form backend scaffold for Firebase Functions.",
   "type": "module",
   "scripts": {

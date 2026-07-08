@@ -31,15 +31,14 @@ export type BetaSignupQueueRecord = {
   sourceRoute: "/beta/";
   status: "pending";
   submittedAtIso: string;
-  requestMeta: {
-    origin?: string;
-    userAgent?: string;
-    submitterKey?: string;
-  };
 };
 
 export type BetaSignupQueue = {
   hasDuplicate(normalizedEmail: string, nowMs: number): Promise<boolean>;
   isRateLimited(submitterKey: string | undefined, nowMs: number): Promise<boolean>;
-  enqueue(record: BetaSignupQueueRecord, nowMs: number): Promise<void>;
+  enqueue(
+    record: BetaSignupQueueRecord,
+    nowMs: number,
+    options?: { rateLimitKey?: string },
+  ): Promise<void>;
 };

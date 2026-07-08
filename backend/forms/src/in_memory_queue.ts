@@ -33,11 +33,15 @@ export class InMemoryBetaSignupQueue implements BetaSignupQueue {
     return lastSeenMs !== undefined && nowMs - lastSeenMs < this.rateLimitWindowMs;
   }
 
-  async enqueue(record: BetaSignupQueueRecord, nowMs: number): Promise<void> {
+  async enqueue(
+    record: BetaSignupQueueRecord,
+    nowMs: number,
+    options?: { rateLimitKey?: string },
+  ): Promise<void> {
     this.records.push(record);
     this.recentEmails.set(record.normalizedEmail, nowMs);
-    if (record.requestMeta.submitterKey) {
-      this.recentSubmitters.set(record.requestMeta.submitterKey, nowMs);
+    if (options?.rateLimitKey) {
+      this.recentSubmitters.set(options.rateLimitKey, nowMs);
     }
   }
 }

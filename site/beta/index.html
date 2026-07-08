@@ -53,6 +53,11 @@
           asks to be considered; it does not automatically add you to Firebase
           App Distribution, Google Play testing, or any tester list.
         </p>
+        <p>
+          Public website collection stays disabled until a reviewed durable
+          queue and deployment gate are enabled. Until then, use
+          <a href="/support/">support</a> for early-access questions.
+        </p>
       </section>
 
       <section class="section beta-section">
@@ -142,9 +147,11 @@
           <div class="form-full form-actions">
             <button class="button" type="submit">Request beta access</button>
             <p class="muted-note">
-              Pending beta-interest records are retained for up to 90 days unless
+              When this route is enabled in a reviewed deploy, pending
+              beta-interest records are retained for up to 90 days unless
               Archivale is actively contacting you. This site has no automatic
-              tester enrollment.
+              tester enrollment and the repo handler does not store raw IP,
+              browser origin, or user-agent in the queue record.
             </p>
           </div>
         </form>

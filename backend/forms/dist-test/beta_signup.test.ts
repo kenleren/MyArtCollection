@@ -7,8 +7,10 @@ import {
   BETA_SIGNUP_RETENTION_VERSION,
   createBetaSignupHttpHandler,
   createInMemoryBetaSignupQueue,
+  type BetaSignupQueueRecord,
   type InMemoryBetaSignupQueue,
 } from "../src/index.js";
+import { isBetaSignupCollectionEnabled } from "../src/firebase.js";
 
 const NOW_MS = Date.UTC(2026, 6, 8, 12, 0, 0);
 
@@ -39,7 +41,7 @@ function validPayload(overrides: Record<string, unknown> = {}): Record<string, u
 async function submit(
   queue: InMemoryBetaSignupQueue,
   body: unknown,
-  headers: Record<string, string> = {},
+  headers: Record<string, string | undefined> = {},
 ): Promise<TestResponse> {
   const handler = createBetaSignupHttpHandler({
     queue,
@@ -96,6 +98,7 @@ test("queues a valid beta signup as a pending manual-review record", async () =>
   assert.equal(queue.records[0]?.formType, "beta_signup");
   assert.equal(queue.records[0]?.status, "pending");
   assert.equal(queue.records[0]?.normalizedEmail, "collector@example.com");
+  assert.equal("requestMeta" in (queue.records[0] as BetaSignupQueueRecord), false);
 });
 
 test("accepts callable-style data envelope without allowing extra envelope fields", async () => {
@@ -112,7 +115,7 @@ test("accepts callable-style data envelope without allowing extra envelope field
   assert.equal(rejected.statusCode, 400);
 });
 
-test("rejects wrong method, content type, origin, and unknown fields", async () => {
+test("rejects wrong method, content type, missing or foreign origin, and unknown fields", async () => {
   const queue = createInMemoryBetaSignupQueue();
   const methodResponse = await submit(queue, validPayload(), { ":method": "GET" });
 
@@ -152,8 +155,20 @@ test("rejects wrong method, content type, origin, and unknown fields", async () 
     415,
   );
   assert.equal(
+    (await submit(queue, validPayload({ email: "no-origin@example.com" }), {
+      origin: undefined,
+    })).statusCode,
+    403,
+  );
+  assert.equal(
     (await submit(queue, validPayload({ email: "origin@example.com" }), {
       origin: "https://example.net",
+    })).statusCode,
+    403,
+  );
+  assert.equal(
+    (await submit(queue, validPayload({ email: "scheme@example.com" }), {
+      origin: "http://archivale.app",
     })).statusCode,
     403,
   );
@@ -196,5 +211,23 @@ test("queued records contain no tester-system mutation fields", async () => {
 
   const serialized = JSON.stringify(queue.records[0]);
   assert.match(serialized, /"status":"pending"/);
+  assert.doesNotMatch(serialized, /origin|userAgent|submitterKey/i);
   assert.doesNotMatch(serialized, /appDistribution|googlePlay|testerList|autoEnroll|inviteTester/i);
+});
+
+test("firebase collection gate stays disabled until explicit durable settings exist", () => {
+  assert.equal(isBetaSignupCollectionEnabled({}), false);
+  assert.equal(
+    isBetaSignupCollectionEnabled({
+      BETA_SIGNUP_HTTP_ENABLED: "true",
+    }),
+    false,
+  );
+  assert.equal(
+    isBetaSignupCollectionEnabled({
+      BETA_SIGNUP_HTTP_ENABLED: "true",
+      BETA_SIGNUP_QUEUE_MODE: "durable",
+    }),
+    true,
+  );
 });

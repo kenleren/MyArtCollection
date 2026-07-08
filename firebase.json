@@ -142,15 +142,6 @@
           }
         ]
       }
-    ],
-    "rewrites": [
-      {
-        "source": "/api/forms/beta-signup",
-        "function": {
-          "functionId": "betaSignup",
-          "region": "us-central1"
-        }
-      }
     ]
   }
 }
