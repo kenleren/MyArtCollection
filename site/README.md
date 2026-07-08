@@ -15,6 +15,8 @@ Included routes:
 - `/blog/collector-records-that-age-well/`
 - `/blog/how-to-organize-provenance-records-private-art-collection/`
 - `/blog/how-to-document-artwork-for-insurance-conversations/`
+- `/blog/art-inventory-template-private-collectors/`
+- `/blog/artwork-condition-report-checklist-private-collectors/`
 
 `/updates/` is intentionally omitted in this task because the repo did not have
 public-safe update content ready to publish.
@@ -64,6 +66,7 @@ Blog posts are plain static HTML under `site/blog/<slug>/index.html`, with the
 index at `site/blog/index.html`. Each published post should include:
 
 - a page-specific `<title>` and meta description;
+- conservative inline `schema.org` JSON-LD that matches visible page copy;
 - a link from the blog index;
 - copy that supports collector education without presenting Archivale as an
   authenticator, appraiser, insurer, certifier, or marketplace authority;
@@ -94,6 +97,8 @@ Then open:
 - `http://127.0.0.1:8000/blog/collector-records-that-age-well/`
 - `http://127.0.0.1:8000/blog/how-to-organize-provenance-records-private-art-collection/`
 - `http://127.0.0.1:8000/blog/how-to-document-artwork-for-insurance-conversations/`
+- `http://127.0.0.1:8000/blog/art-inventory-template-private-collectors/`
+- `http://127.0.0.1:8000/blog/artwork-condition-report-checklist-private-collectors/`
 
 ## Firebase Hosting config
 
@@ -113,8 +118,10 @@ Firebase Hosting headers in `firebase.json` use this policy:
 
 - `/`, `/privacy/`, `/support/`, `/pricing/`, `/blog/`,
   `/blog/collector-records-that-age-well/`,
-  `/blog/how-to-organize-provenance-records-private-art-collection/`, and
-  `/blog/how-to-document-artwork-for-insurance-conversations/` send
+  `/blog/how-to-organize-provenance-records-private-art-collection/`,
+  `/blog/how-to-document-artwork-for-insurance-conversations/`,
+  `/blog/art-inventory-template-private-collectors/`, and
+  `/blog/artwork-condition-report-checklist-private-collectors/` send
   `Cache-Control: public, max-age=0, s-maxage=0, must-revalidate`.
 - Direct HTML file requests matching `/**/*.html` send the same revalidation
   header so route documents do not persist stale HTML after deploy.
@@ -138,6 +145,16 @@ If `jq` is unavailable, use:
 
 ```sh
 python3 -m json.tool firebase.json
+```
+
+### Static site validation
+
+Validate static HTML shape, inline JSON-LD parsing, local `href`/`src`
+resolution, trust-copy guardrails for structured data, disallowed scripts or
+external assets, and expected route smoke coverage from the repository root:
+
+```sh
+python3 scripts/validate_static_site.py
 ```
 
 ### Ad hoc local hosting preview
@@ -178,3 +195,5 @@ match the policy above:
 - `https://archivale.app/blog/collector-records-that-age-well/`
 - `https://archivale.app/blog/how-to-organize-provenance-records-private-art-collection/`
 - `https://archivale.app/blog/how-to-document-artwork-for-insurance-conversations/`
+- `https://archivale.app/blog/art-inventory-template-private-collectors/`
+- `https://archivale.app/blog/artwork-condition-report-checklist-private-collectors/`

@@ -9,6 +9,52 @@
       content="Archivale: Art Records is a private, local-first art collection record app for serious hobby collectors."
     >
     <link rel="stylesheet" href="/styles.css">
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "Organization",
+            "@id": "https://archivale.app/#organization",
+            "name": "Archivale",
+            "url": "https://archivale.app/",
+            "logo": "https://archivale.app/assets/archivale-logo.svg"
+          },
+          {
+            "@type": "WebSite",
+            "@id": "https://archivale.app/#website",
+            "name": "Archivale: Art Records",
+            "url": "https://archivale.app/",
+            "publisher": {
+              "@id": "https://archivale.app/#organization"
+            }
+          },
+          {
+            "@type": "SoftwareApplication",
+            "@id": "https://archivale.app/#app",
+            "name": "Archivale: Art Records",
+            "applicationCategory": "LifestyleApplication",
+            "description": "Archivale is a private, local-first art collection record app for serious hobby collectors.",
+            "publisher": {
+              "@id": "https://archivale.app/#organization"
+            }
+          },
+          {
+            "@type": "WebPage",
+            "@id": "https://archivale.app/#webpage",
+            "url": "https://archivale.app/",
+            "name": "Archivale: Art Records | Private collection records for collectors",
+            "description": "Archivale: Art Records is a private, local-first art collection record app for serious hobby collectors.",
+            "isPartOf": {
+              "@id": "https://archivale.app/#website"
+            },
+            "about": {
+              "@id": "https://archivale.app/#app"
+            }
+          }
+        ]
+      }
+    </script>
   </head>
   <body>
     <header class="site-header">
