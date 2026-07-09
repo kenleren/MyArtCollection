@@ -326,7 +326,10 @@ function checkVulnerability(name, vulnerability, expected, label, allowDerivedFi
   if (vulnerability.severity !== 'moderate') throw new Error(`${name} severity is not exactly moderate`);
   if (vulnerability.isDirect !== expected.isDirect) throw new Error(`${name} direct-dependency state changed`);
   if (vulnerability.range !== expected.range) throw new Error(`${name} vulnerable range changed`);
-  compareExactArray(vulnerability.effects, expected.effects, `${name} ${label} effects`);
+  const expectedEffects = allowDerivedFixMetadata && name === 'firebase-admin'
+    ? ['firebase-functions']
+    : expected.effects;
+  compareExactArray(vulnerability.effects, expectedEffects, `${name} ${label} effects`);
   compareExactArray(vulnerability.nodes, expected.nodes, `${name} ${label} nodes`);
 
   if (name === 'uuid') validateAdvisoryOrigin(vulnerability.via);

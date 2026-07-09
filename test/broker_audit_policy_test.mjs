@@ -52,6 +52,8 @@ const expectedFailures = new Map([
   ['extra-peer-node', /firebase-functions peer metadata nodes changed/],
   ['extra-peer-effect', /firebase-functions peer metadata effects changed/],
   ['rerouted-peer-edge', /firebase-functions peer metadata edges changed/],
+  ['missing-peer-reverse-effect', /firebase-admin full audit effects changed/],
+  ['extra-peer-reverse-effect', /firebase-admin full audit effects changed/],
   ['unexpected-derived-fix-target', /@google-cloud\/firestore full audit fix metadata changed shape/],
   ['extra-derived-fix-field', /@google-cloud\/firestore full audit fix metadata fields changed/],
   ['rerouted-root-peer', /broker root dependency declarations changed/],
@@ -170,6 +172,7 @@ async function readJsonFixture(name) {
 async function createPeerAudit() {
   const audit = await readJsonFixture('allowed-audit.json');
   audit.vulnerabilities['firebase-functions'] = await readJsonFixture('allowed-peer-metadata.json');
+  audit.vulnerabilities['firebase-admin'].effects = ['firebase-functions'];
   audit.metadata.vulnerabilities.moderate = 9;
   audit.metadata.vulnerabilities.total = 9;
   return audit;

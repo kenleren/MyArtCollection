@@ -90,9 +90,12 @@ that advice must retain the exact npm v2 field set and value types.
 npm may add only its known derived `firebase-functions > firebase-admin`
 peer-metavulnerability entry to the full report. That entry must have the exact
 field set, direct state, `via`, empty effects, and top-level node; its range and
-fix recommendation must retain the npm v2 types. The lock binds the peer edge
-to exact top-level `firebase-functions@7.2.5` and `firebase-admin@13.10.0`
-installations. Any other peer package or peer graph change fails.
+fix recommendation must retain the npm v2 types. The full report must also add
+exactly the matching `firebase-admin` reverse effect for `firebase-functions`;
+the peer-normalized report must not contain that effect. The lock binds both
+directions to exact top-level `firebase-functions@7.2.5` and
+`firebase-admin@13.10.0` installations. Any other peer package or peer graph
+change fails.
 
 The lock policy also checks exact registry URLs, integrity values, dependency
 fields/ranges, concrete resolved paths, and a single top-level UUID

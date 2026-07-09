@@ -99,6 +99,20 @@
     ]
   },
   {
+    "id": "missing-peer-reverse-effect",
+    "description": "a missing reverse effect for the approved peer edge",
+    "mutations": [
+      { "target": "peerAudit", "operation": "set", "path": ["vulnerabilities", "firebase-admin", "effects"], "value": [] }
+    ]
+  },
+  {
+    "id": "extra-peer-reverse-effect",
+    "description": "an extra reverse effect beside the approved peer edge",
+    "mutations": [
+      { "target": "peerAudit", "operation": "append", "path": ["vulnerabilities", "firebase-admin", "effects"], "value": "evil" }
+    ]
+  },
+  {
     "id": "unexpected-derived-fix-target",
     "description": "a full-report remediation target outside the locked direct packages",
     "mutations": [
