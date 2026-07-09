@@ -265,6 +265,7 @@ function statusForErrorCode(code: string): number {
       return 403;
     case 'idempotency_conflict':
       return 409;
+    case 'quota_subject_in_flight':
     case 'quota_subject_monthly_cap_exceeded':
     case 'broker_monthly_cap_exceeded':
       return 429;
@@ -310,14 +311,15 @@ function safeMessageForErrorCode(code: string): string {
     case 'invalid_image_dimensions':
       return 'Image derivative dimensions are outside allowed bounds.';
     case 'entitlement_or_credit_denied':
-      return 'Broker entitlement or credit placeholder denied the request.';
+      return 'Broker entitlement or credit denied the request.';
     case 'broker_breaker_open':
       return 'Broker breaker is open.';
     case 'idempotency_conflict':
       return 'Broker request id conflicts with a prior payload.';
     case 'quota_subject_monthly_cap_exceeded':
+    case 'quota_subject_in_flight':
     case 'broker_monthly_cap_exceeded':
-      return 'Broker quota placeholder denied the request.';
+      return 'Broker quota denied the request.';
     case 'provider_failure':
       return 'Provider execution failed.';
     case 'provider_output_invalid':

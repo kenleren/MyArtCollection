@@ -14,6 +14,7 @@ supports:
 
 - Pure broker core: `src/broker.ts`
 - Generic server-side adapter: `src/adapter.ts`
+- Durable broker protection and Firestore adapter: `src/durable_protection.ts`
 - Fake provider: `src/fake_provider.ts`
 - Disabled-by-default HTTP shell: `src/live_broker.ts`
 - Firebase Functions export: `src/firebase.ts`
@@ -33,6 +34,11 @@ these non-default settings are present:
 - `BROKER_PROVIDER_MODE=openai`
 - `BROKER_OPENAI_LIVE_TEST_ENABLED=true`
 - `BROKER_OWNER_UID_ALLOWLIST=<comma-separated owner UIDs>`
+- `BROKER_FIREBASE_PROJECT_ID=<dedicated broker Firebase project ID>`
+- `BROKER_FIREBASE_PROJECT_NUMBER=<dedicated broker Firebase project number>`
+- `BROKER_APP_ID_ALLOWLIST=<comma-separated approved Firebase App Check app IDs>`
+- `BROKER_DURABLE_STORE_CONFIGURED=true`
+- `BROKER_QUOTA_HMAC_SECRET=<server-only HMAC secret from runtime secret injection>`
 - `OPENAI_ALLOWED_DOMAINS=<comma-separated professional-source domains>`
 - `OPENAI_API_KEY` or `ARCHIVALE_OPENAI_API_KEY`
 
@@ -49,9 +55,34 @@ Optional OpenAI env vars:
 
 The shell does not read `.env.local`, mobile config files, or service-account
 files. It reads provider credentials only from runtime env/secret injection.
-The default live configuration still returns `503 research_broker_disabled`
-before OpenAI config lookup because durable cross-instance entitlement, credit,
-and idempotency protection is not implemented in this package.
+The Firebase Functions export wires a concrete Firebase Admin/Firestore-backed
+`DurableBrokerProtection` by default when the durable env gate is complete. It
+still returns `503 research_broker_disabled` before OpenAI config lookup if
+required durable env, Firebase Admin, App Check, or Firestore dependencies are
+absent. The production wiring provides:
+
+- Firebase Admin-backed Auth ID token verification with revocation checking,
+- Firebase Admin-backed App Check token verification,
+- server-side `quota_subject_v1_...` derivation using
+  `BROKER_QUOTA_HMAC_SECRET`,
+- Firestore-backed entitlement, breaker, credit, one-in-flight, and idempotency
+  storage,
+- and lazy OpenAI provider dependency creation only after those request gates
+  pass.
+
+Firestore deployment-owned documents are intentionally abstract and contain no
+secret values:
+
+- `brokerDurableControl/live` for breaker and optional quota cap overrides.
+- `brokerDurableControl/globalUsage` for broker-wide exposed credit aggregate.
+- `brokerDurableEntitlements/<uid-key>` with `entitled=true` for approved owner
+  test users.
+- `brokerDurableQuotaSubjects/<quota-subject-key>` for per-subject exposed
+  credit and reserved in-flight aggregate.
+- `brokerDurableIdempotency/<request-key>` for request id, payload hash,
+  in-flight/completed state, and replay response.
+- `brokerDurableLedger/<request-key>` for reserved/finalized/refunded credit
+  records.
 
 ## Current live-test posture
 
@@ -66,9 +97,13 @@ The OpenAI adapter is wired for:
 - allowlisted domains only
 - response grounding against returned citations before broker acceptance
 
-The shell still uses placeholder Auth/App Check/entitlement/credit inputs from
-request headers. That keeps the package testable and deployable as a reviewed
-shell, but it is not deploy approval and not production auth.
+The live shell no longer trusts client-supplied quota-subject, entitlement,
+credit, breaker, Auth, or App Check placeholder headers. It expects
+`Authorization: Bearer <Firebase Auth ID token>` and `X-Firebase-AppCheck:
+<App Check token>` at the HTTP boundary, then builds the broker identity
+server-side through the durable protection abstraction. Tests use fake
+Admin/store adapters only and do not require real Firebase projects, emulators,
+service accounts, or secrets.
 
 ## Local checks
 
@@ -96,14 +131,18 @@ git diff --check
 - No live OpenAI calls during implementation/tests.
 - No direct OpenAI provider constructor in the package public API.
 - No live provider fetch without broker-issued request authorization.
-- No live shell provider calls until durable cross-instance spend protection is
-  implemented and reviewed.
+- No live shell provider calls until environment-specific Admin credentials,
+  Firestore documents/rules/index posture, secret injection, and
+  breaker/entitlement configuration are reviewed under #155.
 
 ## Remaining gates before any owner live test
 
-- real Firebase Auth/App Check verification instead of header placeholders,
-- reviewed durable entitlement/credit/idempotency storage, wired into the live
-  shell before provider config lookup or provider execution is enabled,
+- environment-specific Firebase Admin Auth/App Check credentials,
+- reviewed durable Firestore entitlement/credit/idempotency storage
+  provisioning,
+- App Check limited-use/replay behavior decision for the deployed HTTP path,
+- exact Secret Manager/runtime secret binding for `BROKER_QUOTA_HMAC_SECRET`
+  and the OpenAI provider key,
 - exact #52 ZDR/data-handling approval for the rollout org/project,
 - deployment-manager approval in #155,
 - task review plus redteam/privacy review for this change,

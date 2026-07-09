@@ -8,15 +8,19 @@ import {
   type BrokerResponse,
   type ProviderClient,
 } from './contracts.js';
-import { PlaceholderCreditLedger } from './credit_ledger.js';
+import { PlaceholderCreditLedger, type BrokerCreditLedger } from './credit_ledger.js';
 import { FakeResearchProvider } from './fake_provider.js';
-import { InMemoryIdempotencyStore } from './idempotency.js';
+import {
+  InMemoryIdempotencyStore,
+  type BrokerIdempotencyStore,
+  type StoredRequest,
+} from './idempotency.js';
 import { authorizeProviderRequest } from './provider_authorization.js';
 
 export interface BrokerDependencies {
   provider: ProviderClient;
-  idempotency: InMemoryIdempotencyStore;
-  creditLedger: PlaceholderCreditLedger;
+  idempotency: BrokerIdempotencyStore;
+  creditLedger: BrokerCreditLedger;
   now: () => Date;
   orderTrace?: string[];
 }
@@ -93,7 +97,7 @@ export async function handleResearchRequest(
   }
 
   trace?.push('idempotency');
-  const existing = dependencies.idempotency.get(context.quota_subject, request.request_id);
+  const existing = await dependencies.idempotency.get(context.quota_subject, request.request_id);
   if (existing !== undefined) {
     if (existing.payloadHash !== request.payload_hash) {
       return fail(
@@ -102,20 +106,37 @@ export async function handleResearchRequest(
         'idempotency',
       );
     }
-    if (existing.response !== undefined) {
-      return { ...existing.response, replayed: true };
+    const replay = await replayExistingRequest(existing);
+    if (replay !== undefined) {
+      return replay;
     }
-    if (existing.inFlight !== undefined) {
-      const response = await existing.inFlight;
-      return { ...response, replayed: true };
+    if (existing.durableInFlight === true) {
+      return fail(
+        'quota_subject_in_flight',
+        'The request is already in flight on another broker instance.',
+        'idempotency',
+      );
     }
   }
 
-  const idempotencyEntry = dependencies.idempotency.begin(
+  const idempotencyEntry = await dependencies.idempotency.begin(
     context.quota_subject,
     request.request_id,
     request.payload_hash,
   );
+  if (idempotencyEntry.created === false) {
+    const replay = await replayExistingRequest(idempotencyEntry);
+    if (replay !== undefined) {
+      return replay;
+    }
+    if (idempotencyEntry.durableInFlight === true) {
+      return fail(
+        'quota_subject_in_flight',
+        'The request is already in flight on another broker instance.',
+        'idempotency',
+      );
+    }
+  }
   const inFlight = runReservedProviderRequest(
     request,
     context.quota_subject,
@@ -124,16 +145,55 @@ export async function handleResearchRequest(
     trace,
     creditCost,
   );
-  dependencies.idempotency.setInFlight(idempotencyEntry, inFlight);
+  await dependencies.idempotency.setInFlight(idempotencyEntry, inFlight);
 
   try {
     const response = await inFlight;
-    dependencies.idempotency.complete(idempotencyEntry, response);
+    await dependencies.idempotency.complete(idempotencyEntry, response);
     return response;
   } catch (error) {
-    dependencies.idempotency.forget(context.quota_subject, request.request_id);
+    await dependencies.idempotency.forget(context.quota_subject, request.request_id);
     throw error;
   }
+}
+
+async function replayExistingRequest(
+  existing: StoredRequest,
+): Promise<BrokerResponse | undefined> {
+  const response = completedResponse(existing);
+  if (response !== undefined) {
+    return { ...response, replayed: true };
+  }
+  const inFlight = inFlightResponse(existing);
+  if (inFlight !== undefined) {
+    const completed = await inFlight;
+    return { ...completed, replayed: true };
+  }
+  await nextEventLoopTurn();
+  const responseAfterMicrotask = completedResponse(existing);
+  if (responseAfterMicrotask !== undefined) {
+    return { ...responseAfterMicrotask, replayed: true };
+  }
+  const inFlightAfterMicrotask = inFlightResponse(existing);
+  if (inFlightAfterMicrotask !== undefined) {
+    const completed = await inFlightAfterMicrotask;
+    return { ...completed, replayed: true };
+  }
+  return undefined;
+}
+
+function completedResponse(existing: StoredRequest): BrokerResponse | undefined {
+  return existing.response;
+}
+
+function inFlightResponse(existing: StoredRequest): Promise<BrokerResponse> | undefined {
+  return existing.inFlight;
+}
+
+function nextEventLoopTurn(): Promise<void> {
+  return new Promise((resolve) => {
+    setImmediate(resolve);
+  });
 }
 
 async function runReservedProviderRequest(
@@ -145,7 +205,7 @@ async function runReservedProviderRequest(
   creditCost: number,
 ): Promise<BrokerResponse> {
   trace?.push('credit_reserve');
-  const reservation = dependencies.creditLedger.reserve({
+  const reservation = await dependencies.creditLedger.reserve({
     requestId: request.request_id,
     quotaSubject,
     creditCost,
@@ -165,13 +225,13 @@ async function runReservedProviderRequest(
     authorizeProviderRequest(request);
     providerResult = await dependencies.provider.research(request);
   } catch {
-    dependencies.creditLedger.refund(record, 'provider_exception');
+    await dependencies.creditLedger.refund(record, 'provider_exception');
     return fail('provider_failure', 'Provider failed before output validation.', 'provider');
   }
 
   if (providerResult.kind === 'output_error') {
     trace?.push('output_validation');
-    dependencies.creditLedger.finalize(record);
+    await dependencies.creditLedger.finalize(record);
     return fail(providerResult.code, providerResult.message, 'output_validation');
   }
 
@@ -179,12 +239,12 @@ async function runReservedProviderRequest(
   trace?.push('output_validation');
   const outputError = validateOutput(providerOutput);
   if (outputError !== undefined) {
-    dependencies.creditLedger.finalize(record);
+    await dependencies.creditLedger.finalize(record);
     return fail(outputError.code, outputError.message, 'output_validation');
   }
 
   trace?.push('credit_finalize');
-  dependencies.creditLedger.finalize(record);
+  await dependencies.creditLedger.finalize(record);
 
   const response: BrokerResponse = {
     request_id: request.request_id,

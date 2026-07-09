@@ -28,6 +28,8 @@ export {
 } from './adapter.js';
 export {
   artResearchBroker,
+  createFirebaseDurableBrokerProtection,
+  createFirebaseResearchBrokerDependencies,
 } from './firebase.js';
 export {
   createConfiguredResearchBrokerDependencies,
@@ -37,3 +39,20 @@ export {
   type MinimalRequest,
   type MinimalResponse,
 } from './live_broker.js';
+export {
+  ConfiguredDurableBrokerProtection,
+  DurableCreditLedger,
+  FirestoreDurableBrokerStore,
+  FirestoreDurableCreditLedger,
+  FirestoreDurableIdempotencyStore,
+  DurableIdempotencyStore,
+  FakeBrokerTokenVerifier,
+  FakeDurableBrokerStore,
+  FirebaseAdminBrokerTokenVerifier,
+  createFirebaseAdminDurableBrokerProtection,
+  deriveQuotaSubject,
+  type BrokerTokenVerifier,
+  type DurableBrokerProtection,
+  type DurableFirestoreLike,
+  type DurableGateStore,
+} from './durable_protection.js';

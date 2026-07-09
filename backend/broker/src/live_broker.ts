@@ -7,9 +7,12 @@ import type { BrokerDependencies } from './broker.js';
 import { createFakeBrokerDependencies } from './broker.js';
 import {
   handleBrokerAdapterRequest,
-  type BrokerAdapterIdentity,
-  type BrokerAdapterEnvelope,
 } from './adapter.js';
+import {
+  durableConfigFromEnv,
+  MISSING_DURABLE_CONFIG_CODE,
+  type DurableBrokerProtection,
+} from './durable_protection.js';
 
 export type MinimalRequest = AsyncIterable<Buffer | string> & {
   method?: string;
@@ -39,9 +42,10 @@ export interface ResearchBrokerHttpHandlerOptions {
 export type ConfiguredBrokerDependenciesResult =
   | {
       kind: 'ready';
-      dependencies: BrokerDependencies;
+      createDependencies: () => BrokerDependencies;
       ownerUidAllowlist: ReadonlySet<string>;
       durableProtection: true;
+      protection: DurableBrokerProtection;
     }
   | {
       kind: 'disabled';
@@ -66,7 +70,7 @@ export function createConfiguredResearchBrokerDependencies(
     currentEnv: NodeJS.ProcessEnv,
     currentOverrides: Partial<OpenAiProviderConfig>,
   ) => ReturnType<typeof readOpenAiProviderConfigFromEnv> = readOpenAiProviderConfigFromEnv,
-  durableProtectionAvailable = false,
+  protection?: DurableBrokerProtection,
 ): ConfiguredBrokerDependenciesResult {
   if (!isResearchBrokerLiveEnabled(env)) {
     return { kind: 'disabled' };
@@ -77,22 +81,32 @@ export function createConfiguredResearchBrokerDependencies(
     return { kind: 'misconfigured', code: 'missing_owner_uid_allowlist' };
   }
 
-  if (!durableProtectionAvailable) {
-    return { kind: 'misconfigured', code: DURABLE_PROTECTION_UNAVAILABLE_CODE };
+  const durableConfig = durableConfigFromEnv(env);
+  if (!durableConfig.ok) {
+    return { kind: 'misconfigured', code: durableConfig.code };
   }
 
-  const providerConfig = configReader(env, overrides);
-  if (!providerConfig.ok) {
-    return { kind: 'misconfigured', code: providerConfig.code };
+  if (protection === undefined) {
+    return { kind: 'misconfigured', code: DURABLE_PROTECTION_UNAVAILABLE_CODE };
   }
 
   return {
     kind: 'ready',
     ownerUidAllowlist,
     durableProtection: true,
-    dependencies: createFakeBrokerDependencies({
-      provider: createOpenAiProvider(providerConfig.config),
-    }),
+    protection,
+    createDependencies: () => {
+      const providerConfig = configReader(env, overrides);
+      if (!providerConfig.ok) {
+        throw new BrokerProviderConfigError(providerConfig.code);
+      }
+
+      return createFakeBrokerDependencies({
+        provider: createOpenAiProvider(providerConfig.config),
+        idempotency: protection.createIdempotencyStore(),
+        creditLedger: protection.createCreditLedger(),
+      });
+    },
   };
 }
 
@@ -138,41 +152,49 @@ export function createResearchBrokerHttpHandler(
       return;
     }
 
-    const identity = identityFromHeaders(request.headers);
+    const identityResult = await configured.protection.verifyAndBuildIdentity({
+      authorizationHeader: header(request.headers, 'authorization'),
+      appCheckToken: header(request.headers, 'x-firebase-appcheck'),
+    });
+    if (!identityResult.ok) {
+      sendJson(response, statusForLiveGateError(identityResult.code), {
+        ok: false,
+        error: safeLiveGateError(identityResult.code),
+      });
+      return;
+    }
+
+    const identity = identityResult.identity;
     if (!configured.ownerUidAllowlist.has(identity.auth.uid ?? '')) {
       sendJson(response, 403, { ok: false, error: 'forbidden' });
       return;
     }
+    if (!identity.entitled || !identity.creditAvailable) {
+      sendJson(response, 403, { ok: false, error: 'entitlement_or_credit_denied' });
+      return;
+    }
+    if (identity.breakerOpen) {
+      sendJson(response, 503, { ok: false, error: 'broker_breaker_open' });
+      return;
+    }
 
     const requestBody = unwrapCallableData(await readJsonBody(request));
+    let dependencies: BrokerDependencies;
+    try {
+      dependencies = configured.createDependencies();
+    } catch (error) {
+      if (error instanceof BrokerProviderConfigError) {
+        sendJson(response, 503, { ok: false, error: 'research_broker_disabled' });
+        return;
+      }
+      throw error;
+    }
     const envelope = await handleBrokerAdapterRequest(
       requestBody,
       identity,
-      configured.dependencies,
+      dependencies,
     );
     sendJson(response, envelope.status, envelope.ok ? envelope.body : envelope.body);
-  };
-}
-
-function identityFromHeaders(
-  headers: MinimalRequest['headers'],
-): BrokerAdapterIdentity {
-  return {
-    auth: {
-      appCheckVerified: header(headers, 'x-archivale-broker-app-check-verified') === 'true',
-      authVerified: header(headers, 'x-archivale-broker-auth-verified') === 'true',
-      uid: header(headers, 'x-archivale-broker-auth-uid'),
-      authProjectId: header(headers, 'x-archivale-broker-auth-project-id'),
-      signInProvider: header(headers, 'x-archivale-broker-auth-provider') ?? 'anonymous',
-    },
-    app: {
-      appId: header(headers, 'x-archivale-broker-app-id'),
-      appProjectId: header(headers, 'x-archivale-broker-app-project-id'),
-    },
-    quotaSubject: header(headers, 'x-archivale-broker-quota-subject'),
-    entitled: header(headers, 'x-archivale-broker-entitled') === 'true',
-    creditAvailable: header(headers, 'x-archivale-broker-credit-available') === 'true',
-    breakerOpen: header(headers, 'x-archivale-broker-breaker-open') === 'true',
   };
 }
 
@@ -256,6 +278,43 @@ function isJsonContentType(value: string | undefined): boolean {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function statusForLiveGateError(code: string): number {
+  switch (code) {
+    case MISSING_DURABLE_CONFIG_CODE:
+    case DURABLE_PROTECTION_UNAVAILABLE_CODE:
+      return 503;
+    case 'missing_auth_token':
+    case 'invalid_auth_token':
+    case 'missing_app_check_token':
+    case 'invalid_app_check_token':
+      return 401;
+    default:
+      return 403;
+  }
+}
+
+function safeLiveGateError(code: string): string {
+  switch (code) {
+    case 'missing_auth_token':
+    case 'invalid_auth_token':
+    case 'missing_app_check_token':
+    case 'invalid_app_check_token':
+      return 'unauthorized';
+    case 'identity_project_mismatch':
+    case 'unsupported_auth_provider':
+    case 'unapproved_app':
+      return 'forbidden';
+    default:
+      return 'research_broker_disabled';
+  }
+}
+
+class BrokerProviderConfigError extends Error {
+  constructor(readonly code: string) {
+    super(code);
+  }
 }
 
 function hasHeaders(
