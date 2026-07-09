@@ -23,8 +23,8 @@ class PrototypeIntroScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     return PrototypeScreenFrame(
       appBarTitle: 'Archivale',
-      title: 'Private artwork records',
-      subtitle: 'AI drafts. You confirm.',
+      title: 'Private collection records',
+      subtitle: 'Photograph, draft, confirm, preserve.',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -32,11 +32,12 @@ class PrototypeIntroScreen extends StatelessWidget {
           const SizedBox(height: 16),
           const _Notice(
             icon: Icons.auto_awesome,
-            text: 'Take a photo. AI drafts the record. You confirm the facts.',
+            text:
+                'Photograph an artwork. Archivale drafts the record. You confirm the facts.',
           ),
           const SizedBox(height: 12),
           const Text(
-            'Keep your collection privately organized in your own Google account when backup is enabled.',
+            'Keep your collection on this device, with backup in your Google account when you choose it.',
           ),
           const SizedBox(height: 20),
           PrimaryActionButton(
@@ -56,22 +57,23 @@ class PrototypeOnboardingScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return PrototypeScreenFrame(
-      title: 'Start your first private record',
-      subtitle: 'AI suggests. You confirm.',
+      title: 'Start your first artwork record',
+      subtitle: 'Photograph, draft, confirm, preserve.',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const _Notice(
             icon: Icons.privacy_tip_outlined,
-            text: 'This app does not determine authenticity or appraise value.',
+            text:
+                'Archivale helps you draft the record, but it does not determine authenticity or appraise value.',
           ),
           const SizedBox(height: 16),
           const _ProgressStrip(activeIndex: 0),
           const SizedBox(height: 20),
           PrimaryActionButton(
             icon: Icons.add_a_photo_outlined,
-            label: 'Add artwork',
-            routeName: AppRoutes.collectionAdd,
+            label: 'Photograph artwork',
+            routeName: AppRoutes.onboardingFirstAdd,
           ),
           const SizedBox(height: 12),
           SecondaryActionButton(
@@ -92,17 +94,18 @@ class PrototypePrivacyScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     return const PrototypeScreenFrame(
       title: 'Privacy and storage',
-      subtitle: 'Private record',
+      subtitle: 'Private by default',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           _Notice(
             icon: Icons.cloud_done_outlined,
-            text: 'Backup stays in your Google account when you enable it.',
+            text:
+                'Backup stays in your Google account only when you choose it.',
           ),
           SizedBox(height: 12),
           Text(
-            'Your first record stays local, and every AI or document-derived value is labeled for review.',
+            'Your first record begins on this device, and every draft or document detail stays labeled for you to confirm.',
           ),
         ],
       ),
@@ -459,7 +462,7 @@ class AddArtworkScreen extends StatelessWidget {
     final dependencies = _maybeDependencies(context);
     return PrototypeScreenFrame(
       title: l10n.addArtworkAction,
-      subtitle: 'Start a new private record',
+      subtitle: 'Photograph the artwork to begin',
       child: dependencies == null
           ? const _AddArtworkActions()
           : FutureBuilder<_CreationGate>(
@@ -510,14 +513,15 @@ class _AddArtworkActions extends StatelessWidget {
         const SizedBox(height: 12),
         const _StatusPanel(
           icon: Icons.attach_file,
-          title: 'Document upload unavailable',
+          title: 'Add supporting records next',
           body:
-              'Create the artwork record first, then add supporting photos. Receipt and certificate file upload is not available yet.',
+              'Create the artwork record first, then add supporting photos. Receipt and certificate file upload is not part of this first step yet.',
         ),
         const SizedBox(height: 20),
         const _Notice(
           icon: Icons.auto_awesome,
-          text: 'AI-suggested values stay separate until you confirm them.',
+          text:
+              'Archivale keeps draft details separate until you confirm them.',
         ),
       ],
     );
@@ -3498,10 +3502,10 @@ class _ProgressStrip extends StatelessWidget {
   final int activeIndex;
 
   static const _steps = [
-    'Add photo',
+    'Photograph',
     'Review draft',
-    'Attach docs',
-    'Preview PDF',
+    'Attach records',
+    'Preserve',
   ];
 
   @override

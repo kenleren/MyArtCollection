@@ -16,6 +16,7 @@ import 'package:my_art_collection/app/config/app_feature_flags.dart';
 import 'package:my_art_collection/app/research/online_research_service.dart';
 import 'package:my_art_collection/app/import/csv_import_file_picker.dart';
 import 'package:my_art_collection/app/intake/artwork_image_picker.dart';
+import 'package:my_art_collection/app/screens/prototype_flow.dart';
 import 'package:my_art_collection/app/startup_route.dart';
 import 'package:my_art_collection/app/storage/ai_research_record.dart';
 import 'package:my_art_collection/app/storage/artwork_record.dart';
@@ -32,15 +33,27 @@ void main() {
     await loadScreenshotFont();
   });
 
-  testWidgets('intro screen shows brand once and value heading once', (
+  testWidgets('intro screen shows first-run stewardship copy', (
     WidgetTester tester,
   ) async {
     await tester.pumpWidget(const ArchivaleApp(initialRoute: AppRoutes.splash));
     await pumpReady(tester);
 
     expect(find.text('Archivale'), findsOneWidget);
-    expect(find.text('Private artwork records'), findsOneWidget);
-    expect(find.text('AI drafts. You confirm.'), findsOneWidget);
+    expect(find.text('Private collection records'), findsOneWidget);
+    expect(find.text('Photograph, draft, confirm, preserve.'), findsOneWidget);
+    expect(
+      find.text(
+        'Photograph an artwork. Archivale drafts the record. You confirm the facts.',
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.text(
+        'Keep your collection on this device, with backup in your Google account when you choose it.',
+      ),
+      findsOneWidget,
+    );
   });
 
   testWidgets('app provides system-aware light and dark Material themes', (
@@ -61,11 +74,47 @@ void main() {
     );
     await pumpReady(tester);
 
-    final headingContext = tester.element(find.text('Private artwork records'));
+    final headingContext = tester.element(
+      find.text('Private collection records'),
+    );
     final theme = Theme.of(headingContext);
     expect(theme.brightness, Brightness.dark);
     expect(theme.colorScheme.primary, const Color(0xFFD9BE78));
     expect(theme.scaffoldBackgroundColor, const Color(0xFF090B0B));
+  });
+
+  testWidgets('onboarding first-run routes keep collector-facing trust copy', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(
+      const ArchivaleApp(initialRoute: AppRoutes.onboarding),
+    );
+    await pumpReady(tester);
+
+    expect(find.text('Start your first artwork record'), findsOneWidget);
+    expect(find.text('Photograph, draft, confirm, preserve.'), findsOneWidget);
+    expect(
+      find.text(
+        'Archivale helps you draft the record, but it does not determine authenticity or appraise value.',
+      ),
+      findsOneWidget,
+    );
+    expect(find.text('Photograph artwork'), findsOneWidget);
+    expect(find.text('Privacy and storage'), findsOneWidget);
+    expect(find.text('Photograph'), findsOneWidget);
+    expect(find.text('Attach records'), findsOneWidget);
+    expect(find.text('Preserve'), findsOneWidget);
+    final firstRunAction = tester.widget<PrimaryActionButton>(
+      find.byType(PrimaryActionButton).first,
+    );
+    expect(firstRunAction.routeName, AppRoutes.onboardingFirstAdd);
+
+    await tester.pumpWidget(
+      const ArchivaleApp(initialRoute: AppRoutes.onboardingPrivacy),
+    );
+    await pumpReady(tester);
+
+    expect(find.text('Privacy and storage'), findsOneWidget);
   });
 
   testWidgets('visual evidence covers refreshed core mobile screens', (
@@ -205,6 +254,29 @@ void main() {
     );
   });
 
+  testWidgets('visual evidence captures onboarding first-run surfaces', (
+    WidgetTester tester,
+  ) async {
+    await captureArtifactForApp(
+      tester,
+      routeName: AppRoutes.splash,
+      fileName: 'issue-164-splash-onboarding-copy.png',
+      ensureVisibleFinder: find.text('Private collection records'),
+    );
+    await captureArtifactForApp(
+      tester,
+      routeName: AppRoutes.onboarding,
+      fileName: 'issue-164-onboarding-copy.png',
+      ensureVisibleFinder: find.text('Photograph artwork'),
+    );
+    await captureArtifactForApp(
+      tester,
+      routeName: AppRoutes.onboardingPrivacy,
+      fileName: 'issue-164-onboarding-privacy-copy.png',
+      ensureVisibleFinder: find.text('Privacy and storage'),
+    );
+  });
+
   testWidgets('visual evidence captures supporting record mobile states', (
     WidgetTester tester,
   ) async {
@@ -308,7 +380,7 @@ void main() {
       routeName: AppRoutes.collectionAdd,
       fileName: 'issue-130-add-artwork-document-gated.png',
       ensureVisibleFinder: find.text(
-        'Document upload unavailable',
+        'Add supporting records next',
         skipOffstage: false,
       ),
     );
@@ -1503,7 +1575,7 @@ void main() {
     );
     await pumpReady(tester);
 
-    expect(find.text('Document upload unavailable'), findsOneWidget);
+    expect(find.text('Add supporting records next'), findsOneWidget);
     expect(find.text('Attach document'), findsNothing);
     expect(find.byIcon(Icons.attach_file), findsOneWidget);
     expect(
@@ -1628,7 +1700,7 @@ void main() {
 
     expect(find.text('Collection'), findsWidgets);
     expect(find.text('Cold Start Local Record'), findsOneWidget);
-    expect(find.text('Private artwork records'), findsNothing);
+    expect(find.text('Private collection records'), findsNothing);
   });
 
   testWidgets('collection and draft show local primary image preview', (
