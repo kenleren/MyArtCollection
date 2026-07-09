@@ -340,7 +340,7 @@ void main() {
       dependencies: fixture.dependencies,
       fileName: 'issue-113-supporting-intake-mobile.png',
       ensureVisibleFinder: find.text(
-        'Choose supporting photo',
+        'Choose a supporting photo',
         skipOffstage: false,
       ),
     );
@@ -448,6 +448,68 @@ void main() {
       settledState: find.textContaining(
         'The selected file could not be found.',
       ),
+    );
+  });
+
+  testWidgets('visual evidence covers issue 170 supporting records copy', (
+    WidgetTester tester,
+  ) async {
+    final testDependencies = await tester.runAsync(
+      () async => _LiveDependencyFixture.create(),
+    );
+    final fixture = testDependencies!;
+    addTearDown(() async {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.runAsync(fixture.dispose);
+    });
+
+    await tester.runAsync(() async {
+      await fixture.repository.upsert(
+        _artworkRecord(
+          id: 'issue-170-supporting-record',
+          title: 'Issue 170 Supporting Record',
+          state: ArtworkRecordState.verifiedByYou,
+          source: ArtworkFieldSource.userConfirmed,
+        ),
+      );
+      await fixture.addPrimaryImage(artworkId: 'issue-170-supporting-record');
+    });
+
+    await captureArtifactForApp(
+      tester,
+      routeName: AppRoutes.artworkDocuments('issue-170-supporting-record'),
+      dependencies: fixture.dependencies,
+      themeMode: ThemeMode.light,
+      fileName: 'issue-170-documents-light.png',
+      ensureVisibleFinder: find.text('Add paper records as photos for now'),
+    );
+    await captureArtifactForApp(
+      tester,
+      routeName: AppRoutes.artworkDocuments('issue-170-supporting-record'),
+      dependencies: fixture.dependencies,
+      themeMode: ThemeMode.dark,
+      fileName: 'issue-170-documents-dark.png',
+      ensureVisibleFinder: find.text('Add paper records as photos for now'),
+    );
+    await captureArtifactForApp(
+      tester,
+      routeName: AppRoutes.artworkSupportingPhotoImport(
+        'issue-170-supporting-record',
+      ),
+      dependencies: fixture.dependencies,
+      themeMode: ThemeMode.light,
+      fileName: 'issue-170-supporting-photo-import-light.png',
+      ensureVisibleFinder: find.text('Saved with this artwork'),
+    );
+    await captureArtifactForApp(
+      tester,
+      routeName: AppRoutes.artworkSupportingPhotoCapture(
+        'issue-170-supporting-record',
+      ),
+      dependencies: fixture.dependencies,
+      themeMode: ThemeMode.light,
+      fileName: 'issue-170-supporting-photo-capture-light.png',
+      ensureVisibleFinder: find.text('Saved with this artwork'),
     );
   });
 
@@ -1349,7 +1411,7 @@ void main() {
     await tapVisible(tester, find.text('Add supporting records'));
     expect(find.text('Documents'), findsWidgets);
     expect(find.text('gallery-receipt-2025.pdf'), findsOneWidget);
-    expect(find.text('Document upload unavailable'), findsOneWidget);
+    expect(find.text('Add paper records as photos for now'), findsOneWidget);
     expect(find.text('Attachment needs attention'), findsOneWidget);
 
     await tapVisible(
@@ -1548,17 +1610,17 @@ void main() {
       await pumpLiveData(tester);
       expect(find.text('Import supporting photo'), findsWidgets);
       expect(find.text('Supporting UI Artwork'), findsWidgets);
-      expect(find.text('Artwork-scoped save'), findsOneWidget);
+      expect(find.text('Saved with this artwork'), findsOneWidget);
 
       await pressAsyncButton(
         tester,
-        find.widgetWithText(FilledButton, 'Choose supporting photo'),
+        find.widgetWithText(FilledButton, 'Choose a supporting photo'),
       );
 
       expect(find.text('Supporting photo imported'), findsOneWidget);
       expect(
         find.text(
-          'Saved as a supporting record. The primary artwork image is unchanged.',
+          'Added to this artwork as a supporting record. Your main artwork image is unchanged.',
         ),
         findsOneWidget,
       );
@@ -1607,7 +1669,7 @@ void main() {
       await pumpLiveData(tester);
 
       expect(find.text('Supporting UI Artwork'), findsOneWidget);
-      expect(find.text('1 supporting record attached.'), findsOneWidget);
+      expect(find.text('1 supporting record added.'), findsOneWidget);
 
       await tester.pumpWidget(const SizedBox.shrink());
       await tester.pump();
@@ -1672,7 +1734,7 @@ void main() {
     expect(find.text('No supporting records yet'), findsOneWidget);
     expect(find.text('Take supporting photo'), findsOneWidget);
     expect(find.text('Import supporting photo'), findsOneWidget);
-    expect(find.text('Document upload unavailable'), findsOneWidget);
+    expect(find.text('Add paper records as photos for now'), findsOneWidget);
     expect(find.text('Attachment needs attention'), findsOneWidget);
     expect(find.text('Attach document'), findsNothing);
   });
@@ -3883,7 +3945,7 @@ Future<void> captureSupportingPhotoActionVisualEvidence(
   await pumpLiveData(tester);
   await pressAsyncButton(
     tester,
-    find.widgetWithText(FilledButton, 'Choose supporting photo'),
+    find.widgetWithText(FilledButton, 'Choose a supporting photo'),
   );
   await waitForFinder(tester, settledState);
   await captureBoundaryToArtifacts(tester, boundaryKey, fileName);

@@ -806,7 +806,7 @@ class _SupportingPhotoIntakeScreenState
         if (snapshot.connectionState != ConnectionState.done) {
           return const PrototypeScreenFrame(
             title: 'Supporting photo',
-            subtitle: 'Loading local record',
+            subtitle: 'Loading artwork record',
             child: Center(child: CircularProgressIndicator()),
           );
         }
@@ -815,7 +815,7 @@ class _SupportingPhotoIntakeScreenState
         if (record == null) {
           return const PrototypeScreenFrame(
             title: 'Supporting photo',
-            subtitle: 'Local record unavailable',
+            subtitle: 'Artwork unavailable',
             child: _StatusPanel(
               icon: Icons.error_outline,
               title: 'Record not found',
@@ -850,9 +850,9 @@ class _SupportingPhotoIntakeScreenState
                 const SizedBox(height: 12),
                 const _StatusPanel(
                   icon: Icons.lock_outline,
-                  title: 'Artwork-scoped save',
+                  title: 'Saved with this artwork',
                   body:
-                      'This photo is saved as a supporting record for the current artwork. It does not replace the primary artwork image.',
+                      'This photo stays with this artwork as a supporting record. Your main artwork image stays as it is.',
                 ),
                 const SizedBox(height: 20),
                 _ActionButton(
@@ -860,8 +860,8 @@ class _SupportingPhotoIntakeScreenState
                       ? Icons.photo_library_outlined
                       : Icons.photo_camera_outlined,
                   label: _isImport
-                      ? 'Choose supporting photo'
-                      : 'Open camera for supporting photo',
+                      ? 'Choose a supporting photo'
+                      : 'Take a supporting photo',
                   onPressed: _isBusy ? null : _runIntake,
                 ),
               ] else ...[
@@ -937,9 +937,9 @@ class _SupportingPhotoStatePanel extends StatelessWidget {
     if (isBusy) {
       return const _StatusPanel(
         icon: Icons.hourglass_top,
-        title: 'Opening supporting record intake',
+        title: 'Opening photo picker',
         body:
-            'Use the system picker or camera. The app stores only your chosen file.',
+            'Choose one photo to keep with this artwork as a supporting record.',
       );
     }
 
@@ -955,7 +955,7 @@ class _SupportingPhotoStatePanel extends StatelessWidget {
                 ? 'Supporting photo imported'
                 : 'Supporting photo captured',
             body:
-                'Saved as a supporting record. The primary artwork image is unchanged.',
+                'Added to this artwork as a supporting record. Your main artwork image is unchanged.',
           ),
           const SizedBox(height: 12),
           _PrimaryArtworkImagePreview(
@@ -976,8 +976,7 @@ class _SupportingPhotoStatePanel extends StatelessWidget {
         title: failure.failure == ArtworkIntakeFailure.cancelled
             ? 'Supporting photo cancelled'
             : 'Supporting photo needs attention',
-        body:
-            '${failure.message} Retry when ready; no broad photo-library access is required for import.',
+        body: '${failure.message} You can try again when ready.',
       );
     }
 
@@ -985,9 +984,9 @@ class _SupportingPhotoStatePanel extends StatelessWidget {
       icon: isImport
           ? Icons.photo_library_outlined
           : Icons.photo_camera_outlined,
-      title: isImport ? 'Use system photo picker' : 'Use camera',
+      title: isImport ? 'Choose from your photos' : 'Use your camera',
       body:
-          'Add a label, signature, frame, reverse-side, or condition photo as supporting record evidence.',
+          'Add a label, signature, reverse side, frame, receipt, or condition photo that helps preserve the record.',
     );
   }
 }
@@ -1021,7 +1020,7 @@ class _StaticSupportingPhotoIntakeScreen extends StatelessWidget {
                 ? 'Supporting photo imported'
                 : 'Supporting photo captured',
             body:
-                'Saved as a supporting record. The primary artwork image is unchanged.',
+                'Added to this artwork as a supporting record. Your main artwork image is unchanged.',
           ),
           const SizedBox(height: 20),
           PrimaryActionButton(
@@ -1793,7 +1792,7 @@ class DocumentsScreen extends StatelessWidget {
           const _Notice(
             icon: Icons.info_outline,
             text:
-                'Supporting photos and documents enrich the record, but do not prove authenticity.',
+                'Supporting records help preserve context for this artwork. They do not prove authenticity.',
           ),
           const SizedBox(height: 16),
           if (artwork.documents.isEmpty)
@@ -1801,7 +1800,7 @@ class DocumentsScreen extends StatelessWidget {
               icon: Icons.folder_copy_outlined,
               title: 'No supporting records yet',
               body:
-                  'Add photos of labels, signatures, backs, frames, condition, receipts, or provenance clues when available.',
+                  'Add photos of labels, signatures, backs, frames, receipts, condition details, or provenance notes when they help tell the record clearly.',
             )
           else
             for (final document in artwork.documents) ...[
@@ -1823,16 +1822,16 @@ class DocumentsScreen extends StatelessWidget {
           const SizedBox(height: 12),
           const _StatusPanel(
             icon: Icons.block_outlined,
-            title: 'Document upload unavailable',
+            title: 'Add paper records as photos for now',
             body:
-                'Receipt and certificate file upload is not available yet. For now, add supporting photos of receipts, certificates, auction records, or provenance notes.',
+                'For now, photograph receipts, certificates, auction records, gallery notes, or estate papers and keep them with this artwork.',
           ),
           const SizedBox(height: 12),
           const _StatusPanel(
             icon: Icons.warning_amber_outlined,
             title: 'Attachment needs attention',
             body:
-                'If a private attachment file becomes unavailable, its record details stay saved and Archivale asks you to attach the file again.',
+                'If one of these private files goes missing later, the record details stay here and you can add the photo again.',
           ),
           const SizedBox(height: 20),
           PrimaryActionButton(
@@ -4925,7 +4924,7 @@ PrototypeDocument _documentFromAttachment(AttachmentRecord attachment) {
         : _attachmentTypeLabel(attachment.type),
     fileName: attachment.fileName,
     source: _prototypeSource(attachment.source),
-    note: attachment.notes ?? 'Stored as app-private attachment metadata.',
+    note: attachment.notes ?? 'Saved with this artwork as a supporting record.',
   );
 }
 
