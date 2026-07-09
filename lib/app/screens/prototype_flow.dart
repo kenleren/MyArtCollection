@@ -24,8 +24,8 @@ class PrototypeIntroScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     return PrototypeScreenFrame(
       appBarTitle: 'Archivale',
-      title: 'Private artwork records',
-      subtitle: 'AI drafts. You confirm.',
+      title: 'Private collection records',
+      subtitle: 'Photograph, draft, confirm, preserve.',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -33,11 +33,12 @@ class PrototypeIntroScreen extends StatelessWidget {
           const SizedBox(height: 16),
           const _Notice(
             icon: Icons.auto_awesome,
-            text: 'Take a photo. AI drafts the record. You confirm the facts.',
+            text:
+                'Photograph an artwork. Archivale drafts the record. You confirm the facts.',
           ),
           const SizedBox(height: 12),
           const Text(
-            'Keep your collection privately organized in your own Google account when backup is enabled.',
+            'Keep your collection on this device, with backup in your Google account when you choose it.',
           ),
           const SizedBox(height: 20),
           PrimaryActionButton(
@@ -57,22 +58,23 @@ class PrototypeOnboardingScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return PrototypeScreenFrame(
-      title: 'Start your first private record',
-      subtitle: 'AI suggests. You confirm.',
+      title: 'Start your first artwork record',
+      subtitle: 'Photograph, draft, confirm, preserve.',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const _Notice(
             icon: Icons.privacy_tip_outlined,
-            text: 'This app does not determine authenticity or appraise value.',
+            text:
+                'Archivale helps you draft the record, but it does not determine authenticity or appraise value.',
           ),
           const SizedBox(height: 16),
           const _ProgressStrip(activeIndex: 0),
           const SizedBox(height: 20),
           PrimaryActionButton(
             icon: Icons.add_a_photo_outlined,
-            label: 'Add artwork',
-            routeName: AppRoutes.collectionAdd,
+            label: 'Photograph artwork',
+            routeName: AppRoutes.onboardingFirstAdd,
           ),
           const SizedBox(height: 12),
           SecondaryActionButton(
@@ -93,17 +95,126 @@ class PrototypePrivacyScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     return const PrototypeScreenFrame(
       title: 'Privacy and storage',
-      subtitle: 'Private record',
+      subtitle: 'Private by default',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           _Notice(
             icon: Icons.cloud_done_outlined,
-            text: 'Backup stays in your Google account when you enable it.',
+            text:
+                'Backup stays in your Google account only when you choose it.',
           ),
           SizedBox(height: 12),
           Text(
-            'Your first record stays local, and every AI or document-derived value is labeled for review.',
+            'Your first record begins on this device, and every draft or document detail stays labeled for you to confirm.',
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class SettingsPrivacyScreen extends StatelessWidget {
+  const SettingsPrivacyScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return const PrototypeScreenFrame(
+      title: 'Privacy',
+      subtitle: 'Private by default',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _Notice(
+            icon: Icons.lock_outline,
+            text:
+                'Your artwork records stay private, and every draft stays under your review before it becomes part of the record.',
+          ),
+          SizedBox(height: 12),
+          _StatusPanel(
+            icon: Icons.fact_check_outlined,
+            title: 'You confirm the facts',
+            body:
+                'Archivale can help draft details from photos and supporting records, but only your review turns them into trusted record details.',
+          ),
+          SizedBox(height: 12),
+          _StatusPanel(
+            icon: Icons.cloud_done_outlined,
+            title: 'Backup stays in your account',
+            body:
+                'When you turn on backup, your records stay in your Google account so you can keep a second copy you control.',
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class SettingsStorageScreen extends StatelessWidget {
+  const SettingsStorageScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return const PrototypeScreenFrame(
+      title: 'Storage',
+      subtitle: 'Keep records close at hand',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _Notice(
+            icon: Icons.phone_android_outlined,
+            text:
+                'Artwork photos, notes, and supporting records stay together on this device unless you choose backup.',
+          ),
+          SizedBox(height: 12),
+          _StatusPanel(
+            icon: Icons.inventory_2_outlined,
+            title: 'One record, one place',
+            body:
+                'Receipts, certificates, condition notes, and report details stay grouped with the artwork record they support.',
+          ),
+          SizedBox(height: 12),
+          _StatusPanel(
+            icon: Icons.delete_outline,
+            title: 'Delete local data with care',
+            body:
+                'Before you clear local records, make sure the archive you want to keep is already backed up or exported.',
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class SettingsBackupScreen extends StatelessWidget {
+  const SettingsBackupScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return const PrototypeScreenFrame(
+      title: 'Backup',
+      subtitle: 'Keep a second copy you control',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _Notice(
+            icon: Icons.cloud_done_outlined,
+            text:
+                'Backup is the place to keep an extra copy of your collection in your own Google account.',
+          ),
+          SizedBox(height: 12),
+          _StatusPanel(
+            icon: Icons.cloud_off_outlined,
+            title: 'Not connected yet',
+            body:
+                'Backup is not connected in this preview, so your records stay only on this device for now.',
+          ),
+          SizedBox(height: 12),
+          _StatusPanel(
+            icon: Icons.link_off_outlined,
+            title: 'Disconnect backup',
+            body:
+                'When you pause backup, the records already saved on this device still stay with you.',
           ),
         ],
       ),
@@ -178,7 +289,7 @@ class _CollectionHomeContent extends StatelessWidget {
       children: [
         const _Heading(
           title: 'Collection',
-          subtitle: 'Private record overview',
+          subtitle: 'Your private artwork records',
         ),
         const SizedBox(height: 16),
         _LimitHint(
@@ -266,16 +377,16 @@ class _IncompleteQueueContent extends StatelessWidget {
       padding: const EdgeInsets.all(20),
       children: [
         const _Heading(
-          title: 'Incomplete',
-          subtitle: 'Records that need attention',
+          title: 'Needs review',
+          subtitle: 'Records worth another look',
         ),
         const SizedBox(height: 16),
         if (items.isEmpty)
           const _StatusPanel(
             icon: Icons.check_circle_outline,
-            title: 'No incomplete records',
+            title: 'Nothing needs review',
             body:
-                'Local records with confirmed fields and supporting attachments will stay out of this queue.',
+                'As you confirm details and add supporting records, finished records leave this list.',
           )
         else
           for (final item in items) ...[
@@ -347,7 +458,8 @@ class _ReportsHomeContent extends StatelessWidget {
       children: [
         const _Heading(
           title: 'Reports',
-          subtitle: 'Generate an insurance-ready PDF',
+          subtitle:
+              'Keep a clear record ready for insurance, estate, and personal files.',
         ),
         const SizedBox(height: 16),
         if (firstArtwork == null)
@@ -355,20 +467,20 @@ class _ReportsHomeContent extends StatelessWidget {
             icon: Icons.inventory_2_outlined,
             title: 'No local records available',
             body:
-                'Add or import an artwork before generating report or archive previews.',
+                'Add or import an artwork before preparing a report or record export.',
           )
         else ...[
           _ReportSummary(artwork: firstArtwork),
           const SizedBox(height: 16),
           PrimaryActionButton(
             icon: Icons.picture_as_pdf_outlined,
-            label: 'Artwork report',
+            label: 'Preview artwork report',
             routeName: AppRoutes.artworkReportPreview(firstArtwork.id),
           ),
           const SizedBox(height: 12),
           SecondaryActionButton(
             icon: Icons.archive_outlined,
-            label: 'Export your archive',
+            label: 'Preview record export',
             routeName: AppRoutes.artworkExport(firstArtwork.id),
           ),
         ],
@@ -386,7 +498,10 @@ class SettingsHomeScreen extends StatelessWidget {
     return ListView(
       padding: const EdgeInsets.all(20),
       children: [
-        const _Heading(title: 'Settings', subtitle: 'Privacy and storage'),
+        const _Heading(
+          title: 'Settings',
+          subtitle: 'Privacy, storage, backup, and exports',
+        ),
         const SizedBox(height: 16),
         if (dependencies != null) ...[
           FutureBuilder<EntitlementState>(
@@ -400,25 +515,62 @@ class SettingsHomeScreen extends StatelessWidget {
           ),
           const SizedBox(height: 12),
         ],
-        const _StatusPanel(
+        const _Notice(
           icon: Icons.lock_outline,
-          title: 'Private record',
-          body:
-              'Back up your records in your Google account or keep local-only.',
+          text:
+              'Choose how your records stay private, where they are kept, and when to save a second copy.',
         ),
         const SizedBox(height: 12),
         const _StatusPanel(
-          icon: Icons.cloud_off_outlined,
-          title: 'Backup connection unavailable',
+          icon: Icons.privacy_tip_outlined,
+          title: 'Privacy',
           body:
-              'Google Drive backup is not connected in this build; local records stay on this device.',
+              'Review how Archivale keeps drafts separate from the record you confirm.',
+        ),
+        const SizedBox(height: 12),
+        const SecondaryActionButton(
+          icon: Icons.privacy_tip_outlined,
+          label: 'Review privacy',
+          routeName: AppRoutes.settingsPrivacy,
+        ),
+        const SizedBox(height: 12),
+        const _StatusPanel(
+          icon: Icons.storage_outlined,
+          title: 'Storage',
+          body:
+              'See how artwork photos, notes, and supporting records stay organized on this device.',
+        ),
+        const SizedBox(height: 12),
+        const SecondaryActionButton(
+          icon: Icons.storage_outlined,
+          label: 'Review storage',
+          routeName: AppRoutes.settingsStorage,
+        ),
+        const SizedBox(height: 12),
+        const _StatusPanel(
+          icon: Icons.cloud_done_outlined,
+          title: 'Backup',
+          body:
+              'Keep a second copy in your Google account when backup is available.',
+        ),
+        const SizedBox(height: 12),
+        const SecondaryActionButton(
+          icon: Icons.cloud_done_outlined,
+          label: 'Review backup',
+          routeName: AppRoutes.settingsBackup,
         ),
         const SizedBox(height: 12),
         const _StatusPanel(
           icon: Icons.ios_share_outlined,
-          title: 'Archive export preview only',
+          title: 'Archive export preview',
           body:
-              'Open a saved artwork report to preview export contents. Full archive export is not enabled from settings yet.',
+              'Review what an export includes before you move or store a copy of your archive.',
+        ),
+        const SizedBox(height: 12),
+        const SecondaryActionButton(
+          icon: Icons.archive_outlined,
+          label: 'Review archive export',
+          routeName: AppRoutes.settingsExport,
         ),
       ],
     );
@@ -435,38 +587,42 @@ class _PlanStatusPanel extends StatelessWidget {
     final plan = entitlementState.plan;
     final billingCopy = switch (entitlementState.billingStatus) {
       EntitlementBillingStatus.available =>
-        'Play Billing is available for this build.',
+        'You can review plan previews here. In-app upgrades are not available in this build yet.',
       EntitlementBillingStatus.unavailable =>
-        'Play Billing is unavailable on this device or build.',
+        'You can review plan previews here, but in-app upgrades are unavailable on this device right now.',
       EntitlementBillingStatus.notConfigured =>
-        'Play Billing products are not connected in this build yet.',
+        'You can review plan previews here, but in-app upgrades are not available in this preview yet.',
     };
 
     return _StatusPanel(
       icon: Icons.workspace_premium_outlined,
       title: '${plan.name} plan',
       body:
-          '${plan.activeArtworkLimitLabel}, ${plan.aiCreditsLabel}. $billingCopy Existing records remain editable and exportable.',
+          '${_planArtworkLimitCopy(plan)}, ${_planResearchDraftCopy(plan)}. Existing records remain editable and exportable. $billingCopy',
     );
   }
 }
 
 class AddArtworkScreen extends StatelessWidget {
-  const AddArtworkScreen({super.key});
+  const AddArtworkScreen({super.key, this.isOnboardingFirstAdd = false});
+
+  final bool isOnboardingFirstAdd;
 
   @override
   Widget build(BuildContext context) {
-    final l10n = AppLocalizations.of(context);
     final dependencies = _maybeDependencies(context);
     return PrototypeScreenFrame(
-      title: l10n.addArtworkAction,
-      subtitle: 'Start a new private record',
+      title: 'Add artwork',
+      subtitle: 'Start a lasting record with one artwork image',
       child: dependencies == null
-          ? const _AddArtworkActions()
+          ? _AddArtworkActions(isOnboardingFirstAdd: isOnboardingFirstAdd)
           : FutureBuilder<_CreationGate>(
               future: _loadCreationGate(dependencies),
               builder: (context, snapshot) {
-                return _AddArtworkActions(gate: snapshot.data);
+                return _AddArtworkActions(
+                  gate: snapshot.data,
+                  isOnboardingFirstAdd: isOnboardingFirstAdd,
+                );
               },
             ),
     );
@@ -474,13 +630,13 @@ class AddArtworkScreen extends StatelessWidget {
 }
 
 class _AddArtworkActions extends StatelessWidget {
-  const _AddArtworkActions({this.gate});
+  const _AddArtworkActions({this.gate, required this.isOnboardingFirstAdd});
 
   final _CreationGate? gate;
+  final bool isOnboardingFirstAdd;
 
   @override
   Widget build(BuildContext context) {
-    final l10n = AppLocalizations.of(context);
     final gate = this.gate;
     final isAllowed = gate == null || gate.canAddRequestedArtworkCount;
 
@@ -494,13 +650,13 @@ class _AddArtworkActions extends StatelessWidget {
           const SizedBox(height: 16),
           PrimaryActionButton(
             icon: Icons.photo_camera_outlined,
-            label: l10n.takePhotoAction,
+            label: 'Photograph artwork',
             routeName: AppRoutes.capture,
           ),
           const SizedBox(height: 12),
           SecondaryActionButton(
             icon: Icons.photo_library_outlined,
-            label: l10n.importPhotoAction,
+            label: 'Choose artwork photo',
             routeName: AppRoutes.import,
           ),
         ] else
@@ -509,16 +665,18 @@ class _AddArtworkActions extends StatelessWidget {
             entitlementState: gate.entitlementState,
           ),
         const SizedBox(height: 12),
-        const _StatusPanel(
+        _StatusPanel(
           icon: Icons.attach_file,
-          title: 'Document upload unavailable',
-          body:
-              'Create the artwork record first, then add supporting photos. Receipt and certificate file upload is not available yet.',
+          title: 'Add supporting records next',
+          body: isOnboardingFirstAdd
+              ? 'Create the artwork record first, then add supporting photos and records when they are ready.'
+              : 'Begin with the main artwork image, then add labels, receipts, and other supporting records when ready.',
         ),
         const SizedBox(height: 20),
         const _Notice(
           icon: Icons.auto_awesome,
-          text: 'AI-suggested values stay separate until you confirm them.',
+          text:
+              'Archivale keeps draft details separate until you confirm them.',
         ),
       ],
     );
@@ -569,20 +727,20 @@ class _CaptureImportScreenState extends State<CaptureImportScreen> {
           final gate = snapshot.data;
           if (gate == null) {
             return PrototypeScreenFrame(
-              title: _isImport ? 'Import photo' : 'Take photo',
-              subtitle: 'Checking plan',
+              title: _isImport ? 'Choose artwork photo' : 'Photograph artwork',
+              subtitle: 'Preparing your record',
               child: const _StatusPanel(
                 icon: Icons.workspace_premium_outlined,
-                title: 'Checking collection plan',
+                title: 'Checking room for a new record',
                 body:
-                    'Confirming whether this plan has room for a new active artwork.',
+                    'Making sure this collection can open one more active record.',
               ),
             );
           }
           if (!gate.canAddRequestedArtworkCount) {
             return PrototypeScreenFrame(
-              title: _isImport ? 'Import photo' : 'Take photo',
-              subtitle: 'Plan limit',
+              title: _isImport ? 'Choose artwork photo' : 'Photograph artwork',
+              subtitle: 'Collection capacity',
               child: _BillingGatePanel(
                 currentActiveArtworkCount: gate.currentActiveArtworkCount,
                 entitlementState: gate.entitlementState,
@@ -599,7 +757,7 @@ class _CaptureImportScreenState extends State<CaptureImportScreen> {
 
   Widget _buildIntakeFrame() {
     return PrototypeScreenFrame(
-      title: _isImport ? 'Import photo' : 'Take photo',
+      title: _isImport ? 'Choose artwork photo' : 'Photograph artwork',
       subtitle: 'Primary artwork image',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -633,13 +791,13 @@ class _CaptureImportScreenState extends State<CaptureImportScreen> {
               icon: _isImport
                   ? Icons.photo_library_outlined
                   : Icons.photo_camera_outlined,
-              label: _isImport ? 'Choose from system picker' : 'Open camera',
+              label: _isImport ? 'Choose artwork photo' : 'Open camera',
               onPressed: _isBusy ? null : _runIntake,
             ),
             const SizedBox(height: 12),
             _ActionButton(
               icon: Icons.restore_outlined,
-              label: 'Recover interrupted import',
+              label: 'Recover last import',
               onPressed: _isBusy ? null : _recoverLostImage,
               isPrimary: false,
             ),
@@ -682,7 +840,7 @@ class _CaptureImportScreenState extends State<CaptureImportScreen> {
       if (recovered == null) {
         throw const ArtworkIntakeException(
           ArtworkIntakeFailure.sourceUnavailable,
-          'No interrupted import was available.',
+          'No previous import was found.',
         );
       }
       return recovered;
@@ -702,7 +860,7 @@ class _CaptureImportScreenState extends State<CaptureImportScreen> {
 
     throw const ArtworkIntakeException(
       ArtworkIntakeFailure.sourceUnavailable,
-      'This plan has no room for another active artwork. Existing records stay viewable, editable, and exportable.',
+      'This plan already holds all of its active records. Existing records stay editable and exportable.',
     );
   }
 
@@ -890,7 +1048,7 @@ class _SupportingPhotoIntakeScreenState
         if (snapshot.connectionState != ConnectionState.done) {
           return const PrototypeScreenFrame(
             title: 'Supporting photo',
-            subtitle: 'Loading local record',
+            subtitle: 'Loading artwork record',
             child: Center(child: CircularProgressIndicator()),
           );
         }
@@ -899,7 +1057,7 @@ class _SupportingPhotoIntakeScreenState
         if (record == null) {
           return const PrototypeScreenFrame(
             title: 'Supporting photo',
-            subtitle: 'Local record unavailable',
+            subtitle: 'Artwork unavailable',
             child: _StatusPanel(
               icon: Icons.error_outline,
               title: 'Record not found',
@@ -934,9 +1092,9 @@ class _SupportingPhotoIntakeScreenState
                 const SizedBox(height: 12),
                 const _StatusPanel(
                   icon: Icons.lock_outline,
-                  title: 'Artwork-scoped save',
+                  title: 'Saved with this artwork',
                   body:
-                      'This photo is saved as a supporting record for the current artwork. It does not replace the primary artwork image.',
+                      'This photo stays with this artwork as a supporting record. Your main artwork image stays as it is.',
                 ),
                 const SizedBox(height: 20),
                 _ActionButton(
@@ -944,8 +1102,8 @@ class _SupportingPhotoIntakeScreenState
                       ? Icons.photo_library_outlined
                       : Icons.photo_camera_outlined,
                   label: _isImport
-                      ? 'Choose supporting photo'
-                      : 'Open camera for supporting photo',
+                      ? 'Choose a supporting photo'
+                      : 'Take a supporting photo',
                   onPressed: _isBusy ? null : _runIntake,
                 ),
               ] else ...[
@@ -1019,11 +1177,12 @@ class _SupportingPhotoStatePanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (isBusy) {
-      return const _StatusPanel(
+      return _StatusPanel(
         icon: Icons.hourglass_top,
-        title: 'Opening supporting record intake',
-        body:
-            'Use the system picker or camera. The app stores only your chosen file.',
+        title: isImport ? 'Opening photo picker' : 'Opening camera',
+        body: isImport
+            ? 'Choose one photo to keep with this artwork as a supporting record.'
+            : 'Take one photo to keep with this artwork as a supporting record.',
       );
     }
 
@@ -1039,7 +1198,7 @@ class _SupportingPhotoStatePanel extends StatelessWidget {
                 ? 'Supporting photo imported'
                 : 'Supporting photo captured',
             body:
-                'Saved as a supporting record. The primary artwork image is unchanged.',
+                'Added to this artwork as a supporting record. Your main artwork image is unchanged.',
           ),
           const SizedBox(height: 12),
           _PrimaryArtworkImagePreview(
@@ -1060,8 +1219,7 @@ class _SupportingPhotoStatePanel extends StatelessWidget {
         title: failure.failure == ArtworkIntakeFailure.cancelled
             ? 'Supporting photo cancelled'
             : 'Supporting photo needs attention',
-        body:
-            '${failure.message} Retry when ready; no broad photo-library access is required for import.',
+        body: '${failure.message} You can try again when ready.',
       );
     }
 
@@ -1069,9 +1227,9 @@ class _SupportingPhotoStatePanel extends StatelessWidget {
       icon: isImport
           ? Icons.photo_library_outlined
           : Icons.photo_camera_outlined,
-      title: isImport ? 'Use system photo picker' : 'Use camera',
+      title: isImport ? 'Choose from your photos' : 'Use your camera',
       body:
-          'Add a label, signature, frame, reverse-side, or condition photo as supporting record evidence.',
+          'Add a label, signature, reverse side, frame, receipt, or condition photo that helps preserve the record.',
     );
   }
 }
@@ -1105,7 +1263,7 @@ class _StaticSupportingPhotoIntakeScreen extends StatelessWidget {
                 ? 'Supporting photo imported'
                 : 'Supporting photo captured',
             body:
-                'Saved as a supporting record. The primary artwork image is unchanged.',
+                'Added to this artwork as a supporting record. Your main artwork image is unchanged.',
           ),
           const SizedBox(height: 20),
           PrimaryActionButton(
@@ -1129,7 +1287,7 @@ class _StaticCaptureImportScreen extends StatelessWidget {
     final isImport = mode == 'import';
 
     return PrototypeScreenFrame(
-      title: isImport ? 'Import photo' : 'Take photo',
+      title: isImport ? 'Choose artwork photo' : 'Photograph artwork',
       subtitle: 'Primary artwork image',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1140,9 +1298,9 @@ class _StaticCaptureImportScreen extends StatelessWidget {
           const SizedBox(height: 12),
           _StatusPanel(
             icon: isImport ? Icons.file_upload_outlined : Icons.camera_alt,
-            title: isImport ? 'Photo imported' : 'Photo captured',
+            title: isImport ? 'Artwork photo added' : 'Artwork photographed',
             body:
-                'Draft created locally. If upload is interrupted, the saved draft can be reviewed later.',
+                'Your draft record is ready to review. If the import is interrupted, Archivale can help you pick it back up later.',
           ),
           const SizedBox(height: 20),
           PrimaryActionButton(
@@ -1176,7 +1334,7 @@ class DraftReviewScreen extends StatefulWidget {
 
 class _DraftReviewScreenState extends State<DraftReviewScreen> {
   ResearchJob? _researchJob;
-  Object? _researchError;
+  String? _researchError;
   bool _showResearchConsent = false;
   bool _isResearchBusy = false;
   final Set<String> _acceptedResearchFieldKeys = {};
@@ -1304,7 +1462,7 @@ class _DraftReviewScreenState extends State<DraftReviewScreen> {
         OnlineResearchRequest(
           artworkId: widget.artwork.id,
           consentSummary:
-              'User approved selected artwork image, current draft fields, and local notes for professional-source research.',
+              'User approved the selected artwork image, draft details, and notes for Archivale research help.',
           consentState: ResearchConsentState.approved,
           querySummary: _researchQuerySummary(widget.artwork),
           searchTerms: _researchSearchTerms(widget.artwork),
@@ -1323,7 +1481,8 @@ class _DraftReviewScreenState extends State<DraftReviewScreen> {
         return;
       }
       setState(() {
-        _researchError = error;
+        _showResearchConsent = false;
+        _researchError = _researchFailureMessage(error);
         _isResearchBusy = false;
       });
     }
@@ -1441,12 +1600,12 @@ class _ArtworkDetailsScreenState extends State<ArtworkDetailsScreen> {
           ),
           const SizedBox(height: 16),
           for (final field in displayedFields) ...[
-            FieldSourceTile(field: field),
+            FieldSourceTile(field: _detailDisplayField(field)),
             const SizedBox(height: 10),
           ],
           PrimaryActionButton(
             icon: Icons.edit_note_outlined,
-            label: 'Edit record fields',
+            label: 'Edit record details',
             routeName: AppRoutes.artworkEdit(artwork.id),
           ),
           const SizedBox(height: 12),
@@ -1482,7 +1641,7 @@ class _ArtworkDetailsScreenState extends State<ArtworkDetailsScreen> {
           return AlertDialog(
             title: const Text('Remove from current holdings?'),
             content: const Text(
-              'The local record and files stay on this device, but the artwork is marked removed and no longer treated as a current holding.',
+              'This private record and its files stay on this device, but the artwork will no longer count as a current holding.',
             ),
             actions: [
               TextButton(
@@ -1491,7 +1650,7 @@ class _ArtworkDetailsScreenState extends State<ArtworkDetailsScreen> {
               ),
               FilledButton(
                 onPressed: () => Navigator.pop(context, true),
-                child: const Text('Mark removed'),
+                child: const Text('Mark as removed'),
               ),
             ],
           );
@@ -1523,7 +1682,7 @@ class _ArtworkDetailsScreenState extends State<ArtworkDetailsScreen> {
         final gate = await _loadCreationGate(dependencies);
         if (!gate.canAddRequestedArtworkCount) {
           throw StateError(
-            'This plan has no room for another active artwork. Existing records stay viewable, editable, and exportable.',
+            'This plan already holds all of its active records. Existing records stay editable and exportable.',
           );
         }
       }
@@ -1606,8 +1765,8 @@ class _ArtworkEditScreenState extends State<ArtworkEditScreen> {
       builder: (context, snapshot) {
         if (snapshot.connectionState != ConnectionState.done) {
           return const PrototypeScreenFrame(
-            title: 'Edit record fields',
-            subtitle: 'Loading local record',
+            title: 'Edit private record',
+            subtitle: 'Loading your saved details',
             child: Center(child: CircularProgressIndicator()),
           );
         }
@@ -1615,13 +1774,13 @@ class _ArtworkEditScreenState extends State<ArtworkEditScreen> {
         final record = snapshot.requireData;
         if (record == null) {
           return const PrototypeScreenFrame(
-            title: 'Edit record fields',
-            subtitle: 'Local record unavailable',
+            title: 'Edit private record',
+            subtitle: 'Saved record unavailable',
             child: _StatusPanel(
               icon: Icons.error_outline,
               title: 'Record not found',
               body:
-                  'Return to Collection and reopen the artwork before editing.',
+                  'Return to Collection and open this artwork again before editing.',
             ),
           );
         }
@@ -1629,15 +1788,15 @@ class _ArtworkEditScreenState extends State<ArtworkEditScreen> {
         _seedControllers(record);
 
         return PrototypeScreenFrame(
-          title: 'Edit record fields',
-          subtitle: 'Your values outrank AI suggestions',
+          title: 'Edit private record',
+          subtitle: 'Confirm the details you want to keep',
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               const _Notice(
                 icon: Icons.verified_user_outlined,
                 text:
-                    'Saved values are labeled User confirmed. AI and research suggestions stay as suggestions until you save your edits.',
+                    'Saved edits are marked User confirmed. AI and research suggestions stay separate until you review and save them.',
               ),
               const SizedBox(height: 16),
               for (final field in _editableArtworkFields) ...[
@@ -1656,6 +1815,7 @@ class _ArtworkEditScreenState extends State<ArtworkEditScreen> {
                     border: const OutlineInputBorder(),
                     labelText: field.label,
                     helperText: field.helperText,
+                    helperMaxLines: field.helperMaxLines,
                   ),
                 ),
                 if (field.usesStructuredMoney) ...[
@@ -1674,7 +1834,9 @@ class _ArtworkEditScreenState extends State<ArtworkEditScreen> {
                           decoration: const InputDecoration(
                             border: OutlineInputBorder(),
                             labelText: 'Amount',
-                            helperText: 'Numbers only, no currency symbol.',
+                            helperText:
+                                'Numbers only. Leave out the currency symbol.',
+                            helperMaxLines: 2,
                           ),
                         ),
                       ),
@@ -1688,7 +1850,8 @@ class _ArtworkEditScreenState extends State<ArtworkEditScreen> {
                           decoration: const InputDecoration(
                             border: OutlineInputBorder(),
                             labelText: 'Currency',
-                            helperText: 'USD, EUR, NOK.',
+                            helperText: 'Use USD, EUR, or NOK.',
+                            helperMaxLines: 2,
                           ),
                         ),
                       ),
@@ -1700,14 +1863,14 @@ class _ArtworkEditScreenState extends State<ArtworkEditScreen> {
               if (_errorMessage != null) ...[
                 _StatusPanel(
                   icon: Icons.error_outline,
-                  title: 'Could not save edits',
+                  title: 'Could not save this record',
                   body: _errorMessage!,
                 ),
                 const SizedBox(height: 14),
               ],
               _ActionButton(
                 icon: Icons.save_outlined,
-                label: _isSaving ? 'Saving...' : 'Save user-confirmed fields',
+                label: _isSaving ? 'Saving...' : 'Save confirmed details',
                 onPressed: _isSaving ? null : () => _save(record),
               ),
               const SizedBox(height: 10),
@@ -1744,11 +1907,20 @@ class _ArtworkEditScreenState extends State<ArtworkEditScreen> {
     _seededArtworkId = record.id;
     for (final field in _editableArtworkFields) {
       final value = record.field(field.key);
-      _controllers[field.key]!.text = value?.value ?? '';
+      final fieldValue = value?.value ?? '';
+      _controllers[field.key]!.text =
+          _isPlaceholderCoreFieldValue(field.key, fieldValue) ? '' : fieldValue;
       if (field.usesStructuredMoney) {
-        _moneyAmountControllers[field.key]!.text = value?.moneyAmount ?? '';
-        _moneyCurrencyControllers[field.key]!.text =
-            value?.moneyCurrencyCode ?? '';
+        final usesPlaceholder = _isPlaceholderCoreFieldValue(
+          field.key,
+          fieldValue,
+        );
+        _moneyAmountControllers[field.key]!.text = usesPlaceholder
+            ? ''
+            : value?.moneyAmount ?? '';
+        _moneyCurrencyControllers[field.key]!.text = usesPlaceholder
+            ? ''
+            : value?.moneyCurrencyCode ?? '';
       }
     }
   }
@@ -1777,7 +1949,7 @@ class _ArtworkEditScreenState extends State<ArtworkEditScreen> {
         if (field.usesStructuredMoney &&
             ((normalizedAmount == null) != (normalizedCurrency == null))) {
           throw StateError(
-            '${field.label} needs both a structured amount and an ISO currency code.',
+            '${field.label} needs both an amount and a three-letter currency code.',
           );
         }
 
@@ -1808,9 +1980,9 @@ class _ArtworkEditScreenState extends State<ArtworkEditScreen> {
               ? ArtworkFieldSource.userConfirmed
               : (previousValue?.source ?? ArtworkFieldSource.unknown),
           note: shouldConfirm
-              ? 'Edited and confirmed by you.'
+              ? 'Saved as part of your confirmed record.'
               : (previousValue?.note ??
-                    'This field still needs user confirmation.'),
+                    'Please confirm this detail before you rely on it.'),
           lastConfirmedAt: shouldConfirm ? now : previousValue?.lastConfirmedAt,
           moneyAmount: normalizedAmount,
           moneyCurrencyCode: normalizedCurrency,
@@ -1863,7 +2035,7 @@ class DocumentsScreen extends StatelessWidget {
           const _Notice(
             icon: Icons.info_outline,
             text:
-                'Supporting photos and documents enrich the record, but do not prove authenticity.',
+                'Supporting records help preserve context for this artwork. They do not prove authenticity.',
           ),
           const SizedBox(height: 16),
           if (artwork.documents.isEmpty)
@@ -1871,7 +2043,7 @@ class DocumentsScreen extends StatelessWidget {
               icon: Icons.folder_copy_outlined,
               title: 'No supporting records yet',
               body:
-                  'Add photos of labels, signatures, backs, frames, condition, receipts, or provenance clues when available.',
+                  'Add photos of labels, signatures, backs, frames, receipts, condition details, or provenance notes when they help tell the record clearly.',
             )
           else
             for (final document in artwork.documents) ...[
@@ -1893,16 +2065,16 @@ class DocumentsScreen extends StatelessWidget {
           const SizedBox(height: 12),
           const _StatusPanel(
             icon: Icons.block_outlined,
-            title: 'Document upload unavailable',
+            title: 'Add paper records as photos for now',
             body:
-                'Receipt and certificate file upload is not available yet. For now, add supporting photos of receipts, certificates, auction records, or provenance notes.',
+                'For now, photograph receipts, certificates, auction records, gallery notes, or estate papers and keep them with this artwork.',
           ),
           const SizedBox(height: 12),
           const _StatusPanel(
             icon: Icons.warning_amber_outlined,
             title: 'Attachment needs attention',
             body:
-                'If a private attachment file becomes unavailable, its record details stay saved and Archivale asks you to attach the file again.',
+                'If one of these private files goes missing later, the record details stay here and you can add the photo again.',
           ),
           const SizedBox(height: 20),
           PrimaryActionButton(
@@ -1931,7 +2103,8 @@ class ReportPreviewScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     return PrototypeScreenFrame(
       title: 'Report preview',
-      subtitle: 'Generate an insurance-ready PDF',
+      subtitle:
+          'Ready a clear record for insurance conversations, estate organization, and personal files.',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -1941,21 +2114,21 @@ class ReportPreviewScreen extends StatelessWidget {
           const SizedBox(height: 16),
           const _StatusPanel(
             icon: Icons.fact_check_outlined,
-            title: 'Included',
+            title: 'What the report includes',
             body:
-                'Confirmed fields, attached document list, report date, and user-provided insurance value.',
+                'Confirmed details, supporting record list, report date, and any user-provided insurance value.',
           ),
           const SizedBox(height: 12),
           const _StatusPanel(
             icon: Icons.block_outlined,
-            title: 'Excluded',
+            title: 'What it does not do',
             body:
-                'No authenticity determination, appraisal certainty, or market-value claim.',
+                'No authenticity finding, appraisal, legal advice, or promise of insurance acceptance.',
           ),
           const SizedBox(height: 20),
           PrimaryActionButton(
             icon: Icons.ios_share_outlined,
-            label: 'Export archive preview',
+            label: 'Preview record export',
             routeName: AppRoutes.artworkExport(artwork.id),
           ),
         ],
@@ -1972,8 +2145,9 @@ class ExportPreviewScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return PrototypeScreenFrame(
-      title: 'Export record package',
-      subtitle: 'Export your archive',
+      title: 'Record export preview',
+      subtitle:
+          'Keep a portable record for family, estate, and personal files.',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -1986,15 +2160,16 @@ class ExportPreviewScreen extends StatelessWidget {
           const SizedBox(height: 16),
           const _StatusPanel(
             icon: Icons.archive_outlined,
-            title: 'ZIP archive preview',
+            title: 'What the export includes',
             body:
-                'Includes artwork fields, source labels, document metadata, and report date.',
+                'Artwork details, how each detail was recorded, supporting record details, and report date.',
           ),
           const SizedBox(height: 12),
           const _StatusPanel(
             icon: Icons.picture_as_pdf_outlined,
-            title: 'PDF preview',
-            body: 'User-provided insurance values only.',
+            title: 'Insurance value note',
+            body:
+                'Any insurance value stays labeled as user-provided in the PDF record.',
           ),
         ],
       ),
@@ -2144,9 +2319,9 @@ class _IntakeStatePanel extends StatelessWidget {
     if (isBusy) {
       return const _StatusPanel(
         icon: Icons.hourglass_top,
-        title: 'Opening private intake',
+        title: 'Preparing your artwork record',
         body:
-            'Use the system picker or camera. The app stores only your chosen file.',
+            'Use your camera or photo library. Archivale saves only the image you choose for this record.',
       );
     }
 
@@ -2161,12 +2336,12 @@ class _IntakeStatePanel extends StatelessWidget {
                 ? Icons.file_upload_outlined
                 : Icons.camera_alt,
             title: result.wasRecovered
-                ? 'Interrupted import recovered'
+                ? 'Recovered artwork photo'
                 : isImport
-                ? 'Photo imported'
-                : 'Photo captured',
+                ? 'Artwork photo added'
+                : 'Artwork photographed',
             body:
-                'Draft created locally. Return from Collection to keep reviewing this record after restart.',
+                'Your record draft is ready to review. You can return from Collection and keep building it later.',
           ),
           const SizedBox(height: 12),
           _PrimaryArtworkImagePreview(
@@ -2193,10 +2368,10 @@ class _IntakeStatePanel extends StatelessWidget {
             ? Icons.cancel_outlined
             : Icons.error_outline,
         title: failure.failure == ArtworkIntakeFailure.cancelled
-            ? 'Import cancelled'
-            : 'Import needs attention',
+            ? 'No photo selected'
+            : 'Could not start this record',
         body:
-            '${failure.message} Retry when ready; no broad photo-library access is required for import.',
+            '${failure.message} Try again when ready. Archivale only adds the photo you choose.',
       );
     }
 
@@ -2204,9 +2379,9 @@ class _IntakeStatePanel extends StatelessWidget {
       icon: isImport
           ? Icons.photo_library_outlined
           : Icons.photo_camera_outlined,
-      title: isImport ? 'Use system photo picker' : 'Use camera',
+      title: isImport ? 'Choose artwork photo' : 'Use camera',
       body:
-          'Choose one artwork image. The app copies only that file into private storage.',
+          'Start with one clear artwork image. Archivale copies only that photo into your private record.',
     );
   }
 }
@@ -2491,7 +2666,7 @@ class _OnlineResearchPanel extends StatelessWidget {
   final ResearchJob? researchJob;
   final bool showConsent;
   final bool isBusy;
-  final Object? error;
+  final String? error;
   final bool isEnabled;
   final Set<String> acceptedFieldKeys;
   final Set<String> rejectedFieldKeys;
@@ -2518,9 +2693,9 @@ class _OnlineResearchPanel extends StatelessWidget {
 
       return const _StatusPanel(
         icon: Icons.travel_explore_outlined,
-        title: 'Online research unavailable',
+        title: 'Research unavailable',
         body:
-            'Online research is not available in this release. Keep the local draft and use documents or manual review.',
+            'Archivale research is not available right now. Keep reviewing the draft and use your notes or supporting documents for now.',
       );
     }
 
@@ -2543,14 +2718,14 @@ class _OnlineResearchPanel extends StatelessWidget {
     }
 
     if (error != null) {
+      final errorMessage = error!;
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           _StatusPanel(
             icon: Icons.error_outline,
             title: 'Research unavailable',
-            body:
-                'Professional-source research could not run. ${error.toString()}',
+            body: errorMessage,
           ),
           const SizedBox(height: 12),
           _ActionButton(
@@ -2591,13 +2766,26 @@ class _OnlineResearchPanel extends StatelessWidget {
           const SizedBox(height: 12),
           _ActionButton(
             icon: Icons.travel_explore,
-            label: 'Research online',
+            label: 'Research this draft',
             onPressed: onStart,
           ),
         ],
       ),
     );
   }
+}
+
+String _researchFailureMessage(Object error) {
+  if (error is ResearchConsentRequiredException) {
+    return 'Research consent needs to be reviewed before Archivale can run source-backed research.';
+  }
+  if (error is InvalidResearchResponseException) {
+    return 'Archivale found a problem with the research result and could not display it safely. Continue reviewing your draft and try again later.';
+  }
+  if (error is DisallowedResearchSourceException) {
+    return 'Archivale could not verify this research response. Please try again later.';
+  }
+  return 'Archivale could not finish source-backed research right now. Please try again.';
 }
 
 class _ResearchConsentPanel extends StatelessWidget {
@@ -2623,18 +2811,18 @@ class _ResearchConsentPanel extends StatelessWidget {
           ),
           const SizedBox(height: 8),
           const Text(
-            'If you continue, the research service may receive the selected artwork image or a derived thumbnail, current draft fields, user notes, and on-device summary/search terms. Your full collection is not sent.',
+            'If you continue, Archivale may use the selected artwork image or thumbnail, the draft details on this screen, your notes, and a short private summary to look for museum, archive, and auction references. Your full collection stays private.',
           ),
           const SizedBox(height: 12),
           const _Notice(
             icon: Icons.fact_check_outlined,
             text:
-                'Results are source-backed candidates. They are not authentication, attribution certainty, or an appraisal.',
+                'Results are source-backed suggestions. They do not confirm authenticity, attribution certainty, or value.',
           ),
           const SizedBox(height: 12),
           _ActionButton(
             icon: Icons.check_circle_outline,
-            label: isBusy ? 'Researching...' : 'Allow professional research',
+            label: isBusy ? 'Researching...' : 'Start source-backed research',
             onPressed: isBusy ? null : onConfirm,
           ),
           const SizedBox(height: 10),
@@ -2675,7 +2863,7 @@ class _ResearchResultsPanel extends StatelessWidget {
             icon: Icons.travel_explore,
             title: 'No source-backed match yet',
             body:
-                'No reliable professional-source candidate was found. Keep the local record and add documents or better photos later.',
+                'Archivale did not find a reliable source-backed match yet. Keep the draft, add documents, or return with clearer detail photos.',
           ),
           const SizedBox(height: 12),
           _ComparableSignalsPanel(
@@ -2960,6 +3148,18 @@ String _defaultComparableCaveat(ComparableValueKind kind) {
   };
 }
 
+String _researchSourceTypeLabel(ResearchSourceType type) {
+  return switch (type) {
+    ResearchSourceType.museumCollection => 'Museum collection',
+    ResearchSourceType.culturalHeritageApi => 'Cultural archive',
+    ResearchSourceType.gallery => 'Gallery',
+    ResearchSourceType.artistFoundation => 'Artist foundation',
+    ResearchSourceType.auctionHouse => 'Auction house',
+    ResearchSourceType.reference ||
+    ResearchSourceType.unknown => 'Reference source',
+  };
+}
+
 ResearchSourceHit? _linkedAuctionSource(
   ComparableValueSignal signal,
   List<ResearchSourceHit> sourceHits,
@@ -3070,7 +3270,9 @@ class _CandidateCitationCard extends StatelessWidget {
           const SizedBox(height: 12),
           if (sourceHit != null) ...[
             Text('Source: ${sourceHit.sourceName}'),
-            Text('Source type: ${sourceHit.sourceType.storageValue}'),
+            Text(
+              'Source type: ${_researchSourceTypeLabel(sourceHit.sourceType)}',
+            ),
             if (sourceHit.sourceUrl != null)
               Text('Citation: ${sourceHit.sourceUrl!}'),
             if (sourceHit.rawSnippet != null)
@@ -3673,10 +3875,10 @@ class _ProgressStrip extends StatelessWidget {
   final int activeIndex;
 
   static const _steps = [
-    'Add photo',
+    'Photograph',
     'Review draft',
-    'Attach docs',
-    'Preview PDF',
+    'Attach records',
+    'Preserve',
   ];
 
   @override
@@ -3772,16 +3974,16 @@ class _LimitHint extends StatelessWidget {
         ? '$currentActiveArtworkCount active records'
         : '$currentActiveArtworkCount of ${plan.activeArtworkLimit} active records';
     final remainingCopy = remaining == null
-        ? 'Your current plan has no active artwork cap.'
+        ? 'Your plan has room for your full collection.'
         : remaining == 0
-        ? 'Upgrade to add more active artworks; existing records remain editable and exportable.'
-        : '$remaining active artwork slot${remaining == 1 ? '' : 's'} left before upgrade.';
+        ? 'This plan is at capacity. Existing records stay editable and exportable.'
+        : '$remaining more active record${remaining == 1 ? '' : 's'} can be added in this plan.';
 
     return _StatusPanel(
       icon: Icons.workspace_premium_outlined,
       title: '${plan.name} plan: $usage',
       body:
-          '$remainingCopy ${plan.aiCreditsLabel} are included for approved AI features.',
+          '$remainingCopy ${_planResearchDraftCopy(plan)} included each month.',
     );
   }
 }
@@ -3810,7 +4012,7 @@ class _EmptyCollectionPanel extends StatelessWidget {
           ),
           const SizedBox(height: 6),
           const Text(
-            'Start with one artwork photo, then keep evidence, source labels, documents, and report notes together.',
+            'Begin with one artwork photo, then keep notes, supporting records, and report-ready details together.',
           ),
           const SizedBox(height: 16),
           if (canAddArtwork) ...[
@@ -3861,9 +4063,9 @@ class _BillingGatePanel extends StatelessWidget {
         : nextPlans.first;
     return _StatusPanel(
       icon: Icons.workspace_premium_outlined,
-      title: '${plan.name} plan limit reached',
+      title: '${plan.name} plan is at capacity',
       body:
-          'You have $currentActiveArtworkCount active artwork${currentActiveArtworkCount == 1 ? '' : 's'} and need room for another active artwork. Existing records stay viewable, editable, and exportable. Upgrade to ${suggestedPlan.name} (${suggestedPlan.priceLabel}) when Play Billing is connected.',
+          'You already have $currentActiveArtworkCount active artwork${currentActiveArtworkCount == 1 ? '' : 's'} in this plan. Existing records stay editable and exportable. ${suggestedPlan.name} plan preview includes ${_planArtworkLimitBenefitCopy(suggestedPlan)} and ${_planResearchDraftCopy(suggestedPlan)} at ${suggestedPlan.priceLabel}. ${_upgradePreviewCopy(entitlementState.billingStatus)}',
     );
   }
 }
@@ -3919,28 +4121,28 @@ class _CollectionRecordPanel extends StatelessWidget {
           _StatusLine(
             icon: Icons.photo_library_outlined,
             text: record.primaryImageAttachmentId == null
-                ? 'Primary image is not attached yet.'
-                : 'Primary image saved in app-private storage.',
+                ? 'Add a primary image for this record.'
+                : 'Primary image saved on this device.',
           ),
           _StatusLine(
             icon: Icons.attach_file,
             text: supportingCount == 0
-                ? 'No supporting records attached yet.'
-                : '$supportingCount supporting record${supportingCount == 1 ? '' : 's'} attached.',
+                ? 'No supporting records added yet.'
+                : '$supportingCount supporting record${supportingCount == 1 ? '' : 's'} added.',
           ),
           _StatusLine(
             icon: incompleteCount == 0
                 ? Icons.check_circle_outline
                 : Icons.rule_folder_outlined,
             text: incompleteCount == 0
-                ? 'No incomplete queue items for this record.'
-                : '$incompleteCount incomplete queue item${incompleteCount == 1 ? '' : 's'} ${incompleteCount == 1 ? 'needs' : 'need'} attention.',
+                ? 'Nothing else needs review for this record.'
+                : '$incompleteCount detail${incompleteCount == 1 ? '' : 's'} still ${incompleteCount == 1 ? 'needs' : 'need'} review.',
           ),
           if (lifecycleStatus != ArtworkLifecycleStatus.active)
             _StatusLine(
               icon: Icons.inventory_2_outlined,
               text:
-                  'Marked ${lifecycleStatus.label.toLowerCase()}; retained in the local record.',
+                  'Marked ${lifecycleStatus.label.toLowerCase()}; kept in your record history.',
             ),
           const SizedBox(height: 12),
           PrimaryActionButton(
@@ -4034,7 +4236,7 @@ class _LifecycleStatusPanel extends StatelessWidget {
               const SizedBox(width: 10),
               Expanded(
                 child: Text(
-                  'Lifecycle status',
+                  'Record status',
                   style: Theme.of(context).textTheme.titleSmall,
                 ),
               ),
@@ -4060,7 +4262,7 @@ class _LifecycleStatusPanel extends StatelessWidget {
           if (errorMessage != null) ...[
             const SizedBox(height: 10),
             Text(
-              'Could not update lifecycle status: $errorMessage',
+              'Could not update record status: $errorMessage',
               style: TextStyle(color: Theme.of(context).colorScheme.error),
             ),
           ],
@@ -4137,15 +4339,15 @@ IconData _lifecycleIcon(ArtworkLifecycleStatus status) {
 String _lifecycleDescription(ArtworkLifecycleStatus status) {
   return switch (status) {
     ArtworkLifecycleStatus.active =>
-      'This artwork is treated as a current holding.',
+      'This artwork counts as part of your current holdings.',
     ArtworkLifecycleStatus.sold =>
-      'This artwork is retained in your records but marked sold.',
+      'This record stays in your archive and is marked sold.',
     ArtworkLifecycleStatus.lost =>
-      'This artwork is retained in your records but marked lost.',
+      'This record stays in your archive and is marked lost.',
     ArtworkLifecycleStatus.stolen =>
-      'This artwork is retained in your records but marked stolen.',
+      'This record stays in your archive and is marked stolen.',
     ArtworkLifecycleStatus.removed =>
-      'This artwork is retained locally but removed from current holdings.',
+      'This private record stays on this device and no longer counts as a current holding.',
   };
 }
 
@@ -4208,7 +4410,7 @@ class _CompletenessPanel extends StatelessWidget {
               const SizedBox(width: 12),
               Expanded(
                 child: Text(
-                  'Record completeness',
+                  'Record review',
                   style: Theme.of(context).textTheme.titleMedium,
                 ),
               ),
@@ -4225,7 +4427,7 @@ class _CompletenessPanel extends StatelessWidget {
           ),
           const SizedBox(height: 10),
           Text(
-            '$reviewedCount of $totalCount core fields are user-confirmed or document-reviewed.',
+            '$reviewedCount of $totalCount core fields are confirmed by you or supported by document review.',
           ),
           const SizedBox(height: 10),
           _StatusLine(
@@ -4235,7 +4437,7 @@ class _CompletenessPanel extends StatelessWidget {
           const _StatusLine(
             icon: Icons.inventory_2_outlined,
             text:
-                'Supporting documents enrich the archive when available; they are tracked separately from confirmed fields.',
+                'Supporting records can document provenance, condition, and location, but they stay separate from your confirmed fields.',
           ),
         ],
       ),
@@ -4550,7 +4752,7 @@ List<_IncompleteItem> _incompleteItems(
           title:
               '$title is marked ${record.lifecycleStatus.label.toLowerCase()}',
           body:
-              'This record is retained locally but is not treated as a current incomplete holding.',
+              'This record stays in your archive, but it is not treated as an active artwork that needs review.',
           actionLabel: 'Open record',
           routeName: AppRoutes.artworkDetails(record.id),
         ),
@@ -4572,8 +4774,8 @@ List<_IncompleteItem> _incompleteItems(
         icon: Icons.rate_review_outlined,
         title: '$title needs review',
         body: reviewCount == 0
-            ? 'Record state still needs review before export.'
-            : '$reviewCount field${reviewCount == 1 ? '' : 's'} still need user confirmation before export.',
+            ? 'Review this record before you rely on it in a report or export.'
+            : '$reviewCount field${reviewCount == 1 ? '' : 's'} still need your confirmation before this record is ready for a report or export.',
         actionLabel: 'Review draft',
         routeName: AppRoutes.artworkDraft(record.id),
       ),
@@ -4586,7 +4788,7 @@ List<_IncompleteItem> _incompleteItems(
         icon: Icons.edit_note_outlined,
         title: '$title has missing values',
         body:
-            '$missingCount core field${missingCount == 1 ? '' : 's'} need a value before this record is complete.',
+            '$missingCount core field${missingCount == 1 ? '' : 's'} still need a value before this record feels complete.',
         actionLabel: 'Open record',
         routeName: _reviewSafeRoute(record),
       ),
@@ -4601,7 +4803,7 @@ List<_IncompleteItem> _incompleteItems(
         title: '$title needs supporting records',
         body: supportingCount == 0
             ? 'Add a supporting photo, receipt, certificate, appraisal, auction record, or provenance note when available.'
-            : '$supportingCount supporting record${supportingCount == 1 ? '' : 's'} attached; review the supporting-record completeness state.',
+            : '$supportingCount supporting record${supportingCount == 1 ? '' : 's'} added; review whether this artwork still needs more context.',
         actionLabel: 'Attach supporting records',
         routeName: AppRoutes.artworkDocuments(record.id),
       ),
@@ -4647,6 +4849,35 @@ List<String> _missingCoreFields(ArtworkRecord record) {
       .toList(growable: false);
 }
 
+String _planArtworkLimitCopy(EntitlementPlan plan) {
+  final limit = plan.activeArtworkLimit;
+  return limit == null
+      ? 'Room for your full active collection'
+      : 'Room for up to $limit active records';
+}
+
+String _planArtworkLimitBenefitCopy(EntitlementPlan plan) {
+  final limit = plan.activeArtworkLimit;
+  return limit == null
+      ? 'room for your full active collection'
+      : 'room for up to $limit active records';
+}
+
+String _planResearchDraftCopy(EntitlementPlan plan) {
+  return '${plan.monthlyAiCredits} Archivale AI research draft${plan.monthlyAiCredits == 1 ? '' : 's'} each month';
+}
+
+String _upgradePreviewCopy(EntitlementBillingStatus billingStatus) {
+  return switch (billingStatus) {
+    EntitlementBillingStatus.available =>
+      'Preview only in this build. In-app upgrades are not available yet.',
+    EntitlementBillingStatus.unavailable =>
+      'Preview only in this build. In-app upgrades are unavailable on this device right now.',
+    EntitlementBillingStatus.notConfigured =>
+      'Preview only in this build. In-app upgrades are not available in this preview yet.',
+  };
+}
+
 const _coreFieldKeys = [
   ArtworkFieldKeys.title,
   ArtworkFieldKeys.artist,
@@ -4662,17 +4893,17 @@ const _editableArtworkFields = [
   _EditableArtworkField(
     key: ArtworkFieldKeys.title,
     label: 'Title',
-    helperText: 'Use your preferred record title.',
+    helperText: 'Record the title you use for this work.',
   ),
   _EditableArtworkField(
     key: ArtworkFieldKeys.artist,
     label: 'Artist',
-    helperText: 'Leave blank if the artist is still unknown.',
+    helperText: 'Leave blank until the artist is confirmed.',
   ),
   _EditableArtworkField(
     key: ArtworkFieldKeys.year,
     label: 'Year or date',
-    helperText: 'Use a year, range, or date text you can support.',
+    helperText: 'Enter a year, range, or date you can support.',
   ),
   _EditableArtworkField(
     key: ArtworkFieldKeys.medium,
@@ -4687,25 +4918,30 @@ const _editableArtworkFields = [
   _EditableArtworkField(
     key: ArtworkFieldKeys.purchasePrice,
     label: 'Purchase price',
-    helperText: 'Keep legacy text or add a structured amount and ISO currency.',
+    helperText: 'Legacy text is fine, or add amount and currency.',
+    helperMaxLines: 2,
     usesStructuredMoney: true,
   ),
   _EditableArtworkField(
     key: ArtworkFieldKeys.currentLocation,
     label: 'Current location',
-    helperText: 'Private location label for your own records.',
+    helperText:
+        'Private location label for storage, display, or loan tracking.',
   ),
   _EditableArtworkField(
     key: ArtworkFieldKeys.insuranceValue,
     label: 'User-provided insurance value',
-    helperText: 'Keep legacy text or add a structured amount and ISO currency.',
+    helperText:
+        'User-provided only. Add an amount with a three-letter currency code when helpful.',
     keyboardType: TextInputType.text,
+    helperMaxLines: 2,
     usesStructuredMoney: true,
   ),
   _EditableArtworkField(
     key: ArtworkFieldKeys.conditionNotes,
     label: 'Condition notes',
-    helperText: 'Describe visible condition, damage, or frame notes.',
+    helperText:
+        'Record visible condition, damage, framing, or treatment notes.',
     maxLines: 4,
   ),
 ];
@@ -4717,6 +4953,7 @@ class _EditableArtworkField {
     required this.helperText,
     this.keyboardType = TextInputType.text,
     this.maxLines = 1,
+    this.helperMaxLines = 1,
     this.usesStructuredMoney = false,
   });
 
@@ -4725,7 +4962,34 @@ class _EditableArtworkField {
   final String helperText;
   final TextInputType keyboardType;
   final int maxLines;
+  final int helperMaxLines;
   final bool usesStructuredMoney;
+}
+
+PrototypeField _detailDisplayField(PrototypeField field) {
+  if (!_isPlaceholderPrototypeFieldValue(field.label, field.value)) {
+    return field;
+  }
+
+  final guidanceValue = switch (field.label) {
+    'Title' => 'Title pending review.',
+    'Artist' => 'Artist not yet confirmed.',
+    'Year' => 'Year pending review.',
+    'Medium' => 'Medium pending review.',
+    'Dimensions' => 'Dimensions pending review.',
+    'Purchase price' => 'Purchase price not recorded.',
+    'Current location' => 'Location pending review.',
+    'User-provided insurance value' => 'Insurance value pending review.',
+    'Condition notes' => 'Condition notes pending review.',
+    _ => field.value,
+  };
+
+  return PrototypeField(
+    label: field.label,
+    value: guidanceValue,
+    source: field.source,
+    note: 'This detail still needs your review before you rely on it.',
+  );
 }
 
 bool _hasCompleteReviewedCoreFields(Map<String, ArtworkFieldValue> fields) {
@@ -4785,6 +5049,7 @@ bool _isPlaceholderCoreFieldValue(String key, String value) {
     ArtworkFieldKeys.currentLocation ||
     ArtworkFieldKeys.conditionNotes =>
       normalized == 'needs review' || normalized == 'unknown',
+    ArtworkFieldKeys.purchasePrice => normalized == 'not set',
     ArtworkFieldKeys.insuranceValue =>
       normalized == 'not set' ||
           normalized == 'needs review' ||
@@ -4801,6 +5066,7 @@ bool _isPlaceholderPrototypeFieldValue(String label, String value) {
     'year' => ArtworkFieldKeys.year,
     'medium' => ArtworkFieldKeys.medium,
     'dimensions' => ArtworkFieldKeys.dimensions,
+    'purchase price' => ArtworkFieldKeys.purchasePrice,
     'current location' => ArtworkFieldKeys.currentLocation,
     'user-provided insurance value' => ArtworkFieldKeys.insuranceValue,
     'condition notes' => ArtworkFieldKeys.conditionNotes,
@@ -4850,16 +5116,34 @@ Future<ArtworkRouteData> artworkDataForRoute(
   final researchJobs = await dependencies.artworkRepository
       .researchJobsForArtwork(record.id);
   return ArtworkRouteData(
-    artwork: prototypeArtworkFromRecord(
-      record,
-      attachments: attachments,
-      locale: locale,
+    artwork: _detailArtworkFromRecord(
+      prototypeArtworkFromRecord(
+        record,
+        attachments: attachments,
+        locale: locale,
+      ),
     ),
     isAiDraftReview:
         aiDraftJobs.isNotEmpty &&
         aiDraftJobs.first.status == AiDraftJobStatus.completed,
     latestAiDraftJob: aiDraftJobs.isEmpty ? null : aiDraftJobs.first,
     latestResearchJob: researchJobs.isEmpty ? null : researchJobs.first,
+  );
+}
+
+PrototypeArtwork _detailArtworkFromRecord(PrototypeArtwork artwork) {
+  return PrototypeArtwork(
+    id: artwork.id,
+    title: _detailDisplayField(artwork.title),
+    artist: _detailDisplayField(artwork.artist),
+    year: _detailDisplayField(artwork.year),
+    medium: _detailDisplayField(artwork.medium),
+    dimensions: _detailDisplayField(artwork.dimensions),
+    purchasePrice: _detailDisplayField(artwork.purchasePrice),
+    location: _detailDisplayField(artwork.location),
+    insuranceValue: _detailDisplayField(artwork.insuranceValue),
+    condition: _detailDisplayField(artwork.condition),
+    documents: artwork.documents,
   );
 }
 
@@ -4968,9 +5252,7 @@ String? _normalizeMoneyAmount(String rawValue) {
 
   final normalized = trimmed.replaceAll(',', '.');
   if (!RegExp(r'^\d+(?:\.\d+)?$').hasMatch(normalized)) {
-    throw StateError(
-      'Structured money amount must use digits with an optional decimal part.',
-    );
+    throw StateError('Enter digits with an optional decimal amount.');
   }
   return normalized;
 }
@@ -4983,9 +5265,7 @@ String? _normalizeCurrencyCode(String rawValue) {
 
   final normalized = trimmed.toUpperCase();
   if (!RegExp(r'^[A-Z]{3}$').hasMatch(normalized)) {
-    throw StateError(
-      'Structured money currency must be a three-letter ISO code.',
-    );
+    throw StateError('Use a three-letter currency code such as USD.');
   }
   return normalized;
 }
@@ -5018,7 +5298,7 @@ PrototypeDocument _documentFromAttachment(AttachmentRecord attachment) {
         : _attachmentTypeLabel(attachment.type),
     fileName: attachment.fileName,
     source: _prototypeSource(attachment.source),
-    note: attachment.notes ?? 'Stored as app-private attachment metadata.',
+    note: attachment.notes ?? 'Saved with this artwork as a supporting record.',
   );
 }
 

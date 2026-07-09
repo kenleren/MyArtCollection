@@ -84,7 +84,7 @@ class ArtworkIntakeService {
       recovered,
       capturedAt: null,
       wasRecovered: true,
-      emptyMessage: 'No interrupted import was available.',
+      emptyMessage: 'No previous import was found.',
     );
   }
 

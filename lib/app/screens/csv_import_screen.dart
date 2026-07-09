@@ -1022,7 +1022,7 @@ class _CsvConfirmActions extends StatelessWidget {
               _CsvPanel(
                 child: _CsvPanelBody(
                   icon: Icons.workspace_premium_outlined,
-                  title: 'This import needs more room',
+                  title: 'Collection capacity before import',
                   body: planGate.limitMessage,
                 ),
               ),
@@ -1113,7 +1113,22 @@ class _CsvImportPlanGate {
       }
     }
 
-    return 'This import would add $selectedImportRowCount active artwork${selectedImportRowCount == 1 ? '' : 's'} to the $currentActiveArtworkCount already in your collection. Your current records stay editable and exportable. Upgrade to ${upgradePlan.name} (${upgradePlan.priceLabel}) to bring in this group together.';
+    final projectedActiveCount =
+        currentActiveArtworkCount + selectedImportRowCount;
+    final planLimitCopy = upgradePlan.activeArtworkLimit == null
+        ? 'room for your full active collection'
+        : 'room for up to ${upgradePlan.activeArtworkLimit} active records';
+    final draftCopy =
+        '${upgradePlan.monthlyAiCredits} Archivale AI research draft${upgradePlan.monthlyAiCredits == 1 ? '' : 's'} each month';
+    final previewCopy = switch (entitlementState.billingStatus) {
+      EntitlementBillingStatus.available =>
+        'Preview only in this build. In-app upgrades are not available yet.',
+      EntitlementBillingStatus.unavailable =>
+        'Preview only in this build. In-app upgrades are unavailable on this device right now.',
+      EntitlementBillingStatus.notConfigured =>
+        'Preview only in this build. In-app upgrades are not available in this preview yet.',
+    };
+    return 'This import would bring this plan from $currentActiveArtworkCount to $projectedActiveCount active records. Existing records remain editable and exportable. ${upgradePlan.name} plan preview includes $planLimitCopy and $draftCopy at ${upgradePlan.priceLabel}. $previewCopy';
   }
 }
 

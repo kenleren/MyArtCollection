@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:ui' as ui;
@@ -13,8 +14,10 @@ import 'package:my_art_collection/app/app_dependencies.dart';
 import 'package:my_art_collection/app/app_routes.dart';
 import 'package:my_art_collection/app/billing/entitlement_plan.dart';
 import 'package:my_art_collection/app/config/app_feature_flags.dart';
+import 'package:my_art_collection/app/research/online_research_service.dart';
 import 'package:my_art_collection/app/import/csv_import_file_picker.dart';
 import 'package:my_art_collection/app/intake/artwork_image_picker.dart';
+import 'package:my_art_collection/app/screens/prototype_flow.dart';
 import 'package:my_art_collection/app/startup_route.dart';
 import 'package:my_art_collection/app/storage/ai_research_record.dart';
 import 'package:my_art_collection/app/storage/artwork_record.dart';
@@ -31,22 +34,34 @@ void main() {
     await loadScreenshotFont();
   });
 
-  testWidgets('intro screen shows brand once and value heading once', (
+  testWidgets('intro screen shows first-run stewardship copy', (
     WidgetTester tester,
   ) async {
     await tester.pumpWidget(const ArchivaleApp(initialRoute: AppRoutes.splash));
-    await pumpReady(tester);
+    await pumpLiveData(tester);
 
     expect(find.text('Archivale'), findsOneWidget);
-    expect(find.text('Private artwork records'), findsOneWidget);
-    expect(find.text('AI drafts. You confirm.'), findsOneWidget);
+    expect(find.text('Private collection records'), findsOneWidget);
+    expect(find.text('Photograph, draft, confirm, preserve.'), findsOneWidget);
+    expect(
+      find.text(
+        'Photograph an artwork. Archivale drafts the record. You confirm the facts.',
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.text(
+        'Keep your collection on this device, with backup in your Google account when you choose it.',
+      ),
+      findsOneWidget,
+    );
   });
 
   testWidgets('app provides system-aware light and dark Material themes', (
     WidgetTester tester,
   ) async {
     await tester.pumpWidget(const ArchivaleApp(initialRoute: AppRoutes.splash));
-    await pumpReady(tester);
+    await pumpLiveData(tester);
 
     final materialApp = tester.widget<MaterialApp>(find.byType(MaterialApp));
     expect(materialApp.themeMode, ThemeMode.system);
@@ -58,13 +73,68 @@ void main() {
         themeMode: ThemeMode.dark,
       ),
     );
-    await pumpReady(tester);
+    await pumpLiveData(tester);
 
-    final headingContext = tester.element(find.text('Private artwork records'));
+    final headingContext = tester.element(
+      find.text('Private collection records'),
+    );
     final theme = Theme.of(headingContext);
     expect(theme.brightness, Brightness.dark);
     expect(theme.colorScheme.primary, const Color(0xFFD9BE78));
     expect(theme.scaffoldBackgroundColor, const Color(0xFF090B0B));
+  });
+
+  testWidgets('onboarding first-run routes keep collector-facing trust copy', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(
+      const ArchivaleApp(initialRoute: AppRoutes.onboarding),
+    );
+    await pumpLiveData(tester);
+
+    expect(find.text('Start your first artwork record'), findsOneWidget);
+    expect(find.text('Photograph, draft, confirm, preserve.'), findsOneWidget);
+    expect(
+      find.text(
+        'Archivale helps you draft the record, but it does not determine authenticity or appraise value.',
+      ),
+      findsOneWidget,
+    );
+    expect(find.text('Photograph artwork'), findsOneWidget);
+    expect(find.text('Privacy and storage'), findsOneWidget);
+    expect(find.text('Photograph'), findsOneWidget);
+    expect(find.text('Attach records'), findsOneWidget);
+    expect(find.text('Preserve'), findsOneWidget);
+    final firstRunAction = tester.widget<PrimaryActionButton>(
+      find.byType(PrimaryActionButton).first,
+    );
+    expect(firstRunAction.routeName, AppRoutes.onboardingFirstAdd);
+
+    await tester.pumpWidget(
+      const ArchivaleApp(initialRoute: AppRoutes.onboardingPrivacy),
+    );
+    await pumpLiveData(tester);
+
+    expect(find.text('Privacy and storage'), findsOneWidget);
+  });
+
+  testWidgets('onboarding first-add route shows collector-facing copy', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(
+      const ArchivaleApp(initialRoute: AppRoutes.onboardingFirstAdd),
+    );
+    await pumpLiveData(tester);
+
+    final materialApp = tester.widget<MaterialApp>(find.byType(MaterialApp));
+    expect(materialApp.initialRoute, AppRoutes.onboardingFirstAdd);
+    expect(find.text('Add supporting records next'), findsOneWidget);
+    expect(
+      find.text(
+        'Create the artwork record first, then add supporting photos and records when they are ready.',
+      ),
+      findsOneWidget,
+    );
   });
 
   testWidgets('visual evidence covers refreshed core mobile screens', (
@@ -204,6 +274,29 @@ void main() {
     );
   });
 
+  testWidgets('visual evidence captures onboarding first-run surfaces', (
+    WidgetTester tester,
+  ) async {
+    await captureArtifactForApp(
+      tester,
+      routeName: AppRoutes.splash,
+      fileName: 'issue-164-splash-onboarding-copy.png',
+      ensureVisibleFinder: find.text('Private collection records'),
+    );
+    await captureArtifactForApp(
+      tester,
+      routeName: AppRoutes.onboarding,
+      fileName: 'issue-164-onboarding-copy.png',
+      ensureVisibleFinder: find.text('Photograph artwork'),
+    );
+    await captureArtifactForApp(
+      tester,
+      routeName: AppRoutes.onboardingPrivacy,
+      fileName: 'issue-164-onboarding-privacy-copy.png',
+      ensureVisibleFinder: find.text('Privacy and storage'),
+    );
+  });
+
   testWidgets('visual evidence captures supporting record mobile states', (
     WidgetTester tester,
   ) async {
@@ -248,7 +341,7 @@ void main() {
       dependencies: fixture.dependencies,
       fileName: 'issue-113-supporting-intake-mobile.png',
       ensureVisibleFinder: find.text(
-        'Choose supporting photo',
+        'Choose a supporting photo',
         skipOffstage: false,
       ),
     );
@@ -307,7 +400,7 @@ void main() {
       routeName: AppRoutes.collectionAdd,
       fileName: 'issue-130-add-artwork-document-gated.png',
       ensureVisibleFinder: find.text(
-        'Document upload unavailable',
+        'Add supporting records next',
         skipOffstage: false,
       ),
     );
@@ -359,6 +452,68 @@ void main() {
     );
   });
 
+  testWidgets('visual evidence covers issue 170 supporting records copy', (
+    WidgetTester tester,
+  ) async {
+    final testDependencies = await tester.runAsync(
+      () async => _LiveDependencyFixture.create(),
+    );
+    final fixture = testDependencies!;
+    addTearDown(() async {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.runAsync(fixture.dispose);
+    });
+
+    await tester.runAsync(() async {
+      await fixture.repository.upsert(
+        _artworkRecord(
+          id: 'issue-170-supporting-record',
+          title: 'Issue 170 Supporting Record',
+          state: ArtworkRecordState.verifiedByYou,
+          source: ArtworkFieldSource.userConfirmed,
+        ),
+      );
+      await fixture.addPrimaryImage(artworkId: 'issue-170-supporting-record');
+    });
+
+    await captureArtifactForApp(
+      tester,
+      routeName: AppRoutes.artworkDocuments('issue-170-supporting-record'),
+      dependencies: fixture.dependencies,
+      themeMode: ThemeMode.light,
+      fileName: 'issue-170-documents-light.png',
+      ensureVisibleFinder: find.text('Add paper records as photos for now'),
+    );
+    await captureArtifactForApp(
+      tester,
+      routeName: AppRoutes.artworkDocuments('issue-170-supporting-record'),
+      dependencies: fixture.dependencies,
+      themeMode: ThemeMode.dark,
+      fileName: 'issue-170-documents-dark.png',
+      ensureVisibleFinder: find.text('Add paper records as photos for now'),
+    );
+    await captureArtifactForApp(
+      tester,
+      routeName: AppRoutes.artworkSupportingPhotoImport(
+        'issue-170-supporting-record',
+      ),
+      dependencies: fixture.dependencies,
+      themeMode: ThemeMode.light,
+      fileName: 'issue-170-supporting-photo-import-light.png',
+      ensureVisibleFinder: find.text('Saved with this artwork'),
+    );
+    await captureArtifactForApp(
+      tester,
+      routeName: AppRoutes.artworkSupportingPhotoCapture(
+        'issue-170-supporting-record',
+      ),
+      dependencies: fixture.dependencies,
+      themeMode: ThemeMode.light,
+      fileName: 'issue-170-supporting-photo-capture-light.png',
+      ensureVisibleFinder: find.text('Saved with this artwork'),
+    );
+  });
+
   testWidgets('visual evidence captures placeholder confirmation states', (
     WidgetTester tester,
   ) async {
@@ -380,7 +535,7 @@ void main() {
       tester,
       routeName: AppRoutes.artworkEdit('placeholder-draft'),
       dependencies: fixture.dependencies,
-      ensureVisibleFinder: find.text('Save user-confirmed fields'),
+      ensureVisibleFinder: find.text('Save confirmed details'),
       fileName: 'issue-129-01-edit-placeholder-draft.png',
     );
 
@@ -427,24 +582,43 @@ void main() {
 
     await captureArtifactForApp(
       tester,
+      routeName: AppRoutes.collectionAdd,
+      fileName: 'issue-166-00-add-artwork-entry.png',
+      ensureVisibleFinder: find.widgetWithText(
+        FilledButton,
+        'Photograph artwork',
+      ),
+    );
+    await captureArtifactForApp(
+      tester,
+      routeName: AppRoutes.capture,
+      dependencies: fixture.dependencies,
+      fileName: 'issue-166-00a-capture-entry.png',
+      ensureVisibleFinder: find.text('Open camera'),
+    );
+    await captureArtifactForApp(
+      tester,
       routeName: AppRoutes.import,
       dependencies: fixture.dependencies,
-      fileName: 'issue-127-01-import-entry.png',
-      ensureVisibleFinder: find.text('Choose from system picker'),
+      fileName: 'issue-166-01-import-entry.png',
+      ensureVisibleFinder: find.widgetWithText(
+        FilledButton,
+        'Choose artwork photo',
+      ),
     );
     await captureImportActionVisualEvidence(
       tester,
       dependencies: fixture.dependencies,
-      actionLabel: 'Choose from system picker',
-      settledState: find.text('Import cancelled'),
-      fileName: 'issue-127-02-import-cancelled.png',
+      actionLabel: 'Choose artwork photo',
+      settledState: find.text('No photo selected'),
+      fileName: 'issue-166-02-import-cancelled.png',
     );
     await captureImportActionVisualEvidence(
       tester,
       dependencies: fixture.dependencies,
-      actionLabel: 'Recover interrupted import',
-      settledState: find.text('Import needs attention'),
-      fileName: 'issue-127-03-recover-unavailable.png',
+      actionLabel: 'Recover last import',
+      settledState: find.text('Could not start this record'),
+      fileName: 'issue-166-03-recover-unavailable.png',
     );
   });
 
@@ -454,10 +628,10 @@ void main() {
     await tester.pumpWidget(
       const ArchivaleApp(initialRoute: AppRoutes.collection),
     );
-    await pumpReady(tester);
+    await pumpLiveData(tester);
 
     expect(find.text('Collection'), findsWidgets);
-    expect(find.text('Incomplete'), findsOneWidget);
+    expect(find.text('Needs review'), findsOneWidget);
     expect(find.text('Reports'), findsOneWidget);
     expect(find.text('Settings'), findsOneWidget);
     expect(find.text('No artworks yet'), findsOneWidget);
@@ -467,8 +641,8 @@ void main() {
     await tapVisible(tester, find.widgetWithText(FilledButton, 'Add artwork'));
 
     expect(find.text('Add artwork'), findsWidgets);
-    expect(find.text('Take photo'), findsOneWidget);
-    expect(find.text('Import photo'), findsOneWidget);
+    expect(find.text('Photograph artwork'), findsOneWidget);
+    expect(find.text('Choose artwork photo'), findsOneWidget);
     expect(find.byKey(const ValueKey('evidence-photo-guide')), findsOneWidget);
     expect(find.text('Evidence photo checklist'), findsOneWidget);
     expect(find.textContaining('signature or maker marks'), findsOneWidget);
@@ -520,12 +694,24 @@ void main() {
       find.textContaining('Free plan: 5 of 5 active records'),
       findsOneWidget,
     );
-    await tester.scrollUntilVisible(find.text('Free plan limit reached'), 300);
+    await tester.scrollUntilVisible(find.text('Free plan is at capacity'), 300);
     await tester.pump();
 
-    expect(find.text('Free plan limit reached'), findsOneWidget);
+    expect(find.text('Free plan is at capacity'), findsOneWidget);
     expect(
-      find.textContaining('Existing records stay viewable'),
+      find.textContaining(
+        'Starter plan preview includes room for up to 50 active records',
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.textContaining('Archivale AI research drafts each month'),
+      findsOneWidget,
+    );
+    expect(
+      find.textContaining(
+        'Preview only in this build. In-app upgrades are not available in this preview yet.',
+      ),
       findsOneWidget,
     );
     expect(find.widgetWithText(FilledButton, 'Add artwork'), findsNothing);
@@ -566,9 +752,9 @@ void main() {
     await pumpLiveData(tester);
 
     expect(find.text('Add artwork'), findsWidgets);
-    expect(find.text('Free plan limit reached'), findsOneWidget);
-    expect(find.text('Take photo'), findsNothing);
-    expect(find.text('Import photo'), findsNothing);
+    expect(find.text('Free plan is at capacity'), findsOneWidget);
+    expect(find.text('Photograph artwork'), findsNothing);
+    expect(find.text('Choose artwork photo'), findsNothing);
   });
 
   testWidgets('free plan ignores retained inactive records for add gates', (
@@ -629,9 +815,9 @@ void main() {
 
     await tapVisible(tester, find.widgetWithText(FilledButton, 'Add artwork'));
 
-    expect(find.text('Take photo'), findsOneWidget);
-    expect(find.text('Import photo'), findsOneWidget);
-    expect(find.text('Free plan limit reached'), findsNothing);
+    expect(find.text('Photograph artwork'), findsOneWidget);
+    expect(find.text('Choose artwork photo'), findsOneWidget);
+    expect(find.text('Free plan is at capacity'), findsNothing);
   });
 
   testWidgets(
@@ -672,7 +858,10 @@ void main() {
       );
       await pumpLiveData(tester);
 
-      expect(find.text('Choose from system picker'), findsOneWidget);
+      expect(
+        find.widgetWithText(FilledButton, 'Choose artwork photo'),
+        findsOneWidget,
+      );
 
       await tester.runAsync(() async {
         await fixture.repository.upsert(
@@ -685,63 +874,69 @@ void main() {
         );
       });
 
-      await tapVisible(tester, find.text('Choose from system picker'));
+      await tapVisible(
+        tester,
+        find.widgetWithText(FilledButton, 'Choose artwork photo'),
+      );
       await pumpLiveData(tester);
 
-      expect(find.text('Free plan limit reached'), findsOneWidget);
-      expect(find.text('Photo imported'), findsNothing);
+      expect(find.text('Free plan is at capacity'), findsOneWidget);
+      expect(find.text('Artwork photo added'), findsNothing);
 
       final records = await tester.runAsync(fixture.repository.list);
       expect(records, hasLength(5));
     },
   );
 
-  testWidgets(
-    'reports tab summarizes local records instead of sample artwork',
-    (WidgetTester tester) async {
-      final testDependencies = await tester.runAsync(
-        () async => _LiveDependencyFixture.create(),
-      );
-      final fixture = testDependencies!;
-      addTearDown(() async {
-        await tester.pumpWidget(const SizedBox.shrink());
-        await tester.runAsync(fixture.dispose);
-      });
+  testWidgets('reports tab summarizes local records instead of sample artwork', (
+    WidgetTester tester,
+  ) async {
+    final testDependencies = await tester.runAsync(
+      () async => _LiveDependencyFixture.create(),
+    );
+    final fixture = testDependencies!;
+    addTearDown(() async {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.runAsync(fixture.dispose);
+    });
 
-      await tester.runAsync(() async {
-        await fixture.repository.upsert(
-          _artworkRecord(
-            id: 'local-report-record',
-            title: 'Untitled artwork',
-            state: ArtworkRecordState.verifiedByYou,
-            source: ArtworkFieldSource.userConfirmed,
-          ),
-        );
-      });
-
-      await tester.pumpWidget(
-        ArchivaleApp(
-          initialRoute: AppRoutes.collectionReport,
-          dependencies: fixture.dependencies,
+    await tester.runAsync(() async {
+      await fixture.repository.upsert(
+        _artworkRecord(
+          id: 'local-report-record',
+          title: 'Untitled artwork',
+          state: ArtworkRecordState.verifiedByYou,
+          source: ArtworkFieldSource.userConfirmed,
         ),
       );
-      await pumpLiveData(tester);
+      await fixture.addPrimaryImage(artworkId: 'local-report-record');
+    });
 
-      expect(find.text('Reports'), findsWidgets);
-      expect(find.text('Untitled artwork'), findsOneWidget);
-      expect(find.text('Blue Interior Study'), findsNothing);
-      expect(find.text('Artwork report'), findsOneWidget);
-      expect(find.text('Export your archive'), findsOneWidget);
+    await tester.pumpWidget(
+      ArchivaleApp(
+        initialRoute: AppRoutes.collectionReport,
+        dependencies: fixture.dependencies,
+      ),
+    );
+    await pumpLiveData(tester);
 
-      await tapVisible(tester, find.text('Artwork report'));
-      await pumpLiveData(tester);
+    expect(find.text('Reports'), findsWidgets);
+    expect(find.text('Preview artwork report'), findsOneWidget);
+    expect(find.text('Preview record export'), findsOneWidget);
 
-      expect(find.text('Report preview'), findsWidgets);
-      expect(find.text('Untitled artwork'), findsOneWidget);
-      expect(find.textContaining('Report date:'), findsOneWidget);
-      expect(find.text('Report date: July 3, 2026'), findsNothing);
-    },
-  );
+    await tapVisible(tester, find.text('Preview artwork report'));
+    await pumpLiveData(tester);
+
+    expect(find.text('Report preview'), findsWidgets);
+    expect(
+      find.text(
+        'Ready a clear record for insurance conversations, estate organization, and personal files.',
+      ),
+      findsOneWidget,
+    );
+    expect(find.textContaining('Report date:'), findsOneWidget);
+    expect(find.text('Report date: July 3, 2026'), findsNothing);
+  });
 
   testWidgets('reports tab gates report actions when no local records exist', (
     WidgetTester tester,
@@ -764,9 +959,8 @@ void main() {
     await pumpLiveData(tester);
 
     expect(find.text('No local records available'), findsOneWidget);
-    expect(find.text('Blue Interior Study'), findsNothing);
-    expect(find.text('Artwork report'), findsNothing);
-    expect(find.text('Export your archive'), findsNothing);
+    expect(find.text('Preview artwork report'), findsNothing);
+    expect(find.text('Preview record export'), findsNothing);
   });
 
   testWidgets(
@@ -999,9 +1193,25 @@ void main() {
     );
     await pumpLiveData(tester);
 
-    expect(find.text('This import needs more room'), findsOneWidget);
+    expect(find.text('Collection capacity before import'), findsOneWidget);
     expect(
-      find.textContaining('This import would add 3 active artworks'),
+      find.textContaining(
+        'This import would bring this plan from 4 to 7 active records',
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.textContaining('Starter plan preview includes'),
+      findsOneWidget,
+    );
+    expect(
+      find.textContaining('Archivale AI research drafts each month'),
+      findsOneWidget,
+    );
+    expect(
+      find.textContaining(
+        'Preview only in this build. In-app upgrades are not available in this preview yet.',
+      ),
       findsOneWidget,
     );
     expect(
@@ -1084,7 +1294,7 @@ void main() {
     );
     await pumpLiveData(tester);
 
-    expect(find.text('This import needs more room'), findsNothing);
+    expect(find.text('Collection capacity before import'), findsNothing);
     await pressAsyncButton(
       tester,
       find.widgetWithText(FilledButton, 'Add to collection'),
@@ -1103,7 +1313,7 @@ void main() {
     );
   });
 
-  testWidgets('visual evidence covers Play billing gate states', (
+  testWidgets('visual evidence covers billing upgrade copy states', (
     WidgetTester tester,
   ) async {
     final testDependencies = await tester.runAsync(
@@ -1131,15 +1341,15 @@ void main() {
     await captureCollectionLimitVisualEvidence(
       tester,
       dependencies: fixture.dependencies,
-      fileName: 'issue-139-collection-limit-light.png',
+      fileName: 'issue-173-01-collection-capacity-light.png',
     );
     await captureArtifactForApp(
       tester,
       routeName: AppRoutes.collectionAdd,
       dependencies: fixture.dependencies,
       themeMode: ThemeMode.light,
-      fileName: 'issue-139-add-artwork-limit-light.png',
-      ensureVisibleFinder: find.text('Free plan limit reached'),
+      fileName: 'issue-173-02-add-artwork-capacity-light.png',
+      ensureVisibleFinder: find.text('Free plan is at capacity'),
     );
 
     final csvFile = await tester.runAsync(
@@ -1149,8 +1359,73 @@ void main() {
       tester,
       dependencies: fixture.dependencies,
       csvPath: csvFile!.path,
-      fileName: 'issue-139-csv-limit-light.png',
-      ensureVisibleFinder: find.text('This import needs more room'),
+      fileName: 'issue-173-03-csv-capacity-light.png',
+      ensureVisibleFinder: find.text('Collection capacity before import'),
+    );
+  });
+
+  testWidgets('settings plan status covers billing status variants', (
+    WidgetTester tester,
+  ) async {
+    final fixture = await tester.runAsync(
+      () async => _LiveDependencyFixture.create(),
+    );
+    final testFixture = fixture!;
+    addTearDown(() async {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.runAsync(testFixture.dispose);
+    });
+
+    Future<void> verifyVariant({
+      required EntitlementBillingStatus billingStatus,
+      required String expectedCopy,
+      required String fileName,
+    }) async {
+      await _configureMobileViewport(tester);
+      final boundaryKey = GlobalKey();
+      await tester.pumpWidget(
+        RepaintBoundary(
+          key: boundaryKey,
+          child: ArchivaleApp(
+            initialRoute: AppRoutes.collectionSettings,
+            dependencies: testFixture.dependenciesWithFlags(
+              entitlementService: FixedEntitlementService(
+                state: EntitlementState(
+                  plan: EntitlementPlans.starter,
+                  billingStatus: billingStatus,
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await pumpLiveData(tester);
+      await tester.ensureVisible(find.text('Starter plan'));
+      await tester.pump();
+
+      expect(find.text('Starter plan'), findsOneWidget);
+      expect(
+        find.textContaining('Archivale AI research drafts each month'),
+        findsOneWidget,
+      );
+      expect(find.textContaining(expectedCopy), findsOneWidget);
+      await captureBoundaryToArtifacts(tester, boundaryKey, fileName);
+    }
+
+    await verifyVariant(
+      billingStatus: EntitlementBillingStatus.available,
+      expectedCopy: 'In-app upgrades are not available in this build yet.',
+      fileName: 'issue-173-04-settings-plan-available-light.png',
+    );
+    await verifyVariant(
+      billingStatus: EntitlementBillingStatus.unavailable,
+      expectedCopy: 'in-app upgrades are unavailable on this device right now.',
+      fileName: 'issue-173-05-settings-plan-unavailable-light.png',
+    );
+    await verifyVariant(
+      billingStatus: EntitlementBillingStatus.notConfigured,
+      expectedCopy: 'in-app upgrades are not available in this preview yet.',
+      fileName: 'issue-173-06-settings-plan-not-configured-light.png',
     );
   });
 
@@ -1201,11 +1476,11 @@ void main() {
     await tester.pumpWidget(
       const ArchivaleApp(initialRoute: AppRoutes.collection),
     );
-    await pumpReady(tester);
+    await pumpLiveData(tester);
 
     await tapVisible(tester, find.widgetWithText(FilledButton, 'Add artwork'));
-    await tapVisible(tester, find.text('Import photo'));
-    expect(find.text('Photo imported'), findsOneWidget);
+    await tapVisible(tester, find.text('Choose artwork photo'));
+    expect(find.text('Artwork photo added'), findsOneWidget);
     expect(find.text('Upload-failure state'), findsNothing);
 
     await tapVisible(tester, find.text('Review AI draft'));
@@ -1220,31 +1495,43 @@ void main() {
     expect(find.text('Blue Interior Study'), findsWidgets);
     expect(find.text('Record state: Needs review'), findsOneWidget);
     expect(
-      find.text('3 of 8 core fields are user-confirmed or document-reviewed.'),
+      find.text(
+        '3 of 8 core fields are confirmed by you or supported by document review.',
+      ),
       findsOneWidget,
     );
 
     await tapVisible(tester, find.text('Add supporting records'));
     expect(find.text('Documents'), findsWidgets);
     expect(find.text('gallery-receipt-2025.pdf'), findsOneWidget);
-    expect(find.text('Document upload unavailable'), findsOneWidget);
+    expect(find.text('Add paper records as photos for now'), findsOneWidget);
     expect(find.text('Attachment needs attention'), findsOneWidget);
 
     await tapVisible(
       tester,
       find.widgetWithText(OutlinedButton, 'Report preview').last,
     );
-    expect(find.text('Generate an insurance-ready PDF'), findsWidgets);
+    expect(
+      find.text(
+        'Ready a clear record for insurance conversations, estate organization, and personal files.',
+      ),
+      findsOneWidget,
+    );
     expect(find.text('Purchase price: USD 1,800.'), findsOneWidget);
     expect(
       find.text('User-provided insurance value: USD 2,400.'),
       findsOneWidget,
     );
 
-    await tapVisible(tester, find.text('Export archive preview'));
-    expect(find.text('Export record package'), findsWidgets);
-    expect(find.text('ZIP archive preview'), findsOneWidget);
-    expect(find.text('User-provided insurance values only.'), findsOneWidget);
+    await tapVisible(tester, find.text('Preview record export'));
+    expect(find.text('Record export preview'), findsWidgets);
+    expect(find.text('What the export includes'), findsOneWidget);
+    expect(
+      find.text(
+        'Any insurance value stays labeled as user-provided in the PDF record.',
+      ),
+      findsOneWidget,
+    );
   });
 
   testWidgets('live import flow shows failed recovery state', (
@@ -1265,26 +1552,30 @@ void main() {
         dependencies: fixture.dependencies,
       ),
     );
-    await pumpReady(tester);
+    await pumpLiveData(tester);
 
-    expect(find.text('Use system photo picker'), findsOneWidget);
+    expect(
+      find.widgetWithText(FilledButton, 'Choose artwork photo'),
+      findsOneWidget,
+    );
     expect(find.text('Evidence photo checklist'), findsOneWidget);
-    expect(find.text('Choose from system picker'), findsOneWidget);
-    expect(find.text('Recover interrupted import'), findsOneWidget);
+    expect(find.text('Choose artwork photo'), findsWidgets);
+    expect(find.text('Recover last import'), findsOneWidget);
     expect(find.text('Upload-failure state'), findsNothing);
 
-    await tapVisible(tester, find.text('Recover interrupted import'));
+    await tapVisible(tester, find.text('Recover last import'));
+    await pumpLiveData(tester);
 
-    expect(find.text('Import needs attention'), findsOneWidget);
+    expect(find.text('Could not start this record'), findsOneWidget);
     expect(
-      find.textContaining('No interrupted import was available.'),
+      find.textContaining('No previous import was found.'),
       findsOneWidget,
     );
     expect(find.text('Evidence photo checklist'), findsOneWidget);
     expect(find.textContaining('prints or lithographs'), findsOneWidget);
     expect(find.textContaining('Receipts, certificates'), findsOneWidget);
-    expect(find.text('Choose from system picker'), findsOneWidget);
-    expect(find.text('Recover interrupted import'), findsOneWidget);
+    expect(find.text('Choose artwork photo'), findsWidgets);
+    expect(find.text('Recover last import'), findsOneWidget);
     expect(find.text('Upload-failure state'), findsNothing);
   });
 
@@ -1306,15 +1597,19 @@ void main() {
         dependencies: fixture.dependencies,
       ),
     );
-    await pumpReady(tester);
+    await pumpLiveData(tester);
 
-    await tapVisible(tester, find.text('Choose from system picker'));
+    await tapVisible(
+      tester,
+      find.widgetWithText(FilledButton, 'Choose artwork photo'),
+    );
+    await pumpLiveData(tester);
 
-    expect(find.text('Import cancelled'), findsOneWidget);
+    expect(find.text('No photo selected'), findsOneWidget);
     expect(find.textContaining('Photo import was cancelled.'), findsOneWidget);
-    expect(find.text('Import needs attention'), findsNothing);
-    expect(find.text('Choose from system picker'), findsOneWidget);
-    expect(find.text('Recover interrupted import'), findsOneWidget);
+    expect(find.text('Could not start this record'), findsNothing);
+    expect(find.text('Choose artwork photo'), findsWidgets);
+    expect(find.text('Recover last import'), findsOneWidget);
     expect(find.text('Upload-failure state'), findsNothing);
   });
 
@@ -1342,18 +1637,18 @@ void main() {
         ),
       ),
     );
-    await pumpReady(tester);
+    await pumpLiveData(tester);
 
     await tester.runAsync(() async {
       final button = tester.widget<FilledButton>(
-        find.widgetWithText(FilledButton, 'Choose from system picker'),
+        find.widgetWithText(FilledButton, 'Choose artwork photo'),
       );
       button.onPressed!();
       await Future<void>.delayed(const Duration(seconds: 1));
     });
     await pumpLiveData(tester);
 
-    expect(find.text('Photo imported'), findsOneWidget);
+    expect(find.text('Artwork photo added'), findsOneWidget);
     expect(find.text('On-device AI unavailable'), findsOneWidget);
     expect(find.textContaining('No photo was sent online'), findsOneWidget);
     expect(find.text('Review draft'), findsOneWidget);
@@ -1418,17 +1713,17 @@ void main() {
       await pumpLiveData(tester);
       expect(find.text('Import supporting photo'), findsWidgets);
       expect(find.text('Supporting UI Artwork'), findsWidgets);
-      expect(find.text('Artwork-scoped save'), findsOneWidget);
+      expect(find.text('Saved with this artwork'), findsOneWidget);
 
       await pressAsyncButton(
         tester,
-        find.widgetWithText(FilledButton, 'Choose supporting photo'),
+        find.widgetWithText(FilledButton, 'Choose a supporting photo'),
       );
 
       expect(find.text('Supporting photo imported'), findsOneWidget);
       expect(
         find.text(
-          'Saved as a supporting record. The primary artwork image is unchanged.',
+          'Added to this artwork as a supporting record. Your main artwork image is unchanged.',
         ),
         findsOneWidget,
       );
@@ -1477,7 +1772,7 @@ void main() {
       await pumpLiveData(tester);
 
       expect(find.text('Supporting UI Artwork'), findsOneWidget);
-      expect(find.text('1 supporting record attached.'), findsOneWidget);
+      expect(find.text('1 supporting record added.'), findsOneWidget);
 
       await tester.pumpWidget(const SizedBox.shrink());
       await tester.pump();
@@ -1500,9 +1795,9 @@ void main() {
     await tester.pumpWidget(
       const ArchivaleApp(initialRoute: AppRoutes.collectionAdd),
     );
-    await pumpReady(tester);
+    await pumpLiveData(tester);
 
-    expect(find.text('Document upload unavailable'), findsOneWidget);
+    expect(find.text('Add supporting records next'), findsOneWidget);
     expect(find.text('Attach document'), findsNothing);
     expect(find.byIcon(Icons.attach_file), findsOneWidget);
     expect(
@@ -1542,7 +1837,7 @@ void main() {
     expect(find.text('No supporting records yet'), findsOneWidget);
     expect(find.text('Take supporting photo'), findsOneWidget);
     expect(find.text('Import supporting photo'), findsOneWidget);
-    expect(find.text('Document upload unavailable'), findsOneWidget);
+    expect(find.text('Add paper records as photos for now'), findsOneWidget);
     expect(find.text('Attachment needs attention'), findsOneWidget);
     expect(find.text('Attach document'), findsNothing);
   });
@@ -1707,6 +2002,88 @@ void main() {
       fileName: 'issue-136-aicore-download/private-ai-draft-saved-mobile.png',
     );
   });
+  testWidgets(
+    'supporting photo busy state matches import and capture intake modes',
+    (WidgetTester tester) async {
+      final testDependencies = await tester.runAsync(
+        () async => _LiveDependencyFixture.create(),
+      );
+      final fixture = testDependencies!;
+      addTearDown(() async {
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.runAsync(fixture.dispose);
+      });
+
+      await tester.runAsync(() async {
+        await fixture.repository.upsert(
+          _artworkRecord(
+            id: 'supporting-busy-state',
+            title: 'Supporting Busy State',
+            state: ArtworkRecordState.verifiedByYou,
+            source: ArtworkFieldSource.userConfirmed,
+          ),
+        );
+        await fixture.addPrimaryImage(artworkId: 'supporting-busy-state');
+      });
+
+      final importPicker = _PendingImagePicker();
+      await tester.pumpWidget(
+        ArchivaleApp(
+          initialRoute: AppRoutes.artworkSupportingPhotoImport(
+            'supporting-busy-state',
+          ),
+          dependencies: fixture.dependenciesWithPicker(importPicker),
+        ),
+      );
+      await pumpLiveData(tester);
+      await waitForFinder(tester, find.text('Choose a supporting photo'));
+
+      await tapVisible(tester, find.text('Choose a supporting photo'));
+      await pumpLiveData(tester);
+
+      expect(find.text('Opening photo picker'), findsOneWidget);
+      expect(
+        find.text(
+          'Choose one photo to keep with this artwork as a supporting record.',
+        ),
+        findsOneWidget,
+      );
+
+      importPicker.complete(ArtworkImagePickMode.gallery, null);
+      await pumpLiveData(tester);
+      expect(find.text('Supporting photo cancelled'), findsOneWidget);
+
+      final capturePicker = _PendingImagePicker();
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+      await tester.pumpWidget(
+        ArchivaleApp(
+          initialRoute: AppRoutes.artworkSupportingPhotoCapture(
+            'supporting-busy-state',
+          ),
+          dependencies: fixture.dependenciesWithPicker(capturePicker),
+        ),
+      );
+      await pumpLiveData(tester);
+      await waitForFinder(tester, find.text('Take a supporting photo'));
+
+      await tapVisible(tester, find.text('Take a supporting photo'));
+      await pumpLiveData(tester);
+
+      expect(find.text('Opening camera'), findsOneWidget);
+      expect(
+        find.text(
+          'Take one photo to keep with this artwork as a supporting record.',
+        ),
+        findsOneWidget,
+      );
+      expect(find.text('Opening photo picker'), findsNothing);
+
+      capturePicker.complete(ArtworkImagePickMode.camera, null);
+      await pumpLiveData(tester);
+      expect(find.text('Supporting photo cancelled'), findsOneWidget);
+    },
+  );
 
   testWidgets('collection lists local record after repository reload', (
     WidgetTester tester,
@@ -1742,7 +2119,7 @@ void main() {
     expect(find.text('Reloaded Local Artwork'), findsOneWidget);
     expect(find.text('Needs review'), findsOneWidget);
     expect(find.text('No artworks yet'), findsNothing);
-    expect(find.textContaining('incomplete queue items'), findsOneWidget);
+    expect(find.textContaining('details still need review'), findsOneWidget);
   });
 
   testWidgets('cold start opens collection when local records exist', (
@@ -1788,7 +2165,7 @@ void main() {
 
     expect(find.text('Collection'), findsWidgets);
     expect(find.text('Cold Start Local Record'), findsOneWidget);
-    expect(find.text('Private artwork records'), findsNothing);
+    expect(find.text('Private collection records'), findsNothing);
   });
 
   testWidgets('collection and draft show local primary image preview', (
@@ -1996,18 +2373,18 @@ void main() {
         ),
       ),
     );
-    await pumpReady(tester);
+    await pumpLiveData(tester);
 
     await tester.runAsync(() async {
       final button = tester.widget<FilledButton>(
-        find.widgetWithText(FilledButton, 'Choose from system picker'),
+        find.widgetWithText(FilledButton, 'Choose artwork photo'),
       );
       button.onPressed!();
       await Future<void>.delayed(const Duration(seconds: 1));
     });
     await pumpLiveData(tester);
 
-    expect(find.text('Photo imported'), findsOneWidget);
+    expect(find.text('Artwork photo added'), findsOneWidget);
     expect(find.text('Private AI draft saved'), findsOneWidget);
     expect(
       find.textContaining('Visible lower-right signature'),
@@ -2118,7 +2495,7 @@ void main() {
       find.text('Needs Local Review needs supporting records'),
       findsNothing,
     );
-    expect(find.text('No incomplete records'), findsOneWidget);
+    expect(find.text('Nothing needs review'), findsOneWidget);
   });
 
   testWidgets('incomplete missing-values action preserves draft provenance', (
@@ -2212,16 +2589,16 @@ void main() {
       await tapVisible(tester, find.text('Open record'));
       await pumpLiveData(tester);
 
-      expect(find.text('Lifecycle status'), findsOneWidget);
+      expect(find.text('Record status'), findsOneWidget);
       expect(
-        find.text('This artwork is treated as a current holding.'),
+        find.text('This artwork counts as part of your current holdings.'),
         findsOneWidget,
       );
 
       await tapVisible(tester, find.widgetWithText(ActionChip, 'Sold'));
       await pumpLiveData(tester);
       expect(
-        find.text('This artwork is retained in your records but marked sold.'),
+        find.text('This record stays in your archive and is marked sold.'),
         findsOneWidget,
       );
 
@@ -2255,7 +2632,7 @@ void main() {
 
       await tapVisible(tester, find.widgetWithText(ActionChip, 'Removed'));
       expect(find.text('Remove from current holdings?'), findsOneWidget);
-      await tester.tap(find.text('Mark removed'));
+      await tester.tap(find.text('Mark as removed'));
       await pumpLiveData(tester);
 
       saved = await tester.runAsync<ArtworkRecord?>(
@@ -2282,7 +2659,7 @@ void main() {
       expect(find.text('Lifecycle UI Artwork'), findsOneWidget);
       expect(find.text('Removed'), findsOneWidget);
       expect(
-        find.textContaining('Marked removed; retained in the local record.'),
+        find.textContaining('Marked removed; kept in your record history.'),
         findsOneWidget,
       );
     },
@@ -2330,13 +2707,13 @@ void main() {
       );
       await pumpLiveData(tester);
 
-      await waitForFinder(tester, find.text('Lifecycle status'));
+      await waitForFinder(tester, find.text('Record status'));
       await pumpLiveData(tester);
-      expect(find.text('Lifecycle status'), findsOneWidget);
+      expect(find.text('Record status'), findsOneWidget);
       await waitForFinder(
         tester,
         find.text(
-          'This artwork is retained in your records but marked sold.',
+          'This record stays in your archive and is marked sold.',
           skipOffstage: false,
         ),
         attempts: 60,
@@ -2363,7 +2740,7 @@ void main() {
       expect(soldRecord.lifecycleStatus, ArtworkLifecycleStatus.sold);
       expect(
         find.textContaining(
-          'This plan has no room for another active artwork',
+          'This plan already holds all of its active records',
           skipOffstage: false,
         ),
         findsOneWidget,
@@ -2412,7 +2789,7 @@ void main() {
 
     expect(find.text('Sold Incomplete Artwork is marked sold'), findsOneWidget);
     expect(
-      find.textContaining('not treated as a current incomplete holding'),
+      find.textContaining('not treated as an active artwork that needs review'),
       findsOneWidget,
     );
     expect(find.text('Sold Incomplete Artwork needs review'), findsNothing);
@@ -2448,11 +2825,13 @@ void main() {
     );
     await pumpLiveData(tester);
 
-    expect(find.text('Untitled artwork'), findsOneWidget);
-    expect(find.text('Unknown'), findsOneWidget);
-    expect(find.text('Needs review'), findsWidgets);
+    expect(find.text('Edit private record'), findsOneWidget);
+    expect(find.text('Confirm the details you want to keep'), findsOneWidget);
+    expect(find.text('Untitled artwork'), findsNothing);
+    expect(find.text('Unknown'), findsNothing);
+    expect(find.text('Needs review'), findsNothing);
 
-    await tapVisible(tester, find.text('Save user-confirmed fields'));
+    await tapVisible(tester, find.text('Save confirmed details'));
     await pumpLiveData(tester);
 
     final saved = await tester.runAsync(
@@ -2460,15 +2839,8 @@ void main() {
     );
     expect(saved, isNotNull);
     expect(saved!.recordState, ArtworkRecordState.needsReview);
-    expect(
-      saved.field(ArtworkFieldKeys.title)?.source,
-      ArtworkFieldSource.unknown,
-    );
-    expect(saved.field(ArtworkFieldKeys.title)?.lastConfirmedAt, isNull);
-    expect(
-      saved.field(ArtworkFieldKeys.conditionNotes)?.source,
-      ArtworkFieldSource.unknown,
-    );
+    expect(saved.field(ArtworkFieldKeys.title), isNull);
+    expect(saved.field(ArtworkFieldKeys.conditionNotes), isNull);
 
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump();
@@ -2486,9 +2858,16 @@ void main() {
 
     expect(find.text('Record state: Needs review'), findsOneWidget);
     expect(
-      find.text('0 of 8 core fields are user-confirmed or document-reviewed.'),
+      find.text(
+        '0 of 8 core fields are confirmed by you or supported by document review.',
+      ),
       findsOneWidget,
     );
+    expect(find.text('Title pending review.'), findsWidgets);
+    expect(find.text('Artist not yet confirmed.'), findsOneWidget);
+    expect(find.text('Purchase price not recorded.'), findsOneWidget);
+    expect(find.text('Untitled artwork'), findsNothing);
+    expect(find.text('Not set'), findsNothing);
     expect(find.text('Verified by you'), findsNothing);
 
     await tester.pumpWidget(const SizedBox.shrink());
@@ -2537,7 +2916,7 @@ void main() {
       find.byKey(const ValueKey('artwork-edit-title')),
       'Confirmed Partial Title',
     );
-    await tapVisible(tester, find.text('Save user-confirmed fields'));
+    await tapVisible(tester, find.text('Save confirmed details'));
     await pumpLiveData(tester);
 
     final saved = await tester.runAsync(
@@ -2549,11 +2928,7 @@ void main() {
       saved.field(ArtworkFieldKeys.title)?.source,
       ArtworkFieldSource.userConfirmed,
     );
-    expect(
-      saved.field(ArtworkFieldKeys.artist)?.source,
-      ArtworkFieldSource.unknown,
-    );
-    expect(saved.field(ArtworkFieldKeys.artist)?.lastConfirmedAt, isNull);
+    expect(saved.field(ArtworkFieldKeys.artist), isNull);
 
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump();
@@ -2572,7 +2947,9 @@ void main() {
     expect(find.text('Confirmed Partial Title'), findsWidgets);
     expect(find.text('Record state: Needs review'), findsOneWidget);
     expect(
-      find.text('1 of 8 core fields are user-confirmed or document-reviewed.'),
+      find.text(
+        '1 of 8 core fields are confirmed by you or supported by document review.',
+      ),
       findsOneWidget,
     );
     expect(find.text('Verified by you'), findsNothing);
@@ -2619,7 +2996,7 @@ void main() {
 
     await tapVisible(tester, find.text('Edit record fields'));
     await pumpLiveData(tester);
-    expect(find.text('Your values outrank AI suggestions'), findsOneWidget);
+    expect(find.text('Confirm the details you want to keep'), findsOneWidget);
 
     await enterVisibleText(
       tester,
@@ -2662,7 +3039,7 @@ void main() {
       'Small crease in lower-left margin.',
     );
 
-    await tapVisible(tester, find.text('Save user-confirmed fields'));
+    await tapVisible(tester, find.text('Save confirmed details'));
     await pumpLiveData(tester);
     await tester.pump(const Duration(seconds: 1));
     await pumpLiveData(tester);
@@ -2724,10 +3101,7 @@ void main() {
 
     expect(find.text('Manual Confirmed Title'), findsOneWidget);
     expect(find.text('Verified by you'), findsOneWidget);
-    expect(
-      find.text('1 incomplete queue item needs attention.'),
-      findsOneWidget,
-    );
+    expect(find.text('1 detail still needs review.'), findsOneWidget);
 
     await tapVisible(tester, find.text('Open record'));
     await pumpLiveData(tester);
@@ -2737,7 +3111,9 @@ void main() {
     expect(find.text('Manual Artist'), findsOneWidget);
     expect(find.text('1998'), findsWidgets);
     expect(
-      find.text('8 of 8 core fields are user-confirmed or document-reviewed.'),
+      find.text(
+        '8 of 8 core fields are confirmed by you or supported by document review.',
+      ),
       findsOneWidget,
     );
     expect(find.text('NOK 12,000'), findsOneWidget);
@@ -2746,7 +3122,12 @@ void main() {
     await tapVisible(tester, find.text('Report preview'));
     await pumpLiveData(tester);
 
-    expect(find.text('Generate an insurance-ready PDF'), findsWidgets);
+    expect(
+      find.text(
+        'Ready a clear record for insurance conversations, estate organization, and personal files.',
+      ),
+      findsOneWidget,
+    );
     expect(
       find.text('User-provided insurance value: NOK 12,000.'),
       findsOneWidget,
@@ -2816,10 +3197,10 @@ void main() {
         findsOneWidget,
       );
 
-      await tapVisible(tester, find.text('Export archive preview'));
+      await tapVisible(tester, find.text('Preview record export'));
       await pumpLiveData(tester);
 
-      expect(find.text('Export record package'), findsWidgets);
+      expect(find.text('Record export preview'), findsWidgets);
       expect(find.text('Purchase price: USD 1,200.50.'), findsOneWidget);
       expect(
         find.text('User-provided insurance value: NOK 12,000.'),
@@ -2858,10 +3239,10 @@ void main() {
     );
     await pumpLiveData(tester);
 
-    expect(find.text('Research online'), findsNothing);
+    expect(find.text('Research this draft'), findsNothing);
     expect(find.text('Research consent'), findsNothing);
     expect(find.text('Source-backed candidates'), findsNothing);
-    expect(find.text('Online research unavailable'), findsOneWidget);
+    expect(find.text('Research unavailable'), findsOneWidget);
   });
 
   testWidgets('online research requires consent and shows cited candidates', (
@@ -2886,37 +3267,60 @@ void main() {
       );
     });
 
+    final boundaryKey = GlobalKey();
     await tester.pumpWidget(
-      ArchivaleApp(
-        initialRoute: AppRoutes.artworkDraft('research-draft'),
-        dependencies: fixture.dependenciesWithFlags(
-          featureFlags: const AppFeatureFlags(onlineResearchEnabled: true),
+      RepaintBoundary(
+        key: boundaryKey,
+        child: ArchivaleApp(
+          initialRoute: AppRoutes.artworkDraft('research-draft'),
+          dependencies: fixture.dependenciesWithFlags(
+            featureFlags: const AppFeatureFlags(onlineResearchEnabled: true),
+          ),
         ),
       ),
     );
     await pumpLiveData(tester);
 
-    expect(find.text('Research online'), findsOneWidget);
+    expect(find.text('Research this draft'), findsOneWidget);
     expect(find.text('Source-backed candidates'), findsNothing);
 
-    await tapVisible(tester, find.text('Research online'));
+    await tapVisible(tester, find.text('Research this draft'));
 
     expect(find.text('Research consent'), findsOneWidget);
     expect(find.textContaining('what leaves this device'), findsNothing);
-    expect(find.textContaining('selected artwork image'), findsOneWidget);
     expect(
-      find.textContaining('Your full collection is not sent'),
+      find.textContaining('selected artwork image or thumbnail'),
       findsOneWidget,
+    );
+    expect(
+      find.textContaining('Your full collection stays private'),
+      findsOneWidget,
+    );
+    await tester.ensureVisible(find.text('Research consent'));
+    await tester.pump();
+    await captureBoundaryToArtifacts(
+      tester,
+      boundaryKey,
+      'issue-168-ai-research-consent-mobile.png',
+      resetAfterCapture: false,
     );
 
     await tapVisible(tester, find.text('Skip online research'));
 
-    expect(find.text('Research online'), findsOneWidget);
+    expect(find.text('Research this draft'), findsOneWidget);
     expect(find.text('Source-backed candidates'), findsNothing);
 
-    await tapVisible(tester, find.text('Research online'));
-    await tapVisible(tester, find.text('Allow professional research'));
+    await tapVisible(tester, find.text('Research this draft'));
+    await tapVisible(tester, find.text('Start source-backed research'));
     await pumpLiveData(tester);
+    await tester.ensureVisible(find.text('Source-backed candidates'));
+    await tester.pump();
+    await captureBoundaryToArtifacts(
+      tester,
+      boundaryKey,
+      'issue-168-ai-research-results-mobile.png',
+      resetAfterCapture: false,
+    );
 
     expect(find.text('Source-backed candidates'), findsOneWidget);
     expect(
@@ -2961,6 +3365,70 @@ void main() {
     expect(
       jobs.single.sourceHits.map((hit) => hit.sourceName),
       contains('The Met Collection'),
+    );
+  });
+
+  testWidgets('online research failure branch uses Archivale-facing copy', (
+    WidgetTester tester,
+  ) async {
+    final testDependencies = await tester.runAsync(
+      () async => _LiveDependencyFixture.create(),
+    );
+    final fixture = testDependencies!;
+    addTearDown(() async {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.runAsync(fixture.dispose);
+    });
+
+    await tester.runAsync(() async {
+      await fixture.repository.upsert(
+        _artworkRecord(
+          id: 'research-failure-draft',
+          title: 'Interior Study',
+          state: ArtworkRecordState.needsReview,
+        ),
+      );
+    });
+
+    final boundaryKey = GlobalKey();
+    await tester.pumpWidget(
+      RepaintBoundary(
+        key: boundaryKey,
+        child: ArchivaleApp(
+          initialRoute: AppRoutes.artworkDraft('research-failure-draft'),
+          dependencies: fixture.dependenciesWithFlags(
+            featureFlags: const AppFeatureFlags(onlineResearchEnabled: true),
+            onlineResearchClient: _ThrowingResearchClient(
+              ResearchConsentRequiredException(ResearchConsentState.declined),
+            ),
+          ),
+        ),
+      ),
+    );
+    await pumpLiveData(tester);
+
+    expect(find.text('Research this draft'), findsOneWidget);
+
+    await tapVisible(tester, find.text('Research this draft'));
+    await tapVisible(tester, find.text('Start source-backed research'));
+    await pumpLiveData(tester);
+
+    expect(find.text('Research unavailable'), findsOneWidget);
+    expect(
+      find.textContaining(
+        'Research consent needs to be reviewed before Archivale can run source-backed research.',
+      ),
+      findsOneWidget,
+    );
+    expect(find.textContaining('Online research'), findsNothing);
+
+    await tester.ensureVisible(find.text('Research unavailable'));
+    await tester.pump();
+    await captureBoundaryToArtifacts(
+      tester,
+      boundaryKey,
+      'issue-168-ai-research-failure-mobile.png',
+      resetAfterCapture: false,
     );
   });
 
@@ -3296,91 +3764,441 @@ void main() {
       await pumpReady(tester);
 
       expect(find.text('Settings'), findsWidgets);
-      expect(find.text('Privacy and storage'), findsWidgets);
-      expect(find.text('Backup connection unavailable'), findsOneWidget);
-      expect(find.text('Archive export preview only'), findsOneWidget);
-      expect(find.text('Disconnect backup'), findsNothing);
+      expect(find.text('Review privacy'), findsOneWidget);
+      expect(find.text('Review storage'), findsOneWidget);
+      await tester.scrollUntilVisible(find.text('Review backup'), 200);
+      await tester.pump();
+      expect(find.text('Review backup'), findsOneWidget);
+      expect(find.text('Review archive export'), findsOneWidget);
       expect(find.text('No artworks yet'), findsNothing);
     }
   });
 
-  testWidgets(
-    'visual evidence covers issue 131 report export settings states',
-    (WidgetTester tester) async {
-      final testDependencies = await tester.runAsync(
-        () async => _LiveDependencyFixture.create(),
-      );
-      final fixture = testDependencies!;
-      addTearDown(() async {
-        await tester.pumpWidget(const SizedBox.shrink());
-        await tester.runAsync(fixture.dispose);
-      });
+  testWidgets('settings home keeps trust hub heading copy', (
+    WidgetTester tester,
+  ) async {
+    await _configureMobileViewport(tester);
+    await tester.pumpWidget(
+      ArchivaleApp(initialRoute: AppRoutes.collectionSettings),
+    );
+    await pumpReady(tester);
 
-      await tester.runAsync(() async {
-        await fixture.repository.upsert(
-          _artworkRecord(
-            id: 'issue-131-report-record',
-            title: 'Issue 131 Local Record',
-            state: ArtworkRecordState.verifiedByYou,
-            source: ArtworkFieldSource.userConfirmed,
-          ),
-        );
-        await fixture.addSupportingPhoto(
-          artworkId: 'issue-131-report-record',
-          fileName: 'issue-131-receipt.png',
-        );
-      });
+    expect(find.text('Settings'), findsWidgets);
+    expect(find.text('Privacy, storage, backup, and exports'), findsOneWidget);
+    expect(
+      find.text(
+        'Choose how your records stay private, where they are kept, and when to save a second copy.',
+      ),
+      findsOneWidget,
+    );
+  });
 
-      await captureArtifactForApp(
-        tester,
-        routeName: AppRoutes.collectionReport,
-        dependencies: fixture.dependencies,
-        themeMode: ThemeMode.light,
-        fileName: 'issue-131-reports-light.png',
-        ensureVisibleFinder: find.text('Issue 131 Local Record'),
+  testWidgets('settings trust routes keep collector-facing copy', (
+    WidgetTester tester,
+  ) async {
+    final routeAssertions = <String, List<String>>{
+      AppRoutes.settingsPrivacy: [
+        'Privacy',
+        'Private by default',
+        'You confirm the facts',
+        'Backup stays in your account',
+      ],
+      AppRoutes.settingsStorage: [
+        'Storage',
+        'Keep records close at hand',
+        'One record, one place',
+        'Delete local data with care',
+      ],
+      AppRoutes.settingsBackup: [
+        'Backup',
+        'Keep a second copy you control',
+        'Not connected yet',
+        'Disconnect backup',
+      ],
+    };
+
+    const bannedTerms = [
+      'Firebase',
+      'backend',
+      'local DB',
+      'deploy',
+      'Remote Config',
+      'broker',
+      'provider',
+    ];
+
+    for (final entry in routeAssertions.entries) {
+      await tester.pumpWidget(ArchivaleApp(initialRoute: entry.key));
+      await pumpReady(tester);
+      expect(find.text(entry.value.first), findsOneWidget);
+      expect(find.text(entry.value[1]), findsOneWidget);
+      await tester.scrollUntilVisible(find.text(entry.value.last), 200);
+      await tester.pump();
+      for (final copy in entry.value.skip(2)) {
+        expect(find.text(copy), findsOneWidget);
+      }
+      for (final bannedTerm in bannedTerms) {
+        expect(find.textContaining(bannedTerm), findsNothing);
+      }
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+    }
+  });
+
+  testWidgets('visual evidence covers issue 165 collection tab copy states', (
+    WidgetTester tester,
+  ) async {
+    final testDependencies = await tester.runAsync(
+      () async => _LiveDependencyFixture.create(),
+    );
+    final fixture = testDependencies!;
+    addTearDown(() async {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.runAsync(fixture.dispose);
+    });
+
+    await tester.runAsync(() async {
+      await fixture.repository.upsert(
+        _artworkRecord(
+          id: 'issue-165-report-record',
+          title: 'North Wall Landscape',
+          state: ArtworkRecordState.verifiedByYou,
+          source: ArtworkFieldSource.userConfirmed,
+        ),
       );
-      await captureArtifactForApp(
-        tester,
-        routeName: AppRoutes.artworkExport('issue-131-report-record'),
-        dependencies: fixture.dependencies,
-        themeMode: ThemeMode.light,
-        fileName: 'issue-131-export-light.png',
-        ensureVisibleFinder: find.text('Export record package'),
+      await fixture.addSupportingPhoto(
+        artworkId: 'issue-165-report-record',
+        fileName: 'issue-165-supporting-photo.png',
       );
-      await captureArtifactForApp(
-        tester,
-        routeName: AppRoutes.collectionSettings,
-        dependencies: fixture.dependencies,
-        themeMode: ThemeMode.light,
-        fileName: 'issue-131-settings-light.png',
-        ensureVisibleFinder: find.text('Archive export preview only'),
+      await fixture.repository.upsert(
+        _artworkRecord(
+          id: 'issue-165-review-record',
+          title: 'Studio Portrait',
+          state: ArtworkRecordState.needsReview,
+        ),
       );
-      await captureArtifactForApp(
-        tester,
-        routeName: AppRoutes.collectionReport,
-        dependencies: fixture.dependencies,
-        themeMode: ThemeMode.dark,
-        fileName: 'issue-131-reports-dark.png',
-        ensureVisibleFinder: find.text('Issue 131 Local Record'),
+    });
+
+    await captureArtifactForApp(
+      tester,
+      routeName: AppRoutes.collection,
+      dependencies: fixture.dependencies,
+      themeMode: ThemeMode.light,
+      fileName: 'issue-165-collection-light.png',
+      ensureVisibleFinder: find.text('North Wall Landscape'),
+    );
+    await captureArtifactForApp(
+      tester,
+      routeName: AppRoutes.collectionIncomplete,
+      dependencies: fixture.dependencies,
+      themeMode: ThemeMode.light,
+      fileName: 'issue-165-needs-review-light.png',
+      ensureVisibleFinder: find.text('Studio Portrait needs review'),
+    );
+    await captureArtifactForApp(
+      tester,
+      routeName: AppRoutes.collectionReport,
+      dependencies: fixture.dependencies,
+      themeMode: ThemeMode.light,
+      fileName: 'issue-165-reports-light.png',
+      ensureVisibleFinder: find.text('Preview artwork report'),
+    );
+    await captureArtifactForApp(
+      tester,
+      routeName: AppRoutes.collectionSettings,
+      dependencies: fixture.dependencies,
+      themeMode: ThemeMode.light,
+      fileName: 'issue-165-settings-light.png',
+      ensureVisibleFinder: find.text('Review privacy'),
+    );
+    await captureArtifactForApp(
+      tester,
+      routeName: AppRoutes.collection,
+      dependencies: fixture.dependencies,
+      themeMode: ThemeMode.dark,
+      fileName: 'issue-165-collection-dark.png',
+      ensureVisibleFinder: find.text('North Wall Landscape'),
+    );
+    await captureArtifactForApp(
+      tester,
+      routeName: AppRoutes.collectionIncomplete,
+      dependencies: fixture.dependencies,
+      themeMode: ThemeMode.dark,
+      fileName: 'issue-165-needs-review-dark.png',
+      ensureVisibleFinder: find.text('Studio Portrait needs review'),
+    );
+    await captureArtifactForApp(
+      tester,
+      routeName: AppRoutes.collectionReport,
+      dependencies: fixture.dependencies,
+      themeMode: ThemeMode.dark,
+      fileName: 'issue-165-reports-dark.png',
+      ensureVisibleFinder: find.text('Preview artwork report'),
+    );
+    await captureArtifactForApp(
+      tester,
+      routeName: AppRoutes.collectionSettings,
+      dependencies: fixture.dependencies,
+      themeMode: ThemeMode.dark,
+      fileName: 'issue-165-settings-dark.png',
+      ensureVisibleFinder: find.text('Review privacy'),
+    );
+  });
+
+  testWidgets('visual evidence covers issue 169 artwork detail and edit copy', (
+    WidgetTester tester,
+  ) async {
+    final testDependencies = await tester.runAsync(
+      () async => _LiveDependencyFixture.create(),
+    );
+    final fixture = testDependencies!;
+    addTearDown(() async {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.runAsync(fixture.dispose);
+    });
+
+    await tester.runAsync(() async {
+      await fixture.repository.upsert(
+        _artworkRecord(
+          id: 'issue-169-detail-record',
+          title: 'Issue 169 Detail Record',
+          state: ArtworkRecordState.needsReview,
+          source: ArtworkFieldSource.userConfirmed,
+          missingFieldKeys: {
+            ArtworkFieldKeys.title,
+            ArtworkFieldKeys.currentLocation,
+            ArtworkFieldKeys.conditionNotes,
+            ArtworkFieldKeys.insuranceValue,
+          },
+        ),
       );
-      await captureArtifactForApp(
-        tester,
-        routeName: AppRoutes.artworkExport('issue-131-report-record'),
-        dependencies: fixture.dependencies,
-        themeMode: ThemeMode.dark,
-        fileName: 'issue-131-export-dark.png',
-        ensureVisibleFinder: find.text('Export record package'),
+      await fixture.addPrimaryImage(artworkId: 'issue-169-detail-record');
+      await fixture.addSupportingPhoto(
+        artworkId: 'issue-169-detail-record',
+        fileName: 'issue-169-supporting-photo.png',
       );
-      await captureArtifactForApp(
-        tester,
-        routeName: AppRoutes.collectionSettings,
-        dependencies: fixture.dependencies,
-        themeMode: ThemeMode.dark,
-        fileName: 'issue-131-settings-dark.png',
-        ensureVisibleFinder: find.text('Archive export preview only'),
+      await fixture.repository.upsert(
+        _placeholderDraftRecord(id: 'issue-169-edit-record'),
       );
-    },
-  );
+      await fixture.addPrimaryImage(artworkId: 'issue-169-edit-record');
+    });
+
+    await tester.pumpWidget(
+      ArchivaleApp(
+        initialRoute: AppRoutes.artworkDetails('issue-169-detail-record'),
+        dependencies: fixture.dependencies,
+      ),
+    );
+    await pumpLiveData(tester);
+    expect(find.text('Untitled artwork'), findsNothing);
+    expect(find.text('Not set'), findsNothing);
+    expect(find.text('Title pending review.'), findsWidgets);
+    expect(find.text('Insurance value pending review.'), findsOneWidget);
+
+    await captureArtifactForApp(
+      tester,
+      routeName: AppRoutes.artworkDetails('issue-169-detail-record'),
+      dependencies: fixture.dependencies,
+      themeMode: ThemeMode.light,
+      fileName: 'issue-169-details-light.png',
+      ensureVisibleFinder: find.text('Record review'),
+    );
+    await captureArtifactForApp(
+      tester,
+      routeName: AppRoutes.artworkDetails('issue-169-detail-record'),
+      dependencies: fixture.dependencies,
+      themeMode: ThemeMode.dark,
+      fileName: 'issue-169-details-dark.png',
+      ensureVisibleFinder: find.text('Record review'),
+    );
+    await captureArtifactForApp(
+      tester,
+      routeName: AppRoutes.artworkEdit('issue-169-edit-record'),
+      dependencies: fixture.dependencies,
+      themeMode: ThemeMode.light,
+      fileName: 'issue-169-edit-light.png',
+      ensureVisibleFinder: find.text('Confirm the details you want to keep'),
+    );
+    await captureArtifactForApp(
+      tester,
+      routeName: AppRoutes.artworkEdit('issue-169-edit-record'),
+      dependencies: fixture.dependencies,
+      themeMode: ThemeMode.dark,
+      fileName: 'issue-169-edit-dark.png',
+      ensureVisibleFinder: find.text('Confirm the details you want to keep'),
+    );
+  });
+
+  testWidgets('visual evidence covers issue 171 report export routes', (
+    WidgetTester tester,
+  ) async {
+    final testDependencies = await tester.runAsync(
+      () async => _LiveDependencyFixture.create(),
+    );
+    final fixture = testDependencies!;
+    addTearDown(() async {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.runAsync(fixture.dispose);
+    });
+
+    await tester.runAsync(() async {
+      await fixture.repository.upsert(
+        _artworkRecord(
+          id: 'issue-131-report-record',
+          title: 'Issue 131 Local Record',
+          state: ArtworkRecordState.verifiedByYou,
+          source: ArtworkFieldSource.userConfirmed,
+        ),
+      );
+      await fixture.addPrimaryImage(artworkId: 'issue-131-report-record');
+      await fixture.addSupportingPhoto(
+        artworkId: 'issue-131-report-record',
+        fileName: 'issue-131-receipt.png',
+      );
+    });
+
+    await captureArtifactForApp(
+      tester,
+      routeName: AppRoutes.collectionReport,
+      dependencies: fixture.dependencies,
+      themeMode: ThemeMode.light,
+      fileName: 'issue-171-reports-light.png',
+      ensureVisibleFinder: find.text('Issue 131 Local Record'),
+    );
+    await captureArtifactForApp(
+      tester,
+      routeName: AppRoutes.artworkReportPreview('issue-131-report-record'),
+      dependencies: fixture.dependencies,
+      themeMode: ThemeMode.light,
+      fileName: 'issue-171-report-preview-light.png',
+      ensureVisibleFinder: find.text('What the report includes'),
+    );
+    await captureArtifactForApp(
+      tester,
+      routeName: AppRoutes.artworkExport('issue-131-report-record'),
+      dependencies: fixture.dependencies,
+      themeMode: ThemeMode.light,
+      fileName: 'issue-171-export-light.png',
+      ensureVisibleFinder: find.text('What the export includes'),
+    );
+    await captureArtifactForApp(
+      tester,
+      routeName: AppRoutes.settingsExport,
+      dependencies: fixture.dependencies,
+      themeMode: ThemeMode.light,
+      fileName: 'issue-171-settings-export-light.png',
+      ensureVisibleFinder: find.text('Record export preview'),
+    );
+    await captureArtifactForApp(
+      tester,
+      routeName: AppRoutes.collectionReport,
+      dependencies: fixture.dependencies,
+      themeMode: ThemeMode.dark,
+      fileName: 'issue-171-reports-dark.png',
+      ensureVisibleFinder: find.text('Issue 131 Local Record'),
+    );
+    await captureArtifactForApp(
+      tester,
+      routeName: AppRoutes.artworkReportPreview('issue-131-report-record'),
+      dependencies: fixture.dependencies,
+      themeMode: ThemeMode.dark,
+      fileName: 'issue-171-report-preview-dark.png',
+      ensureVisibleFinder: find.text('What the report includes'),
+    );
+    await captureArtifactForApp(
+      tester,
+      routeName: AppRoutes.artworkExport('issue-131-report-record'),
+      dependencies: fixture.dependencies,
+      themeMode: ThemeMode.dark,
+      fileName: 'issue-171-export-dark.png',
+      ensureVisibleFinder: find.text('What the export includes'),
+    );
+    await captureArtifactForApp(
+      tester,
+      routeName: AppRoutes.settingsExport,
+      dependencies: fixture.dependencies,
+      themeMode: ThemeMode.dark,
+      fileName: 'issue-171-settings-export-dark.png',
+      ensureVisibleFinder: find.text('Record export preview'),
+    );
+  });
+
+  testWidgets('visual evidence covers issue 172 settings trust routes', (
+    WidgetTester tester,
+  ) async {
+    final testDependencies = await tester.runAsync(
+      () async => _LiveDependencyFixture.create(),
+    );
+    final fixture = testDependencies!;
+    addTearDown(() async {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.runAsync(fixture.dispose);
+    });
+
+    await captureArtifactForApp(
+      tester,
+      routeName: AppRoutes.collectionSettings,
+      dependencies: fixture.dependencies,
+      themeMode: ThemeMode.light,
+      fileName: 'issue-172-settings-home-light.png',
+    );
+    await captureArtifactForApp(
+      tester,
+      routeName: AppRoutes.settingsPrivacy,
+      dependencies: fixture.dependencies,
+      themeMode: ThemeMode.light,
+      fileName: 'issue-172-settings-privacy-light.png',
+      ensureVisibleFinder: find.text('You confirm the facts'),
+    );
+    await captureArtifactForApp(
+      tester,
+      routeName: AppRoutes.settingsStorage,
+      dependencies: fixture.dependencies,
+      themeMode: ThemeMode.light,
+      fileName: 'issue-172-settings-storage-light.png',
+      ensureVisibleFinder: find.text('One record, one place'),
+    );
+    await captureArtifactForApp(
+      tester,
+      routeName: AppRoutes.settingsBackup,
+      dependencies: fixture.dependencies,
+      themeMode: ThemeMode.light,
+      fileName: 'issue-172-settings-backup-light.png',
+      ensureVisibleFinder: find.text('Not connected yet'),
+    );
+    await captureArtifactForApp(
+      tester,
+      routeName: AppRoutes.collectionSettings,
+      dependencies: fixture.dependencies,
+      themeMode: ThemeMode.dark,
+      fileName: 'issue-172-settings-home-dark.png',
+    );
+    await captureArtifactForApp(
+      tester,
+      routeName: AppRoutes.settingsPrivacy,
+      dependencies: fixture.dependencies,
+      themeMode: ThemeMode.dark,
+      fileName: 'issue-172-settings-privacy-dark.png',
+      ensureVisibleFinder: find.text('You confirm the facts'),
+    );
+    await captureArtifactForApp(
+      tester,
+      routeName: AppRoutes.settingsStorage,
+      dependencies: fixture.dependencies,
+      themeMode: ThemeMode.dark,
+      fileName: 'issue-172-settings-storage-dark.png',
+      ensureVisibleFinder: find.text('One record, one place'),
+    );
+    await captureArtifactForApp(
+      tester,
+      routeName: AppRoutes.settingsBackup,
+      dependencies: fixture.dependencies,
+      themeMode: ThemeMode.dark,
+      fileName: 'issue-172-settings-backup-dark.png',
+      ensureVisibleFinder: find.text('Not connected yet'),
+    );
+  });
 }
 
 Future<void> tapVisible(WidgetTester tester, Finder finder) async {
@@ -3585,7 +4403,7 @@ Future<void> captureCollectionLimitVisualEvidence(
     ),
   );
   await pumpLiveData(tester);
-  await tester.scrollUntilVisible(find.text('Free plan limit reached'), 300);
+  await tester.scrollUntilVisible(find.text('Free plan is at capacity'), 300);
   await tester.pump();
   await captureBoundaryToArtifacts(tester, boundaryKey, fileName);
 }
@@ -3610,7 +4428,15 @@ Future<void> captureImportActionVisualEvidence(
     ),
   );
   await pumpLiveData(tester);
-  await tapVisible(tester, find.text(actionLabel));
+  final primaryFinder = find.widgetWithText(FilledButton, actionLabel);
+  final outlinedFinder = find.widgetWithText(OutlinedButton, actionLabel);
+  final finder = tester.any(primaryFinder)
+      ? primaryFinder
+      : tester.any(outlinedFinder)
+      ? outlinedFinder
+      : find.text(actionLabel);
+  await tapVisible(tester, finder);
+  await pumpLiveData(tester);
   await waitForFinder(tester, settledState);
   await captureBoundaryToArtifacts(tester, boundaryKey, fileName);
 }
@@ -3636,7 +4462,7 @@ Future<void> captureSupportingPhotoActionVisualEvidence(
   await pumpLiveData(tester);
   await pressAsyncButton(
     tester,
-    find.widgetWithText(FilledButton, 'Choose supporting photo'),
+    find.widgetWithText(FilledButton, 'Choose a supporting photo'),
   );
   await waitForFinder(tester, settledState);
   await captureBoundaryToArtifacts(tester, boundaryKey, fileName);
@@ -3660,7 +4486,7 @@ Future<void> capturePlaceholderSaveVisualEvidence(
     ),
   );
   await pumpLiveData(tester);
-  await tapVisible(tester, find.text('Save user-confirmed fields'));
+  await tapVisible(tester, find.text('Save confirmed details'));
   await pumpLiveData(tester);
   await tester.runAsync(
     () async => Future<void>.delayed(const Duration(milliseconds: 500)),
@@ -3971,6 +4797,7 @@ class _LiveDependencyFixture {
     CsvImportFilePicker csvImportFilePicker = const _NoCsvPicker(),
     AppFeatureFlags featureFlags = const AppFeatureFlags(),
     EntitlementService entitlementService = const FixedEntitlementService(),
+    OnlineResearchClient? onlineResearchClient,
   }) {
     return AppDependencies(
       artworkRepository: repository,
@@ -3980,6 +4807,7 @@ class _LiveDependencyFixture {
       featureFlags: featureFlags,
       entitlementService: entitlementService,
       onDeviceAiDraftProvider: onDeviceAiDraftProvider,
+      onlineResearchClient: onlineResearchClient,
     );
   }
 
@@ -4088,11 +4916,44 @@ class _SingleImagePicker implements ArtworkImagePicker {
   Future<XFile?> retrieveLostImage() async => null;
 }
 
+class _PendingImagePicker implements ArtworkImagePicker {
+  final Map<ArtworkImagePickMode, Completer<XFile?>> _completers = {
+    ArtworkImagePickMode.gallery: Completer<XFile?>(),
+    ArtworkImagePickMode.camera: Completer<XFile?>(),
+  };
+
+  @override
+  Future<XFile?> pick(ArtworkImagePickMode mode) {
+    return _completers[mode]!.future;
+  }
+
+  void complete(ArtworkImagePickMode mode, XFile? file) {
+    final completer = _completers[mode]!;
+    if (!completer.isCompleted) {
+      completer.complete(file);
+    }
+  }
+
+  @override
+  Future<XFile?> retrieveLostImage() async => null;
+}
+
 class _NoCsvPicker implements CsvImportFilePicker {
   const _NoCsvPicker();
 
   @override
   Future<CsvImportFileSelection?> pickCsvFile() async => null;
+}
+
+class _ThrowingResearchClient implements OnlineResearchClient {
+  _ThrowingResearchClient(this._error);
+
+  final Object _error;
+
+  @override
+  Future<ResearchJob> research(OnlineResearchRequest request) async {
+    throw _error;
+  }
 }
 
 class _SingleCsvPicker implements CsvImportFilePicker {

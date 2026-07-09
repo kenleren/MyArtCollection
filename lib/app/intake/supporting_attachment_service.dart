@@ -97,7 +97,7 @@ class SupportingAttachmentService {
         importedAt: now,
         capturedAt: capturedAt,
         notes:
-            'Supporting photo added for labels, signatures, reverse-side details, condition, or other record evidence.',
+            'Supporting photo of a label, signature, reverse side, receipt, condition detail, or other supporting record.',
       );
 
       await repository.addAttachment(attachment);

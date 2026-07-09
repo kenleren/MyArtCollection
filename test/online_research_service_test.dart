@@ -447,7 +447,7 @@ void main() {
     expect(job.candidateAttributions, isEmpty);
     expect(
       job.errorMessage,
-      'Online research could not complete. Try again later.',
+      'Archivale research could not complete. Try again later.',
     );
     expect(persisted, isNotNull);
     expect(
@@ -461,6 +461,42 @@ void main() {
       ),
     );
   });
+
+  test(
+    'broker error mapping keeps offline fallback aligned with Archivale framing',
+    () async {
+      final endpoint = _RecordingFakeBrokerEndpoint(
+        const FakeBrokerAdapterErrorEnvelope(
+          status: 429,
+          body: BrokerErrorBody(
+            requestId: '7c7a0f5a-f2bc-4d8e-a5bb-3f9f8d8b8e11',
+            status: 'rejected',
+            provider: 'fake-provider',
+            error: BrokerErrorDetail(
+              code: 'broker_breaker_open',
+              message: 'circuit breaker enabled',
+              stage: 'breaker',
+            ),
+          ),
+        ),
+      );
+      final service = OnlineResearchService(
+        repository: repository,
+        client: BrokerResearchClient(
+          endpoint: endpoint,
+          now: () => DateTime.utc(2026, 7, 4, 14),
+        ),
+      );
+
+      final job = await service.runResearch(_brokerRequest());
+
+      expect(
+        job.errorMessage,
+        'Archivale research is temporarily unavailable. Try again later.',
+      );
+      expect(job.errorMessage, isNot(contains('Online research')));
+    },
+  );
 
   test(
     'fixture client returns no reliable comparable when no sources match',

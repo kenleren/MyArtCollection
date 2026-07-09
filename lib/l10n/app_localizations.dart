@@ -135,7 +135,7 @@ abstract class AppLocalizations {
   /// No description provided for @incompleteTab.
   ///
   /// In en, this message translates to:
-  /// **'Incomplete'**
+  /// **'Needs review'**
   String get incompleteTab;
 
   /// No description provided for @reportsTab.
