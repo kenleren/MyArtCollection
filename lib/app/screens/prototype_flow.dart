@@ -1843,7 +1843,7 @@ class ReportPreviewScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     return PrototypeScreenFrame(
       title: 'Report preview',
-      subtitle: 'Generate an insurance-ready PDF',
+      subtitle: 'Preview the collector report PDF',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [

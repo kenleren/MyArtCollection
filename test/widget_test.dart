@@ -1326,7 +1326,7 @@ void main() {
       tester,
       find.widgetWithText(OutlinedButton, 'Report preview').last,
     );
-    expect(find.text('Generate an insurance-ready PDF'), findsWidgets);
+    expect(find.text('Preview the collector report PDF'), findsWidgets);
     expect(find.text('Purchase price: USD 1,800.'), findsOneWidget);
     expect(
       find.text('User-provided insurance value: USD 2,400.'),
@@ -2674,7 +2674,7 @@ void main() {
     await tapVisible(tester, find.text('Report preview'));
     await pumpLiveData(tester);
 
-    expect(find.text('Generate an insurance-ready PDF'), findsWidgets);
+    expect(find.text('Preview the collector report PDF'), findsWidgets);
     expect(
       find.text('User-provided insurance value: NOK 12,000.'),
       findsOneWidget,

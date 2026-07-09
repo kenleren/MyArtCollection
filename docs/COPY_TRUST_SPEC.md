@@ -25,7 +25,7 @@ Use these phrases or close equivalents:
 - User confirmed
 - Backed up in your Google account
 - Export your archive
-- Generate an insurance-ready PDF
+- Preview the collector report PDF
 - Private record
 
 ## Disallowed Language
@@ -124,13 +124,14 @@ Avoid:
 
 Allowed:
 
-- "Generate an insurance-ready PDF"
+- "Preview the collector report PDF"
 - "Export your archive as ZIP"
 - "Includes confirmed fields, attached documents, and report date"
 - "User-provided insurance values only"
 
 Avoid:
 
+- "Insurance-ready PDF"
 - "Insurance-approved report"
 - "Appraised collection report"
 - "Proof of authenticity"
