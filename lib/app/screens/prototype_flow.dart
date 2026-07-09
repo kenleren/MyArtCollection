@@ -585,11 +585,12 @@ class _PlanStatusPanel extends StatelessWidget {
   Widget build(BuildContext context) {
     final plan = entitlementState.plan;
     final billingCopy = switch (entitlementState.billingStatus) {
-      EntitlementBillingStatus.available => 'Plan changes are available here.',
+      EntitlementBillingStatus.available =>
+        'You can review upgrade options here.',
       EntitlementBillingStatus.unavailable =>
-        'Plan changes are unavailable here right now.',
+        'You can review plans here, but upgrades are unavailable on this device right now.',
       EntitlementBillingStatus.notConfigured =>
-        'Plan changes are not open in this preview yet.',
+        'You can review plans here, but upgrades are not available in this preview yet.',
     };
 
     return _StatusPanel(
@@ -3773,7 +3774,7 @@ class _LimitHint extends StatelessWidget {
         ? 'Your plan has room for your full collection.'
         : remaining == 0
         ? 'This plan is at capacity. Existing records stay editable and exportable.'
-        : '$remaining artwork slot${remaining == 1 ? '' : 's'} still open for new active records.';
+        : '$remaining more active record${remaining == 1 ? '' : 's'} can be added in this plan.';
 
     return _StatusPanel(
       icon: Icons.workspace_premium_outlined,
@@ -3861,7 +3862,7 @@ class _BillingGatePanel extends StatelessWidget {
       icon: Icons.workspace_premium_outlined,
       title: '${plan.name} plan is at capacity',
       body:
-          'You already have $currentActiveArtworkCount active artwork${currentActiveArtworkCount == 1 ? '' : 's'} in this plan. Existing records stay editable and exportable. Choose ${suggestedPlan.name} (${suggestedPlan.priceLabel}) when you want room to start another active record.',
+          'You already have $currentActiveArtworkCount active artwork${currentActiveArtworkCount == 1 ? '' : 's'} in this plan. Existing records stay editable and exportable. ${suggestedPlan.name} includes ${_planArtworkLimitCopy(suggestedPlan).toLowerCase()} and ${_planResearchDraftCopy(suggestedPlan).toLowerCase()} at ${suggestedPlan.priceLabel}.',
     );
   }
 }
@@ -4645,12 +4646,12 @@ List<String> _missingCoreFields(ArtworkRecord record) {
 String _planArtworkLimitCopy(EntitlementPlan plan) {
   final limit = plan.activeArtworkLimit;
   return limit == null
-      ? 'Room for unlimited active artworks'
-      : 'Room for $limit active artworks';
+      ? 'Room for your full active collection'
+      : 'Room for up to $limit active records';
 }
 
 String _planResearchDraftCopy(EntitlementPlan plan) {
-  return '${plan.monthlyAiCredits} Archivale research draft${plan.monthlyAiCredits == 1 ? '' : 's'}';
+  return '${plan.monthlyAiCredits} Archivale AI research draft${plan.monthlyAiCredits == 1 ? '' : 's'} each month';
 }
 
 const _coreFieldKeys = [

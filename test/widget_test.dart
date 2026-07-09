@@ -699,7 +699,7 @@ void main() {
 
     expect(find.text('Free plan is at capacity'), findsOneWidget);
     expect(
-      find.textContaining('Existing records stay editable and exportable'),
+      find.textContaining('Starter includes room for up to 50 active records'),
       findsOneWidget,
     );
     expect(find.widgetWithText(FilledButton, 'Add artwork'), findsNothing);
@@ -1181,9 +1181,11 @@ void main() {
     );
     await pumpLiveData(tester);
 
-    expect(find.text('Plan limit before import'), findsOneWidget);
+    expect(find.text('Collection capacity before import'), findsOneWidget);
     expect(
-      find.textContaining('This import would add 3 active artworks'),
+      find.textContaining(
+        'This import would bring this plan from 4 to 7 active records',
+      ),
       findsOneWidget,
     );
     expect(
@@ -1266,7 +1268,7 @@ void main() {
     );
     await pumpLiveData(tester);
 
-    expect(find.text('Plan limit before import'), findsNothing);
+    expect(find.text('Collection capacity before import'), findsNothing);
     await pressAsyncButton(
       tester,
       find.widgetWithText(FilledButton, 'Confirm local import'),
@@ -1285,7 +1287,7 @@ void main() {
     );
   });
 
-  testWidgets('visual evidence covers Play billing gate states', (
+  testWidgets('visual evidence covers billing upgrade copy states', (
     WidgetTester tester,
   ) async {
     final testDependencies = await tester.runAsync(
@@ -1313,14 +1315,14 @@ void main() {
     await captureCollectionLimitVisualEvidence(
       tester,
       dependencies: fixture.dependencies,
-      fileName: 'issue-166-04-collection-capacity-light.png',
+      fileName: 'issue-173-01-collection-capacity-light.png',
     );
     await captureArtifactForApp(
       tester,
       routeName: AppRoutes.collectionAdd,
       dependencies: fixture.dependencies,
       themeMode: ThemeMode.light,
-      fileName: 'issue-166-05-add-artwork-capacity-light.png',
+      fileName: 'issue-173-02-add-artwork-capacity-light.png',
       ensureVisibleFinder: find.text('Free plan is at capacity'),
     );
 
@@ -1331,8 +1333,8 @@ void main() {
       tester,
       dependencies: fixture.dependencies,
       csvPath: csvFile!.path,
-      fileName: 'issue-139-csv-limit-light.png',
-      ensureVisibleFinder: find.text('Plan limit before import'),
+      fileName: 'issue-173-03-csv-capacity-light.png',
+      ensureVisibleFinder: find.text('Collection capacity before import'),
     );
   });
 

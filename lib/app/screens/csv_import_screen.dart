@@ -1017,7 +1017,7 @@ class _CsvConfirmActions extends StatelessWidget {
               _CsvPanel(
                 child: _CsvPanelBody(
                   icon: Icons.workspace_premium_outlined,
-                  title: 'Plan limit before import',
+                  title: 'Collection capacity before import',
                   body: planGate.limitMessage,
                 ),
               ),
@@ -1108,7 +1108,14 @@ class _CsvImportPlanGate {
       }
     }
 
-    return 'This import would add $selectedImportRowCount active artwork${selectedImportRowCount == 1 ? '' : 's'} to $currentActiveArtworkCount existing active artwork${currentActiveArtworkCount == 1 ? '' : 's'}. Existing records remain editable and exportable. Upgrade to ${upgradePlan.name} (${upgradePlan.priceLabel}) when Play Billing is connected.';
+    final projectedActiveCount =
+        currentActiveArtworkCount + selectedImportRowCount;
+    final planLimitCopy = upgradePlan.activeArtworkLimit == null
+        ? 'room for your full active collection'
+        : 'room for up to ${upgradePlan.activeArtworkLimit} active records';
+    final draftCopy =
+        '${upgradePlan.monthlyAiCredits} Archivale AI research draft${upgradePlan.monthlyAiCredits == 1 ? '' : 's'} each month';
+    return 'This import would bring this plan from $currentActiveArtworkCount to $projectedActiveCount active records. Existing records remain editable and exportable. ${upgradePlan.name} includes $planLimitCopy and ${draftCopy.toLowerCase()} at ${upgradePlan.priceLabel}.';
   }
 }
 
