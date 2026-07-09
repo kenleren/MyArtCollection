@@ -63,7 +63,7 @@ jobs:
         run: |
           dart format --set-exit-if-changed lib test
           flutter analyze
-          flutter test
+          flutter test --concurrency=1
 
   android-debug-package:
     name: Android debug package

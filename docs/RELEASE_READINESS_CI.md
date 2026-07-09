@@ -22,6 +22,10 @@ reports `success`. It is the only check name intended for required branch
 protection; existing workflow job names are implementation evidence, not a
 branch-protection contract.
 
+Flutter test files run with one worker because several existing suites mutate
+process-global Flutter/database test state. Serial execution keeps the hosted
+result deterministic while still running every test.
+
 ## Reproducibility and cache boundary
 
 All GitHub Actions are pinned to immutable commits. Flutter, Gitleaks, and
