@@ -49,16 +49,16 @@ class AppRouter {
           child: const CaptureImportScreen(mode: 'import'),
         );
       case AppRoutes.settingsPrivacy:
-        return _page(settings: settings, child: const PrototypePrivacyScreen());
+        return _page(settings: settings, child: const SettingsPrivacyScreen());
       case AppRoutes.settingsStorage:
-        return _page(settings: settings, child: const SettingsHomeScreen());
+        return _page(settings: settings, child: const SettingsStorageScreen());
       case AppRoutes.settingsExport:
         return _page(
           settings: settings,
           child: const ExportPreviewScreen(artwork: prototypeArtwork),
         );
       case AppRoutes.settingsBackup:
-        return _page(settings: settings, child: const SettingsHomeScreen());
+        return _page(settings: settings, child: const SettingsBackupScreen());
       default:
         final artworkScreen = _artworkRoute(name, settings);
         if (artworkScreen != null) {

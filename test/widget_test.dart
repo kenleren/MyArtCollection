@@ -3511,11 +3511,66 @@ void main() {
       await pumpReady(tester);
 
       expect(find.text('Settings'), findsWidgets);
-      expect(find.text('Privacy, backup, and exports'), findsWidgets);
-      expect(find.text('Backup not connected'), findsOneWidget);
-      expect(find.text('Export from a saved report'), findsOneWidget);
-      expect(find.text('Disconnect backup'), findsNothing);
+      expect(find.text('Review privacy'), findsOneWidget);
+      expect(find.text('Review storage'), findsOneWidget);
+      await tester.scrollUntilVisible(find.text('Review backup'), 200);
+      await tester.pump();
+      expect(find.text('Review backup'), findsOneWidget);
+      expect(find.text('Review archive export'), findsOneWidget);
       expect(find.text('No artworks yet'), findsNothing);
+    }
+  });
+
+  testWidgets('settings trust routes keep collector-facing copy', (
+    WidgetTester tester,
+  ) async {
+    final routeAssertions = <String, List<String>>{
+      AppRoutes.settingsPrivacy: [
+        'Privacy',
+        'Private by default',
+        'You confirm the facts',
+        'Backup stays in your account',
+      ],
+      AppRoutes.settingsStorage: [
+        'Storage',
+        'Keep records close at hand',
+        'One record, one place',
+        'Delete local data with care',
+      ],
+      AppRoutes.settingsBackup: [
+        'Backup',
+        'Keep a second copy you control',
+        'Not connected yet',
+        'Disconnect backup',
+      ],
+    };
+
+    const bannedTerms = [
+      'Firebase',
+      'backend',
+      'local DB',
+      'deploy',
+      'Remote Config',
+      'broker',
+      'provider',
+    ];
+
+    for (final entry in routeAssertions.entries) {
+      await tester.pumpWidget(ArchivaleApp(initialRoute: entry.key));
+      await pumpReady(tester);
+      expect(find.text(entry.value.first), findsOneWidget);
+      expect(find.text(entry.value[1]), findsOneWidget);
+      await tester.scrollUntilVisible(find.text(entry.value.last), 200);
+      await tester.pump();
+      for (final copy in entry.value.skip(2)) {
+        expect(find.text(copy), findsOneWidget);
+      }
+      for (final bannedTerm in bannedTerms) {
+        expect(find.textContaining(bannedTerm), findsNothing);
+      }
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
     }
   });
 
@@ -3583,7 +3638,7 @@ void main() {
       dependencies: fixture.dependencies,
       themeMode: ThemeMode.light,
       fileName: 'issue-165-settings-light.png',
-      ensureVisibleFinder: find.text('Export from a saved report'),
+      ensureVisibleFinder: find.text('Review privacy'),
     );
     await captureArtifactForApp(
       tester,
@@ -3615,7 +3670,7 @@ void main() {
       dependencies: fixture.dependencies,
       themeMode: ThemeMode.dark,
       fileName: 'issue-165-settings-dark.png',
-      ensureVisibleFinder: find.text('Export from a saved report'),
+      ensureVisibleFinder: find.text('Review privacy'),
     );
   });
 
@@ -3715,21 +3770,21 @@ void main() {
       await tester.runAsync(fixture.dispose);
     });
 
-      await tester.runAsync(() async {
-        await fixture.repository.upsert(
-          _artworkRecord(
-            id: 'issue-131-report-record',
-            title: 'Issue 131 Local Record',
-            state: ArtworkRecordState.verifiedByYou,
-            source: ArtworkFieldSource.userConfirmed,
-          ),
-        );
-        await fixture.addPrimaryImage(artworkId: 'issue-131-report-record');
-        await fixture.addSupportingPhoto(
-          artworkId: 'issue-131-report-record',
-          fileName: 'issue-131-receipt.png',
-        );
-      });
+    await tester.runAsync(() async {
+      await fixture.repository.upsert(
+        _artworkRecord(
+          id: 'issue-131-report-record',
+          title: 'Issue 131 Local Record',
+          state: ArtworkRecordState.verifiedByYou,
+          source: ArtworkFieldSource.userConfirmed,
+        ),
+      );
+      await fixture.addPrimaryImage(artworkId: 'issue-131-report-record');
+      await fixture.addSupportingPhoto(
+        artworkId: 'issue-131-report-record',
+        fileName: 'issue-131-receipt.png',
+      );
+    });
 
     await captureArtifactForApp(
       tester,
@@ -3794,6 +3849,84 @@ void main() {
       themeMode: ThemeMode.dark,
       fileName: 'issue-171-settings-export-dark.png',
       ensureVisibleFinder: find.text('Record export preview'),
+    );
+  });
+
+  testWidgets('visual evidence covers issue 172 settings trust routes', (
+    WidgetTester tester,
+  ) async {
+    final testDependencies = await tester.runAsync(
+      () async => _LiveDependencyFixture.create(),
+    );
+    final fixture = testDependencies!;
+    addTearDown(() async {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.runAsync(fixture.dispose);
+    });
+
+    await captureArtifactForApp(
+      tester,
+      routeName: AppRoutes.collectionSettings,
+      dependencies: fixture.dependencies,
+      themeMode: ThemeMode.light,
+      fileName: 'issue-172-settings-home-light.png',
+      ensureVisibleFinder: find.text('Review privacy'),
+    );
+    await captureArtifactForApp(
+      tester,
+      routeName: AppRoutes.settingsPrivacy,
+      dependencies: fixture.dependencies,
+      themeMode: ThemeMode.light,
+      fileName: 'issue-172-settings-privacy-light.png',
+      ensureVisibleFinder: find.text('You confirm the facts'),
+    );
+    await captureArtifactForApp(
+      tester,
+      routeName: AppRoutes.settingsStorage,
+      dependencies: fixture.dependencies,
+      themeMode: ThemeMode.light,
+      fileName: 'issue-172-settings-storage-light.png',
+      ensureVisibleFinder: find.text('One record, one place'),
+    );
+    await captureArtifactForApp(
+      tester,
+      routeName: AppRoutes.settingsBackup,
+      dependencies: fixture.dependencies,
+      themeMode: ThemeMode.light,
+      fileName: 'issue-172-settings-backup-light.png',
+      ensureVisibleFinder: find.text('Not connected yet'),
+    );
+    await captureArtifactForApp(
+      tester,
+      routeName: AppRoutes.collectionSettings,
+      dependencies: fixture.dependencies,
+      themeMode: ThemeMode.dark,
+      fileName: 'issue-172-settings-home-dark.png',
+      ensureVisibleFinder: find.text('Review privacy'),
+    );
+    await captureArtifactForApp(
+      tester,
+      routeName: AppRoutes.settingsPrivacy,
+      dependencies: fixture.dependencies,
+      themeMode: ThemeMode.dark,
+      fileName: 'issue-172-settings-privacy-dark.png',
+      ensureVisibleFinder: find.text('You confirm the facts'),
+    );
+    await captureArtifactForApp(
+      tester,
+      routeName: AppRoutes.settingsStorage,
+      dependencies: fixture.dependencies,
+      themeMode: ThemeMode.dark,
+      fileName: 'issue-172-settings-storage-dark.png',
+      ensureVisibleFinder: find.text('One record, one place'),
+    );
+    await captureArtifactForApp(
+      tester,
+      routeName: AppRoutes.settingsBackup,
+      dependencies: fixture.dependencies,
+      themeMode: ThemeMode.dark,
+      fileName: 'issue-172-settings-backup-dark.png',
+      ensureVisibleFinder: find.text('Not connected yet'),
     );
   });
 }

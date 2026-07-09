@@ -113,6 +113,114 @@ class PrototypePrivacyScreen extends StatelessWidget {
   }
 }
 
+class SettingsPrivacyScreen extends StatelessWidget {
+  const SettingsPrivacyScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return const PrototypeScreenFrame(
+      title: 'Privacy',
+      subtitle: 'Private by default',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _Notice(
+            icon: Icons.lock_outline,
+            text:
+                'Your artwork records stay private, and every draft stays under your review before it becomes part of the record.',
+          ),
+          SizedBox(height: 12),
+          _StatusPanel(
+            icon: Icons.fact_check_outlined,
+            title: 'You confirm the facts',
+            body:
+                'Archivale can help draft details from photos and supporting records, but only your review turns them into trusted record details.',
+          ),
+          SizedBox(height: 12),
+          _StatusPanel(
+            icon: Icons.cloud_done_outlined,
+            title: 'Backup stays in your account',
+            body:
+                'When you turn on backup, your records stay in your Google account so you can keep a second copy you control.',
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class SettingsStorageScreen extends StatelessWidget {
+  const SettingsStorageScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return const PrototypeScreenFrame(
+      title: 'Storage',
+      subtitle: 'Keep records close at hand',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _Notice(
+            icon: Icons.phone_android_outlined,
+            text:
+                'Artwork photos, notes, and supporting records stay together on this device unless you choose backup.',
+          ),
+          SizedBox(height: 12),
+          _StatusPanel(
+            icon: Icons.inventory_2_outlined,
+            title: 'One record, one place',
+            body:
+                'Receipts, certificates, condition notes, and report details stay grouped with the artwork record they support.',
+          ),
+          SizedBox(height: 12),
+          _StatusPanel(
+            icon: Icons.delete_outline,
+            title: 'Delete local data with care',
+            body:
+                'Before you clear local records, make sure the archive you want to keep is already backed up or exported.',
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class SettingsBackupScreen extends StatelessWidget {
+  const SettingsBackupScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return const PrototypeScreenFrame(
+      title: 'Backup',
+      subtitle: 'Keep a second copy you control',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _Notice(
+            icon: Icons.cloud_done_outlined,
+            text:
+                'Backup is the place to keep an extra copy of your collection in your own Google account.',
+          ),
+          SizedBox(height: 12),
+          _StatusPanel(
+            icon: Icons.cloud_off_outlined,
+            title: 'Not connected yet',
+            body:
+                'Backup is not connected in this preview, so your records stay only on this device for now.',
+          ),
+          SizedBox(height: 12),
+          _StatusPanel(
+            icon: Icons.link_off_outlined,
+            title: 'Disconnect backup',
+            body:
+                'When you pause backup, the records already saved on this device still stay with you.',
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class CollectionHomeScreen extends StatefulWidget {
   const CollectionHomeScreen({super.key});
 
@@ -406,25 +514,62 @@ class SettingsHomeScreen extends StatelessWidget {
           ),
           const SizedBox(height: 12),
         ],
-        const _StatusPanel(
+        const _Notice(
           icon: Icons.lock_outline,
-          title: 'Your records stay private',
-          body:
-              'Keep your records on this device, or back them up in your Google account when you choose.',
+          text:
+              'Choose how your records stay private, where they are kept, and when to save a second copy.',
         ),
         const SizedBox(height: 12),
         const _StatusPanel(
-          icon: Icons.cloud_off_outlined,
-          title: 'Backup not connected',
+          icon: Icons.privacy_tip_outlined,
+          title: 'Privacy',
           body:
-              'Your collection stays on this device until you connect Google Drive backup.',
+              'Review how Archivale keeps drafts separate from the record you confirm.',
+        ),
+        const SizedBox(height: 12),
+        const SecondaryActionButton(
+          icon: Icons.privacy_tip_outlined,
+          label: 'Review privacy',
+          routeName: AppRoutes.settingsPrivacy,
+        ),
+        const SizedBox(height: 12),
+        const _StatusPanel(
+          icon: Icons.storage_outlined,
+          title: 'Storage',
+          body:
+              'See how artwork photos, notes, and supporting records stay organized on this device.',
+        ),
+        const SizedBox(height: 12),
+        const SecondaryActionButton(
+          icon: Icons.storage_outlined,
+          label: 'Review storage',
+          routeName: AppRoutes.settingsStorage,
+        ),
+        const SizedBox(height: 12),
+        const _StatusPanel(
+          icon: Icons.cloud_done_outlined,
+          title: 'Backup',
+          body:
+              'Keep a second copy in your Google account when backup is available.',
+        ),
+        const SizedBox(height: 12),
+        const SecondaryActionButton(
+          icon: Icons.cloud_done_outlined,
+          label: 'Review backup',
+          routeName: AppRoutes.settingsBackup,
         ),
         const SizedBox(height: 12),
         const _StatusPanel(
           icon: Icons.ios_share_outlined,
-          title: 'Export from a saved report',
+          title: 'Archive export preview',
           body:
-              'Open an artwork report to preview what an archive export will include.',
+              'Review what an export includes before you move or store a copy of your archive.',
+        ),
+        const SizedBox(height: 12),
+        const SecondaryActionButton(
+          icon: Icons.archive_outlined,
+          label: 'Review archive export',
+          routeName: AppRoutes.settingsExport,
         ),
       ],
     );
@@ -440,12 +585,11 @@ class _PlanStatusPanel extends StatelessWidget {
   Widget build(BuildContext context) {
     final plan = entitlementState.plan;
     final billingCopy = switch (entitlementState.billingStatus) {
-      EntitlementBillingStatus.available =>
-        'You can choose a different plan on this device.',
+      EntitlementBillingStatus.available => 'Plan changes are available here.',
       EntitlementBillingStatus.unavailable =>
-        'Choose a different plan from the device where billing is set up.',
+        'Plan changes are unavailable here right now.',
       EntitlementBillingStatus.notConfigured =>
-        'Plan changes are not available here yet.',
+        'Plan changes are not open in this preview yet.',
     };
 
     return _StatusPanel(
