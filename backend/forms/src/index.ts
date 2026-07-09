@@ -16,3 +16,4 @@ export {
   type SitePageviewAggregate,
   type SitePageviewAggregateStore,
 } from "./site_analytics.js";
+export { betaSignup, sitePageview } from "./firebase.js";

@@ -110,9 +110,16 @@ export function createFirestoreSitePageviewStore(
 export function createSitePageviewFirebaseRequestHandler(
   env: NodeJS.ProcessEnv = process.env,
 ) {
-  return createSitePageviewHttpHandler({
-    store: createFirestoreSitePageviewStore(env),
-  });
+  let handler: ReturnType<typeof createSitePageviewHttpHandler> | null = null;
+  return async function sitePageviewFirebaseRequestHandler(
+    request: MinimalRequest,
+    response: MinimalResponse,
+  ): Promise<void> {
+    handler ??= createSitePageviewHttpHandler({
+      store: createFirestoreSitePageviewStore(env),
+    });
+    await handler(request, response);
+  };
 }
 
 export const sitePageview = onRequest(
