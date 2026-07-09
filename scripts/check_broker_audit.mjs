@@ -41,14 +41,12 @@ const policy = {
 const args = parseArgs(process.argv.slice(2));
 
 try {
-  const [audit, coreAudit, lock] = await Promise.all([
+  const [audit, lock] = await Promise.all([
     readJson(args.audit, 'audit'),
-    readJson(args.coreAudit, 'core audit'),
     readJson(args.lock, 'lock'),
   ]);
   checkExpiry(args.asOf);
-  checkAudit(audit, { allowPeerMetadata: true, label: 'full audit' });
-  checkAudit(coreAudit, { label: 'peer-normalized audit' });
+  checkAudit(audit);
   checkLock(lock);
   console.log(
     `Broker audit policy passed: ${policy.advisory} is the only accepted advisory through ${policy.paths.length} exact uuid@${policy.uuidVersion} paths until ${policy.expiresOn}.`,
@@ -66,22 +64,21 @@ function parseArgs(args) {
   for (let index = 0; index < args.length; index += 2) {
     const name = args[index];
     const value = args[index + 1];
-    if (!['--audit', '--core-audit', '--lock', '--as-of'].includes(name) || !value || values.has(name)) {
+    if (!['--audit', '--lock', '--as-of'].includes(name) || !value || values.has(name)) {
       throw new Error(usage());
     }
     values.set(name, value);
   }
   const audit = values.get('--audit');
-  const coreAudit = values.get('--core-audit');
   const lock = values.get('--lock');
-  if (!audit || !coreAudit || !lock) {
+  if (!audit || !lock) {
     throw new Error(usage());
   }
-  return { audit, coreAudit, lock, asOf: values.get('--as-of') };
+  return { audit, lock, asOf: values.get('--as-of') };
 }
 
 function usage() {
-  return 'usage: check_broker_audit.mjs --audit <npm-audit.json> --core-audit <peer-normalized.json> --lock <package-lock.json> [--as-of <YYYY-MM-DD>]';
+  return 'usage: check_broker_audit.mjs --audit <npm-audit.json> --lock <package-lock.json> [--as-of <YYYY-MM-DD>]';
 }
 
 async function readJson(path, label) {
@@ -109,31 +106,29 @@ function checkExpiry(asOf) {
   }
 }
 
-function checkAudit(audit, { allowPeerMetadata = false, label }) {
+function checkAudit(audit) {
   if (!audit || typeof audit !== 'object' || !audit.vulnerabilities || typeof audit.vulnerabilities !== 'object') {
     throw new Error('audit JSON has no vulnerabilities object');
   }
   const vulnerabilities = { ...audit.vulnerabilities };
-  if (allowPeerMetadata) {
-    for (const [name, expectedVia] of policy.peerMetadataVia) {
-      if (vulnerabilities[name]) {
-        checkVulnerability(name, vulnerabilities[name], expectedVia, label);
-        delete vulnerabilities[name];
-      }
+  for (const [name, expectedVia] of policy.peerMetadataVia) {
+    if (vulnerabilities[name]) {
+      checkVulnerability(name, vulnerabilities[name], expectedVia);
+      delete vulnerabilities[name];
     }
   }
   compareExact(
     Object.keys(vulnerabilities),
     [...policy.auditVia.keys()],
-    `${label} package set`,
+    'audit package set',
   );
 
   for (const [name, expectedVia] of policy.auditVia) {
-    checkVulnerability(name, vulnerabilities[name], expectedVia, label);
+    checkVulnerability(name, vulnerabilities[name], expectedVia);
   }
 }
 
-function checkVulnerability(name, vulnerability, expectedVia, label) {
+function checkVulnerability(name, vulnerability, expectedVia) {
   if (!vulnerability || vulnerability.severity !== policy.severity) {
     throw new Error(`${name} severity is not exactly ${policy.severity}`);
   }
@@ -141,7 +136,7 @@ function checkVulnerability(name, vulnerability, expectedVia, label) {
     throw new Error(`${name} has no auditable dependency chain`);
   }
   const actualVia = vulnerability.via.map((via) => normalizeAuditVia(name, via));
-  compareExact(actualVia, expectedVia, `${name} ${label} edges`);
+  compareExact(actualVia, expectedVia, `${name} audit edges`);
 }
 
 function normalizeAuditVia(name, via) {

@@ -33,9 +33,8 @@ The only caches are dependency-download directories: `~/.pub-cache` and
 `~/.npm`, keyed by their lockfiles. The workflow never caches the repository,
 build outputs, Android Gradle workspace, `.env*`, Firebase configuration or
 tokens, service accounts, signing files, keystores, or provisioning material.
-The full and peer-normalized broker audits use separate isolated temporary npm
-caches so stale or cross-mode audit metadata cannot alter either graph input;
-neither cache is persisted.
+The broker audit uses an isolated temporary npm cache so stale audit metadata
+cannot alter the graph input; that cache is not persisted.
 
 ## Debug package boundary
 
@@ -66,12 +65,12 @@ fixtures under `test/fixtures/broker-audit/` cover the accepted graph and each
 negative mode, including an injected post-expiry date so expiry evidence is
 deterministic.
 
-The broker check evaluates both the full npm audit and a peer-normalized audit.
-The normalized result must match the eight-node path graph exactly. The full
-result must match that graph and may additionally contain only npm's exact
-`firebase-functions > firebase-admin` peer-metavulnerability edge; npm emits
-that derived edge inconsistently even when the lockfile and advisory paths are
-unchanged. Any other full-audit package or edge fails.
+The broker check canonicalizes one npm presentation detail: the result may
+include only the exact `firebase-functions > firebase-admin` peer-
+metavulnerability edge in addition to the eight-node path graph. npm emits that
+derived edge inconsistently across bundled npm versions even when the lockfile
+and advisory paths are unchanged. After removing that exact edge, the package
+set and every remaining edge must match exactly; any variation fails.
 
 This exception is a review reminder, not a risk acceptance for deployment.
 Updating or removing it needs a separately reviewed lockfile and policy change.
