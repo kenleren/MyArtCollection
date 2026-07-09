@@ -52,6 +52,8 @@ const expectedFailures = new Map([
   ['extra-peer-node', /firebase-functions peer metadata nodes changed/],
   ['extra-peer-effect', /firebase-functions peer metadata effects changed/],
   ['rerouted-peer-edge', /firebase-functions peer metadata edges changed/],
+  ['unexpected-derived-fix-target', /@google-cloud\/firestore full audit fix metadata changed shape/],
+  ['extra-derived-fix-field', /@google-cloud\/firestore full audit fix metadata fields changed/],
   ['rerouted-root-peer', /broker root dependency declarations changed/],
   ['extra-lock-edge', /firebase-admin locked vulnerable edges changed/],
   ['rerouted-lock-range', /@google-cloud\/storage locked vulnerable edges changed/],

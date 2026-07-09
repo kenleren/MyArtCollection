@@ -81,8 +81,11 @@ audit graph. The policy validates both npm's full report and a separately
 fetched `--omit=peer` report. Both must use audit report version 2 with no
 top-level error or unknown report fields. The peer-normalized report and all
 eight core entries in the full report must match exact vulnerability names,
-ranges, directness, `via`, `nodes`, `effects`, fix metadata, counts, and the
-advisory's source, trusted GitHub origin/path, CWE, CVSS, and affected range.
+ranges, directness, `via`, `nodes`, `effects`, counts, and the advisory's
+source, trusted GitHub origin/path, CWE, CVSS, and affected range. The
+peer-normalized fix metadata is exact. npm may retarget remediation advice in
+the full peer-aware report only to the two locked direct Firebase packages, and
+that advice must retain the exact npm v2 field set and value types.
 
 npm may add only its known derived `firebase-functions > firebase-admin`
 peer-metavulnerability entry to the full report. That entry must have the exact

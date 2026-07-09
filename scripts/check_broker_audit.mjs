@@ -311,11 +311,11 @@ function checkAudit(audit, { allowPeerMetadata = false, label }) {
   compareExact(Object.keys(vulnerabilities), [...policy.auditPackages.keys()], `${label} package set`);
 
   for (const [name, expected] of policy.auditPackages) {
-    checkVulnerability(name, vulnerabilities[name], expected, label);
+    checkVulnerability(name, vulnerabilities[name], expected, label, hasPeerMetadata);
   }
 }
 
-function checkVulnerability(name, vulnerability, expected, label) {
+function checkVulnerability(name, vulnerability, expected, label, allowDerivedFixMetadata) {
   if (!isPlainObject(vulnerability)) throw new Error(`${name} vulnerability is malformed`);
   compareExact(
     Object.keys(vulnerability),
@@ -331,7 +331,31 @@ function checkVulnerability(name, vulnerability, expected, label) {
 
   if (name === 'uuid') validateAdvisoryOrigin(vulnerability.via);
   compareJsonExact(vulnerability.via, expected.via, `${name} ${label} edges`);
-  compareJsonExact(vulnerability.fixAvailable, expected.fixAvailable, `${name} ${label} fix metadata`);
+  if (allowDerivedFixMetadata) {
+    checkDerivedFixMetadata(name, vulnerability.fixAvailable);
+  } else {
+    compareJsonExact(vulnerability.fixAvailable, expected.fixAvailable, `${name} ${label} fix metadata`);
+  }
+}
+
+function checkDerivedFixMetadata(vulnerabilityName, fixAvailable) {
+  if (typeof fixAvailable === 'boolean') return;
+  if (!isPlainObject(fixAvailable)) {
+    throw new Error(`${vulnerabilityName} full audit fix metadata is malformed`);
+  }
+  compareExact(
+    Object.keys(fixAvailable),
+    ['isSemVerMajor', 'name', 'version'],
+    `${vulnerabilityName} full audit fix metadata fields`,
+  );
+  if (
+    !['firebase-admin', 'firebase-functions'].includes(fixAvailable.name) ||
+    typeof fixAvailable.version !== 'string' ||
+    !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(fixAvailable.version) ||
+    typeof fixAvailable.isSemVerMajor !== 'boolean'
+  ) {
+    throw new Error(`${vulnerabilityName} full audit fix metadata changed shape`);
+  }
 }
 
 function checkPeerMetadataVulnerability(vulnerability) {

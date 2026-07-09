@@ -99,6 +99,20 @@
     ]
   },
   {
+    "id": "unexpected-derived-fix-target",
+    "description": "a full-report remediation target outside the locked direct packages",
+    "mutations": [
+      { "target": "peerAudit", "operation": "set", "path": ["vulnerabilities", "@google-cloud/firestore", "fixAvailable", "name"], "value": "evil" }
+    ]
+  },
+  {
+    "id": "extra-derived-fix-field",
+    "description": "an extra full-report remediation metadata field",
+    "mutations": [
+      { "target": "peerAudit", "operation": "set", "path": ["vulnerabilities", "@google-cloud/firestore", "fixAvailable", "origin"], "value": "injected" }
+    ]
+  },
+  {
     "id": "rerouted-root-peer",
     "description": "a rerouted root peer dependency declaration",
     "mutations": [
