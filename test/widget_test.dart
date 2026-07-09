@@ -699,7 +699,19 @@ void main() {
 
     expect(find.text('Free plan is at capacity'), findsOneWidget);
     expect(
-      find.textContaining('Starter includes room for up to 50 active records'),
+      find.textContaining(
+        'Starter plan preview includes room for up to 50 active records',
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.textContaining('Archivale AI research drafts each month'),
+      findsOneWidget,
+    );
+    expect(
+      find.textContaining(
+        'Preview only in this build. In-app upgrades are not available in this preview yet.',
+      ),
       findsOneWidget,
     );
     expect(find.widgetWithText(FilledButton, 'Add artwork'), findsNothing);
@@ -1189,6 +1201,20 @@ void main() {
       findsOneWidget,
     );
     expect(
+      find.textContaining('Starter plan preview includes'),
+      findsOneWidget,
+    );
+    expect(
+      find.textContaining('Archivale AI research drafts each month'),
+      findsOneWidget,
+    );
+    expect(
+      find.textContaining(
+        'Preview only in this build. In-app upgrades are not available in this preview yet.',
+      ),
+      findsOneWidget,
+    );
+    expect(
       find.widgetWithText(FilledButton, 'Confirm local import'),
       findsNothing,
     );
@@ -1335,6 +1361,74 @@ void main() {
       csvPath: csvFile!.path,
       fileName: 'issue-173-03-csv-capacity-light.png',
       ensureVisibleFinder: find.text('Collection capacity before import'),
+    );
+  });
+
+  testWidgets('settings plan status covers billing status variants', (
+    WidgetTester tester,
+  ) async {
+    final fixture = await tester.runAsync(
+      () async => _LiveDependencyFixture.create(),
+    );
+    final testFixture = fixture!;
+    addTearDown(() async {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.runAsync(testFixture.dispose);
+    });
+
+    Future<void> verifyVariant({
+      required EntitlementBillingStatus billingStatus,
+      required String expectedCopy,
+      required String fileName,
+    }) async {
+      await _configureMobileViewport(tester);
+      final boundaryKey = GlobalKey();
+      await tester.pumpWidget(
+        RepaintBoundary(
+          key: boundaryKey,
+          child: ArchivaleApp(
+            initialRoute: AppRoutes.collectionSettings,
+            dependencies: testFixture.dependenciesWithFlags(
+              entitlementService: FixedEntitlementService(
+                state: EntitlementState(
+                  plan: EntitlementPlans.starter,
+                  billingStatus: billingStatus,
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await pumpLiveData(tester);
+      await tester.ensureVisible(find.text('Starter plan'));
+      await tester.pump();
+
+      expect(find.text('Starter plan'), findsOneWidget);
+      expect(
+        find.textContaining('Archivale AI research drafts each month'),
+        findsOneWidget,
+      );
+      expect(find.textContaining(expectedCopy), findsOneWidget);
+      await captureBoundaryToArtifacts(tester, boundaryKey, fileName);
+    }
+
+    await verifyVariant(
+      billingStatus: EntitlementBillingStatus.available,
+      expectedCopy:
+          'In-app upgrades are not available in this build yet.',
+      fileName: 'issue-173-04-settings-plan-available-light.png',
+    );
+    await verifyVariant(
+      billingStatus: EntitlementBillingStatus.unavailable,
+      expectedCopy:
+          'in-app upgrades are unavailable on this device right now.',
+      fileName: 'issue-173-05-settings-plan-unavailable-light.png',
+    );
+    await verifyVariant(
+      billingStatus: EntitlementBillingStatus.notConfigured,
+      expectedCopy:
+          'in-app upgrades are not available in this preview yet.',
+      fileName: 'issue-173-06-settings-plan-not-configured-light.png',
     );
   });
 

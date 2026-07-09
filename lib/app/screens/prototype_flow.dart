@@ -586,11 +586,11 @@ class _PlanStatusPanel extends StatelessWidget {
     final plan = entitlementState.plan;
     final billingCopy = switch (entitlementState.billingStatus) {
       EntitlementBillingStatus.available =>
-        'You can review upgrade options here.',
+        'You can review plan previews here. In-app upgrades are not available in this build yet.',
       EntitlementBillingStatus.unavailable =>
-        'You can review plans here, but upgrades are unavailable on this device right now.',
+        'You can review plan previews here, but in-app upgrades are unavailable on this device right now.',
       EntitlementBillingStatus.notConfigured =>
-        'You can review plans here, but upgrades are not available in this preview yet.',
+        'You can review plan previews here, but in-app upgrades are not available in this preview yet.',
     };
 
     return _StatusPanel(
@@ -3862,7 +3862,7 @@ class _BillingGatePanel extends StatelessWidget {
       icon: Icons.workspace_premium_outlined,
       title: '${plan.name} plan is at capacity',
       body:
-          'You already have $currentActiveArtworkCount active artwork${currentActiveArtworkCount == 1 ? '' : 's'} in this plan. Existing records stay editable and exportable. ${suggestedPlan.name} includes ${_planArtworkLimitCopy(suggestedPlan).toLowerCase()} and ${_planResearchDraftCopy(suggestedPlan).toLowerCase()} at ${suggestedPlan.priceLabel}.',
+          'You already have $currentActiveArtworkCount active artwork${currentActiveArtworkCount == 1 ? '' : 's'} in this plan. Existing records stay editable and exportable. ${suggestedPlan.name} plan preview includes ${_planArtworkLimitBenefitCopy(suggestedPlan)} and ${_planResearchDraftCopy(suggestedPlan)} at ${suggestedPlan.priceLabel}. ${_upgradePreviewCopy(entitlementState.billingStatus)}',
     );
   }
 }
@@ -4650,8 +4650,26 @@ String _planArtworkLimitCopy(EntitlementPlan plan) {
       : 'Room for up to $limit active records';
 }
 
+String _planArtworkLimitBenefitCopy(EntitlementPlan plan) {
+  final limit = plan.activeArtworkLimit;
+  return limit == null
+      ? 'room for your full active collection'
+      : 'room for up to $limit active records';
+}
+
 String _planResearchDraftCopy(EntitlementPlan plan) {
   return '${plan.monthlyAiCredits} Archivale AI research draft${plan.monthlyAiCredits == 1 ? '' : 's'} each month';
+}
+
+String _upgradePreviewCopy(EntitlementBillingStatus billingStatus) {
+  return switch (billingStatus) {
+    EntitlementBillingStatus.available =>
+      'Preview only in this build. In-app upgrades are not available yet.',
+    EntitlementBillingStatus.unavailable =>
+      'Preview only in this build. In-app upgrades are unavailable on this device right now.',
+    EntitlementBillingStatus.notConfigured =>
+      'Preview only in this build. In-app upgrades are not available in this preview yet.',
+  };
 }
 
 const _coreFieldKeys = [

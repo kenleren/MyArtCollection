@@ -1115,7 +1115,15 @@ class _CsvImportPlanGate {
         : 'room for up to ${upgradePlan.activeArtworkLimit} active records';
     final draftCopy =
         '${upgradePlan.monthlyAiCredits} Archivale AI research draft${upgradePlan.monthlyAiCredits == 1 ? '' : 's'} each month';
-    return 'This import would bring this plan from $currentActiveArtworkCount to $projectedActiveCount active records. Existing records remain editable and exportable. ${upgradePlan.name} includes $planLimitCopy and ${draftCopy.toLowerCase()} at ${upgradePlan.priceLabel}.';
+    final previewCopy = switch (entitlementState.billingStatus) {
+      EntitlementBillingStatus.available =>
+        'Preview only in this build. In-app upgrades are not available yet.',
+      EntitlementBillingStatus.unavailable =>
+        'Preview only in this build. In-app upgrades are unavailable on this device right now.',
+      EntitlementBillingStatus.notConfigured =>
+        'Preview only in this build. In-app upgrades are not available in this preview yet.',
+    };
+    return 'This import would bring this plan from $currentActiveArtworkCount to $projectedActiveCount active records. Existing records remain editable and exportable. ${upgradePlan.name} plan preview includes $planLimitCopy and $draftCopy at ${upgradePlan.priceLabel}. $previewCopy';
   }
 }
 
