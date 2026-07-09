@@ -149,7 +149,7 @@
               <tr>
                 <td data-label="Category">Archivale research help</td>
                 <td data-label="What it can include">Only after you ask for it: a minimized image derivative, allowed draft hints, app context, request identifiers, validated source metadata, and content-free operational details.</td>
-                <td data-label="How it is used">To return source-backed research suggestions for your review. Raw notes, full records, document bodies, filenames, paths, local artwork IDs, source URLs in telemetry, and service secrets are not allowed in the request.</td>
+                <td data-label="How it is used">To return source-backed research suggestions for your review. Raw notes, full records, document bodies, filenames, paths, local artwork IDs, and source URLs are not allowed in the request.</td>
               </tr>
               <tr>
                 <td data-label="Category">Website technical behavior</td>
@@ -182,10 +182,10 @@
       <section class="page-card">
         <h2>How Archivale Protects Records</h2>
         <ul>
-          <li>Local records and attachments are stored in app-private storage by default. App-private storage is not the same as encryption, and this policy does not claim local encrypted storage unless a later reviewed release implements it.</li>
+          <li>Local records and attachments stay on your device by default in app storage.</li>
           <li>Files are not placed into a public gallery or shared folder by default. Exports remain app-private until you choose where to save or share them.</li>
-          <li>Network features for support, diagnostics, and research help use HTTPS or service-managed secure transport where applicable.</li>
-          <li>The mobile app must not contain service secrets. Research help requests are routed through protected server systems.</li>
+          <li>Support, diagnostics, and research help use secure connections when they connect outside your device.</li>
+          <li>Research help requests are only sent when you start the feature, and only with the minimum context needed.</li>
           <li>Crash and operational telemetry must avoid artwork titles, artist names, locations, prices, notes, filenames, paths, prompts, responses, source URLs, contact lists, tokens, and secrets.</li>
         </ul>
       </section>
@@ -211,7 +211,7 @@
               </tr>
               <tr>
                 <td data-label="Area">Accounts</td>
-                <td data-label="Retention and control">The current app and public website do not expose user-created Archivale accounts. Because there is no in-app account creation, account deletion is not an active app flow. Local deletion, export, early access removal, and support request paths are still available as described here.</td>
+                <td data-label="Retention and control">Archivale does not offer Archivale account login for this app or the public website. Your records stay on your device until you choose to export or share them.</td>
               </tr>
               <tr>
                 <td data-label="Area">Early access interest</td>
@@ -227,7 +227,7 @@
               </tr>
               <tr>
                 <td data-label="Area">Archivale research help</td>
-                <td data-label="Retention and control">When you ask for research help, uploaded image derivatives are deleted from temporary research storage after completion or terminal failure, duplicate-request state may be retained for up to 24 hours, and content-free operational details may be retained for up to 30 days. Archivale is configured to minimize retention in the research service where those controls are available.</td>
+                <td data-label="Retention and control">When you ask for research help, temporary image copies are deleted after the request finishes or fails. A short request history record may remain for up to 24 hours, and only non-sensitive operational details may remain for up to 30 days.</td>
               </tr>
             </tbody>
           </table>
