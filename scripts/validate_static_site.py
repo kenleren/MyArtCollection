@@ -32,6 +32,22 @@ EXPECTED_SCHEMA_ROUTES = {
     "/blog/how-to-organize-provenance-records-private-art-collection/",
 }
 
+SUPPORT_COPY_BANNED_PATTERNS = [
+    r"\bbackend\b",
+    r"\bbeta\b",
+    r"\bbroker\b",
+    r"\bdeploy\b",
+    r"\benabled\b",
+    r"\bfirebase\b",
+    r"\bgate\b",
+    r"\bprovider\b",
+    r"\bremote config\b",
+    r"\brelease track\b",
+    r"\bservice-boundary\b",
+    r"\bpayload\b",
+    r"\bsdk\b",
+]
+
 ALLOWED_SCHEMA_TYPES = {
     "Blog",
     "BlogPosting",
@@ -282,6 +298,18 @@ def validate_links_and_assets(path: Path, parser: SiteParser) -> list[str]:
     return errors
 
 
+def validate_support_copy(path: Path) -> list[str]:
+    if route_for_html(path) != "/support/":
+        return []
+
+    text = path.read_text(encoding="utf-8").lower()
+    errors: list[str] = []
+    for pattern in SUPPORT_COPY_BANNED_PATTERNS:
+        if re.search(pattern, text):
+            errors.append(f"/support/: banned copy term matched {pattern!r}")
+    return errors
+
+
 def validate_html_shape(path: Path, parser: SiteParser) -> list[str]:
     route = route_for_html(path)
     errors: list[str] = []
@@ -321,6 +349,7 @@ def main() -> int:
         errors.extend(validate_html_shape(path, parser))
         errors.extend(validate_json_ld(path, parser))
         errors.extend(validate_links_and_assets(path, parser))
+        errors.extend(validate_support_copy(path))
 
     if errors:
         print("Static site validation failed:")
