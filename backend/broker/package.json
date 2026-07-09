@@ -1,12 +1,16 @@
 {
-  "name": "@archivale/fake-research-broker",
+  "name": "@archivale/research-broker",
   "version": "0.0.0",
   "private": true,
-  "description": "Fake-provider-only Archivale research broker scaffold.",
+  "main": "build/src/index.js",
+  "description": "Archivale research broker scaffold with fake-provider tests and a disabled-by-default OpenAI shell.",
   "type": "module",
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "test": "npm run build && node --test build/dist-test/*.test.js"
+  },
+  "dependencies": {
+    "firebase-functions": "^7.2.5"
   },
   "devDependencies": {
     "@types/node": "^22.15.3",

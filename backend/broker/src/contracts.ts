@@ -18,6 +18,7 @@ export interface BrokerRequest {
     mime_type: 'image/jpeg' | 'image/webp';
     byte_size: number;
     long_edge_px: number;
+    content_base64?: string;
   };
   draft_hints?: {
     title_hint?: string;
@@ -82,9 +83,9 @@ export interface BrokerResearchOutput {
 export interface BrokerResponse {
   request_id: string;
   status: BrokerStatus;
-  provider: 'fake-provider';
-  model: 'fake-local-model';
-  reasoning_effort: 'none';
+  provider: 'fake-provider' | 'openai';
+  model: string;
+  reasoning_effort: 'none' | 'medium' | 'high' | 'xhigh';
   completed_at?: string;
   replayed?: boolean;
   sources: BrokerSource[];
@@ -98,7 +99,21 @@ export interface BrokerResponse {
   };
 }
 
+export type ProviderResearchResult =
+  | {
+      kind: 'success';
+      output: BrokerResearchOutput;
+    }
+  | {
+      kind: 'output_error';
+      code: string;
+      message: string;
+    };
+
 export interface ProviderClient {
+  readonly providerName: BrokerResponse['provider'];
+  readonly modelName: string;
+  readonly reasoningEffort: BrokerResponse['reasoning_effort'];
   readonly callCount: number;
-  research(request: BrokerRequest): Promise<BrokerResearchOutput>;
+  research(request: BrokerRequest): Promise<ProviderResearchResult>;
 }

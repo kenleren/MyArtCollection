@@ -1,12 +1,20 @@
-import type { BrokerRequest, BrokerResearchOutput, ProviderClient } from './contracts.js';
+import type {
+  BrokerRequest,
+  BrokerResearchOutput,
+  ProviderClient,
+  ProviderResearchResult,
+} from './contracts.js';
 
 export class FakeResearchProvider implements ProviderClient {
+  readonly providerName = 'fake-provider';
+  readonly modelName = 'fake-local-model';
+  readonly reasoningEffort = 'none';
   callCount = 0;
 
-  async research(_request: BrokerRequest): Promise<BrokerResearchOutput> {
+  async research(_request: BrokerRequest): Promise<ProviderResearchResult> {
     this.callCount += 1;
 
-    return {
+    const output: BrokerResearchOutput = {
       sources: [
         {
           source_id: 'src_fake_museum_1',
@@ -42,6 +50,11 @@ export class FakeResearchProvider implements ProviderClient {
         },
       ],
       warnings: [],
+    };
+
+    return {
+      kind: 'success',
+      output,
     };
   }
 }

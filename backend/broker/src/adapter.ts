@@ -22,7 +22,7 @@ export interface LocalBrokerAppPlaceholder {
   appProjectId?: string;
 }
 
-export interface FakeBrokerAdapterIdentity {
+export interface BrokerAdapterIdentity {
   auth: LocalBrokerAuthPlaceholder;
   app: LocalBrokerAppPlaceholder;
   quotaSubject?: string;
@@ -31,19 +31,19 @@ export interface FakeBrokerAdapterIdentity {
   breakerOpen: boolean;
 }
 
-export interface FakeBrokerAdapterSuccessEnvelope {
+export interface BrokerAdapterSuccessEnvelope {
   ok: true;
   status: 200;
   body: BrokerResponse;
 }
 
-export interface FakeBrokerAdapterErrorEnvelope {
+export interface BrokerAdapterErrorEnvelope {
   ok: false;
   status: number;
   body: {
     request_id?: string;
     status: 'rejected' | 'conflict';
-    provider: 'fake-provider';
+    provider: 'fake-provider' | 'openai';
     error: {
       code: string;
       message: string;
@@ -52,23 +52,38 @@ export interface FakeBrokerAdapterErrorEnvelope {
   };
 }
 
-export type FakeBrokerAdapterEnvelope =
-  | FakeBrokerAdapterSuccessEnvelope
-  | FakeBrokerAdapterErrorEnvelope;
+export type BrokerAdapterEnvelope =
+  | BrokerAdapterSuccessEnvelope
+  | BrokerAdapterErrorEnvelope;
 
-export async function handleFakeBrokerAdapterRequest(
+export type FakeBrokerAdapterIdentity = BrokerAdapterIdentity;
+export type FakeBrokerAdapterSuccessEnvelope = BrokerAdapterSuccessEnvelope;
+export type FakeBrokerAdapterErrorEnvelope = BrokerAdapterErrorEnvelope;
+export type FakeBrokerAdapterEnvelope = BrokerAdapterEnvelope;
+
+export async function handleBrokerAdapterRequest(
   jsonRequest: unknown,
-  identity: FakeBrokerAdapterIdentity,
+  identity: BrokerAdapterIdentity,
   dependencies: BrokerDependencies = createFakeBrokerDependencies(),
-): Promise<FakeBrokerAdapterEnvelope> {
+): Promise<BrokerAdapterEnvelope> {
   const authError = validateLocalIdentity(identity);
   if (authError !== undefined) {
-    return errorEnvelope(authError.code, authError.stage, undefined);
+    return errorEnvelope(
+      authError.code,
+      authError.stage,
+      undefined,
+      dependencies.provider.providerName,
+    );
   }
 
   const requestParse = parseBrokerRequest(jsonRequest);
   if (!requestParse.ok) {
-    return errorEnvelope(requestParse.code, requestParse.stage, requestParse.requestId);
+    return errorEnvelope(
+      requestParse.code,
+      requestParse.stage,
+      requestParse.requestId,
+      dependencies.provider.providerName,
+    );
   }
 
   const response = await handleResearchRequest(
@@ -78,7 +93,12 @@ export async function handleFakeBrokerAdapterRequest(
   );
 
   if (response.error !== undefined) {
-    return errorEnvelope(response.error.code, response.error.stage, response.request_id);
+    return errorEnvelope(
+      response.error.code,
+      response.error.stage,
+      response.request_id,
+      dependencies.provider.providerName,
+    );
   }
 
   return {
@@ -88,8 +108,16 @@ export async function handleFakeBrokerAdapterRequest(
   };
 }
 
-function validateLocalIdentity(
+export async function handleFakeBrokerAdapterRequest(
+  jsonRequest: unknown,
   identity: FakeBrokerAdapterIdentity,
+  dependencies: BrokerDependencies = createFakeBrokerDependencies(),
+): Promise<FakeBrokerAdapterEnvelope> {
+  return handleBrokerAdapterRequest(jsonRequest, identity, dependencies);
+}
+
+function validateLocalIdentity(
+  identity: BrokerAdapterIdentity,
 ): { code: string; stage: string } | undefined {
   if (!identity.auth.appCheckVerified || !identity.auth.authVerified) {
     return { code: 'unauthorized', stage: 'auth' };
@@ -114,7 +142,7 @@ function validateLocalIdentity(
   return undefined;
 }
 
-function contextFromIdentity(identity: FakeBrokerAdapterIdentity): BrokerContext {
+function contextFromIdentity(identity: BrokerAdapterIdentity): BrokerContext {
   return {
     app_check_verified: identity.auth.appCheckVerified,
     auth_verified: identity.auth.authVerified,
@@ -142,6 +170,9 @@ function parseBrokerRequest(value: unknown): RequestParseResult {
   if (!isRecord(value)) {
     return { ok: false, code: 'invalid_request_payload', stage: 'adapter' };
   }
+  if (!hasOnlyAllowedKeys(value, ALLOWED_TOP_LEVEL_FIELDS)) {
+    return { ok: false, code: 'invalid_request_payload', stage: 'adapter' };
+  }
 
   const requestId = stringValue(value.request_id);
   const image = value.image;
@@ -154,9 +185,11 @@ function parseBrokerRequest(value: unknown): RequestParseResult {
     stringValue(value.payload_hash) === undefined ||
     stringValue(value.approved_payload_class) === undefined ||
     !isRecord(image) ||
+    !hasOnlyAllowedKeys(image, ALLOWED_IMAGE_FIELDS) ||
     stringValue(image.mime_type) === undefined ||
     numberValue(image.byte_size) === undefined ||
     numberValue(image.long_edge_px) === undefined ||
+    (image.content_base64 !== undefined && stringValue(image.content_base64) === undefined) ||
     !validDraftHintsShape(value.draft_hints)
   ) {
     return {
@@ -180,6 +213,9 @@ function validDraftHintsShape(value: unknown): boolean {
   if (!isRecord(value)) {
     return false;
   }
+  if (!hasOnlyAllowedKeys(value, ALLOWED_DRAFT_HINT_FIELDS)) {
+    return false;
+  }
   if (value.title_hint !== undefined && stringValue(value.title_hint) === undefined) {
     return false;
   }
@@ -197,14 +233,15 @@ function errorEnvelope(
   code: string,
   stage: string,
   requestId: string | undefined,
-): FakeBrokerAdapterErrorEnvelope {
+  providerName: 'fake-provider' | 'openai',
+): BrokerAdapterErrorEnvelope {
   return {
     ok: false,
     status: statusForErrorCode(code),
     body: {
       ...(requestId === undefined ? {} : { request_id: requestId }),
       status: code === 'idempotency_conflict' ? 'conflict' : 'rejected',
-      provider: 'fake-provider',
+      provider: providerName,
       error: {
         code,
         message: safeMessageForErrorCode(code),
@@ -234,6 +271,7 @@ function statusForErrorCode(code: string): number {
     case 'broker_breaker_open':
       return 503;
     case 'provider_failure':
+    case 'provider_output_invalid':
     case 'invalid_source_url':
     case 'candidate_missing_source':
     case 'candidate_unknown_source':
@@ -281,14 +319,41 @@ function safeMessageForErrorCode(code: string): string {
     case 'broker_monthly_cap_exceeded':
       return 'Broker quota placeholder denied the request.';
     case 'provider_failure':
+      return 'Provider execution failed.';
+    case 'provider_output_invalid':
     case 'invalid_source_url':
     case 'candidate_missing_source':
     case 'candidate_unknown_source':
-      return 'Fake provider output failed broker validation.';
+      return 'Provider output failed broker validation.';
     default:
       return 'Broker request was rejected.';
   }
 }
+
+const ALLOWED_TOP_LEVEL_FIELDS = new Set([
+  'request_id',
+  'consent_status',
+  'consent_scope',
+  'consent_copy_version',
+  'payload_contract_version',
+  'payload_hash',
+  'approved_payload_class',
+  'image',
+  'draft_hints',
+]);
+
+const ALLOWED_IMAGE_FIELDS = new Set([
+  'mime_type',
+  'byte_size',
+  'long_edge_px',
+  'content_base64',
+]);
+
+const ALLOWED_DRAFT_HINT_FIELDS = new Set([
+  'title_hint',
+  'artist_hint',
+  'search_terms',
+]);
 
 function empty(value: string | undefined): boolean {
   return value === undefined || value.length === 0;
@@ -304,4 +369,11 @@ function stringValue(value: unknown): string | undefined {
 
 function numberValue(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+function hasOnlyAllowedKeys(
+  value: Record<string, unknown>,
+  allowedKeys: ReadonlySet<string>,
+): boolean {
+  return Object.keys(value).every((key) => allowedKeys.has(key));
 }

@@ -42,9 +42,9 @@ export async function handleResearchRequest(
   const fail = (code: string, message: string, stage: string): BrokerResponse => ({
     request_id: request.request_id,
     status: code === 'idempotency_conflict' ? 'conflict' : 'rejected',
-    provider: 'fake-provider',
-    model: 'fake-local-model',
-    reasoning_effort: 'none',
+    provider: dependencies.provider.providerName,
+    model: dependencies.provider.modelName,
+    reasoning_effort: dependencies.provider.reasoningEffort,
     sources: [],
     candidate_attributions: [],
     comparable_value_signals: [],
@@ -159,14 +159,21 @@ async function runReservedProviderRequest(
 
   const record = reservation.record;
   trace?.push('provider');
-  let providerOutput: BrokerResearchOutput;
+  let providerResult;
   try {
-    providerOutput = await dependencies.provider.research(request);
+    providerResult = await dependencies.provider.research(request);
   } catch {
     dependencies.creditLedger.refund(record, 'provider_exception');
-    return fail('provider_failure', 'Fake provider failed before output validation.', 'provider');
+    return fail('provider_failure', 'Provider failed before output validation.', 'provider');
   }
 
+  if (providerResult.kind === 'output_error') {
+    trace?.push('output_validation');
+    dependencies.creditLedger.finalize(record);
+    return fail(providerResult.code, providerResult.message, 'output_validation');
+  }
+
+  const providerOutput: BrokerResearchOutput = providerResult.output;
   trace?.push('output_validation');
   const outputError = validateOutput(providerOutput);
   if (outputError !== undefined) {
@@ -180,9 +187,9 @@ async function runReservedProviderRequest(
   const response: BrokerResponse = {
     request_id: request.request_id,
     status: 'completed',
-    provider: 'fake-provider',
-    model: 'fake-local-model',
-    reasoning_effort: 'none',
+    provider: dependencies.provider.providerName,
+    model: dependencies.provider.modelName,
+    reasoning_effort: dependencies.provider.reasoningEffort,
     completed_at: dependencies.now().toISOString(),
     sources: providerOutput.sources,
     candidate_attributions: providerOutput.candidate_attributions,

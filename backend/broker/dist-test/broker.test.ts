@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import { Readable } from 'node:stream';
 import test from 'node:test';
 import {
   APPROVED_PAYLOAD_CLASS,
@@ -9,14 +10,29 @@ import {
   type BrokerRequest,
   type BrokerResearchOutput,
   type ProviderClient,
+  type ProviderResearchResult,
 } from '../src/contracts.js';
 import { createFakeBrokerDependencies, handleResearchRequest } from '../src/broker.js';
 import {
+  handleBrokerAdapterRequest,
   handleFakeBrokerAdapterRequest,
+  type BrokerAdapterEnvelope,
+  type BrokerAdapterIdentity,
   type FakeBrokerAdapterEnvelope,
   type FakeBrokerAdapterIdentity,
 } from '../src/adapter.js';
 import { PlaceholderCreditLedger } from '../src/credit_ledger.js';
+import {
+  buildOpenAiResponsesRequest,
+  createOpenAiProvider,
+  readOpenAiProviderConfigFromEnv,
+} from '../src/openai_provider.js';
+import {
+  createConfiguredResearchBrokerDependencies,
+  createResearchBrokerHttpHandler,
+  isResearchBrokerLiveEnabled,
+  type MinimalResponse,
+} from '../src/live_broker.js';
 
 const baseContext = Object.freeze({
   app_check_verified: true,
@@ -115,60 +131,140 @@ function invalidOutput(): BrokerResearchOutput {
   };
 }
 
+type TestHttpResponse = {
+  statusCode: number;
+  headers: Record<string, string>;
+  body: string;
+  json: Record<string, unknown>;
+};
+
+function createHttpRequest(
+  body: unknown,
+  headers: Record<string, string | undefined> = {},
+) {
+  const request = Readable.from([]) as Readable & {
+    method?: string;
+    headers: Record<string, string>;
+    body?: unknown;
+  };
+  request.method = 'POST';
+  request.headers = {
+    'content-type': 'application/json',
+    'x-archivale-broker-app-check-verified': 'true',
+    'x-archivale-broker-auth-verified': 'true',
+    'x-archivale-broker-auth-uid': 'owner-uid',
+    'x-archivale-broker-auth-project-id': 'broker-project',
+    'x-archivale-broker-auth-provider': 'anonymous',
+    'x-archivale-broker-app-id': 'owner-test-app',
+    'x-archivale-broker-app-project-id': 'broker-project',
+    'x-archivale-broker-quota-subject': 'quota_subject_v1_aaaaaaaaaaaaaaaa',
+    'x-archivale-broker-entitled': 'true',
+    'x-archivale-broker-credit-available': 'true',
+    'x-archivale-broker-breaker-open': 'false',
+    ...headers,
+  };
+  request.body = body;
+  return request;
+}
+
+function createHttpResponse(): TestHttpResponse & {
+  responder: MinimalResponse;
+} {
+  const response: TestHttpResponse = {
+    statusCode: 200,
+    headers: {},
+    body: '',
+    json: {},
+  };
+
+  const responder: MinimalResponse = {
+    status(code: number) {
+      response.statusCode = code;
+      return responder;
+    },
+    setHeader(name: string, value: string) {
+      response.headers[name] = value;
+    },
+    end(bodyText: string) {
+      response.body = bodyText;
+      response.json = JSON.parse(bodyText) as Record<string, unknown>;
+    },
+  };
+
+  return Object.assign(response, {
+    responder,
+  });
+}
+
 class StaticProvider implements ProviderClient {
+  readonly providerName = 'fake-provider';
+  readonly modelName = 'fake-local-model';
+  readonly reasoningEffort = 'none';
   callCount = 0;
 
   constructor(private readonly output: BrokerResearchOutput) {}
 
-  async research(_request: BrokerRequest): Promise<BrokerResearchOutput> {
+  async research(_request: BrokerRequest): Promise<ProviderResearchResult> {
     this.callCount += 1;
-    return this.output;
+    return {
+      kind: 'success',
+      output: this.output,
+    };
   }
 }
 
 class ThrowingProvider implements ProviderClient {
+  readonly providerName = 'fake-provider';
+  readonly modelName = 'fake-local-model';
+  readonly reasoningEffort = 'none';
   callCount = 0;
 
-  async research(_request: BrokerRequest): Promise<BrokerResearchOutput> {
+  async research(_request: BrokerRequest): Promise<ProviderResearchResult> {
     this.callCount += 1;
     throw new Error('fake provider failure');
   }
 }
 
 class SlowProvider implements ProviderClient {
+  readonly providerName = 'fake-provider';
+  readonly modelName = 'fake-local-model';
+  readonly reasoningEffort = 'none';
   callCount = 0;
   private releaseProvider!: () => void;
   readonly release = new Promise<void>((resolve) => {
     this.releaseProvider = resolve;
   });
 
-  async research(_request: BrokerRequest): Promise<BrokerResearchOutput> {
+  async research(_request: BrokerRequest): Promise<ProviderResearchResult> {
     this.callCount += 1;
     await this.release;
     return {
-      sources: [
-        {
-          source_id: 'src_slow',
-          source_name: 'Slow Fixture',
-          source_type: 'museum',
-          source_url: 'https://museum.example/research/slow',
-          title: 'Slow collection record',
-          accessed_at: new Date('2026-07-06T00:00:00.000Z').toISOString(),
-          citation_excerpt: 'Slow fixture excerpt.',
-          matched_fields: ['title'],
-        },
-      ],
-      candidate_attributions: [
-        {
-          candidate_id: 'candidate_slow',
-          confidence: 'possible',
-          match_reason: 'Slow fixture result.',
-          field_sources: { title: 'ai_suggested' },
-          source_refs: ['src_slow'],
-        },
-      ],
-      comparable_value_signals: [],
-      warnings: [],
+      kind: 'success',
+      output: {
+        sources: [
+          {
+            source_id: 'src_slow',
+            source_name: 'Slow Fixture',
+            source_type: 'museum',
+            source_url: 'https://museum.example/research/slow',
+            title: 'Slow collection record',
+            accessed_at: new Date('2026-07-06T00:00:00.000Z').toISOString(),
+            citation_excerpt: 'Slow fixture excerpt.',
+            matched_fields: ['title'],
+          },
+        ],
+        candidate_attributions: [
+          {
+            candidate_id: 'candidate_slow',
+            confidence: 'possible',
+            match_reason: 'Slow fixture result.',
+            field_sources: { title: 'ai_suggested' },
+            source_refs: ['src_slow'],
+          },
+        ],
+        comparable_value_signals: [],
+        warnings: [],
+      },
     };
   }
 
@@ -732,13 +828,335 @@ test('adapter rejects malformed callable payload without leaking raw notes or in
   assertSanitizedEnvelope(envelope);
 });
 
-test('broker scaffold has no secret-value lookup requirement', async () => {
+test('openai provider sends a Responses API request with store=false, required web search, and strict schema', async () => {
+  const fetchCalls: Array<{ url: string; body: Record<string, unknown> }> = [];
+  const provider = createOpenAiProvider({
+    apiKey: 'test-openai-key',
+    allowedDomains: ['museum.example'],
+    fetchImpl: (async (url, init) => {
+      fetchCalls.push({
+        url: String(url),
+        body: JSON.parse(String(init?.body)) as Record<string, unknown>,
+      });
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          output: [
+            {
+              type: 'web_search_call',
+              action: {
+                sources: [{ url: 'https://museum.example/works/123' }],
+              },
+            },
+            {
+              type: 'message',
+              content: [
+                {
+                  type: 'output_text',
+                  text: JSON.stringify({
+                    sources: [
+                      {
+                        source_id: 'src_1',
+                        source_name: 'Museum Example',
+                        source_type: 'museum',
+                        source_url: 'https://museum.example/works/123',
+                        title: 'Collection record',
+                        accessed_at: '2026-07-08T16:00:00.000Z',
+                        citation_excerpt: 'Collection record excerpt.',
+                        matched_fields: ['title'],
+                      },
+                    ],
+                    candidate_attributions: [
+                      {
+                        candidate_id: 'cand_1',
+                        confidence: 'likely',
+                        match_reason: 'Source-backed match.',
+                        title: 'Untitled',
+                        artist: 'Unknown',
+                        field_sources: { title: 'ai_suggested' },
+                        source_refs: ['src_1'],
+                      },
+                    ],
+                    comparable_value_signals: [
+                      {
+                        kind: 'no_reliable_comparable',
+                        label: 'No reliable comparable found',
+                        source_refs: [],
+                        caveat: 'Do not infer market value.',
+                      },
+                    ],
+                    warnings: ['needs_human_confirmation'],
+                  }),
+                  annotations: [
+                    {
+                      type: 'url_citation',
+                      url_citation: {
+                        url: 'https://museum.example/works/123',
+                        title: 'Collection record',
+                      },
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        }),
+      } as Response;
+    }) as typeof fetch,
+  });
+
+  const result = await provider.research(request({
+    image: {
+      mime_type: 'image/jpeg',
+      byte_size: 120_000,
+      long_edge_px: 1400,
+      content_base64: 'ZmFrZS1pbWFnZS1ieXRlcw==',
+    },
+  }));
+
+  assert.equal(result.kind, 'success');
+  assert.equal(result.output.sources[0]?.source_url, 'https://museum.example/works/123');
+  assert.equal(fetchCalls.length, 1);
+  assert.equal(fetchCalls[0]?.url, 'https://api.openai.com/v1/responses');
+
+  const body = fetchCalls[0]?.body ?? {};
+  const serialized = JSON.stringify(body);
+  assert.equal(body.store, false);
+  assert.deepEqual(body.reasoning, { effort: 'high' });
+  assert.equal(body.tool_choice, 'required');
+  assert.deepEqual(body.include, ['web_search_call.action.sources']);
+  assert.equal(Array.isArray(body.tools), true);
+  assert.deepEqual(
+    (body.tools as Array<Record<string, unknown>>)[0],
+    {
+      type: 'web_search',
+      filters: { allowed_domains: ['museum.example'] },
+      search_context_size: 'medium',
+      external_web_access: false,
+    },
+  );
+  assert.equal(
+    ((body.text as Record<string, unknown>).format as Record<string, unknown>).type,
+    'json_schema',
+  );
+  assert.equal(
+    ((body.text as Record<string, unknown>).format as Record<string, unknown>).strict,
+    true,
+  );
+  assert.equal(serialized.includes('"response_format"'), false);
+  assert.equal(serialized.includes('artworkId'), false);
+  assert.equal(serialized.includes('consentSummary'), false);
+  assert.equal(serialized.includes('querySummary'), false);
+  assert.equal(serialized.includes('raw_notes'), false);
+  assert.equal(serialized.includes('previous_response_id'), false);
+  assert.equal(serialized.includes('file_search'), false);
+  assert.equal(serialized.includes('store":false'), true);
+  assert.equal(serialized.includes('data:image/jpeg;base64,ZmFrZS1pbWFnZS1ieXRlcw=='), true);
+});
+
+test('openai provider rejects ungrounded or non-allowlisted sources as invalid output', async () => {
+  const provider = createOpenAiProvider({
+    apiKey: 'test-openai-key',
+    allowedDomains: ['museum.example'],
+    fetchImpl: (async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        output: [
+          {
+            type: 'message',
+            content: [
+              {
+                type: 'output_text',
+                text: JSON.stringify({
+                  sources: [
+                    {
+                      source_id: 'src_1',
+                      source_name: 'Bad Source',
+                      source_type: 'museum',
+                      source_url: 'https://example.net/not-allowlisted',
+                      title: 'Bad source',
+                      accessed_at: '2026-07-08T16:00:00.000Z',
+                      citation_excerpt: 'Bad source excerpt.',
+                      matched_fields: ['title'],
+                    },
+                  ],
+                  candidate_attributions: [],
+                  comparable_value_signals: [],
+                  warnings: [],
+                }),
+                annotations: [],
+              },
+            ],
+          },
+        ],
+      }),
+    }) as Response) as typeof fetch,
+  });
+
+  const result = await provider.research(request());
+
+  assert.equal(result.kind, 'output_error');
+  assert.equal(result.code, 'provider_output_invalid');
+});
+
+test('disabled live gate returns a safe 503 before any OpenAI config lookup', async () => {
+  let configLookupCount = 0;
+  const configured = createConfiguredResearchBrokerDependencies(
+    {
+      BROKER_HTTP_ENABLED: 'false',
+      BROKER_PROVIDER_MODE: 'openai',
+      BROKER_OPENAI_LIVE_TEST_ENABLED: 'true',
+      OPENAI_API_KEY: 'should-not-be-read',
+    },
+    {},
+    () => {
+      configLookupCount += 1;
+      return {
+        ok: false,
+        code: 'missing_openai_api_key',
+        message: 'should not be reached',
+      };
+    },
+  );
+
+  assert.equal(configured.kind, 'disabled');
+  assert.equal(configLookupCount, 0);
+
+  const handler = createResearchBrokerHttpHandler({
+    env: {
+      BROKER_HTTP_ENABLED: 'false',
+      BROKER_PROVIDER_MODE: 'openai',
+      BROKER_OPENAI_LIVE_TEST_ENABLED: 'true',
+    },
+    dependenciesFactory: () => ({ kind: 'disabled' }),
+  });
+  const response = createHttpResponse();
+  await handler(createHttpRequest({ data: request() }), response.responder);
+
+  assert.equal(response.statusCode, 503);
+  assert.deepEqual(response.json, { ok: false, error: 'research_broker_disabled' });
+});
+
+test('live shell stays disabled until explicit gates and owner allowlist are present', async () => {
+  assert.equal(isResearchBrokerLiveEnabled({}), false);
+  assert.equal(
+    isResearchBrokerLiveEnabled({
+      BROKER_HTTP_ENABLED: 'true',
+      BROKER_PROVIDER_MODE: 'openai',
+      BROKER_OPENAI_LIVE_TEST_ENABLED: 'true',
+    }),
+    true,
+  );
+
+  const deps = createFakeBrokerDependencies({
+    provider: createOpenAiProvider({
+      apiKey: 'test-openai-key',
+      allowedDomains: ['museum.example'],
+      fetchImpl: (async () => ({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          output: [
+            {
+              type: 'web_search_call',
+              action: { sources: [{ url: 'https://museum.example/works/123' }] },
+            },
+            {
+              type: 'message',
+              content: [
+                {
+                  type: 'output_text',
+                  text: JSON.stringify({
+                    sources: [
+                      {
+                        source_id: 'src_1',
+                        source_name: 'Museum Example',
+                        source_type: 'museum',
+                        source_url: 'https://museum.example/works/123',
+                        title: 'Collection record',
+                        accessed_at: '2026-07-08T16:00:00.000Z',
+                        citation_excerpt: 'Collection record excerpt.',
+                        matched_fields: ['title'],
+                      },
+                    ],
+                    candidate_attributions: [],
+                    comparable_value_signals: [],
+                    warnings: [],
+                  }),
+                  annotations: [
+                    {
+                      type: 'url_citation',
+                      url_citation: { url: 'https://museum.example/works/123' },
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        }),
+      }) as Response) as typeof fetch,
+    }),
+  });
+
+  const handler = createResearchBrokerHttpHandler({
+    env: {
+      BROKER_HTTP_ENABLED: 'true',
+      BROKER_PROVIDER_MODE: 'openai',
+      BROKER_OPENAI_LIVE_TEST_ENABLED: 'true',
+      BROKER_OWNER_UID_ALLOWLIST: 'owner-uid',
+    },
+    dependenciesFactory: () => ({
+      kind: 'ready',
+      dependencies: deps,
+      ownerUidAllowlist: new Set(['owner-uid']),
+    }),
+  });
+
+  const deniedResponse = createHttpResponse();
+  await handler(
+    createHttpRequest({ data: request() }, { 'x-archivale-broker-auth-uid': 'non-owner' }),
+    deniedResponse.responder,
+  );
+  assert.equal(deniedResponse.statusCode, 403);
+  assert.deepEqual(deniedResponse.json, { ok: false, error: 'forbidden' });
+  assert.equal(deps.provider.callCount, 0);
+
+  const allowedResponse = createHttpResponse();
+  await handler(
+    createHttpRequest({
+      data: request({
+        image: {
+          mime_type: 'image/jpeg',
+          byte_size: 120_000,
+          long_edge_px: 1400,
+          content_base64: 'ZmFrZS1pbWFnZS1ieXRlcw==',
+        },
+      }),
+    }),
+    allowedResponse.responder,
+  );
+
+  assert.equal(allowedResponse.statusCode, 200);
+  assert.equal(allowedResponse.json.status, 'completed');
+  assert.equal(allowedResponse.json.provider, 'openai');
+  assert.equal(deps.provider.callCount, 1);
+});
+
+test('broker scaffold keeps env lookup server-only and never references local secret files', async () => {
   const brokerSource = await readFile(new URL('../src/broker.js', import.meta.url), 'utf8');
   const fakeProviderSource = await readFile(new URL('../src/fake_provider.js', import.meta.url), 'utf8');
   const adapterSource = await readFile(new URL('../src/adapter.js', import.meta.url), 'utf8');
+  const openAiProviderSource = await readFile(new URL('../src/openai_provider.js', import.meta.url), 'utf8');
+  const liveBrokerSource = await readFile(new URL('../src/live_broker.js', import.meta.url), 'utf8');
   assert.equal(brokerSource.includes('process.env'), false);
   assert.equal(fakeProviderSource.includes('process.env'), false);
   assert.equal(adapterSource.includes('process.env'), false);
+  assert.equal(openAiProviderSource.includes('OPENAI_API_KEY'), true);
+  assert.equal(openAiProviderSource.includes('.env.local'), false);
+  assert.equal(liveBrokerSource.includes('.env.local'), false);
+  assert.equal(liveBrokerSource.includes('google-services.json'), false);
   const deps = createFakeBrokerDependencies();
   const response = await handleResearchRequest(request(), baseContext, deps);
 

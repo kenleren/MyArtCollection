@@ -1,11 +1,10 @@
-# AI Fake Broker Runbook
+# AI Broker Runbook
 
-Status: fake-provider-only local contract for issues #116, #117, #118, and
-#119.
+Status: local fake-provider foundation plus disabled-by-default OpenAI live
+shell for issues #116, #117, #118, #119, #120, #133, and #154.
 
 This repository now has an isolated broker scaffold in `backend/broker`. It is
-not wired into Firebase Hosting, Firebase Functions, Secret Manager, or any
-provider SDK.
+still not approved for deploy or live provider traffic by default.
 
 ## Current behavior
 
@@ -16,9 +15,17 @@ provider SDK.
   envelope:
   - success: `{ ok: true, status: 200, body: BrokerResponse }`,
   - error: `{ ok: false, status, body: { request_id?, status, provider, error } }`.
-- The only provider implementation is `FakeResearchProvider`.
-- There is no OpenAI SDK, no live provider host, no provider key lookup, and no
-  deploy target.
+- `handleBrokerAdapterRequest` is now the generic server-side adapter used by
+  both fake and live-shell wiring.
+- `FakeResearchProvider` remains the default provider in local tests.
+- `OpenAiResearchProvider` is now available behind the same provider interface.
+  It uses a dependency-injected `fetch`, builds a Responses API request with
+  `store=false`, hosted `web_search`, `tool_choice="required"`, and strict
+  `text.format` JSON Schema output, then validates returned source URLs against
+  the broker allowlist and OpenAI web-search citations before the broker
+  accepts the result.
+- A Firebase Functions 2nd gen shell now exists in `backend/broker/src/firebase.ts`
+  with a pure HTTP handler in `backend/broker/src/live_broker.ts`.
 - The auth input is a strict local DTO stub. It requires verified App Check and
   Auth booleans, a non-empty anonymous-auth placeholder UID, a non-empty app ID,
   matching placeholder project IDs, and a pre-derived
@@ -32,6 +39,17 @@ provider SDK.
   finalize placeholder.
 - Missing auth or missing quota subject rejects at the auth stage before
   consent, payload validation, ledger, or provider work.
+- The live shell returns `503 research_broker_disabled` before any provider
+  credential lookup or provider call unless all explicit live-test gates are
+  present:
+  - `BROKER_HTTP_ENABLED=true`
+  - `BROKER_PROVIDER_MODE=openai`
+  - `BROKER_OPENAI_LIVE_TEST_ENABLED=true`
+  - `BROKER_OWNER_UID_ALLOWLIST=<comma-separated owner UIDs>`
+  - `OPENAI_ALLOWED_DOMAINS=<comma-separated professional-source domains>`
+  - `OPENAI_API_KEY` or `ARCHIVALE_OPENAI_API_KEY`
+- The live shell still fails closed even when enabled unless the request UID is
+  in `BROKER_OWNER_UID_ALLOWLIST`.
 - The adapter performs the first local identity check before entering the broker
   core. Missing App Check/Auth placeholders or missing quota subject therefore
   produce fixed auth envelopes without broker trace entries, ledger records, or
@@ -39,11 +57,14 @@ provider SDK.
 - Adapter error statuses are deterministic and intentionally coarse:
   unauthorized/missing quota subject -> `401`, identity/consent/entitlement
   failures -> `403`, malformed payloads -> `400`, idempotency conflict -> `409`,
-  quota cap failures -> `429`, breaker open -> `503`, and fake provider/output
+  quota cap failures -> `429`, breaker open -> `503`, and provider/output
   failures -> `502`.
 - Adapter error bodies use fixed messages and stable codes. They must not echo
   raw request payload, raw notes, provider key/env names, local env file names,
   stack traces, or the broker's server-only order trace.
+- The live OpenAI path reads provider credentials only from runtime env/secret
+  injection names. It does not read `.env.local`, mobile Firebase config files,
+  service-account files, or any repo-local secret file.
 - Idempotency is in-memory and local-test only. For the same `quota_subject`
   and `request_id`, the same `payload_hash` replays the stored response,
   including when a matching request is already in flight. Same quota subject and
@@ -69,6 +90,9 @@ provider SDK.
   cap before provider work completes. `refunded` and `rejected-before-reserve`
   records do not count as exposed. These are test contracts only, not durable
   quota or billing controls.
+- The current live shell keeps the placeholder auth/entitlement/credit inputs in
+  HTTP headers for owner-test scaffolding only. This is deliberately not the
+  final production trust boundary.
 - The mobile bypass guard scans root Flutter dependency manifests plus `lib/`,
   `android/`, and `ios/` source, dependency, and native config manifests for
   direct provider SDKs, provider hosts, provider key/env names, Firebase AI
@@ -86,11 +110,18 @@ provider SDK.
 
 ## Local checks
 
-Run the fake broker tests:
+Run the broker tests:
 
 ```sh
 cd backend/broker
 npm test
+```
+
+Run dependency vulnerability checks from the broker package:
+
+```sh
+cd backend/broker
+npm audit
 ```
 
 Run the mobile bypass guard directly:
@@ -115,28 +146,33 @@ These checks require no provider secret values. They must not read local env
 files, service-account files, signing files, keystores, or Firebase app
 configuration files.
 
-For issue #118, the broker tests cover the adapter success envelope, auth and
-quota-subject pre-broker rejection, unsupported MIME, stale consent, bad
-payload hash, idempotency conflict, cap exceeded, no provider/ledger reserve for
-pre-provider rejects, and response redaction for raw notes, provider env names,
-and trace internals.
+Broker tests now cover:
+
+- adapter success and failure envelopes,
+- auth and quota-subject pre-broker rejection,
+- consent/version/hash gates,
+- idempotency and one-in-flight behavior,
+- no provider/ledger reserve for pre-provider rejects,
+- output-validation spend semantics,
+- OpenAI Responses request shape with `store=false`, hosted `web_search`,
+  strict schema output, and no banned local fields,
+- citation/allowlist rejection for bad provider output,
+- disabled live-shell gate behavior before OpenAI config lookup,
+- and response redaction for raw notes, provider env names, and trace internals.
 
 ## Remaining live gates
 
-The fake broker does not approve live provider usage. Before any real provider
-path exists, the project still needs:
+This broker shell is still not deploy or live-test approval. Before any real
+owner live test or rollout, the project still needs:
 
 - accepted #52 ZDR approval for the exact OpenAI org/project used by rollout,
-- deployment-manager approval for Blaze/backend deployment and rollback,
+- deployment-manager approval for Blaze/backend deployment and rollback in #155,
 - Secret Manager or equivalent server-only secret custody,
 - real Auth/App Check verification against the broker Firebase project,
-- real Firebase Functions or HTTPS hosting for the broker adapter,
 - server-derived quota subjects using a one-way key, not client input,
 - durable entitlement, quota, credit, one-in-flight, and spend accounting,
 - production-safe error mapping and content-free operational logging on the
   deployed boundary,
-- provider adapter review with `store=false`, hosted web search, source
-  allowlists, and structured output validation,
 - log redaction tests proving prompts, images, notes, source URLs, raw tokens,
   UIDs, filenames, and secrets cannot enter logs or telemetry,
 - repository branch protection or a ruleset that requires the mobile broker
