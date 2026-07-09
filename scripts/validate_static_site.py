@@ -30,6 +30,8 @@ EXPECTED_SCHEMA_ROUTES = {
     "/blog/collector-records-that-age-well/",
     "/blog/how-to-document-artwork-for-insurance-conversations/",
     "/blog/how-to-organize-provenance-records-private-art-collection/",
+    "/blog/how-to-prepare-artwork-records-before-a-move/",
+    "/blog/how-to-record-artwork-labels-and-inscriptions/",
 }
 
 SUPPORT_COPY_BANNED_PATTERNS = [
