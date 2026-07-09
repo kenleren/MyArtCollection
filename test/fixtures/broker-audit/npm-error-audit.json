@@ -1,0 +1,6 @@
+{
+  "error": {
+    "code": "EAUDIT",
+    "summary": "fixture registry failure"
+  }
+}

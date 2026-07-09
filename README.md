@@ -101,6 +101,7 @@ Primary job:
 - [Mobile Information Architecture](docs/MOBILE_IA.md)
 - [Artwork Record Schema](docs/ARTWORK_RECORD_SCHEMA.md)
 - [Secret Hygiene](docs/SECRET_HYGIENE.md)
+- [Release Readiness CI](docs/RELEASE_READINESS_CI.md)
 - [Firebase Telemetry Privacy Policy](docs/FIREBASE_TELEMETRY_POLICY.md)
 - [MVP Task Breakdown](docs/MVP_TASKS.md)
 - [ADR 0001: Local-First Flutter With Google Drive Backup](docs/adr/0001-local-first-flutter-google-drive.md)
