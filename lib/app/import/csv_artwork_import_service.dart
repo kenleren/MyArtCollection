@@ -134,13 +134,13 @@ class CsvArtworkImportService {
     if (bytes.isEmpty) {
       throw const CsvArtworkImportException(
         CsvArtworkImportFailure.emptyFile,
-        'CSV import file is empty.',
+        'This spreadsheet is empty.',
       );
     }
     if (bytes.length > maxFileBytes) {
       throw const CsvArtworkImportException(
         CsvArtworkImportFailure.fileTooLarge,
-        'CSV import file exceeds the 2 MB limit.',
+        'This spreadsheet is larger than the 2 MB import limit.',
       );
     }
 
@@ -160,7 +160,7 @@ class CsvArtworkImportService {
     if (utf8.encode(csv).length > maxFileBytes) {
       throw const CsvArtworkImportException(
         CsvArtworkImportFailure.fileTooLarge,
-        'CSV import file exceeds the 2 MB limit.',
+        'This spreadsheet is larger than the 2 MB import limit.',
       );
     }
 
@@ -168,7 +168,7 @@ class CsvArtworkImportService {
     if (rows.isEmpty || rows.every((row) => row.every(_isBlank))) {
       throw const CsvArtworkImportException(
         CsvArtworkImportFailure.emptyFile,
-        'CSV import file is empty.',
+        'This spreadsheet is empty.',
       );
     }
 
@@ -176,7 +176,7 @@ class CsvArtworkImportService {
     if (headers.every(_isBlank)) {
       throw const CsvArtworkImportException(
         CsvArtworkImportFailure.emptyFile,
-        'CSV import file has no headers.',
+        'The first row needs column headings.',
       );
     }
 
@@ -186,7 +186,7 @@ class CsvArtworkImportService {
     if (dataRows.length > maxRows) {
       throw const CsvArtworkImportException(
         CsvArtworkImportFailure.rowLimitExceeded,
-        'CSV import has more than 500 artwork rows.',
+        'This import can review up to 500 artworks at a time.',
       );
     }
 
@@ -284,7 +284,7 @@ class CsvArtworkImportService {
     }
     if (values.length > headers.length) {
       warnings.add(
-        'Row has more cells than headers; extra cells were preserved in notes.',
+        'This row has more cells than headings, so the extra details were kept in notes.',
       );
       for (var index = headers.length; index < values.length; index += 1) {
         final header = 'Unmapped column ${index + 1}';
@@ -307,7 +307,7 @@ class CsvArtworkImportService {
 
     if (!_hasIdentifyingText(fieldText)) {
       errors.add(
-        'Row needs at least a title, artist, notes, reference, or other identifying text.',
+        'Add at least a title, artist, note, reference, or other identifying detail for this row.',
       );
     }
 
@@ -391,7 +391,7 @@ class CsvArtworkImportService {
     } on FormatException catch (error) {
       throw CsvArtworkImportException(
         CsvArtworkImportFailure.malformedCsv,
-        'CSV import must be valid UTF-8: ${error.message}',
+        'This spreadsheet could not be read. Save it again as a standard CSV and try again: ${error.message}',
       );
     }
   }
@@ -470,7 +470,7 @@ class CsvArtworkImportService {
   ) {
     final year = fieldText[ArtworkFieldKeys.year];
     if (!_isBlank(year) && !_isUnambiguousYear(year!)) {
-      warnings.add('Year is ambiguous and was preserved as imported.');
+      warnings.add('Year looks uncertain, so it was kept exactly as imported.');
     }
 
     final purchasePrice = fieldText[ArtworkFieldKeys.purchasePrice];
@@ -478,7 +478,7 @@ class CsvArtworkImportService {
         _moneyAmountFor(ArtworkFieldKeys.purchasePrice, purchasePrice!) ==
             null) {
       warnings.add(
-        'Purchase price is ambiguous and was preserved as imported.',
+        'Purchase price needs a closer look, so it was kept exactly as imported.',
       );
     }
 
@@ -487,18 +487,22 @@ class CsvArtworkImportService {
         _moneyAmountFor(ArtworkFieldKeys.insuranceValue, insuranceValue!) ==
             null) {
       warnings.add(
-        'Insurance value is ambiguous and was preserved as imported.',
+        'Insurance value needs a closer look, so it was kept exactly as imported.',
       );
     }
 
     final purchaseDate = fieldText[ArtworkFieldKeys.purchaseDate];
     if (!_isBlank(purchaseDate) && !_isUnambiguousIsoDate(purchaseDate!)) {
-      warnings.add('Purchase date is ambiguous and was preserved as imported.');
+      warnings.add(
+        'Purchase date looks uncertain, so it was kept exactly as imported.',
+      );
     }
 
     final dimensions = fieldText[ArtworkFieldKeys.dimensions];
     if (!_isBlank(dimensions) && !_isUnambiguousDimensions(dimensions!)) {
-      warnings.add('Dimensions are ambiguous and were preserved as imported.');
+      warnings.add(
+        'Dimensions need a closer look, so they were kept exactly as imported.',
+      );
     }
   }
 
@@ -709,13 +713,13 @@ class _DuplicateKey {
         other.artist.isNotEmpty &&
         artist == other.artist &&
         title == other.title) {
-      return 'Normalized title and artist match.';
+      return 'Title and artist closely match.';
     }
     if ((artist.isEmpty || other.artist.isEmpty) &&
         title == other.title &&
         ((year.isNotEmpty && year == other.year) ||
             (dimensions.isNotEmpty && dimensions == other.dimensions))) {
-      return 'Artist is blank and normalized title plus year or dimensions match.';
+      return 'Title plus year or dimensions closely match.';
     }
     return null;
   }
@@ -779,7 +783,7 @@ class _CsvParser {
         }
         throw const CsvArtworkImportException(
           CsvArtworkImportFailure.malformedCsv,
-          'CSV import has an unexpected quote.',
+          'A quoted field is not formatted correctly.',
         );
       }
 
@@ -789,7 +793,7 @@ class _CsvParser {
         }
         throw const CsvArtworkImportException(
           CsvArtworkImportFailure.malformedCsv,
-          'CSV import has text after a closing quote.',
+          'A quoted field has extra text after the closing quote.',
         );
       }
 
@@ -810,7 +814,7 @@ class _CsvParser {
     if (inQuotes) {
       throw const CsvArtworkImportException(
         CsvArtworkImportFailure.malformedCsv,
-        'CSV import has an unterminated quoted field.',
+        'A quoted field is missing a closing quote.',
       );
     }
 
