@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../../l10n/app_localizations.dart';
+import '../ai/on_device_ai_draft_service.dart';
 import '../app_dependencies.dart';
 import '../app_routes.dart';
 import '../billing/entitlement_plan.dart';
@@ -537,9 +538,11 @@ class _CaptureImportScreenState extends State<CaptureImportScreen> {
   Future<_CreationGate>? _creationGate;
   ArtworkIntakeResult? _result;
   AiDraftJob? _aiDraftJob;
+  OnDeviceAiCapability? _aiCapability;
   ArtworkIntakeException? _failure;
   bool _isBusy = false;
   bool _isAiDraftBusy = false;
+  bool _isAiDownloadBusy = false;
 
   bool get _isImport => widget.mode == 'import';
 
@@ -607,8 +610,17 @@ class _CaptureImportScreenState extends State<CaptureImportScreen> {
             isAiDraftBusy: _isAiDraftBusy,
             result: _result,
             aiDraftJob: _aiDraftJob,
+            aiCapability: _aiCapability,
             failure: _failure,
             attachmentStore: AppDependencyScope.of(context).attachmentStore,
+            isAiDownloadBusy: _isAiDownloadBusy,
+            onDownloadAiModel: _isAiDownloadBusy
+                ? null
+                : _downloadOnDeviceAiModel,
+            onCheckAiAvailability: _isAiDownloadBusy
+                ? null
+                : _checkOnDeviceAiAvailability,
+            onRetryAiDraft: _isAiDraftBusy ? null : _retryPrivateAiDraft,
           ),
           const SizedBox(height: 12),
           if (_result == null) ...[
@@ -710,6 +722,8 @@ class _CaptureImportScreenState extends State<CaptureImportScreen> {
       setState(() {
         _result = result;
         _aiDraftJob = null;
+        _aiCapability = null;
+        _isAiDownloadBusy = false;
         _failure = null;
       });
       await _runPrivateAiDraft(result);
@@ -735,14 +749,96 @@ class _CaptureImportScreenState extends State<CaptureImportScreen> {
       record: result.record,
       primaryImage: result.primaryImage,
     );
+    final capability = await _safeCheckOnDeviceAiAvailability(service);
 
     if (!mounted) {
       return;
     }
     setState(() {
       _aiDraftJob = draftJob;
+      _aiCapability = capability;
       _isAiDraftBusy = false;
     });
+  }
+
+  Future<void> _downloadOnDeviceAiModel() async {
+    final result = _result;
+    if (result == null) {
+      return;
+    }
+
+    final service = AppDependencyScope.of(
+      context,
+    ).createOnDeviceAiDraftService();
+    setState(() => _isAiDownloadBusy = true);
+    final capability = await _safeDownloadOnDeviceAiModel(service);
+
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _aiCapability = capability;
+      _isAiDownloadBusy = false;
+    });
+    if (capability?.canRunDraft ?? false) {
+      await _runPrivateAiDraft(result);
+    }
+  }
+
+  Future<void> _checkOnDeviceAiAvailability() async {
+    final result = _result;
+    if (result == null) {
+      return;
+    }
+
+    final service = AppDependencyScope.of(
+      context,
+    ).createOnDeviceAiDraftService();
+    setState(() => _isAiDownloadBusy = true);
+    final capability = await _safeCheckOnDeviceAiAvailability(service);
+
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _aiCapability = capability;
+      _isAiDownloadBusy = false;
+    });
+    if (capability?.canRunDraft ?? false) {
+      await _runPrivateAiDraft(result);
+    }
+  }
+
+  Future<void> _retryPrivateAiDraft() async {
+    final result = _result;
+    if (result == null) {
+      return;
+    }
+    await _runPrivateAiDraft(result);
+  }
+
+  Future<OnDeviceAiCapability?> _safeCheckOnDeviceAiAvailability(
+    OnDeviceAiDraftService service,
+  ) async {
+    try {
+      return await service.checkAvailability();
+    } on Exception {
+      return null;
+    }
+  }
+
+  Future<OnDeviceAiCapability?> _safeDownloadOnDeviceAiModel(
+    OnDeviceAiDraftService service,
+  ) async {
+    try {
+      return await service.downloadModel();
+    } on Exception {
+      return const OnDeviceAiCapability(
+        availability: OnDeviceAiAvailability.downloadFailed,
+        message:
+            'On-device AI download could not finish yet. Try again after checking AICore.',
+      );
+    }
   }
 }
 
@@ -2021,8 +2117,13 @@ class _IntakeStatePanel extends StatelessWidget {
     required this.isAiDraftBusy,
     required this.result,
     required this.aiDraftJob,
+    required this.aiCapability,
     required this.failure,
     required this.attachmentStore,
+    required this.isAiDownloadBusy,
+    required this.onDownloadAiModel,
+    required this.onCheckAiAvailability,
+    required this.onRetryAiDraft,
   });
 
   final bool isImport;
@@ -2030,8 +2131,13 @@ class _IntakeStatePanel extends StatelessWidget {
   final bool isAiDraftBusy;
   final ArtworkIntakeResult? result;
   final AiDraftJob? aiDraftJob;
+  final OnDeviceAiCapability? aiCapability;
   final ArtworkIntakeException? failure;
   final LocalAttachmentStore attachmentStore;
+  final bool isAiDownloadBusy;
+  final VoidCallback? onDownloadAiModel;
+  final VoidCallback? onCheckAiAvailability;
+  final VoidCallback? onRetryAiDraft;
 
   @override
   Widget build(BuildContext context) {
@@ -2067,7 +2173,15 @@ class _IntakeStatePanel extends StatelessWidget {
             file: attachmentStore.fileFor(result.primaryImage),
           ),
           const SizedBox(height: 12),
-          _AiDraftStatusPanel(isBusy: isAiDraftBusy, draftJob: aiDraftJob),
+          _AiDraftStatusPanel(
+            isBusy: isAiDraftBusy,
+            draftJob: aiDraftJob,
+            capability: aiCapability,
+            isActionBusy: isAiDownloadBusy,
+            onDownload: onDownloadAiModel,
+            onCheckAgain: onCheckAiAvailability,
+            onRetryDraft: onRetryAiDraft,
+          ),
         ],
       );
     }
@@ -2098,10 +2212,23 @@ class _IntakeStatePanel extends StatelessWidget {
 }
 
 class _AiDraftStatusPanel extends StatelessWidget {
-  const _AiDraftStatusPanel({required this.isBusy, required this.draftJob});
+  const _AiDraftStatusPanel({
+    required this.isBusy,
+    required this.draftJob,
+    this.capability,
+    this.isActionBusy = false,
+    this.onDownload,
+    this.onCheckAgain,
+    this.onRetryDraft,
+  });
 
   final bool isBusy;
   final AiDraftJob? draftJob;
+  final OnDeviceAiCapability? capability;
+  final bool isActionBusy;
+  final VoidCallback? onDownload;
+  final VoidCallback? onCheckAgain;
+  final VoidCallback? onRetryDraft;
 
   @override
   Widget build(BuildContext context) {
@@ -2130,16 +2257,17 @@ class _AiDraftStatusPanel extends StatelessWidget {
         body: _completedDraftBody(draftJob),
       ),
       AiDraftJobStatus.unavailable => _StatusPanel(
-        icon: Icons.offline_bolt_outlined,
-        title: 'On-device AI unavailable',
-        body:
-            '${draftJob.errorMessage ?? 'This device or build cannot run a private AI draft yet.'} No photo was sent online.',
+        icon: _unavailableIcon(capability),
+        title: _unavailableTitle(capability),
+        body: _unavailableBody(draftJob, capability),
+        footer: _buildActionFooter(),
       ),
       AiDraftJobStatus.failed => _StatusPanel(
         icon: Icons.error_outline,
         title: 'Private AI draft failed',
         body:
             '${draftJob.errorMessage ?? 'The draft could not be created.'} You can continue manually.',
+        footer: _buildActionFooter(),
       ),
       AiDraftJobStatus.pending || AiDraftJobStatus.running => _StatusPanel(
         icon: Icons.hourglass_top,
@@ -2158,6 +2286,81 @@ class _AiDraftStatusPanel extends StatelessWidget {
       'AI-suggested only. Confirm before using in a record.',
     ];
     return parts.join(' ');
+  }
+
+  IconData _unavailableIcon(OnDeviceAiCapability? capability) {
+    return switch (capability?.availability) {
+      OnDeviceAiAvailability.downloadable => Icons.download_outlined,
+      OnDeviceAiAvailability.downloading => Icons.downloading_outlined,
+      OnDeviceAiAvailability.downloadFailed => Icons.error_outline,
+      _ => Icons.offline_bolt_outlined,
+    };
+  }
+
+  String _unavailableTitle(OnDeviceAiCapability? capability) {
+    return switch (capability?.availability) {
+      OnDeviceAiAvailability.downloadable => 'On-device AI download ready',
+      OnDeviceAiAvailability.downloading => 'On-device AI downloading',
+      OnDeviceAiAvailability.downloadFailed => 'On-device AI download failed',
+      _ => 'On-device AI unavailable',
+    };
+  }
+
+  String _unavailableBody(
+    AiDraftJob draftJob,
+    OnDeviceAiCapability? capability,
+  ) {
+    final message =
+        capability?.message ??
+        draftJob.errorMessage ??
+        'This device or build cannot run a private AI draft yet.';
+    return '$message No photo was sent online.';
+  }
+
+  Widget? _buildActionFooter() {
+    final action = _resolveAction();
+    if (action == null) {
+      return null;
+    }
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 12),
+      child: _ActionButton(
+        icon: action.$1,
+        label: action.$2,
+        onPressed: isActionBusy ? null : action.$3,
+      ),
+    );
+  }
+
+  (IconData, String, VoidCallback?)? _resolveAction() {
+    final capability = this.capability;
+    if (capability == null) {
+      return null;
+    }
+
+    return switch (capability.availability) {
+      OnDeviceAiAvailability.downloadable => (
+        Icons.download_outlined,
+        'Download on-device AI',
+        onDownload,
+      ),
+      OnDeviceAiAvailability.downloading => (
+        Icons.refresh_outlined,
+        'Check again',
+        onCheckAgain,
+      ),
+      OnDeviceAiAvailability.downloadFailed => (
+        Icons.refresh_outlined,
+        'Retry download',
+        onDownload,
+      ),
+      OnDeviceAiAvailability.available
+          when draftJob != null &&
+              draftJob!.status != AiDraftJobStatus.completed =>
+        (Icons.auto_awesome_outlined, 'Retry local draft', onRetryDraft),
+      _ => null,
+    };
   }
 }
 
@@ -4096,11 +4299,13 @@ class _StatusPanel extends StatelessWidget {
     required this.icon,
     required this.title,
     required this.body,
+    this.footer,
   });
 
   final IconData icon;
   final String title;
   final String body;
+  final Widget? footer;
 
   @override
   Widget build(BuildContext context) {
@@ -4117,6 +4322,7 @@ class _StatusPanel extends StatelessWidget {
                 Text(title, style: Theme.of(context).textTheme.titleSmall),
                 const SizedBox(height: 4),
                 Text(body),
+                ...?(footer == null ? null : <Widget>[footer!]),
               ],
             ),
           ),

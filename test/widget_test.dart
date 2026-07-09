@@ -1547,6 +1547,167 @@ void main() {
     expect(find.text('Attach document'), findsNothing);
   });
 
+  testWidgets('downloadable on-device AI lets the user download and retry', (
+    WidgetTester tester,
+  ) async {
+    final provider = _DownloadFlowAiDraftProvider();
+    final testDependencies = await tester.runAsync(
+      () async =>
+          _LiveDependencyFixture.create(onDeviceAiDraftProvider: provider),
+    );
+    final fixture = testDependencies!;
+    addTearDown(() async {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.runAsync(fixture.dispose);
+    });
+
+    final sourceImage = await tester.runAsync(
+      () => fixture.writePngSource('picker-downloadable-primary.png'),
+    );
+
+    await tester.pumpWidget(
+      ArchivaleApp(
+        initialRoute: AppRoutes.import,
+        dependencies: fixture.dependenciesWithPicker(
+          _SingleImagePicker(sourceImage!),
+        ),
+      ),
+    );
+    await pumpReady(tester);
+
+    await tester.runAsync(() async {
+      final button = tester.widget<FilledButton>(
+        find.widgetWithText(FilledButton, 'Choose from system picker'),
+      );
+      button.onPressed!();
+      await Future<void>.delayed(const Duration(seconds: 1));
+    });
+    await pumpLiveData(tester);
+
+    expect(find.text('On-device AI download ready'), findsOneWidget);
+    expect(find.text('Download on-device AI'), findsOneWidget);
+    expect(find.textContaining('No photo was sent online'), findsOneWidget);
+
+    await pressAsyncButton(
+      tester,
+      find.widgetWithText(FilledButton, 'Download on-device AI'),
+    );
+    await pumpLiveData(tester);
+
+    expect(find.text('On-device AI downloading'), findsOneWidget);
+    expect(find.text('Check again'), findsOneWidget);
+
+    await pressAsyncButton(
+      tester,
+      find.widgetWithText(FilledButton, 'Check again'),
+    );
+    await pumpLiveData(tester);
+
+    expect(find.text('Private AI draft saved'), findsOneWidget);
+    expect(provider.createDraftCount, 1);
+  });
+
+  testWidgets('download failure copy stays sanitized and retryable', (
+    WidgetTester tester,
+  ) async {
+    final provider = _DownloadFailureAiDraftProvider();
+    final testDependencies = await tester.runAsync(
+      () async =>
+          _LiveDependencyFixture.create(onDeviceAiDraftProvider: provider),
+    );
+    final fixture = testDependencies!;
+    addTearDown(() async {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.runAsync(fixture.dispose);
+    });
+
+    final sourceImage = await tester.runAsync(
+      () => fixture.writePngSource('picker-download-failure-primary.png'),
+    );
+
+    await tester.pumpWidget(
+      ArchivaleApp(
+        initialRoute: AppRoutes.import,
+        dependencies: fixture.dependenciesWithPicker(
+          _SingleImagePicker(sourceImage!),
+        ),
+      ),
+    );
+    await pumpReady(tester);
+
+    await tester.runAsync(() async {
+      final button = tester.widget<FilledButton>(
+        find.widgetWithText(FilledButton, 'Choose from system picker'),
+      );
+      button.onPressed!();
+      await Future<void>.delayed(const Duration(seconds: 1));
+    });
+    await pumpLiveData(tester);
+
+    await pressAsyncButton(
+      tester,
+      find.widgetWithText(FilledButton, 'Download on-device AI'),
+    );
+    await pumpLiveData(tester);
+
+    expect(find.text('On-device AI download failed'), findsOneWidget);
+    expect(find.text('Retry download'), findsOneWidget);
+    expect(find.textContaining('Portrait of Ada'), findsNothing);
+    expect(find.textContaining('/data/user/0/'), findsNothing);
+  });
+
+  testWidgets('captures issue 136 on-device AI portrait visual states', (
+    WidgetTester tester,
+  ) async {
+    await _captureIssue136OnDeviceAiImportState(
+      tester,
+      provider: const _StaticCapabilityAiDraftProvider(
+        capability: OnDeviceAiCapability(
+          availability: OnDeviceAiAvailability.downloadable,
+          deviceModel: 'Pixel test device',
+          message: 'Gemini Nano support is downloadable but not ready yet.',
+        ),
+      ),
+      expectedTitle: 'On-device AI download ready',
+      fileName: 'issue-136-aicore-download/download-ready-mobile.png',
+    );
+
+    await _captureIssue136OnDeviceAiImportState(
+      tester,
+      provider: const _StaticCapabilityAiDraftProvider(
+        capability: OnDeviceAiCapability(
+          availability: OnDeviceAiAvailability.downloading,
+          deviceModel: 'Pixel test device',
+          message:
+              'Gemini Nano support is still downloading. Try again after it finishes.',
+        ),
+      ),
+      expectedTitle: 'On-device AI downloading',
+      fileName: 'issue-136-aicore-download/downloading-mobile.png',
+    );
+
+    await _captureIssue136OnDeviceAiImportState(
+      tester,
+      provider: const _StaticCapabilityAiDraftProvider(
+        capability: OnDeviceAiCapability(
+          availability: OnDeviceAiAvailability.downloadFailed,
+          deviceModel: 'Pixel test device',
+          message:
+              'On-device AI download could not finish yet. Try again after checking AICore.',
+        ),
+      ),
+      expectedTitle: 'On-device AI download failed',
+      fileName: 'issue-136-aicore-download/download-failed-mobile.png',
+    );
+
+    await _captureIssue136OnDeviceAiImportState(
+      tester,
+      provider: const _CompletedAiDraftProvider(),
+      expectedTitle: 'Private AI draft saved',
+      fileName: 'issue-136-aicore-download/private-ai-draft-saved-mobile.png',
+    );
+  });
+
   testWidgets('collection lists local record after repository reload', (
     WidgetTester tester,
   ) async {
@@ -3731,6 +3892,53 @@ Future<void> captureBoundaryToArtifacts(
   }
 }
 
+Future<void> _captureIssue136OnDeviceAiImportState(
+  WidgetTester tester, {
+  required OnDeviceAiDraftProvider provider,
+  required String expectedTitle,
+  required String fileName,
+}) async {
+  final fixture = await tester.runAsync(
+    () async =>
+        _LiveDependencyFixture.create(onDeviceAiDraftProvider: provider),
+  );
+  expect(fixture, isNotNull);
+  final liveFixture = fixture!;
+  addTearDown(() async => tester.runAsync(liveFixture.dispose));
+
+  final sourceImage = await tester.runAsync(
+    () => liveFixture.writePngSource(p.basename(fileName)),
+  );
+
+  await _configureMobileViewport(tester);
+
+  final boundaryKey = GlobalKey();
+  await tester.pumpWidget(
+    RepaintBoundary(
+      key: boundaryKey,
+      child: ArchivaleApp(
+        initialRoute: AppRoutes.import,
+        dependencies: liveFixture.dependenciesWithPicker(
+          _SingleImagePicker(sourceImage!),
+        ),
+      ),
+    ),
+  );
+  await pumpReady(tester);
+
+  await tester.runAsync(() async {
+    final button = tester.widget<FilledButton>(
+      find.widgetWithText(FilledButton, 'Choose from system picker'),
+    );
+    button.onPressed!();
+    await Future<void>.delayed(const Duration(seconds: 1));
+  });
+  await pumpLiveData(tester);
+  await waitForFinder(tester, find.text(expectedTitle));
+
+  await captureBoundaryToArtifacts(tester, boundaryKey, fileName);
+}
+
 class _NoLostImagePicker implements ArtworkImagePicker {
   @override
   Future<XFile?> pick(ArtworkImagePickMode mode) async => null;
@@ -3916,6 +4124,11 @@ class _CompletedAiDraftProvider implements OnDeviceAiDraftProvider {
   }
 
   @override
+  Future<OnDeviceAiCapability> downloadModel() async {
+    return checkAvailability();
+  }
+
+  @override
   Future<OnDeviceAiDraftResult> createDraft(
     OnDeviceAiDraftRequest request,
   ) async {
@@ -3925,6 +4138,137 @@ class _CompletedAiDraftProvider implements OnDeviceAiDraftProvider {
       mediumHint: 'Print or lithograph on paper',
       searchTerms: ['E. Test framed artwork'],
     );
+  }
+}
+
+class _StaticCapabilityAiDraftProvider implements OnDeviceAiDraftProvider {
+  const _StaticCapabilityAiDraftProvider({required this.capability});
+
+  final OnDeviceAiCapability capability;
+
+  @override
+  Future<OnDeviceAiCapability> checkAvailability() async => capability;
+
+  @override
+  Future<OnDeviceAiCapability> downloadModel() async => capability;
+
+  @override
+  Future<OnDeviceAiDraftResult> createDraft(
+    OnDeviceAiDraftRequest request,
+  ) async {
+    throw StateError(
+      'createDraft must not run when status is ${capability.availability}',
+    );
+  }
+}
+
+enum _DownloadFlowPhase { downloadable, downloading, available, failed }
+
+class _DownloadFlowAiDraftProvider implements OnDeviceAiDraftProvider {
+  _DownloadFlowAiDraftProvider();
+
+  _DownloadFlowPhase _phase = _DownloadFlowPhase.downloadable;
+  int createDraftCount = 0;
+
+  @override
+  Future<OnDeviceAiCapability> checkAvailability() async {
+    if (_phase == _DownloadFlowPhase.downloading) {
+      _phase = _DownloadFlowPhase.available;
+    }
+
+    return switch (_phase) {
+      _DownloadFlowPhase.downloadable => const OnDeviceAiCapability(
+        availability: OnDeviceAiAvailability.downloadable,
+        deviceModel: 'Pixel test device',
+        message: 'Gemini Nano support is downloadable but not ready yet.',
+      ),
+      _DownloadFlowPhase.downloading => const OnDeviceAiCapability(
+        availability: OnDeviceAiAvailability.downloading,
+        deviceModel: 'Pixel test device',
+        message:
+            'Gemini Nano support is still downloading. Try again after it finishes.',
+      ),
+      _DownloadFlowPhase.available => const OnDeviceAiCapability(
+        availability: OnDeviceAiAvailability.available,
+        deviceModel: 'Pixel test device',
+      ),
+      _DownloadFlowPhase.failed => const OnDeviceAiCapability(
+        availability: OnDeviceAiAvailability.downloadFailed,
+        deviceModel: 'Pixel test device',
+        message:
+            'On-device AI download could not finish yet. Try again after checking AICore.',
+      ),
+    };
+  }
+
+  @override
+  Future<OnDeviceAiCapability> downloadModel() async {
+    _phase = _DownloadFlowPhase.downloading;
+    return const OnDeviceAiCapability(
+      availability: OnDeviceAiAvailability.downloading,
+      deviceModel: 'Pixel test device',
+      message:
+          'Gemini Nano support is still downloading. Try again after it finishes.',
+    );
+  }
+
+  @override
+  Future<OnDeviceAiDraftResult> createDraft(
+    OnDeviceAiDraftRequest request,
+  ) async {
+    createDraftCount += 1;
+    expect(_phase, _DownloadFlowPhase.available);
+    return const OnDeviceAiDraftResult(
+      visualSummary: 'Visible lower-right signature on a framed artwork.',
+      signatureNotes: 'May read E. Test.',
+      mediumHint: 'Print or lithograph on paper',
+      searchTerms: ['E. Test framed artwork'],
+    );
+  }
+}
+
+class _DownloadFailureAiDraftProvider implements OnDeviceAiDraftProvider {
+  _DownloadFailureAiDraftProvider();
+
+  _DownloadFlowPhase _phase = _DownloadFlowPhase.downloadable;
+
+  @override
+  Future<OnDeviceAiCapability> checkAvailability() async {
+    return switch (_phase) {
+      _DownloadFlowPhase.downloadable => const OnDeviceAiCapability(
+        availability: OnDeviceAiAvailability.downloadable,
+        deviceModel: 'Pixel test device',
+        message: 'Gemini Nano support is downloadable but not ready yet.',
+      ),
+      _DownloadFlowPhase.failed => const OnDeviceAiCapability(
+        availability: OnDeviceAiAvailability.downloadFailed,
+        deviceModel: 'Pixel test device',
+        message:
+            'On-device AI download could not finish yet. Try again after checking AICore.',
+      ),
+      _ => const OnDeviceAiCapability(
+        availability: OnDeviceAiAvailability.unavailable,
+        deviceModel: 'Pixel test device',
+      ),
+    };
+  }
+
+  @override
+  Future<OnDeviceAiCapability> downloadModel() async {
+    _phase = _DownloadFlowPhase.failed;
+    return const OnDeviceAiCapability(
+      availability: OnDeviceAiAvailability.downloadFailed,
+      deviceModel: 'Pixel test device',
+      message:
+          'On-device AI download could not finish yet. Try again after checking AICore.',
+    );
+  }
+
+  @override
+  Future<OnDeviceAiDraftResult> createDraft(
+    OnDeviceAiDraftRequest request,
+  ) async {
+    throw StateError('createDraft must not run after a failed download');
   }
 }
 

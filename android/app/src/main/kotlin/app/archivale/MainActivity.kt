@@ -5,16 +5,20 @@ import android.os.Build
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.plugin.common.MethodChannel
+import com.google.mlkit.genai.common.DownloadStatus
 import com.google.mlkit.genai.common.FeatureStatus
 import com.google.mlkit.genai.prompt.Generation
 import com.google.mlkit.genai.prompt.GenerativeModel
 import com.google.mlkit.genai.prompt.ImagePart
 import com.google.mlkit.genai.prompt.TextPart
 import com.google.mlkit.genai.prompt.generateContentRequest
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
@@ -41,6 +45,19 @@ class MainActivity : FlutterActivity() {
                             result.success(nativeOnDeviceAiProvider().checkAvailability())
                         } catch (error: Exception) {
                             result.success(unavailableCapability("On-device AI status check failed."))
+                        }
+                    }
+                }
+                "downloadModel" -> {
+                    if (!BuildConfig.MY_ART_ON_DEVICE_AI_ENABLED) {
+                        result.success(disabledCapability())
+                        return@setMethodCallHandler
+                    }
+                    onDeviceAiScope.launch {
+                        try {
+                            result.success(nativeOnDeviceAiProvider().downloadModel())
+                        } catch (error: Exception) {
+                            result.success(downloadFailedCapability())
                         }
                     }
                 }
@@ -92,14 +109,18 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun nativeOnDeviceAiProvider(): MlKitPromptOnDeviceAiProvider {
-        return onDeviceAiProvider ?: MlKitPromptOnDeviceAiProvider().also {
+        return onDeviceAiProvider ?: MlKitPromptOnDeviceAiProvider(onDeviceAiScope).also {
             onDeviceAiProvider = it
         }
     }
 }
 
-private class MlKitPromptOnDeviceAiProvider {
+private class MlKitPromptOnDeviceAiProvider(
+    private val scope: CoroutineScope,
+) {
     private var generativeModel: GenerativeModel? = null
+    private var downloadJob: Job? = null
+    private var lastDownloadFailed = false
 
     suspend fun checkAvailability(): Map<String, Any?> {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
@@ -108,19 +129,35 @@ private class MlKitPromptOnDeviceAiProvider {
 
         val model = model()
         return when (model.checkStatus()) {
-            FeatureStatus.AVAILABLE -> capability(
-                availability = "available",
-                message = "On-device AI is available on this device.",
-                baseModelName = runCatching { model.getBaseModelName() }.getOrNull(),
+            FeatureStatus.AVAILABLE -> {
+                lastDownloadFailed = false
+                availableCapability(model)
+            }
+            FeatureStatus.DOWNLOADABLE -> if (lastDownloadFailed) {
+                downloadFailedCapability()
+            } else {
+                downloadableCapability()
+            }
+            FeatureStatus.DOWNLOADING -> downloadingCapability()
+            else -> unavailableCapability(
+                "Gemini Nano is not supported on this device or AICore is not ready.",
             )
-            FeatureStatus.DOWNLOADABLE -> capability(
-                availability = "downloadable",
-                message = "Gemini Nano support is downloadable but not ready yet.",
-            )
-            FeatureStatus.DOWNLOADING -> capability(
-                availability = "downloading",
-                message = "Gemini Nano support is still downloading. Try again after it finishes.",
-            )
+        }
+    }
+
+    suspend fun downloadModel(): Map<String, Any?> {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+            return unavailableCapability("On-device AI requires Android API level 26 or newer.")
+        }
+
+        val model = model()
+        return when (model.checkStatus()) {
+            FeatureStatus.AVAILABLE -> {
+                lastDownloadFailed = false
+                availableCapability(model)
+            }
+            FeatureStatus.DOWNLOADABLE -> beginDownload(model)
+            FeatureStatus.DOWNLOADING -> downloadingCapability()
             else -> unavailableCapability(
                 "Gemini Nano is not supported on this device or AICore is not ready.",
             )
@@ -154,6 +191,7 @@ private class MlKitPromptOnDeviceAiProvider {
     }
 
     fun close() {
+        downloadJob?.cancel()
         generativeModel?.close()
         generativeModel = null
     }
@@ -162,6 +200,47 @@ private class MlKitPromptOnDeviceAiProvider {
         return generativeModel ?: Generation.getClient().also {
             generativeModel = it
         }
+    }
+
+    private suspend fun beginDownload(model: GenerativeModel): Map<String, Any?> {
+        if (downloadJob?.isActive == true) {
+            return downloadingCapability()
+        }
+
+        lastDownloadFailed = false
+        val firstUpdate = CompletableDeferred<Map<String, Any?>>()
+        downloadJob = scope.launch {
+            try {
+                model.download().collect { status ->
+                    val capability = when (status) {
+                        is DownloadStatus.DownloadStarted -> downloadingCapability()
+                        is DownloadStatus.DownloadProgress -> downloadingCapability()
+                        is DownloadStatus.DownloadCompleted -> {
+                            lastDownloadFailed = false
+                            availableCapability(model)
+                        }
+                        is DownloadStatus.DownloadFailed -> {
+                            lastDownloadFailed = true
+                            downloadFailedCapability()
+                        }
+                    }
+                    if (!firstUpdate.isCompleted) {
+                        firstUpdate.complete(capability)
+                    }
+                }
+                if (!firstUpdate.isCompleted) {
+                    firstUpdate.complete(checkAvailability())
+                }
+            } catch (_: Exception) {
+                lastDownloadFailed = true
+                if (!firstUpdate.isCompleted) {
+                    firstUpdate.complete(downloadFailedCapability())
+                }
+            } finally {
+                downloadJob = null
+            }
+        }
+        return firstUpdate.await()
     }
 }
 
@@ -177,6 +256,31 @@ private fun unavailableCapability(message: String): Map<String, Any?> =
     capability(
         availability = "unavailable",
         message = message,
+    )
+
+private fun downloadableCapability(): Map<String, Any?> =
+    capability(
+        availability = "downloadable",
+        message = "Gemini Nano support is downloadable but not ready yet.",
+    )
+
+private fun downloadingCapability(): Map<String, Any?> =
+    capability(
+        availability = "downloading",
+        message = "Gemini Nano support is still downloading. Try again after it finishes.",
+    )
+
+private fun downloadFailedCapability(): Map<String, Any?> =
+    capability(
+        availability = "download_failed",
+        message = "On-device AI download could not finish yet. Try again after checking AICore.",
+    )
+
+private suspend fun availableCapability(model: GenerativeModel): Map<String, Any?> =
+    capability(
+        availability = "available",
+        message = "On-device AI is available on this device.",
+        baseModelName = runCatching { model.getBaseModelName() }.getOrNull(),
     )
 
 private fun capability(

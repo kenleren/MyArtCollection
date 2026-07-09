@@ -11,6 +11,7 @@ enum OnDeviceAiAvailability {
   available('available'),
   downloadable('downloadable'),
   downloading('downloading'),
+  downloadFailed('download_failed'),
   unavailable('unavailable');
 
   const OnDeviceAiAvailability(this.storageValue);
@@ -37,6 +38,10 @@ class OnDeviceAiCapability {
   final String? message;
 
   bool get canRunDraft => availability == OnDeviceAiAvailability.available;
+
+  bool get canStartDownload =>
+      availability == OnDeviceAiAvailability.downloadable ||
+      availability == OnDeviceAiAvailability.downloadFailed;
 }
 
 class OnDeviceAiDraftRequest {
@@ -68,6 +73,8 @@ class OnDeviceAiDraftResult {
 abstract interface class OnDeviceAiDraftProvider {
   Future<OnDeviceAiCapability> checkAvailability();
 
+  Future<OnDeviceAiCapability> downloadModel();
+
   Future<OnDeviceAiDraftResult> createDraft(OnDeviceAiDraftRequest request);
 }
 
@@ -80,6 +87,11 @@ class DisabledOnDeviceAiDraftProvider implements OnDeviceAiDraftProvider {
       availability: OnDeviceAiAvailability.disabled,
       message: 'On-device AI is disabled for this build.',
     );
+  }
+
+  @override
+  Future<OnDeviceAiCapability> downloadModel() async {
+    return checkAvailability();
   }
 
   @override
@@ -107,6 +119,18 @@ class MethodChannelOnDeviceAiDraftProvider implements OnDeviceAiDraftProvider {
 
     final response = await _channel.invokeMapMethod<String, Object?>(
       'checkAvailability',
+    );
+    return _capabilityFromMap(response);
+  }
+
+  @override
+  Future<OnDeviceAiCapability> downloadModel() async {
+    if (!isEnabled) {
+      return const DisabledOnDeviceAiDraftProvider().downloadModel();
+    }
+
+    final response = await _channel.invokeMapMethod<String, Object?>(
+      'downloadModel',
     );
     return _capabilityFromMap(response);
   }
@@ -176,6 +200,14 @@ class OnDeviceAiDraftService {
   final OnDeviceAiDraftProvider provider;
   final DateTime Function() _now;
   final String Function() _idFactory;
+
+  Future<OnDeviceAiCapability> checkAvailability() {
+    return provider.checkAvailability();
+  }
+
+  Future<OnDeviceAiCapability> downloadModel() {
+    return provider.downloadModel();
+  }
 
   Future<AiDraftJob> createDraftForPrimaryImage({
     required ArtworkRecord record,
@@ -263,6 +295,8 @@ class OnDeviceAiDraftService {
         'ON_DEVICE_AI_DOWNLOADABLE: On-device AI support is downloadable but not ready yet.',
       OnDeviceAiAvailability.downloading =>
         'ON_DEVICE_AI_DOWNLOADING: On-device AI support is still downloading. Try again after it finishes.',
+      OnDeviceAiAvailability.downloadFailed =>
+        'ON_DEVICE_AI_DOWNLOAD_FAILED: On-device AI download could not finish yet. Try again after checking AICore.',
       OnDeviceAiAvailability.unavailable =>
         'ON_DEVICE_AI_UNAVAILABLE: On-device AI is not available on this device or build.',
       OnDeviceAiAvailability.available =>
