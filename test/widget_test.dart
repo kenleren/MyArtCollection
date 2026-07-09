@@ -37,7 +37,7 @@ void main() {
     WidgetTester tester,
   ) async {
     await tester.pumpWidget(const ArchivaleApp(initialRoute: AppRoutes.splash));
-    await pumpReady(tester);
+    await pumpLiveData(tester);
 
     expect(find.text('Archivale'), findsOneWidget);
     expect(find.text('Private collection records'), findsOneWidget);
@@ -60,7 +60,7 @@ void main() {
     WidgetTester tester,
   ) async {
     await tester.pumpWidget(const ArchivaleApp(initialRoute: AppRoutes.splash));
-    await pumpReady(tester);
+    await pumpLiveData(tester);
 
     final materialApp = tester.widget<MaterialApp>(find.byType(MaterialApp));
     expect(materialApp.themeMode, ThemeMode.system);
@@ -72,7 +72,7 @@ void main() {
         themeMode: ThemeMode.dark,
       ),
     );
-    await pumpReady(tester);
+    await pumpLiveData(tester);
 
     final headingContext = tester.element(
       find.text('Private collection records'),
@@ -89,7 +89,7 @@ void main() {
     await tester.pumpWidget(
       const ArchivaleApp(initialRoute: AppRoutes.onboarding),
     );
-    await pumpReady(tester);
+    await pumpLiveData(tester);
 
     expect(find.text('Start your first artwork record'), findsOneWidget);
     expect(find.text('Photograph, draft, confirm, preserve.'), findsOneWidget);
@@ -112,7 +112,7 @@ void main() {
     await tester.pumpWidget(
       const ArchivaleApp(initialRoute: AppRoutes.onboardingPrivacy),
     );
-    await pumpReady(tester);
+    await pumpLiveData(tester);
 
     expect(find.text('Privacy and storage'), findsOneWidget);
   });
@@ -123,7 +123,7 @@ void main() {
     await tester.pumpWidget(
       const ArchivaleApp(initialRoute: AppRoutes.onboardingFirstAdd),
     );
-    await pumpReady(tester);
+    await pumpLiveData(tester);
 
     final materialApp = tester.widget<MaterialApp>(find.byType(MaterialApp));
     expect(materialApp.initialRoute, AppRoutes.onboardingFirstAdd);
@@ -519,24 +519,43 @@ void main() {
 
     await captureArtifactForApp(
       tester,
+      routeName: AppRoutes.collectionAdd,
+      fileName: 'issue-166-00-add-artwork-entry.png',
+      ensureVisibleFinder: find.widgetWithText(
+        FilledButton,
+        'Photograph artwork',
+      ),
+    );
+    await captureArtifactForApp(
+      tester,
+      routeName: AppRoutes.capture,
+      dependencies: fixture.dependencies,
+      fileName: 'issue-166-00a-capture-entry.png',
+      ensureVisibleFinder: find.text('Open camera'),
+    );
+    await captureArtifactForApp(
+      tester,
       routeName: AppRoutes.import,
       dependencies: fixture.dependencies,
-      fileName: 'issue-127-01-import-entry.png',
-      ensureVisibleFinder: find.text('Choose from system picker'),
+      fileName: 'issue-166-01-import-entry.png',
+      ensureVisibleFinder: find.widgetWithText(
+        FilledButton,
+        'Choose artwork photo',
+      ),
     );
     await captureImportActionVisualEvidence(
       tester,
       dependencies: fixture.dependencies,
-      actionLabel: 'Choose from system picker',
-      settledState: find.text('Import cancelled'),
-      fileName: 'issue-127-02-import-cancelled.png',
+      actionLabel: 'Choose artwork photo',
+      settledState: find.text('No photo selected'),
+      fileName: 'issue-166-02-import-cancelled.png',
     );
     await captureImportActionVisualEvidence(
       tester,
       dependencies: fixture.dependencies,
-      actionLabel: 'Recover interrupted import',
-      settledState: find.text('Import needs attention'),
-      fileName: 'issue-127-03-recover-unavailable.png',
+      actionLabel: 'Recover last import',
+      settledState: find.text('Could not start this record'),
+      fileName: 'issue-166-03-recover-unavailable.png',
     );
   });
 
@@ -546,7 +565,7 @@ void main() {
     await tester.pumpWidget(
       const ArchivaleApp(initialRoute: AppRoutes.collection),
     );
-    await pumpReady(tester);
+    await pumpLiveData(tester);
 
     expect(find.text('Collection'), findsWidgets);
     expect(find.text('Needs review'), findsOneWidget);
@@ -559,8 +578,8 @@ void main() {
     await tapVisible(tester, find.widgetWithText(FilledButton, 'Add artwork'));
 
     expect(find.text('Add artwork'), findsWidgets);
-    expect(find.text('Take photo'), findsOneWidget);
-    expect(find.text('Import photo'), findsOneWidget);
+    expect(find.text('Photograph artwork'), findsOneWidget);
+    expect(find.text('Choose artwork photo'), findsOneWidget);
     expect(find.byKey(const ValueKey('evidence-photo-guide')), findsOneWidget);
     expect(find.text('Evidence photo checklist'), findsOneWidget);
     expect(find.textContaining('signature or maker marks'), findsOneWidget);
@@ -612,12 +631,12 @@ void main() {
       find.textContaining('Free plan: 5 of 5 active records'),
       findsOneWidget,
     );
-    await tester.scrollUntilVisible(find.text('Free plan limit reached'), 300);
+    await tester.scrollUntilVisible(find.text('Free plan is at capacity'), 300);
     await tester.pump();
 
-    expect(find.text('Free plan limit reached'), findsOneWidget);
+    expect(find.text('Free plan is at capacity'), findsOneWidget);
     expect(
-      find.textContaining('Existing records stay viewable'),
+      find.textContaining('Existing records stay editable and exportable'),
       findsOneWidget,
     );
     expect(find.widgetWithText(FilledButton, 'Add artwork'), findsNothing);
@@ -658,9 +677,9 @@ void main() {
     await pumpLiveData(tester);
 
     expect(find.text('Add artwork'), findsWidgets);
-    expect(find.text('Free plan limit reached'), findsOneWidget);
-    expect(find.text('Take photo'), findsNothing);
-    expect(find.text('Import photo'), findsNothing);
+    expect(find.text('Free plan is at capacity'), findsOneWidget);
+    expect(find.text('Photograph artwork'), findsNothing);
+    expect(find.text('Choose artwork photo'), findsNothing);
   });
 
   testWidgets('free plan ignores retained inactive records for add gates', (
@@ -721,9 +740,9 @@ void main() {
 
     await tapVisible(tester, find.widgetWithText(FilledButton, 'Add artwork'));
 
-    expect(find.text('Take photo'), findsOneWidget);
-    expect(find.text('Import photo'), findsOneWidget);
-    expect(find.text('Free plan limit reached'), findsNothing);
+    expect(find.text('Photograph artwork'), findsOneWidget);
+    expect(find.text('Choose artwork photo'), findsOneWidget);
+    expect(find.text('Free plan is at capacity'), findsNothing);
   });
 
   testWidgets(
@@ -764,7 +783,10 @@ void main() {
       );
       await pumpLiveData(tester);
 
-      expect(find.text('Choose from system picker'), findsOneWidget);
+      expect(
+        find.widgetWithText(FilledButton, 'Choose artwork photo'),
+        findsOneWidget,
+      );
 
       await tester.runAsync(() async {
         await fixture.repository.upsert(
@@ -777,11 +799,14 @@ void main() {
         );
       });
 
-      await tapVisible(tester, find.text('Choose from system picker'));
+      await tapVisible(
+        tester,
+        find.widgetWithText(FilledButton, 'Choose artwork photo'),
+      );
       await pumpLiveData(tester);
 
-      expect(find.text('Free plan limit reached'), findsOneWidget);
-      expect(find.text('Photo imported'), findsNothing);
+      expect(find.text('Free plan is at capacity'), findsOneWidget);
+      expect(find.text('Artwork photo added'), findsNothing);
 
       final records = await tester.runAsync(fixture.repository.list);
       expect(records, hasLength(5));
@@ -1223,15 +1248,15 @@ void main() {
     await captureCollectionLimitVisualEvidence(
       tester,
       dependencies: fixture.dependencies,
-      fileName: 'issue-139-collection-limit-light.png',
+      fileName: 'issue-166-04-collection-capacity-light.png',
     );
     await captureArtifactForApp(
       tester,
       routeName: AppRoutes.collectionAdd,
       dependencies: fixture.dependencies,
       themeMode: ThemeMode.light,
-      fileName: 'issue-139-add-artwork-limit-light.png',
-      ensureVisibleFinder: find.text('Free plan limit reached'),
+      fileName: 'issue-166-05-add-artwork-capacity-light.png',
+      ensureVisibleFinder: find.text('Free plan is at capacity'),
     );
 
     final csvFile = await tester.runAsync(
@@ -1293,11 +1318,14 @@ void main() {
     await tester.pumpWidget(
       const ArchivaleApp(initialRoute: AppRoutes.collection),
     );
-    await pumpReady(tester);
+    await pumpLiveData(tester);
 
     await tapVisible(tester, find.widgetWithText(FilledButton, 'Add artwork'));
-    await tapVisible(tester, find.text('Import photo'));
-    expect(find.text('Photo imported'), findsOneWidget);
+    await tapVisible(
+      tester,
+      find.widgetWithText(FilledButton, 'Choose artwork photo'),
+    );
+    expect(find.text('Artwork photo added'), findsOneWidget);
     expect(find.text('Upload-failure state'), findsNothing);
 
     await tapVisible(tester, find.text('Review AI draft'));
@@ -1357,17 +1385,21 @@ void main() {
         dependencies: fixture.dependencies,
       ),
     );
-    await pumpReady(tester);
+    await pumpLiveData(tester);
 
-    expect(find.text('Use system photo picker'), findsOneWidget);
+    expect(
+      find.widgetWithText(FilledButton, 'Choose artwork photo'),
+      findsOneWidget,
+    );
     expect(find.text('Evidence photo checklist'), findsOneWidget);
-    expect(find.text('Choose from system picker'), findsOneWidget);
-    expect(find.text('Recover interrupted import'), findsOneWidget);
+    expect(find.text('Choose artwork photo'), findsWidgets);
+    expect(find.text('Recover last import'), findsOneWidget);
     expect(find.text('Upload-failure state'), findsNothing);
 
-    await tapVisible(tester, find.text('Recover interrupted import'));
+    await tapVisible(tester, find.text('Recover last import'));
+    await pumpLiveData(tester);
 
-    expect(find.text('Import needs attention'), findsOneWidget);
+    expect(find.text('Could not start this record'), findsOneWidget);
     expect(
       find.textContaining('No interrupted import was available.'),
       findsOneWidget,
@@ -1375,8 +1407,8 @@ void main() {
     expect(find.text('Evidence photo checklist'), findsOneWidget);
     expect(find.textContaining('prints or lithographs'), findsOneWidget);
     expect(find.textContaining('Receipts, certificates'), findsOneWidget);
-    expect(find.text('Choose from system picker'), findsOneWidget);
-    expect(find.text('Recover interrupted import'), findsOneWidget);
+    expect(find.text('Choose artwork photo'), findsWidgets);
+    expect(find.text('Recover last import'), findsOneWidget);
     expect(find.text('Upload-failure state'), findsNothing);
   });
 
@@ -1398,15 +1430,19 @@ void main() {
         dependencies: fixture.dependencies,
       ),
     );
-    await pumpReady(tester);
+    await pumpLiveData(tester);
 
-    await tapVisible(tester, find.text('Choose from system picker'));
+    await tapVisible(
+      tester,
+      find.widgetWithText(FilledButton, 'Choose artwork photo'),
+    );
+    await pumpLiveData(tester);
 
-    expect(find.text('Import cancelled'), findsOneWidget);
+    expect(find.text('No photo selected'), findsOneWidget);
     expect(find.textContaining('Photo import was cancelled.'), findsOneWidget);
-    expect(find.text('Import needs attention'), findsNothing);
-    expect(find.text('Choose from system picker'), findsOneWidget);
-    expect(find.text('Recover interrupted import'), findsOneWidget);
+    expect(find.text('Could not start this record'), findsNothing);
+    expect(find.text('Choose artwork photo'), findsWidgets);
+    expect(find.text('Recover last import'), findsOneWidget);
     expect(find.text('Upload-failure state'), findsNothing);
   });
 
@@ -1434,18 +1470,18 @@ void main() {
         ),
       ),
     );
-    await pumpReady(tester);
+    await pumpLiveData(tester);
 
     await tester.runAsync(() async {
       final button = tester.widget<FilledButton>(
-        find.widgetWithText(FilledButton, 'Choose from system picker'),
+        find.widgetWithText(FilledButton, 'Choose artwork photo'),
       );
       button.onPressed!();
       await Future<void>.delayed(const Duration(seconds: 1));
     });
     await pumpLiveData(tester);
 
-    expect(find.text('Photo imported'), findsOneWidget);
+    expect(find.text('Artwork photo added'), findsOneWidget);
     expect(find.text('On-device AI unavailable'), findsOneWidget);
     expect(find.textContaining('No photo was sent online'), findsOneWidget);
     expect(find.text('Review draft'), findsOneWidget);
@@ -1592,7 +1628,7 @@ void main() {
     await tester.pumpWidget(
       const ArchivaleApp(initialRoute: AppRoutes.collectionAdd),
     );
-    await pumpReady(tester);
+    await pumpLiveData(tester);
 
     expect(find.text('Add supporting records next'), findsOneWidget);
     expect(find.text('Attach document'), findsNothing);
@@ -1927,18 +1963,18 @@ void main() {
         ),
       ),
     );
-    await pumpReady(tester);
+    await pumpLiveData(tester);
 
     await tester.runAsync(() async {
       final button = tester.widget<FilledButton>(
-        find.widgetWithText(FilledButton, 'Choose from system picker'),
+        find.widgetWithText(FilledButton, 'Choose artwork photo'),
       );
       button.onPressed!();
       await Future<void>.delayed(const Duration(seconds: 1));
     });
     await pumpLiveData(tester);
 
-    expect(find.text('Photo imported'), findsOneWidget);
+    expect(find.text('Artwork photo added'), findsOneWidget);
     expect(find.text('Private AI draft saved'), findsOneWidget);
     expect(
       find.textContaining('Visible lower-right signature'),
@@ -2294,7 +2330,7 @@ void main() {
       expect(soldRecord.lifecycleStatus, ArtworkLifecycleStatus.sold);
       expect(
         find.textContaining(
-          'This plan has no room for another active artwork',
+          'This plan already holds all of its active records',
           skipOffstage: false,
         ),
         findsOneWidget,
@@ -3700,7 +3736,7 @@ Future<void> captureCollectionLimitVisualEvidence(
     ),
   );
   await pumpLiveData(tester);
-  await tester.scrollUntilVisible(find.text('Free plan limit reached'), 300);
+  await tester.scrollUntilVisible(find.text('Free plan is at capacity'), 300);
   await tester.pump();
   await captureBoundaryToArtifacts(tester, boundaryKey, fileName);
 }
@@ -3725,7 +3761,15 @@ Future<void> captureImportActionVisualEvidence(
     ),
   );
   await pumpLiveData(tester);
-  await tapVisible(tester, find.text(actionLabel));
+  final primaryFinder = find.widgetWithText(FilledButton, actionLabel);
+  final outlinedFinder = find.widgetWithText(OutlinedButton, actionLabel);
+  final finder = tester.any(primaryFinder)
+      ? primaryFinder
+      : tester.any(outlinedFinder)
+      ? outlinedFinder
+      : find.text(actionLabel);
+  await tapVisible(tester, finder);
+  await pumpLiveData(tester);
   await waitForFinder(tester, settledState);
   await captureBoundaryToArtifacts(tester, boundaryKey, fileName);
 }

@@ -440,11 +440,11 @@ class _PlanStatusPanel extends StatelessWidget {
     final plan = entitlementState.plan;
     final billingCopy = switch (entitlementState.billingStatus) {
       EntitlementBillingStatus.available =>
-        'Plan changes are available on this device.',
+        'You can choose a different plan on this device.',
       EntitlementBillingStatus.unavailable =>
-        'Plan changes are not available on this device.',
+        'Choose a different plan from the device where billing is set up.',
       EntitlementBillingStatus.notConfigured =>
-        'Plan changes are not available yet.',
+        'Plan changes are not available here yet.',
     };
 
     return _StatusPanel(
@@ -461,11 +461,10 @@ class AddArtworkScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final l10n = AppLocalizations.of(context);
     final dependencies = _maybeDependencies(context);
     return PrototypeScreenFrame(
-      title: l10n.addArtworkAction,
-      subtitle: 'Photograph the artwork to begin',
+      title: 'Add artwork',
+      subtitle: 'Start a lasting record with one artwork image',
       child: dependencies == null
           ? const _AddArtworkActions()
           : FutureBuilder<_CreationGate>(
@@ -485,7 +484,6 @@ class _AddArtworkActions extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final l10n = AppLocalizations.of(context);
     final gate = this.gate;
     final isAllowed = gate == null || gate.canAddRequestedArtworkCount;
 
@@ -499,13 +497,13 @@ class _AddArtworkActions extends StatelessWidget {
           const SizedBox(height: 16),
           PrimaryActionButton(
             icon: Icons.photo_camera_outlined,
-            label: l10n.takePhotoAction,
+            label: 'Photograph artwork',
             routeName: AppRoutes.capture,
           ),
           const SizedBox(height: 12),
           SecondaryActionButton(
             icon: Icons.photo_library_outlined,
-            label: l10n.importPhotoAction,
+            label: 'Choose artwork photo',
             routeName: AppRoutes.import,
           ),
         ] else
@@ -518,7 +516,7 @@ class _AddArtworkActions extends StatelessWidget {
           icon: Icons.attach_file,
           title: 'Add supporting records next',
           body:
-              'Create the artwork record first, then add supporting photos and records when they are ready.',
+              'Begin with the main artwork image, then add labels, receipts, and other supporting records when ready.',
         ),
         const SizedBox(height: 20),
         const _Notice(
@@ -573,20 +571,20 @@ class _CaptureImportScreenState extends State<CaptureImportScreen> {
           final gate = snapshot.data;
           if (gate == null) {
             return PrototypeScreenFrame(
-              title: _isImport ? 'Import photo' : 'Take photo',
-              subtitle: 'Checking plan',
+              title: _isImport ? 'Choose artwork photo' : 'Photograph artwork',
+              subtitle: 'Preparing your record',
               child: const _StatusPanel(
                 icon: Icons.workspace_premium_outlined,
-                title: 'Checking collection plan',
+                title: 'Checking room for a new record',
                 body:
-                    'Confirming whether this plan has room for a new active artwork.',
+                    'Making sure this collection can open one more active record.',
               ),
             );
           }
           if (!gate.canAddRequestedArtworkCount) {
             return PrototypeScreenFrame(
-              title: _isImport ? 'Import photo' : 'Take photo',
-              subtitle: 'Plan limit',
+              title: _isImport ? 'Choose artwork photo' : 'Photograph artwork',
+              subtitle: 'Collection capacity',
               child: _BillingGatePanel(
                 currentActiveArtworkCount: gate.currentActiveArtworkCount,
                 entitlementState: gate.entitlementState,
@@ -603,7 +601,7 @@ class _CaptureImportScreenState extends State<CaptureImportScreen> {
 
   Widget _buildIntakeFrame() {
     return PrototypeScreenFrame(
-      title: _isImport ? 'Import photo' : 'Take photo',
+      title: _isImport ? 'Choose artwork photo' : 'Photograph artwork',
       subtitle: 'Primary artwork image',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -628,13 +626,13 @@ class _CaptureImportScreenState extends State<CaptureImportScreen> {
               icon: _isImport
                   ? Icons.photo_library_outlined
                   : Icons.photo_camera_outlined,
-              label: _isImport ? 'Choose from system picker' : 'Open camera',
+              label: _isImport ? 'Choose artwork photo' : 'Open camera',
               onPressed: _isBusy ? null : _runIntake,
             ),
             const SizedBox(height: 12),
             _ActionButton(
               icon: Icons.restore_outlined,
-              label: 'Recover interrupted import',
+              label: 'Recover last import',
               onPressed: _isBusy ? null : _recoverLostImage,
               isPrimary: false,
             ),
@@ -697,7 +695,7 @@ class _CaptureImportScreenState extends State<CaptureImportScreen> {
 
     throw const ArtworkIntakeException(
       ArtworkIntakeFailure.sourceUnavailable,
-      'This plan has no room for another active artwork. Existing records stay viewable, editable, and exportable.',
+      'This plan already holds all of its active records. Existing records stay editable and exportable.',
     );
   }
 
@@ -1040,7 +1038,7 @@ class _StaticCaptureImportScreen extends StatelessWidget {
     final isImport = mode == 'import';
 
     return PrototypeScreenFrame(
-      title: isImport ? 'Import photo' : 'Take photo',
+      title: isImport ? 'Choose artwork photo' : 'Photograph artwork',
       subtitle: 'Primary artwork image',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1051,9 +1049,9 @@ class _StaticCaptureImportScreen extends StatelessWidget {
           const SizedBox(height: 12),
           _StatusPanel(
             icon: isImport ? Icons.file_upload_outlined : Icons.camera_alt,
-            title: isImport ? 'Photo imported' : 'Photo captured',
+            title: isImport ? 'Artwork photo added' : 'Artwork photographed',
             body:
-                'Draft created locally. If upload is interrupted, the saved draft can be reviewed later.',
+                'Your draft record is ready to review. If the import is interrupted, Archivale can help you pick it back up later.',
           ),
           const SizedBox(height: 20),
           PrimaryActionButton(
@@ -1435,7 +1433,7 @@ class _ArtworkDetailsScreenState extends State<ArtworkDetailsScreen> {
         final gate = await _loadCreationGate(dependencies);
         if (!gate.canAddRequestedArtworkCount) {
           throw StateError(
-            'This plan has no room for another active artwork. Existing records stay viewable, editable, and exportable.',
+            'This plan already holds all of its active records. Existing records stay editable and exportable.',
           );
         }
       }
@@ -2046,9 +2044,9 @@ class _IntakeStatePanel extends StatelessWidget {
     if (isBusy) {
       return const _StatusPanel(
         icon: Icons.hourglass_top,
-        title: 'Opening private intake',
+        title: 'Preparing your artwork record',
         body:
-            'Use the system picker or camera. The app stores only your chosen file.',
+            'Use your camera or photo library. Archivale saves only the image you choose for this record.',
       );
     }
 
@@ -2063,12 +2061,12 @@ class _IntakeStatePanel extends StatelessWidget {
                 ? Icons.file_upload_outlined
                 : Icons.camera_alt,
             title: result.wasRecovered
-                ? 'Interrupted import recovered'
+                ? 'Recovered artwork photo'
                 : isImport
-                ? 'Photo imported'
-                : 'Photo captured',
+                ? 'Artwork photo added'
+                : 'Artwork photographed',
             body:
-                'Draft created locally. Return from Collection to keep reviewing this record after restart.',
+                'Your record draft is ready to review. You can return from Collection and keep building it later.',
           ),
           const SizedBox(height: 12),
           _PrimaryArtworkImagePreview(
@@ -2087,10 +2085,10 @@ class _IntakeStatePanel extends StatelessWidget {
             ? Icons.cancel_outlined
             : Icons.error_outline,
         title: failure.failure == ArtworkIntakeFailure.cancelled
-            ? 'Import cancelled'
-            : 'Import needs attention',
+            ? 'No photo selected'
+            : 'Could not start this record',
         body:
-            '${failure.message} Retry when ready; no broad photo-library access is required for import.',
+            '${failure.message} Try again when ready. Archivale only adds the photo you choose.',
       );
     }
 
@@ -2098,9 +2096,9 @@ class _IntakeStatePanel extends StatelessWidget {
       icon: isImport
           ? Icons.photo_library_outlined
           : Icons.photo_camera_outlined,
-      title: isImport ? 'Use system photo picker' : 'Use camera',
+      title: isImport ? 'Choose artwork photo' : 'Use camera',
       body:
-          'Choose one artwork image. The app copies only that file into private storage.',
+          'Start with one clear artwork image. Archivale copies only that photo into your private record.',
     );
   }
 }
@@ -3606,8 +3604,8 @@ class _LimitHint extends StatelessWidget {
     final remainingCopy = remaining == null
         ? 'Your plan has room for your full collection.'
         : remaining == 0
-        ? 'This plan is full. Existing records remain editable and exportable.'
-        : '$remaining artwork slot${remaining == 1 ? '' : 's'} open in this plan.';
+        ? 'This plan is at capacity. Existing records stay editable and exportable.'
+        : '$remaining artwork slot${remaining == 1 ? '' : 's'} still open for new active records.';
 
     return _StatusPanel(
       icon: Icons.workspace_premium_outlined,
@@ -3693,9 +3691,9 @@ class _BillingGatePanel extends StatelessWidget {
         : nextPlans.first;
     return _StatusPanel(
       icon: Icons.workspace_premium_outlined,
-      title: '${plan.name} plan is full',
+      title: '${plan.name} plan is at capacity',
       body:
-          'You already have $currentActiveArtworkCount active artwork${currentActiveArtworkCount == 1 ? '' : 's'} in this plan. Existing records stay viewable, editable, and exportable. Choose ${suggestedPlan.name} (${suggestedPlan.priceLabel}) when you want room for another active artwork.',
+          'You already have $currentActiveArtworkCount active artwork${currentActiveArtworkCount == 1 ? '' : 's'} in this plan. Existing records stay editable and exportable. Choose ${suggestedPlan.name} (${suggestedPlan.priceLabel}) when you want room to start another active record.',
     );
   }
 }
