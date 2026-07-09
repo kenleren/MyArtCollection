@@ -163,30 +163,89 @@ function settlementIntentForCondition(condition: string): 'refund' | 'finalize' 
 }
 
 function isBrokerResponse(value: unknown): boolean {
+  if (
+    !isRecord(value) ||
+    !hasOnlyKeys(value, BROKER_RESPONSE_KEYS) ||
+    !nonEmptyString(value.request_id) ||
+    value.status !== 'completed' ||
+    (value.provider !== 'fake-provider' && value.provider !== 'openai') ||
+    !nonEmptyString(value.model) ||
+    (value.reasoning_effort !== 'none' && value.reasoning_effort !== 'medium' &&
+      value.reasoning_effort !== 'high' && value.reasoning_effort !== 'xhigh') ||
+    !isIsoDate(value.completed_at) ||
+    !Array.isArray(value.sources) ||
+    !Array.isArray(value.candidate_attributions) ||
+    !Array.isArray(value.comparable_value_signals) ||
+    !isStringArray(value.warnings) ||
+    !value.sources.every(isBrokerSource)
+  ) {
+    return false;
+  }
+
+  const sourceIds = new Set(value.sources.map((source) => source.source_id));
+  return value.candidate_attributions.every((candidate) =>
+    isBrokerCandidate(candidate, sourceIds)) &&
+    value.comparable_value_signals.every((signal) =>
+      isComparableValueSignal(signal, sourceIds));
+}
+
+function isBrokerSource(value: unknown): value is Record<string, unknown> & { source_id: string } {
   return isRecord(value) &&
-    hasOnlyKeys(value, new Set([
-      'request_id',
-      'status',
-      'provider',
-      'model',
-      'reasoning_effort',
-      'completed_at',
-      'sources',
-      'candidate_attributions',
-      'comparable_value_signals',
-      'warnings',
-    ])) &&
-    nonEmptyString(value.request_id) &&
-    value.status === 'completed' &&
-    (value.provider === 'fake-provider' || value.provider === 'openai') &&
-    nonEmptyString(value.model) &&
-    (value.reasoning_effort === 'none' || value.reasoning_effort === 'medium' ||
-      value.reasoning_effort === 'high' || value.reasoning_effort === 'xhigh') &&
-    isIsoDate(value.completed_at) &&
-    Array.isArray(value.sources) &&
-    Array.isArray(value.candidate_attributions) &&
-    Array.isArray(value.comparable_value_signals) &&
-    Array.isArray(value.warnings);
+    hasOnlyKeys(value, BROKER_SOURCE_KEYS) &&
+    typeof value.source_id === 'string' &&
+    typeof value.source_name === 'string' &&
+    (value.source_type === 'museum' || value.source_type === 'auction_house') &&
+    typeof value.source_url === 'string' &&
+    value.source_url.startsWith('https://') &&
+    typeof value.title === 'string' &&
+    typeof value.accessed_at === 'string' &&
+    typeof value.citation_excerpt === 'string' &&
+    isStringArray(value.matched_fields);
+}
+
+function isBrokerCandidate(value: unknown, sourceIds: ReadonlySet<string>): boolean {
+  return isRecord(value) &&
+    hasOnlyKeys(value, BROKER_CANDIDATE_KEYS) &&
+    typeof value.candidate_id === 'string' &&
+    (value.confidence === 'possible' || value.confidence === 'likely' ||
+      value.confidence === 'insufficient_evidence') &&
+    typeof value.match_reason === 'string' &&
+    optionalStringField(value.title) &&
+    optionalStringField(value.artist) &&
+    optionalStringField(value.year) &&
+    optionalStringField(value.medium) &&
+    isFieldSources(value.field_sources) &&
+    isStringArray(value.source_refs) &&
+    value.source_refs.length > 0 &&
+    value.source_refs.every((sourceRef) => sourceIds.has(sourceRef));
+}
+
+function isComparableValueSignal(value: unknown, sourceIds: ReadonlySet<string>): boolean {
+  if (
+    !isRecord(value) ||
+    !hasOnlyKeys(value, COMPARABLE_VALUE_SIGNAL_KEYS) ||
+    (value.kind !== 'public_estimate' && value.kind !== 'comparable_sale_signal' &&
+      value.kind !== 'no_reliable_comparable') ||
+    typeof value.label !== 'string' ||
+    !isStringArray(value.source_refs) ||
+    typeof value.caveat !== 'string' ||
+    !value.source_refs.every((sourceRef) => sourceIds.has(sourceRef))
+  ) {
+    return false;
+  }
+  return value.kind === 'no_reliable_comparable' || value.source_refs.length > 0;
+}
+
+function isFieldSources(value: unknown): boolean {
+  return isRecord(value) && Object.values(value).every((source) => source === 'ai_suggested');
+}
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((entry) => typeof entry === 'string');
+}
+
+function optionalStringField(value: unknown): boolean {
+  return value === undefined || typeof value === 'string';
 }
 
 function isLifecycleState(value: unknown): value is RequestLifecycleState {
@@ -229,4 +288,43 @@ const REQUEST_RECORD_KEYS = new Set([
   'retention_expires_at',
   'settlement_state',
   'terminal_outcome',
+]);
+const BROKER_RESPONSE_KEYS = new Set([
+  'request_id',
+  'status',
+  'provider',
+  'model',
+  'reasoning_effort',
+  'completed_at',
+  'sources',
+  'candidate_attributions',
+  'comparable_value_signals',
+  'warnings',
+]);
+const BROKER_SOURCE_KEYS = new Set([
+  'source_id',
+  'source_name',
+  'source_type',
+  'source_url',
+  'title',
+  'accessed_at',
+  'citation_excerpt',
+  'matched_fields',
+]);
+const BROKER_CANDIDATE_KEYS = new Set([
+  'candidate_id',
+  'confidence',
+  'match_reason',
+  'title',
+  'artist',
+  'year',
+  'medium',
+  'field_sources',
+  'source_refs',
+]);
+const COMPARABLE_VALUE_SIGNAL_KEYS = new Set([
+  'kind',
+  'label',
+  'source_refs',
+  'caveat',
 ]);

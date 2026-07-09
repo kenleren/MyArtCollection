@@ -63,6 +63,32 @@ test('provider uses only the remaining handler-wide deadline budget', async () =
   assert.equal(scheduledDelay, 750);
 });
 
+test('provider rejects an expired absolute deadline before timer creation or fetch', async () => {
+  let timerCalls = 0;
+  let fetchCalls = 0;
+  const current = request();
+  authorizeProviderRequest(current);
+  const provider = createOpenAiProvider({
+    apiKey: 'test-only-key',
+    allowedDomains: ['museum.example'],
+    providerDeadlineAtMs: 1_000,
+    nowMilliseconds: () => 2_000,
+    scheduleTimeout: () => {
+      timerCalls += 1;
+      return 1 as unknown as ReturnType<typeof setTimeout>;
+    },
+    fetchImpl: (async () => {
+      fetchCalls += 1;
+      return new Response('', { status: 429 });
+    }) as typeof fetch,
+  });
+
+  assert.deepEqual(await provider.research(current), { kind: 'timeout' });
+  assert.equal(provider.callCount, 0);
+  assert.equal(timerCalls, 0);
+  assert.equal(fetchCalls, 0);
+});
+
 test('provider deadline aborts before the Function timeout and persists terminal timeout refund', async () => {
   let scheduledDelay: number | undefined;
   let fireTimeout: (() => void) | undefined;

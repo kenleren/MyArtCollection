@@ -210,11 +210,19 @@ class OpenAiResearchProvider implements ProviderClient {
       return { kind: 'failure' };
     }
 
+    const rawRemainingDeadlineMs = this.providerDeadlineAtMs === undefined
+      ? undefined
+      : this.providerDeadlineAtMs - this.nowMilliseconds();
+    if (rawRemainingDeadlineMs !== undefined &&
+      (!Number.isFinite(rawRemainingDeadlineMs) || rawRemainingDeadlineMs <= 0)) {
+      return { kind: 'timeout' };
+    }
+
     this.callCount += 1;
     const abortController = new AbortController();
-    const remainingDeadlineMs = this.providerDeadlineAtMs === undefined
+    const remainingDeadlineMs = rawRemainingDeadlineMs === undefined
       ? this.providerTimeoutMs
-      : Math.max(1, Math.ceil(this.providerDeadlineAtMs - this.nowMilliseconds()));
+      : Math.ceil(rawRemainingDeadlineMs);
     const timeoutMs = Math.min(this.providerTimeoutMs, remainingDeadlineMs);
     const timeoutHandle = this.scheduleTimeout(() => {
       abortController.abort(new DOMException('Provider deadline exceeded.', 'TimeoutError'));

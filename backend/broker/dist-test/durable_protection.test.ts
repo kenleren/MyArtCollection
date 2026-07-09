@@ -13,6 +13,7 @@ import {
   type DurableBrokerProtection,
 } from '../src/durable_protection.js';
 import {
+  createConfiguredResearchBrokerDependencies,
   createResearchBrokerHttpHandler,
   type ConfiguredBrokerDependenciesResult,
 } from '../src/live_broker.js';
@@ -24,6 +25,7 @@ import {
   createHttpResponse,
   durableEnv,
   request,
+  validOutput,
 } from './test_helpers.js';
 
 const protectionConfig = {
@@ -355,6 +357,44 @@ test('HTTP handler captures the provider deadline at function entry', async () =
   await handler(createHttpRequest({ data: request() }), response.responder);
   assert.equal(response.statusCode, 200);
   assert.equal(capturedDeadline, 56_000);
+});
+
+test('HTTP handler terminalizes an exhausted provider deadline without timer or fetch', async () => {
+  let timerCalls = 0;
+  let fetchCalls = 0;
+  const store = new FakeDurableBrokerStore();
+  const protection = fakeProtection(store);
+  const configured = createConfiguredResearchBrokerDependencies(
+    durableEnv(),
+    {
+      nowMilliseconds: () => 56_000,
+      scheduleTimeout: () => {
+        timerCalls += 1;
+        return 1 as unknown as ReturnType<typeof setTimeout>;
+      },
+      fetchImpl: (async () => {
+        fetchCalls += 1;
+        return new Response('', { status: 429 });
+      }) as typeof fetch,
+    },
+    undefined,
+    protection,
+  );
+  assert.equal(configured.kind, 'ready');
+  const handler = createResearchBrokerHttpHandler({
+    env: durableEnv(),
+    nowMilliseconds: () => 1_000,
+    dependenciesFactory: () => configured,
+  });
+  const response = createHttpResponse();
+  await handler(createHttpRequest({ data: request() }), response.responder);
+
+  assert.equal(response.statusCode, 504);
+  assert.equal((response.json.error as Record<string, unknown>).code, 'upstream_timeout');
+  assert.equal(timerCalls, 0);
+  assert.equal(fetchCalls, 0);
+  assert.equal(store.refundCount, 1);
+  assert.equal(store.finalizeCount, 0);
 });
 
 test('live prechecks cause zero provider setup or fetch and split entitlement from credits', async () => {
@@ -707,6 +747,162 @@ test('terminal replay requires matching request, outcome, settlement, and ledger
   }
 });
 
+test('terminal success replay deeply rejects malformed nested response structures', async () => {
+  const comparable = (): Record<string, unknown> => ({
+    kind: 'public_estimate',
+    label: 'Fixture signal',
+    source_refs: ['src_fixture'],
+    caveat: 'Fixture caveat.',
+  });
+  const mutations: Array<{
+    name: string;
+    mutate: (response: Record<string, unknown>) => void;
+  }> = [
+    {
+      name: 'review probe malformed elements in every response collection',
+      mutate: (response) => {
+        response.sources = ['malformed source'];
+        response.candidate_attributions = [42];
+        response.comparable_value_signals = [null];
+        response.warnings = [{ private: 'malformed warning' }];
+      },
+    },
+    {
+      name: 'source element is not an object',
+      mutate: (response) => { response.sources = ['malformed source']; },
+    },
+    {
+      name: 'source scalar has wrong type',
+      mutate: (response) => {
+        (response.sources as Array<Record<string, unknown>>)[0].source_name = 42;
+      },
+    },
+    {
+      name: 'source enum is unknown',
+      mutate: (response) => {
+        (response.sources as Array<Record<string, unknown>>)[0].source_type = 'blog';
+      },
+    },
+    {
+      name: 'source URL is not HTTPS',
+      mutate: (response) => {
+        (response.sources as Array<Record<string, unknown>>)[0].source_url = 'http://museum.example';
+      },
+    },
+    {
+      name: 'source nested array contains a non-string',
+      mutate: (response) => {
+        (response.sources as Array<Record<string, unknown>>)[0].matched_fields = [42];
+      },
+    },
+    {
+      name: 'source object has an unknown field',
+      mutate: (response) => {
+        (response.sources as Array<Record<string, unknown>>)[0].unexpected = true;
+      },
+    },
+    {
+      name: 'candidate element is not an object',
+      mutate: (response) => { response.candidate_attributions = [42]; },
+    },
+    {
+      name: 'candidate enum is unknown',
+      mutate: (response) => {
+        (response.candidate_attributions as Array<Record<string, unknown>>)[0].confidence = 'certain';
+      },
+    },
+    {
+      name: 'candidate optional scalar has wrong type',
+      mutate: (response) => {
+        (response.candidate_attributions as Array<Record<string, unknown>>)[0].title = 42;
+      },
+    },
+    {
+      name: 'candidate field-source value is unknown',
+      mutate: (response) => {
+        (response.candidate_attributions as Array<Record<string, unknown>>)[0].field_sources = {
+          title: 'user_confirmed',
+        };
+      },
+    },
+    {
+      name: 'candidate source references contain a non-string',
+      mutate: (response) => {
+        (response.candidate_attributions as Array<Record<string, unknown>>)[0].source_refs = [42];
+      },
+    },
+    {
+      name: 'candidate source reference is not present',
+      mutate: (response) => {
+        (response.candidate_attributions as Array<Record<string, unknown>>)[0].source_refs = ['missing'];
+      },
+    },
+    {
+      name: 'candidate has no source references',
+      mutate: (response) => {
+        (response.candidate_attributions as Array<Record<string, unknown>>)[0].source_refs = [];
+      },
+    },
+    {
+      name: 'comparable signal element is not an object',
+      mutate: (response) => { response.comparable_value_signals = [null]; },
+    },
+    {
+      name: 'comparable signal enum is unknown',
+      mutate: (response) => {
+        response.comparable_value_signals = [{ ...comparable(), kind: 'appraisal' }];
+      },
+    },
+    {
+      name: 'comparable signal scalar has wrong type',
+      mutate: (response) => {
+        response.comparable_value_signals = [{ ...comparable(), label: 42 }];
+      },
+    },
+    {
+      name: 'comparable source references contain a non-string',
+      mutate: (response) => {
+        response.comparable_value_signals = [{ ...comparable(), source_refs: [42] }];
+      },
+    },
+    {
+      name: 'comparable source reference is not present',
+      mutate: (response) => {
+        response.comparable_value_signals = [{ ...comparable(), source_refs: ['missing'] }];
+      },
+    },
+    {
+      name: 'cited comparable signal has no source references',
+      mutate: (response) => {
+        response.comparable_value_signals = [{ ...comparable(), source_refs: [] }];
+      },
+    },
+    {
+      name: 'comparable signal has an unknown field',
+      mutate: (response) => {
+        response.comparable_value_signals = [{ ...comparable(), unexpected: true }];
+      },
+    },
+    {
+      name: 'warning element is not a string',
+      mutate: (response) => { response.warnings = [{ private: 'malformed warning' }]; },
+    },
+  ];
+
+  for (const current of mutations) {
+    const { db, store } = await terminalSuccessStore();
+    const requestRef = store.requestRef(lifecycleInput().quota_subject, request().request_id);
+    const record = db.read(requestRef.path)!;
+    const terminalOutcome = record.terminal_outcome as Record<string, unknown>;
+    const response = terminalOutcome.response as Record<string, unknown>;
+    current.mutate(response);
+    db.seed(requestRef.path, record);
+
+    const result = await store.createRequestLifecycle().acquire(lifecycleInput());
+    assert.equal(result.kind, 'unsafe_record', current.name);
+  }
+});
+
 test('refund rejects malformed or orphan credit aggregates without partial settlement', async () => {
   const mutations: Array<{
     name: string;
@@ -854,5 +1050,34 @@ async function terminalTimeoutStore(): Promise<{
     kind: 'error',
     failure: { request_id: request().request_id, condition: 'provider_timeout' },
   }, 'refund');
+  return { db, store };
+}
+
+async function terminalSuccessStore(): Promise<{
+  db: MemoryFirestore;
+  store: FirestoreDurableBrokerStore;
+}> {
+  const db = validControlFirestore();
+  const store = new FirestoreDurableBrokerStore(db);
+  const lifecycle = store.createRequestLifecycle();
+  const acquired = await lifecycle.acquire(lifecycleInput());
+  assert.equal(acquired.kind, 'reserved');
+  if (acquired.kind !== 'reserved') {
+    throw new Error('fixture reservation failed');
+  }
+  await lifecycle.markDispatchStarted(acquired.record, FIXED_NOW);
+  await lifecycle.persistTerminal(acquired.record, {
+    kind: 'success',
+    response: {
+      request_id: request().request_id,
+      status: 'completed',
+      provider: 'fake-provider',
+      model: 'fake-local-model',
+      reasoning_effort: 'none',
+      completed_at: FIXED_NOW.toISOString(),
+      ...validOutput(),
+    },
+  }, 'finalize');
+  await lifecycle.settle(acquired.record);
   return { db, store };
 }
