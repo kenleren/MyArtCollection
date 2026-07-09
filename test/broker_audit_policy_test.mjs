@@ -1,63 +1,139 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { readFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import test from 'node:test';
+import { checkExpiryForTest } from '../scripts/check_broker_audit.mjs';
 
 const execFileAsync = promisify(execFile);
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const script = path.join(repoRoot, 'scripts/check_broker_audit.mjs');
 const fixture = (name) => path.join(repoRoot, 'test/fixtures/broker-audit', name);
-const policyDates = JSON.parse(await readFile(fixture('policy-dates.json'), 'utf8'));
+const policyDates = await readJsonFixture('policy-dates.json');
+const adversarialCases = await readJsonFixture('adversarial-cases.json');
 
-test('accepts the current expiry-dated uuid exception', async () => {
-  const result = await run('allowed-audit.json', 'allowed-lock.json', {
-    asOf: policyDates.lastAllowedDate,
-  });
+test('accepts the exact current npm audit and lock graph before expiry', async () => {
+  const result = await run(fixture('allowed-audit.json'), fixture('allowed-lock.json'));
   assert.equal(result.code, 0, result.stderr);
   assert.match(result.stdout, /5 exact uuid@9\.0\.1 paths/);
 });
 
-test('accepts only the exact known npm peer metavulnerability edge', async () => {
-  const result = await run('allowed-audit-with-peer-meta.json', 'allowed-lock.json');
-  assert.equal(result.code, 0, result.stderr);
+test('accepts the exception deterministically on its last allowed date', () => {
+  assert.doesNotThrow(() => checkExpiryForTest(policyDates.lastAllowedDate));
 });
 
-for (const [name, audit, lock, message] of [
-  ['rejects a new advisory', 'new-advisory-audit.json', 'allowed-lock.json', /uuid audit edges changed/],
-  ['rejects high severity', 'high-severity-audit.json', 'allowed-lock.json', /uuid severity is not exactly moderate/],
-  ['rejects an extra audit path', 'extra-path-audit.json', 'allowed-lock.json', /firebase-admin audit edges changed/],
-  ['rejects an extra locked path', 'allowed-audit.json', 'extra-path-lock.json', /firebase-admin locked vulnerable edges changed/],
-  ['rejects a rerouted audit graph', 'rerouted-audit.json', 'allowed-lock.json', /@google-cloud\/storage audit edges changed/],
-  ['rejects a rerouted lock graph', 'allowed-audit.json', 'rerouted-lock.json', /@google-cloud\/storage locked vulnerable edges changed/],
-  ['rejects a changed uuid lock state', 'allowed-audit.json', 'changed-uuid-lock.json', /uuid@9\.0\.1/],
-  ['rejects a missing allowed dependency path', 'allowed-audit.json', 'missing-path-lock.json', /@google-cloud\/storage locked vulnerable edges changed/],
-  ['rejects malformed audit JSON', 'malformed-audit.json', 'allowed-lock.json', /malformed or unreadable/],
-]) {
-  test(name, async () => {
-    const result = await run(audit, lock);
+const expectedFailures = new Map([
+  ['top-level-error', /top-level error/],
+  ['unknown-top-level-field', /audit top-level fields changed/],
+  ['untrusted-advisory-origin', /exact trusted GitHub advisory origin and path/],
+  ['extra-advisory-field', /uuid audit edges changed/],
+  ['extra-uuid-node-and-effect', /uuid effects changed/],
+  ['new-advisory', /exact trusted GitHub advisory origin and path/],
+  ['high-severity', /uuid severity is not exactly moderate/],
+  ['extra-audit-edge', /firebase-admin audit edges changed/],
+  ['rerouted-audit-edge', /@google-cloud\/storage audit edges changed/],
+  ['missing-audit-field', /uuid vulnerability fields changed/],
+  ['changed-audit-metadata', /audit metadata changed/],
+  ['extra-lock-edge', /firebase-admin locked vulnerable edges changed/],
+  ['rerouted-lock-range', /@google-cloud\/storage locked vulnerable edges changed/],
+  ['changed-uuid-version', /node_modules\/uuid version changed/],
+  ['missing-lock-path', /@google-cloud\/storage locked vulnerable edges changed/],
+  ['nested-rerouted-uuid', /uuid installation paths changed/],
+  ['extra-nested-uuid', /uuid installation paths changed/],
+  ['changed-package-integrity', /node_modules\/gaxios integrity changed/],
+]);
+
+for (const adversarialCase of adversarialCases) {
+  test(`rejects ${adversarialCase.description}`, async () => {
+    const result = await runMutationCase(adversarialCase);
     assert.notEqual(result.code, 0);
-    assert.match(result.stderr, message);
+    assert.match(result.stderr, expectedFailures.get(adversarialCase.id));
   });
 }
 
-test('rejects the exception deterministically after expiry', async () => {
-  const result = await run('allowed-audit.json', 'allowed-lock.json', {
-    asOf: policyDates.firstExpiredDate,
-  });
+test('rejects a standalone npm audit exit-1 error response', async () => {
+  const result = await run(fixture('npm-error-audit.json'), fixture('allowed-lock.json'));
   assert.notEqual(result.code, 0);
-  assert.match(result.stderr, /exception expired on 2026-08-31/);
+  assert.match(result.stderr, /top-level error/);
 });
 
-async function run(audit, lock, { asOf } = {}) {
+test('rejects malformed audit JSON', async () => {
+  const result = await run(fixture('malformed-audit.json'), fixture('allowed-lock.json'));
+  assert.notEqual(result.code, 0);
+  assert.match(result.stderr, /malformed or unreadable/);
+});
+
+test('rejects the exception deterministically after expiry', () => {
+  assert.throws(
+    () => checkExpiryForTest(policyDates.firstExpiredDate),
+    /exception expired on 2026-08-31/,
+  );
+});
+
+for (const [label, asOf, message] of [
+  ['invalid calendar date', policyDates.invalidCalendarDate, /not a valid calendar date/],
+  ['timestamp-shaped clock input', policyDates.invalidClockInput, /must use YYYY-MM-DD/],
+]) {
+  test(`rejects ${label} in the deterministic expiry harness`, () => {
+    assert.throws(() => checkExpiryForTest(asOf), message);
+  });
+}
+
+test('does not expose the deterministic clock override on the production CLI', async () => {
+  const result = await run(
+    fixture('allowed-audit.json'),
+    fixture('allowed-lock.json'),
+    ['--as-of', policyDates.lastAllowedDate],
+  );
+  assert.notEqual(result.code, 0);
+  assert.match(result.stderr, /usage:/);
+});
+
+async function runMutationCase(adversarialCase) {
+  const temporaryDirectory = await mkdtemp(path.join(os.tmpdir(), 'broker-audit-policy-'));
+  try {
+    const audit = await readJsonFixture('allowed-audit.json');
+    const lock = await readJsonFixture('allowed-lock.json');
+    for (const mutation of adversarialCase.mutations) {
+      applyMutation(mutation.target === 'audit' ? audit : lock, mutation);
+    }
+    const auditPath = path.join(temporaryDirectory, 'audit.json');
+    const lockPath = path.join(temporaryDirectory, 'package-lock.json');
+    await Promise.all([
+      writeFile(auditPath, JSON.stringify(audit)),
+      writeFile(lockPath, JSON.stringify(lock)),
+    ]);
+    return await run(auditPath, lockPath);
+  } finally {
+    await rm(temporaryDirectory, { recursive: true, force: true });
+  }
+}
+
+function applyMutation(document, mutation) {
+  const pathParts = [...mutation.path];
+  const finalPart = pathParts.pop();
+  let parent = document;
+  for (const part of pathParts) parent = parent[part];
+  if (mutation.operation === 'set') parent[finalPart] = mutation.value;
+  else if (mutation.operation === 'delete') delete parent[finalPart];
+  else if (mutation.operation === 'append') parent[finalPart].push(mutation.value);
+  else throw new Error(`Unknown fixture mutation: ${mutation.operation}`);
+}
+
+async function readJsonFixture(name) {
+  return JSON.parse(await readFile(fixture(name), 'utf8'));
+}
+
+async function run(auditPath, lockPath, extraArgs = []) {
   const args = [
     script,
-    '--audit', fixture(audit),
-    '--lock', fixture(lock),
+    '--audit', auditPath,
+    '--lock', lockPath,
+    ...extraArgs,
   ];
-  if (asOf) args.push('--as-of', asOf);
   try {
     const result = await execFileAsync('node', args);
     return { code: 0, ...result };
