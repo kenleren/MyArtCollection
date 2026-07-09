@@ -351,7 +351,7 @@ void main() {
       dependencies: fixture.dependencies,
       fileName: 'issue-113-saved-list-mobile.png',
       ensureVisibleFinder: find.text(
-        '1 supporting record attached.',
+        '1 supporting record added.',
         skipOffstage: false,
       ),
     );
@@ -1440,7 +1440,7 @@ void main() {
     });
 
     final expectedLabels = <Locale, List<String>>{
-      const Locale('en'): ['Collection', 'Incomplete', 'Reports', 'Settings'],
+      const Locale('en'): ['Collection', 'Needs review', 'Reports', 'Settings'],
       const Locale('nb'): [
         'Samling',
         'Ufullstendig',
@@ -1479,7 +1479,7 @@ void main() {
     await pumpLiveData(tester);
 
     await tapVisible(tester, find.widgetWithText(FilledButton, 'Add artwork'));
-    await tapVisible(tester, find.text('Choose artwork photo'));
+    await tapVisible(tester, find.text('Choose artwork photo').last);
     expect(find.text('Artwork photo added'), findsOneWidget);
     expect(find.text('Upload-failure state'), findsNothing);
 
@@ -1639,14 +1639,7 @@ void main() {
     );
     await pumpLiveData(tester);
 
-    await tester.runAsync(() async {
-      final button = tester.widget<FilledButton>(
-        find.widgetWithText(FilledButton, 'Choose artwork photo'),
-      );
-      button.onPressed!();
-      await Future<void>.delayed(const Duration(seconds: 1));
-    });
-    await pumpLiveData(tester);
+    await chooseArtworkPhotoForTest(tester);
 
     expect(find.text('Artwork photo added'), findsOneWidget);
     expect(find.text('On-device AI unavailable'), findsOneWidget);
@@ -1868,18 +1861,11 @@ void main() {
         ),
       ),
     );
-    await pumpReady(tester);
-
-    await tester.runAsync(() async {
-      final button = tester.widget<FilledButton>(
-        find.widgetWithText(FilledButton, 'Choose from system picker'),
-      );
-      button.onPressed!();
-      await Future<void>.delayed(const Duration(seconds: 1));
-    });
     await pumpLiveData(tester);
 
-    expect(find.text('On-device AI download ready'), findsOneWidget);
+    await chooseArtworkPhotoForTest(tester);
+
+    await waitForFinder(tester, find.text('On-device AI download ready'));
     expect(find.text('Download on-device AI'), findsOneWidget);
     expect(find.textContaining('No photo was sent online'), findsOneWidget);
 
@@ -1928,16 +1914,9 @@ void main() {
         ),
       ),
     );
-    await pumpReady(tester);
-
-    await tester.runAsync(() async {
-      final button = tester.widget<FilledButton>(
-        find.widgetWithText(FilledButton, 'Choose from system picker'),
-      );
-      button.onPressed!();
-      await Future<void>.delayed(const Duration(seconds: 1));
-    });
     await pumpLiveData(tester);
+
+    await chooseArtworkPhotoForTest(tester);
 
     await pressAsyncButton(
       tester,
@@ -2117,7 +2096,7 @@ void main() {
     await pumpLiveData(tester);
 
     expect(find.text('Reloaded Local Artwork'), findsOneWidget);
-    expect(find.text('Needs review'), findsOneWidget);
+    expect(find.text('Needs review'), findsWidgets);
     expect(find.text('No artworks yet'), findsNothing);
     expect(find.textContaining('details still need review'), findsOneWidget);
   });
@@ -4205,7 +4184,7 @@ Future<void> tapVisible(WidgetTester tester, Finder finder) async {
   await tester.ensureVisible(finder);
   await tester.pump();
   await tester.tap(finder);
-  await pumpReady(tester);
+  await pumpLiveData(tester);
 }
 
 Future<void> enterVisibleText(
@@ -4261,6 +4240,17 @@ Future<void> pressAsyncButton(WidgetTester tester, Finder finder) async {
     final dynamic button = tester.widget(finder);
     (button.onPressed as VoidCallback?)!.call();
     await Future<void>.delayed(const Duration(milliseconds: 100));
+  });
+  await pumpLiveData(tester);
+}
+
+Future<void> chooseArtworkPhotoForTest(WidgetTester tester) async {
+  final finder = find.widgetWithText(FilledButton, 'Choose artwork photo');
+  await waitForFinder(tester, finder, attempts: 80);
+  await tester.runAsync(() async {
+    final button = tester.widget<FilledButton>(finder);
+    button.onPressed!();
+    await Future<void>.delayed(const Duration(seconds: 1));
   });
   await pumpLiveData(tester);
 }
@@ -4333,7 +4323,7 @@ Future<void> captureVisualEvidence(
       child: ArchivaleApp(initialRoute: routeName, themeMode: themeMode),
     ),
   );
-  await pumpReady(tester);
+  await pumpLiveData(tester);
 
   final boundary =
       boundaryKey.currentContext!.findRenderObject()! as RenderRepaintBoundary;
@@ -4493,7 +4483,7 @@ Future<void> capturePlaceholderSaveVisualEvidence(
   );
   await tester.pump();
   await waitForFinder(tester, find.text('Draft review'), attempts: 60);
-  await tester.ensureVisible(find.text('Untitled artwork'));
+  await tester.ensureVisible(find.text('Draft review'));
   await tester.pump();
 
   await captureBoundaryToArtifacts(tester, boundaryKey, fileName);
@@ -4748,16 +4738,9 @@ Future<void> _captureIssue136OnDeviceAiImportState(
       ),
     ),
   );
-  await pumpReady(tester);
-
-  await tester.runAsync(() async {
-    final button = tester.widget<FilledButton>(
-      find.widgetWithText(FilledButton, 'Choose from system picker'),
-    );
-    button.onPressed!();
-    await Future<void>.delayed(const Duration(seconds: 1));
-  });
   await pumpLiveData(tester);
+
+  await chooseArtworkPhotoForTest(tester);
   await waitForFinder(tester, find.text(expectedTitle));
 
   await captureBoundaryToArtifacts(tester, boundaryKey, fileName);
