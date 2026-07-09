@@ -457,7 +457,12 @@ class _PlanStatusPanel extends StatelessWidget {
 }
 
 class AddArtworkScreen extends StatelessWidget {
-  const AddArtworkScreen({super.key});
+  const AddArtworkScreen({
+    super.key,
+    this.isOnboardingFirstAdd = false,
+  });
+
+  final bool isOnboardingFirstAdd;
 
   @override
   Widget build(BuildContext context) {
@@ -466,11 +471,16 @@ class AddArtworkScreen extends StatelessWidget {
       title: 'Add artwork',
       subtitle: 'Start a lasting record with one artwork image',
       child: dependencies == null
-          ? const _AddArtworkActions()
+          ? _AddArtworkActions(
+              isOnboardingFirstAdd: isOnboardingFirstAdd,
+            )
           : FutureBuilder<_CreationGate>(
               future: _loadCreationGate(dependencies),
               builder: (context, snapshot) {
-                return _AddArtworkActions(gate: snapshot.data);
+                return _AddArtworkActions(
+                  gate: snapshot.data,
+                  isOnboardingFirstAdd: isOnboardingFirstAdd,
+                );
               },
             ),
     );
@@ -478,9 +488,13 @@ class AddArtworkScreen extends StatelessWidget {
 }
 
 class _AddArtworkActions extends StatelessWidget {
-  const _AddArtworkActions({this.gate});
+  const _AddArtworkActions({
+    this.gate,
+    required this.isOnboardingFirstAdd,
+  });
 
   final _CreationGate? gate;
+  final bool isOnboardingFirstAdd;
 
   @override
   Widget build(BuildContext context) {
@@ -512,11 +526,12 @@ class _AddArtworkActions extends StatelessWidget {
             entitlementState: gate.entitlementState,
           ),
         const SizedBox(height: 12),
-        const _StatusPanel(
+        _StatusPanel(
           icon: Icons.attach_file,
           title: 'Add supporting records next',
-          body:
-              'Begin with the main artwork image, then add labels, receipts, and other supporting records when ready.',
+          body: isOnboardingFirstAdd
+              ? 'Create the artwork record first, then add supporting photos and records when they are ready.'
+              : 'Begin with the main artwork image, then add labels, receipts, and other supporting records when ready.',
         ),
         const SizedBox(height: 20),
         const _Notice(
@@ -675,7 +690,7 @@ class _CaptureImportScreenState extends State<CaptureImportScreen> {
       if (recovered == null) {
         throw const ArtworkIntakeException(
           ArtworkIntakeFailure.sourceUnavailable,
-          'No interrupted import was available.',
+          'No previous import was found.',
         );
       }
       return recovered;

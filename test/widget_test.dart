@@ -1401,7 +1401,7 @@ void main() {
 
     expect(find.text('Could not start this record'), findsOneWidget);
     expect(
-      find.textContaining('No interrupted import was available.'),
+      find.textContaining('No previous import was found.'),
       findsOneWidget,
     );
     expect(find.text('Evidence photo checklist'), findsOneWidget);

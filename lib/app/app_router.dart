@@ -21,7 +21,10 @@ class AppRouter {
       case AppRoutes.onboardingPrivacy:
         return _page(settings: settings, child: const PrototypePrivacyScreen());
       case AppRoutes.onboardingFirstAdd:
-        return _page(settings: settings, child: const AddArtworkScreen());
+        return _page(
+          settings: settings,
+          child: const AddArtworkScreen(isOnboardingFirstAdd: true),
+        );
       case AppRoutes.collection:
       case AppRoutes.collectionIncomplete:
       case AppRoutes.collectionReport:
