@@ -1,14 +1,27 @@
 import { createHmac } from 'node:crypto';
 
-import type {
-  BrokerCreditLedger,
-  LedgerRecord,
-  ReserveCreditInput,
-  ReserveCreditResult,
-} from './credit_ledger.js';
-import type { BrokerIdempotencyStore, StoredRequest } from './idempotency.js';
 import type { BrokerAdapterIdentity } from './adapter.js';
-import type { BrokerResponse } from './contracts.js';
+import {
+  CREDIT_LEDGER_RECORD_VERSION,
+  applyFinalize,
+  applyRefund,
+  type LedgerRecord,
+} from './credit_ledger.js';
+import {
+  REQUEST_LIFECYCLE_RECORD_VERSION,
+  parseStoredRequest,
+  type StoredRequestRecord,
+} from './idempotency.js';
+import {
+  InMemoryRequestLifecycle,
+  RESERVATION_LEASE_MILLISECONDS,
+  RETENTION_MILLISECONDS,
+  type AcquireRequestInput,
+  type AcquireRequestResult,
+  type RequestLifecycleStore,
+  type SettlementIntent,
+} from './request_lifecycle.js';
+import type { BrokerTerminalOutcome } from './contracts.js';
 
 export const BROKER_FIREBASE_PROJECT_ID_ENV = 'BROKER_FIREBASE_PROJECT_ID';
 export const BROKER_FIREBASE_PROJECT_NUMBER_ENV = 'BROKER_FIREBASE_PROJECT_NUMBER';
@@ -17,6 +30,10 @@ export const BROKER_QUOTA_HMAC_SECRET_ENV = 'BROKER_QUOTA_HMAC_SECRET';
 export const BROKER_DURABLE_STORE_CONFIGURED_ENV = 'BROKER_DURABLE_STORE_CONFIGURED';
 export const MISSING_DURABLE_CONFIG_CODE = 'missing_durable_broker_config';
 export const MISSING_QUOTA_SECRET_CODE = 'missing_quota_hmac_secret';
+export const CONTROL_RECORD_VERSION = 'broker-control-v1';
+export const ENTITLEMENT_RECORD_VERSION = 'broker-entitlement-v1';
+export const SUBJECT_CREDIT_RECORD_VERSION = 'broker-credit-subject-v1';
+export const GLOBAL_CREDIT_RECORD_VERSION = 'broker-credit-global-v1';
 
 export interface DurableProtectionConfig {
   projectId: string;
@@ -25,35 +42,26 @@ export interface DurableProtectionConfig {
   quotaHmacSecret: string;
 }
 
-export interface BrokerTokenVerifier {
-  verify(input: VerifyBrokerTokensInput): Promise<VerifyBrokerTokensResult>;
-}
-
 export interface VerifyBrokerTokensInput {
   authorizationHeader?: string;
   appCheckToken?: string;
 }
 
-export type VerifyBrokerTokensResult =
-  | {
-      ok: true;
-      auth: VerifiedAuthIdentity;
-      app: VerifiedAppIdentity;
-    }
-  | {
-      ok: false;
-      code:
-        | 'missing_auth_token'
-        | 'invalid_auth_token'
-        | 'missing_app_check_token'
-        | 'invalid_app_check_token'
-        | 'identity_project_mismatch'
-        | 'unsupported_auth_provider'
-        | 'unapproved_app';
-    };
-
 export type VerifyBrokerTokensErrorCode =
-  Extract<VerifyBrokerTokensResult, { ok: false }>['code'];
+  | 'missing_auth_token'
+  | 'invalid_auth_token'
+  | 'wrong_project_auth'
+  | 'missing_app_check_token'
+  | 'invalid_app_check_token'
+  | 'wrong_project_app_check'
+  | 'app_check_replayed'
+  | 'identity_project_mismatch'
+  | 'unsupported_auth_provider'
+  | 'unapproved_app';
+
+export type VerifyBrokerTokensResult =
+  | { ok: true; auth: VerifiedAuthIdentity; app: VerifiedAppIdentity }
+  | { ok: false; code: VerifyBrokerTokensErrorCode };
 
 export interface VerifiedAuthIdentity {
   uid: string;
@@ -66,8 +74,8 @@ export interface VerifiedAppIdentity {
   projectId: string;
 }
 
-export interface DurableGateStore {
-  readAccess(input: DurableAccessInput): Promise<DurableAccessResult>;
+export interface BrokerTokenVerifier {
+  verify(input: VerifyBrokerTokensInput): Promise<VerifyBrokerTokensResult>;
 }
 
 export interface DurableAccessInput {
@@ -78,29 +86,23 @@ export interface DurableAccessInput {
 
 export interface DurableAccessResult {
   entitled: boolean;
-  creditAvailable: boolean;
   breakerOpen: boolean;
 }
 
+export interface DurableGateStore {
+  readAccess(input: DurableAccessInput): Promise<DurableAccessResult>;
+}
+
 export interface DurableBrokerProtection {
-  verifyAndBuildIdentity(
-    input: VerifyBrokerTokensInput,
-  ): Promise<DurableBrokerIdentityResult>;
-  createIdempotencyStore(): BrokerIdempotencyStore;
-  createCreditLedger(): BrokerCreditLedger;
+  verifyAndBuildIdentity(input: VerifyBrokerTokensInput): Promise<DurableBrokerIdentityResult>;
+  createRequestLifecycle(): RequestLifecycleStore;
 }
 
 export type DurableBrokerIdentityResult =
-  | {
-      ok: true;
-      identity: BrokerAdapterIdentity;
-    }
+  | { ok: true; identity: BrokerAdapterIdentity }
   | {
       ok: false;
-      code:
-        | VerifyBrokerTokensErrorCode
-        | typeof MISSING_DURABLE_CONFIG_CODE
-        | typeof MISSING_QUOTA_SECRET_CODE;
+      code: VerifyBrokerTokensErrorCode | typeof MISSING_DURABLE_CONFIG_CODE | typeof MISSING_QUOTA_SECRET_CODE;
     };
 
 export interface FirebaseAdminAuthLike {
@@ -111,21 +113,21 @@ export interface FirebaseAdminAuthLike {
     uid?: string;
     aud?: string;
     iss?: string;
-    firebase?: {
-      sign_in_provider?: string;
-    };
+    firebase?: { sign_in_provider?: string };
   }>;
 }
 
 export interface FirebaseAdminAppCheckLike {
   verifyToken(
     token: string,
+    options: { consume: boolean },
   ): Promise<{
     appId?: string;
     app_id?: string;
     aud?: string | string[];
     iss?: string;
     sub?: string;
+    alreadyConsumed?: boolean;
   }>;
 }
 
@@ -143,52 +145,48 @@ export class FirebaseAdminBrokerTokenVerifier implements BrokerTokenVerifier {
     if (authToken === undefined) {
       return { ok: false, code: 'missing_auth_token' };
     }
-    if (input.appCheckToken === undefined || input.appCheckToken.trim().length === 0) {
-      return { ok: false, code: 'missing_app_check_token' };
-    }
 
-    let authTokenBody: Awaited<ReturnType<FirebaseAdminAuthLike['verifyIdToken']>>;
-    let appCheckTokenBody: Awaited<ReturnType<FirebaseAdminAppCheckLike['verifyToken']>>;
+    let authBody: Awaited<ReturnType<FirebaseAdminAuthLike['verifyIdToken']>>;
     try {
-      authTokenBody = await this.options.auth.verifyIdToken(authToken, true);
+      authBody = await this.options.auth.verifyIdToken(authToken, true);
     } catch {
       return { ok: false, code: 'invalid_auth_token' };
     }
-    try {
-      appCheckTokenBody = await this.options.appCheck.verifyToken(input.appCheckToken);
-    } catch {
-      return { ok: false, code: 'invalid_app_check_token' };
-    }
-
-    const authProjectId = projectIdFromAuthToken(authTokenBody);
-    const appProjectMatches = appCheckTokenMatchesProject(
-      appCheckTokenBody,
-      this.options.config.projectId,
-      this.options.config.projectNumber,
-    );
-    const uid = authTokenBody.uid;
-    const appId = appCheckTokenBody.appId ?? appCheckTokenBody.app_id ?? appCheckTokenBody.sub;
-    const signInProvider = authTokenBody.firebase?.sign_in_provider;
-
+    const authProjectId = projectIdFromAuthToken(authBody);
     if (
-      uid === undefined ||
-      uid.length === 0 ||
-      authProjectId !== this.options.config.projectId
+      authProjectId === undefined ||
+      authProjectId !== this.options.config.projectId ||
+      !nonEmptyString(authBody.uid)
     ) {
-      return { ok: false, code: 'invalid_auth_token' };
+      return { ok: false, code: 'wrong_project_auth' };
     }
-    if (
-      appId === undefined ||
-      appId.length === 0 ||
-      !appProjectMatches
-    ) {
-      return { ok: false, code: 'invalid_app_check_token' };
-    }
-    if (authProjectId !== this.options.config.projectId) {
-      return { ok: false, code: 'identity_project_mismatch' };
-    }
+    const signInProvider = authBody.firebase?.sign_in_provider;
     if (signInProvider !== 'anonymous') {
       return { ok: false, code: 'unsupported_auth_provider' };
+    }
+
+    if (!nonEmptyString(input.appCheckToken)) {
+      return { ok: false, code: 'missing_app_check_token' };
+    }
+    let appBody: Awaited<ReturnType<FirebaseAdminAppCheckLike['verifyToken']>>;
+    try {
+      appBody = await this.options.appCheck.verifyToken(input.appCheckToken, { consume: true });
+    } catch {
+      return { ok: false, code: 'invalid_app_check_token' };
+    }
+    if (appBody.alreadyConsumed === true) {
+      return { ok: false, code: 'app_check_replayed' };
+    }
+    if (!appCheckTokenMatchesProject(
+      appBody,
+      this.options.config.projectId,
+      this.options.config.projectNumber,
+    )) {
+      return { ok: false, code: 'wrong_project_app_check' };
+    }
+    const appId = appBody.appId ?? appBody.app_id ?? appBody.sub;
+    if (!nonEmptyString(appId)) {
+      return { ok: false, code: 'invalid_app_check_token' };
     }
     if (!this.options.config.allowedAppIds.has(appId)) {
       return { ok: false, code: 'unapproved_app' };
@@ -196,15 +194,8 @@ export class FirebaseAdminBrokerTokenVerifier implements BrokerTokenVerifier {
 
     return {
       ok: true,
-      auth: {
-        uid,
-        projectId: authProjectId,
-        signInProvider,
-      },
-      app: {
-        appId,
-        projectId: this.options.config.projectId,
-      },
+      auth: { uid: authBody.uid, projectId: authProjectId, signInProvider },
+      app: { appId, projectId: this.options.config.projectId },
     };
   }
 }
@@ -213,21 +204,20 @@ export class ConfiguredDurableBrokerProtection implements DurableBrokerProtectio
   constructor(
     private readonly verifier: BrokerTokenVerifier,
     private readonly gateStore: DurableGateStore,
-    private readonly idempotency: BrokerIdempotencyStore,
-    private readonly creditLedger: BrokerCreditLedger,
+    private readonly requestLifecycle: RequestLifecycleStore,
     private readonly config: DurableProtectionConfig,
   ) {}
 
-  async verifyAndBuildIdentity(
-    input: VerifyBrokerTokensInput,
-  ): Promise<DurableBrokerIdentityResult> {
+  async verifyAndBuildIdentity(input: VerifyBrokerTokensInput): Promise<DurableBrokerIdentityResult> {
     if (this.config.quotaHmacSecret.trim().length === 0) {
       return { ok: false, code: MISSING_QUOTA_SECRET_CODE };
     }
-
     const verified = await this.verifier.verify(input);
     if (!verified.ok) {
       return verified;
+    }
+    if (verified.auth.projectId !== verified.app.projectId) {
+      return { ok: false, code: 'identity_project_mismatch' };
     }
 
     const quotaSubject = deriveQuotaSubject({
@@ -257,24 +247,16 @@ export class ConfiguredDurableBrokerProtection implements DurableBrokerProtectio
           authProjectId: verified.auth.projectId,
           signInProvider: 'anonymous',
         },
-        app: {
-          appId: verified.app.appId,
-          appProjectId: verified.app.projectId,
-        },
+        app: { appId: verified.app.appId, appProjectId: verified.app.projectId },
         quotaSubject,
         entitled: access.entitled,
-        creditAvailable: access.creditAvailable,
         breakerOpen: access.breakerOpen,
       },
     };
   }
 
-  createIdempotencyStore(): BrokerIdempotencyStore {
-    return this.idempotency;
-  }
-
-  createCreditLedger(): BrokerCreditLedger {
-    return this.creditLedger;
+  createRequestLifecycle(): RequestLifecycleStore {
+    return this.requestLifecycle;
   }
 }
 
@@ -298,10 +280,7 @@ export interface DurableFirestoreTransaction {
     data: Record<string, unknown>,
     options?: { merge?: boolean },
   ): DurableFirestoreTransaction;
-  update(
-    ref: DurableFirestoreDocumentRef,
-    data: Record<string, unknown>,
-  ): DurableFirestoreTransaction;
+  update(ref: DurableFirestoreDocumentRef, data: Record<string, unknown>): DurableFirestoreTransaction;
   delete(ref: DurableFirestoreDocumentRef): DurableFirestoreTransaction;
 }
 
@@ -314,69 +293,56 @@ export interface DurableFirestoreLike {
 
 export interface FirestoreDurableBrokerStoreOptions {
   collectionPrefix?: string;
-  perSubjectMonthlyCap?: number;
-  brokerMonthlyCap?: number;
+  perSubjectCreditCap?: number;
+  brokerCreditCap?: number;
   oneInFlightPerSubject?: boolean;
 }
 
 export class FirestoreDurableBrokerStore implements DurableGateStore {
-  private readonly collectionPrefix: string;
-  private readonly perSubjectMonthlyCap: number;
-  private readonly brokerMonthlyCap: number;
-  private readonly oneInFlightPerSubject: boolean;
+  readonly collectionPrefix: string;
+  readonly perSubjectCreditCap: number;
+  readonly brokerCreditCap: number;
+  readonly oneInFlightPerSubject: boolean;
 
   constructor(
-    private readonly firestore: DurableFirestoreLike,
+    readonly firestore: DurableFirestoreLike,
     options: FirestoreDurableBrokerStoreOptions = {},
   ) {
     this.collectionPrefix = options.collectionPrefix ?? 'brokerDurable';
-    this.perSubjectMonthlyCap = options.perSubjectMonthlyCap ?? 3;
-    this.brokerMonthlyCap = options.brokerMonthlyCap ?? 100;
+    this.perSubjectCreditCap = options.perSubjectCreditCap ?? 3;
+    this.brokerCreditCap = options.brokerCreditCap ?? 100;
     this.oneInFlightPerSubject = options.oneInFlightPerSubject ?? true;
   }
 
   async readAccess(input: DurableAccessInput): Promise<DurableAccessResult> {
-    const [control, entitlement, subject, global] = await Promise.all([
+    const [control, entitlement] = await Promise.all([
       this.controlRef().get(),
       this.entitlementRef(input.uid).get(),
-      this.subjectRef(input.quotaSubject).get(),
-      this.globalUsageRef().get(),
     ]);
-    const controlData = control.data() ?? {};
-    const subjectData = subject.data() ?? {};
-    const globalData = global.data() ?? {};
-    const perSubjectCap = numberField(controlData.perSubjectMonthlyCap) ?? this.perSubjectMonthlyCap;
-    const brokerCap = numberField(controlData.brokerMonthlyCap) ?? this.brokerMonthlyCap;
-    const exposedSubjectCredits = numberField(subjectData.exposedCredits) ?? 0;
-    const exposedBrokerCredits = numberField(globalData.exposedCredits) ?? 0;
-
+    const controlData = control.data();
+    const entitlementData = entitlement.data();
+    if (!control.exists || controlData?.record_version !== CONTROL_RECORD_VERSION) {
+      throw new Error('unsafe_control_record');
+    }
+    if (entitlement.exists && entitlementData?.record_version !== ENTITLEMENT_RECORD_VERSION) {
+      throw new Error('unsafe_entitlement_record');
+    }
     return {
-      entitled: entitlement.data()?.entitled === true,
-      creditAvailable:
-        exposedSubjectCredits + 1 <= perSubjectCap &&
-        exposedBrokerCredits + 1 <= brokerCap,
+      entitled: entitlementData?.entitled === true,
       breakerOpen: controlData.breakerOpen === true,
     };
   }
 
-  createIdempotencyStore(): BrokerIdempotencyStore {
-    return new FirestoreDurableIdempotencyStore(this);
+  createRequestLifecycle(): RequestLifecycleStore {
+    return new FirestoreRequestLifecycle(this);
   }
 
-  createCreditLedger(): BrokerCreditLedger {
-    return new FirestoreDurableCreditLedger(this);
-  }
-
-  idempotencyRef(quotaSubject: string, requestId: string): DurableFirestoreDocumentRef {
-    return this.firestore.doc(
-      `${this.collectionPrefix}Idempotency/${docKey(`${quotaSubject}|${requestId}`)}`,
-    );
+  requestRef(quotaSubject: string, requestId: string): DurableFirestoreDocumentRef {
+    return this.firestore.doc(`${this.collectionPrefix}Idempotency/${docKey(`${quotaSubject}|${requestId}`)}`);
   }
 
   ledgerRef(quotaSubject: string, requestId: string): DurableFirestoreDocumentRef {
-    return this.firestore.doc(
-      `${this.collectionPrefix}Ledger/${docKey(`${quotaSubject}|${requestId}`)}`,
-    );
+    return this.firestore.doc(`${this.collectionPrefix}Ledger/${docKey(`${quotaSubject}|${requestId}`)}`);
   }
 
   subjectRef(quotaSubject: string): DurableFirestoreDocumentRef {
@@ -395,247 +361,302 @@ export class FirestoreDurableBrokerStore implements DurableGateStore {
     return this.firestore.doc(`${this.collectionPrefix}Entitlements/${docKey(uid)}`);
   }
 
-  transaction<T>(
-    updateFunction: (transaction: DurableFirestoreTransaction) => Promise<T>,
-  ): Promise<T> {
-    return this.firestore.runTransaction(updateFunction);
-  }
-
-  get defaultPerSubjectMonthlyCap(): number {
-    return this.perSubjectMonthlyCap;
-  }
-
-  get defaultBrokerMonthlyCap(): number {
-    return this.brokerMonthlyCap;
-  }
-
-  get defaultOneInFlightPerSubject(): boolean {
-    return this.oneInFlightPerSubject;
+  transaction<T>(callback: (transaction: DurableFirestoreTransaction) => Promise<T>): Promise<T> {
+    return this.firestore.runTransaction(callback);
   }
 }
 
-export class FirestoreDurableIdempotencyStore implements BrokerIdempotencyStore {
+export class FirestoreRequestLifecycle implements RequestLifecycleStore {
   constructor(private readonly store: FirestoreDurableBrokerStore) {}
 
-  async get(quotaSubject: string, requestId: string): Promise<StoredRequest | undefined> {
-    return storedRequestFromSnapshot(await this.store.idempotencyRef(quotaSubject, requestId).get());
-  }
-
-  async begin(
-    quotaSubject: string,
-    requestId: string,
-    payloadHash: string,
-  ): Promise<StoredRequest> {
+  async acquire(input: AcquireRequestInput): Promise<AcquireRequestResult> {
     return this.store.transaction(async (transaction) => {
-      const ref = this.store.idempotencyRef(quotaSubject, requestId);
-      const existing = storedRequestFromSnapshot(await transaction.get(ref));
-      if (existing !== undefined) {
-        return existing;
+      const requestRef = this.store.requestRef(input.quota_subject, input.request_id);
+      const requestSnapshot = await transaction.get(requestRef);
+      const parsed = parseStoredRequest(requestSnapshot.exists ? requestSnapshot.data() : undefined);
+      if (parsed.kind === 'unsafe') {
+        return { kind: 'unsafe_record' };
+      }
+      if (parsed.kind === 'valid') {
+        const existing = parsed.record;
+        if (existing.payload_hash !== input.payload_hash) {
+          return { kind: 'conflict' };
+        }
+        if (existing.state === 'terminal') {
+          return { kind: 'replay', record: existing, outcome: existing.terminal_outcome! };
+        }
+        if (existing.state === 'dispatch_started') {
+          return input.now.getTime() < Date.parse(existing.reservation_lease_expires_at)
+            ? { kind: 'in_flight' }
+            : { kind: 'outcome_unknown' };
+        }
+        if (input.now.getTime() < Date.parse(existing.reservation_lease_expires_at)) {
+          return { kind: 'in_flight' };
+        }
+
+        const outcome = reservationExpiredOutcome(existing.request_id);
+        const terminal = {
+          ...existing,
+          state: 'terminal' as const,
+          settlement_state: 'pending_refund' as const,
+          terminal_outcome: outcome,
+        };
+        transaction.set(requestRef, terminal);
+        return { kind: 'replay', record: terminal, outcome };
       }
 
-      transaction.set(ref, {
-        quotaSubject,
-        requestId,
-        payloadHash,
-        state: 'in-flight',
-        createdAtIso: new Date().toISOString(),
-      });
-      return { payloadHash, quotaSubject, requestId, created: true };
+      const ledgerRef = this.store.ledgerRef(input.quota_subject, input.request_id);
+      const controlRef = this.store.controlRef();
+      const subjectRef = this.store.subjectRef(input.quota_subject);
+      const globalRef = this.store.globalUsageRef();
+      const [ledgerSnapshot, controlSnapshot, subjectSnapshot, globalSnapshot] = await Promise.all([
+        transaction.get(ledgerRef),
+        transaction.get(controlRef),
+        transaction.get(subjectRef),
+        transaction.get(globalRef),
+      ]);
+      if (ledgerSnapshot.exists) {
+        return { kind: 'unsafe_record' };
+      }
+      const control = controlSnapshot.data() ?? {};
+      const subject = subjectSnapshot.data() ?? {};
+      const global = globalSnapshot.data() ?? {};
+      if (
+        !controlSnapshot.exists ||
+        control.record_version !== CONTROL_RECORD_VERSION ||
+        (subjectSnapshot.exists && subject.record_version !== SUBJECT_CREDIT_RECORD_VERSION) ||
+        (globalSnapshot.exists && global.record_version !== GLOBAL_CREDIT_RECORD_VERSION)
+      ) {
+        return { kind: 'unsafe_record' };
+      }
+      const oneInFlight = booleanField(control.oneInFlightPerSubject) ?? this.store.oneInFlightPerSubject;
+      const perSubjectCap = integerField(control.perSubjectCreditCap) ?? this.store.perSubjectCreditCap;
+      const brokerCap = integerField(control.brokerCreditCap) ?? this.store.brokerCreditCap;
+      const subjectSnapshotValue = creditSnapshot(subject);
+      const globalExposed = integerField(global.exposed_credits) ?? 0;
+      if (oneInFlight && subjectSnapshotValue.reserved_count > 0) {
+        return { kind: 'in_flight' };
+      }
+      if (
+        subjectSnapshotValue.exposed_credits + input.credit_cost > perSubjectCap ||
+        globalExposed + input.credit_cost > brokerCap
+      ) {
+        return { kind: 'credits_exhausted' };
+      }
+
+      const record: StoredRequestRecord = {
+        record_version: REQUEST_LIFECYCLE_RECORD_VERSION,
+        quota_subject: input.quota_subject,
+        request_id: input.request_id,
+        payload_hash: input.payload_hash,
+        state: 'reserved',
+        credit_cost: 1,
+        reservation_lease_expires_at: new Date(
+          input.now.getTime() + RESERVATION_LEASE_MILLISECONDS,
+        ).toISOString(),
+        retention_expires_at: new Date(input.now.getTime() + RETENTION_MILLISECONDS).toISOString(),
+        settlement_state: 'reserved',
+      };
+      const ledger: LedgerRecord = {
+        record_version: CREDIT_LEDGER_RECORD_VERSION,
+        quota_subject: input.quota_subject,
+        request_id: input.request_id,
+        state: 'reserved',
+        credit_cost: 1,
+      };
+      transaction.set(requestRef, { ...record });
+      transaction.set(ledgerRef, { ...ledger });
+      transaction.set(subjectRef, {
+        record_version: SUBJECT_CREDIT_RECORD_VERSION,
+        exposed_credits: subjectSnapshotValue.exposed_credits + 1,
+        reserved_count: subjectSnapshotValue.reserved_count + 1,
+      }, { merge: true });
+      transaction.set(globalRef, {
+        record_version: GLOBAL_CREDIT_RECORD_VERSION,
+        exposed_credits: globalExposed + 1,
+      }, { merge: true });
+      return { kind: 'reserved', record };
     });
   }
 
-  async setInFlight(
-    entry: StoredRequest,
-    inFlight: Promise<BrokerResponse>,
-  ): Promise<void> {
-    entry.inFlight = inFlight;
+  async markDispatchStarted(record: StoredRequestRecord): Promise<void> {
+    await this.store.transaction(async (transaction) => {
+      const ref = this.store.requestRef(record.quota_subject, record.request_id);
+      const current = validRecordFromSnapshot(await transaction.get(ref));
+      if (current.state !== 'reserved' || current.settlement_state !== 'reserved') {
+        throw new Error('unsafe_dispatch_transition');
+      }
+      transaction.set(ref, { state: 'dispatch_started' }, { merge: true });
+    });
+    record.state = 'dispatch_started';
   }
 
-  async complete(entry: StoredRequest, response: BrokerResponse): Promise<void> {
-    entry.response = response;
-    entry.inFlight = undefined;
-    if (entry.durableInFlight === true) {
-      return;
-    }
-    if (entry.quotaSubject === undefined || entry.requestId === undefined) {
-      return;
-    }
+  async persistTerminal(
+    record: StoredRequestRecord,
+    outcome: BrokerTerminalOutcome,
+    settlement: SettlementIntent,
+  ): Promise<void> {
     await this.store.transaction(async (transaction) => {
-      transaction.set(this.store.idempotencyRef(entry.quotaSubject ?? '', entry.requestId ?? ''), {
-        payloadHash: entry.payloadHash,
-        state: 'completed',
-        response,
-        completedAtIso: new Date().toISOString(),
+      const ref = this.store.requestRef(record.quota_subject, record.request_id);
+      const current = validRecordFromSnapshot(await transaction.get(ref));
+      if (current.state !== 'reserved' && current.state !== 'dispatch_started') {
+        throw new Error('unsafe_terminal_transition');
+      }
+      transaction.set(ref, {
+        state: 'terminal',
+        terminal_outcome: outcome,
+        settlement_state: settlement === 'refund' ? 'pending_refund' : 'pending_finalize',
       }, { merge: true });
     });
+    record.state = 'terminal';
+    record.terminal_outcome = outcome;
+    record.settlement_state = settlement === 'refund' ? 'pending_refund' : 'pending_finalize';
   }
 
-  async forget(quotaSubject: string, requestId: string): Promise<void> {
-    await this.store.idempotencyRef(quotaSubject, requestId).delete();
+  async settle(record: StoredRequestRecord): Promise<void> {
+    await this.store.transaction(async (transaction) => {
+      const requestRef = this.store.requestRef(record.quota_subject, record.request_id);
+      const ledgerRef = this.store.ledgerRef(record.quota_subject, record.request_id);
+      const subjectRef = this.store.subjectRef(record.quota_subject);
+      const globalRef = this.store.globalUsageRef();
+      const [requestSnapshot, ledgerSnapshot, subjectSnapshot, globalSnapshot] = await Promise.all([
+        transaction.get(requestRef),
+        transaction.get(ledgerRef),
+        transaction.get(subjectRef),
+        transaction.get(globalRef),
+      ]);
+      const current = validRecordFromSnapshot(requestSnapshot);
+      if (current.state !== 'terminal') {
+        throw new Error('settlement_requires_terminal');
+      }
+      if (current.settlement_state === 'refunded' || current.settlement_state === 'finalized') {
+        record.settlement_state = current.settlement_state;
+        return;
+      }
+      const ledger = ledgerRecordFromSnapshot(ledgerSnapshot);
+      if (ledger === undefined || ledger.state !== 'reserved') {
+        throw new Error('unsafe_ledger_record');
+      }
+      if (
+        !subjectSnapshot.exists ||
+        subjectSnapshot.data()?.record_version !== SUBJECT_CREDIT_RECORD_VERSION ||
+        !globalSnapshot.exists ||
+        globalSnapshot.data()?.record_version !== GLOBAL_CREDIT_RECORD_VERSION
+      ) {
+        throw new Error('unsafe_credit_aggregate');
+      }
+      const subject = creditSnapshot(subjectSnapshot.data() ?? {});
+      const globalExposed = integerField(globalSnapshot.data()?.exposed_credits) ?? 0;
+      const refund = current.settlement_state === 'pending_refund';
+      const nextSubject = refund ? applyRefund(subject, 1) : applyFinalize(subject, 1);
+
+      transaction.set(ledgerRef, {
+        state: refund ? 'refunded' : 'finalized',
+        ...(refund ? { reason: terminalReason(current.terminal_outcome) } : {}),
+      }, { merge: true });
+      transaction.set(subjectRef, { ...nextSubject }, { merge: true });
+      if (refund) {
+        transaction.set(globalRef, {
+          record_version: GLOBAL_CREDIT_RECORD_VERSION,
+          exposed_credits: Math.max(0, globalExposed - 1),
+        }, { merge: true });
+      }
+      transaction.set(requestRef, {
+        settlement_state: refund ? 'refunded' : 'finalized',
+      }, { merge: true });
+      record.settlement_state = refund ? 'refunded' : 'finalized';
+    });
   }
 }
 
-export class FirestoreDurableCreditLedger implements BrokerCreditLedger {
-  constructor(private readonly store: FirestoreDurableBrokerStore) {}
+export interface FakeDurableBrokerStoreOptions {
+  entitledUids?: Iterable<string>;
+  breakerOpen?: boolean;
+  perSubjectCreditCap?: number;
+  brokerCreditCap?: number;
+  oneInFlightPerSubject?: boolean;
+}
 
-  get records(): LedgerRecord[] {
-    return [];
+export class FakeDurableBrokerStore implements DurableGateStore {
+  readonly entitledUids: Set<string>;
+  readonly lifecycle: InMemoryRequestLifecycle;
+  breakerOpen: boolean;
+
+  constructor(options: FakeDurableBrokerStoreOptions = {}) {
+    this.entitledUids = new Set(options.entitledUids ?? ['owner-uid']);
+    this.breakerOpen = options.breakerOpen ?? false;
+    this.lifecycle = new InMemoryRequestLifecycle({
+      perSubjectCreditCap: options.perSubjectCreditCap,
+      brokerCreditCap: options.brokerCreditCap,
+      oneInFlightPerSubject: options.oneInFlightPerSubject,
+    });
+  }
+
+  async readAccess(input: DurableAccessInput): Promise<DurableAccessResult> {
+    return {
+      entitled: this.entitledUids.has(input.uid),
+      breakerOpen: this.breakerOpen,
+    };
   }
 
   get reserveCount(): number {
-    return 0;
+    return this.lifecycle.reserveCount;
   }
 
   get finalizeCount(): number {
-    return 0;
+    return this.lifecycle.finalizeCount;
   }
 
   get refundCount(): number {
-    return 0;
+    return this.lifecycle.refundCount;
   }
+}
 
-  get exposedCredits(): number {
-    return 0;
-  }
+export class FakeBrokerTokenVerifier implements BrokerTokenVerifier {
+  private readonly consumedAppCheckTokens = new Set<string>();
 
-  spentCreditsFor(_quotaSubject: string): number {
-    return 0;
-  }
+  constructor(
+    private readonly config: Omit<DurableProtectionConfig, 'quotaHmacSecret'>,
+    private readonly tokenMap: ReadonlyMap<
+      string,
+      { uid: string; appId: string; projectId?: string; signInProvider?: string }
+    > = new Map([
+      ['owner-auth-token|owner-app-check-token', { uid: 'owner-uid', appId: 'owner-test-app' }],
+    ]),
+  ) {}
 
-  exposedCreditsFor(_quotaSubject: string): number {
-    return 0;
-  }
-
-  async reserve(input: ReserveCreditInput): Promise<ReserveCreditResult> {
-    return this.store.transaction(async (transaction) => {
-      const control = dataFromSnapshot(await transaction.get(this.store.controlRef()));
-      const subjectRef = this.store.subjectRef(input.quotaSubject);
-      const globalRef = this.store.globalUsageRef();
-      const ledgerRef = this.store.ledgerRef(input.quotaSubject, input.requestId);
-      const [subject, global] = await Promise.all([
-        transaction.get(subjectRef),
-        transaction.get(globalRef),
-      ]);
-      const subjectData = dataFromSnapshot(subject);
-      const globalData = dataFromSnapshot(global);
-      const oneInFlight = booleanField(control.oneInFlightPerSubject) ??
-        this.store.defaultOneInFlightPerSubject;
-      const perSubjectCap = numberField(control.perSubjectMonthlyCap) ??
-        this.store.defaultPerSubjectMonthlyCap;
-      const brokerCap = numberField(control.brokerMonthlyCap) ??
-        this.store.defaultBrokerMonthlyCap;
-      const subjectReservedCount = numberField(subjectData.reservedCount) ?? 0;
-      const subjectExposedCredits = numberField(subjectData.exposedCredits) ?? 0;
-      const brokerExposedCredits = numberField(globalData.exposedCredits) ?? 0;
-
-      if (oneInFlight && subjectReservedCount > 0) {
-        return this.rejectBeforeReserve(
-          transaction,
-          ledgerRef,
-          input,
-          'quota_subject_in_flight',
-          'Quota subject already has an in-flight request.',
-        );
-      }
-
-      if (subjectExposedCredits + input.creditCost > perSubjectCap) {
-        return this.rejectBeforeReserve(
-          transaction,
-          ledgerRef,
-          input,
-          'quota_subject_monthly_cap_exceeded',
-          'Quota subject monthly cap denied the request.',
-        );
-      }
-
-      if (brokerExposedCredits + input.creditCost > brokerCap) {
-        return this.rejectBeforeReserve(
-          transaction,
-          ledgerRef,
-          input,
-          'broker_monthly_cap_exceeded',
-          'Broker monthly cap denied the request.',
-        );
-      }
-
-      const record: LedgerRecord = { ...input, state: 'reserved' };
-      transaction.set(ledgerRef, { ...record });
-      transaction.set(subjectRef, {
-        exposedCredits: subjectExposedCredits + input.creditCost,
-        reservedCount: subjectReservedCount + 1,
-      }, { merge: true });
-      transaction.set(globalRef, {
-        exposedCredits: brokerExposedCredits + input.creditCost,
-      }, { merge: true });
-      return { ok: true, record };
-    });
-  }
-
-  async finalize(record: LedgerRecord): Promise<void> {
-    await this.store.transaction(async (transaction) => {
-      const ledgerRef = this.store.ledgerRef(record.quotaSubject, record.requestId);
-      const existing = ledgerRecordFromSnapshot(await transaction.get(ledgerRef));
-      if (existing?.state !== 'reserved') {
-        return;
-      }
-      const subjectRef = this.store.subjectRef(record.quotaSubject);
-      const subject = dataFromSnapshot(await transaction.get(subjectRef));
-      const reservedCount = Math.max(0, (numberField(subject.reservedCount) ?? 0) - 1);
-      transaction.set(ledgerRef, { state: 'finalized' }, { merge: true });
-      transaction.set(subjectRef, { reservedCount }, { merge: true });
-      record.state = 'finalized';
-    });
-  }
-
-  async refund(record: LedgerRecord, reason: string): Promise<void> {
-    await this.store.transaction(async (transaction) => {
-      const ledgerRef = this.store.ledgerRef(record.quotaSubject, record.requestId);
-      const existing = ledgerRecordFromSnapshot(await transaction.get(ledgerRef));
-      if (existing?.state !== 'reserved') {
-        return;
-      }
-      const subjectRef = this.store.subjectRef(record.quotaSubject);
-      const globalRef = this.store.globalUsageRef();
-      const [subjectSnapshot, globalSnapshot] = await Promise.all([
-        transaction.get(subjectRef),
-        transaction.get(globalRef),
-      ]);
-      const subject = dataFromSnapshot(subjectSnapshot);
-      const global = dataFromSnapshot(globalSnapshot);
-      const reservedCount = Math.max(0, (numberField(subject.reservedCount) ?? 0) - 1);
-      const subjectExposedCredits = Math.max(
-        0,
-        (numberField(subject.exposedCredits) ?? 0) - record.creditCost,
-      );
-      const brokerExposedCredits = Math.max(
-        0,
-        (numberField(global.exposedCredits) ?? 0) - record.creditCost,
-      );
-      transaction.set(ledgerRef, { state: 'refunded', reason }, { merge: true });
-      transaction.set(subjectRef, {
-        exposedCredits: subjectExposedCredits,
-        reservedCount,
-      }, { merge: true });
-      transaction.set(globalRef, { exposedCredits: brokerExposedCredits }, { merge: true });
-      record.state = 'refunded';
-      record.reason = reason;
-    });
-  }
-
-  private rejectBeforeReserve(
-    transaction: DurableFirestoreTransaction,
-    ledgerRef: DurableFirestoreDocumentRef,
-    input: ReserveCreditInput,
-    code: NonNullable<ReserveCreditResult['code']>,
-    message: string,
-  ): ReserveCreditResult {
-    const record: LedgerRecord = {
-      ...input,
-      state: 'rejected-before-reserve',
-      reason: code,
+  async verify(input: VerifyBrokerTokensInput): Promise<VerifyBrokerTokensResult> {
+    const authToken = bearerToken(input.authorizationHeader);
+    if (authToken === undefined) {
+      return { ok: false, code: 'missing_auth_token' };
+    }
+    const appCheckToken = input.appCheckToken;
+    if (!nonEmptyString(appCheckToken)) {
+      return { ok: false, code: 'missing_app_check_token' };
+    }
+    const mapped = this.tokenMap.get(`${authToken}|${appCheckToken}`);
+    if (mapped === undefined) {
+      return { ok: false, code: 'invalid_auth_token' };
+    }
+    const projectId = mapped.projectId ?? this.config.projectId;
+    if (projectId !== this.config.projectId) {
+      return { ok: false, code: 'wrong_project_auth' };
+    }
+    if ((mapped.signInProvider ?? 'anonymous') !== 'anonymous') {
+      return { ok: false, code: 'unsupported_auth_provider' };
+    }
+    if (this.consumedAppCheckTokens.has(appCheckToken)) {
+      return { ok: false, code: 'app_check_replayed' };
+    }
+    this.consumedAppCheckTokens.add(appCheckToken);
+    if (!this.config.allowedAppIds.has(mapped.appId)) {
+      return { ok: false, code: 'unapproved_app' };
+    }
+    return {
+      ok: true,
+      auth: { uid: mapped.uid, projectId, signInProvider: 'anonymous' },
+      app: { appId: mapped.appId, projectId },
     };
-    transaction.set(ledgerRef, { ...record });
-    return { ok: false, record, code, message };
   }
 }
 
@@ -649,29 +670,23 @@ export interface FirebaseDurableBrokerProtectionOptions {
 export function createFirebaseAdminDurableBrokerProtection(
   options: FirebaseDurableBrokerProtectionOptions,
 ): { ok: true; protection: DurableBrokerProtection } | { ok: false; code: string } {
-  const configResult = durableConfigFromEnv(options.env ?? process.env);
-  if (!configResult.ok) {
-    return configResult;
+  const configured = durableConfigFromEnv(options.env ?? process.env);
+  if (!configured.ok) {
+    return configured;
   }
   const store = new FirestoreDurableBrokerStore(options.firestore);
   const verifier = new FirebaseAdminBrokerTokenVerifier({
     auth: options.auth,
     appCheck: options.appCheck,
-    config: {
-      projectId: configResult.config.projectId,
-      projectNumber: configResult.config.projectNumber,
-      allowedAppIds: configResult.config.allowedAppIds,
-    },
+    config: configured.config,
   });
-
   return {
     ok: true,
     protection: new ConfiguredDurableBrokerProtection(
       verifier,
       store,
-      store.createIdempotencyStore(),
-      store.createCreditLedger(),
-      configResult.config,
+      store.createRequestLifecycle(),
+      configured.config,
     ),
   };
 }
@@ -695,288 +710,72 @@ export function durableConfigFromEnv(
   const projectNumber = env[BROKER_FIREBASE_PROJECT_NUMBER_ENV]?.trim();
   const allowedAppIds = parseAllowlist(env[BROKER_APP_ID_ALLOWLIST_ENV]);
   if (
-    projectId === undefined ||
-    projectId.length === 0 ||
-    projectNumber === undefined ||
-    projectNumber.length === 0 ||
+    !nonEmptyString(projectId) ||
+    !nonEmptyString(projectNumber) ||
     allowedAppIds.size === 0 ||
     env[BROKER_DURABLE_STORE_CONFIGURED_ENV] !== 'true'
   ) {
     return { ok: false, code: MISSING_DURABLE_CONFIG_CODE };
   }
-
   const quotaHmacSecret = env[BROKER_QUOTA_HMAC_SECRET_ENV];
-  if (quotaHmacSecret === undefined || quotaHmacSecret.trim().length === 0) {
+  if (!nonEmptyString(quotaHmacSecret?.trim())) {
     return { ok: false, code: MISSING_QUOTA_SECRET_CODE };
   }
-
   return {
     ok: true,
-    config: {
-      projectId,
-      projectNumber,
-      allowedAppIds,
-      quotaHmacSecret,
-    },
+    config: { projectId, projectNumber, allowedAppIds, quotaHmacSecret },
   };
 }
 
-export interface FakeDurableBrokerStoreOptions {
-  entitledUids?: Iterable<string>;
-  breakerOpen?: boolean;
-  perSubjectMonthlyCap?: number;
-  brokerMonthlyCap?: number;
-  oneInFlightPerSubject?: boolean;
+function validRecordFromSnapshot(snapshot: DurableFirestoreDocumentSnapshot): StoredRequestRecord {
+  const parsed = parseStoredRequest(snapshot.exists ? snapshot.data() : undefined);
+  if (parsed.kind !== 'valid') {
+    throw new Error('unsafe_request_record');
+  }
+  return parsed.record;
 }
 
-export class FakeDurableBrokerStore implements DurableGateStore {
-  readonly idempotency = new Map<string, StoredRequest>();
-  readonly ledgerRecords: LedgerRecord[] = [];
-  readonly entitledUids: Set<string>;
-  breakerOpen: boolean;
-  perSubjectMonthlyCap: number;
-  brokerMonthlyCap: number;
-  oneInFlightPerSubject: boolean;
-
-  constructor(options: FakeDurableBrokerStoreOptions = {}) {
-    this.entitledUids = new Set(options.entitledUids ?? ['owner-uid']);
-    this.breakerOpen = options.breakerOpen ?? false;
-    this.perSubjectMonthlyCap = options.perSubjectMonthlyCap ?? 3;
-    this.brokerMonthlyCap = options.brokerMonthlyCap ?? 100;
-    this.oneInFlightPerSubject = options.oneInFlightPerSubject ?? true;
+function ledgerRecordFromSnapshot(snapshot: DurableFirestoreDocumentSnapshot): LedgerRecord | undefined {
+  const data = snapshot.data();
+  if (
+    !snapshot.exists ||
+    data === undefined ||
+    !Object.keys(data).every((key) => LEDGER_RECORD_KEYS.has(key)) ||
+    data?.record_version !== CREDIT_LEDGER_RECORD_VERSION ||
+    !nonEmptyString(data.request_id) ||
+    !nonEmptyString(data.quota_subject) ||
+    (data.state !== 'reserved' && data.state !== 'finalized' && data.state !== 'refunded') ||
+    data.credit_cost !== 1
+  ) {
+    return undefined;
   }
-
-  async readAccess(input: DurableAccessInput): Promise<DurableAccessResult> {
-    return {
-      entitled: this.entitledUids.has(input.uid),
-      creditAvailable:
-        this.exposedCreditsFor(input.quotaSubject) + 1 <= this.perSubjectMonthlyCap &&
-        this.exposedCredits + 1 <= this.brokerMonthlyCap,
-      breakerOpen: this.breakerOpen,
-    };
-  }
-
-  get reserveCount(): number {
-    return this.ledgerRecords.filter((record) => record.state !== 'rejected-before-reserve').length;
-  }
-
-  get finalizeCount(): number {
-    return this.ledgerRecords.filter((record) => record.state === 'finalized').length;
-  }
-
-  get refundCount(): number {
-    return this.ledgerRecords.filter((record) => record.state === 'refunded').length;
-  }
-
-  get exposedCredits(): number {
-    return this.ledgerRecords
-      .filter((record) => record.state === 'reserved' || record.state === 'finalized')
-      .reduce((total, record) => total + record.creditCost, 0);
-  }
-
-  exposedCreditsFor(quotaSubject: string): number {
-    return this.ledgerRecords
-      .filter(
-        (record) =>
-          record.quotaSubject === quotaSubject &&
-          (record.state === 'reserved' || record.state === 'finalized'),
-      )
-      .reduce((total, record) => total + record.creditCost, 0);
-  }
-
-  hasReservedFor(quotaSubject: string): boolean {
-    return this.ledgerRecords.some(
-      (record) => record.quotaSubject === quotaSubject && record.state === 'reserved',
-    );
-  }
+  return data as unknown as LedgerRecord;
 }
 
-export class DurableIdempotencyStore implements BrokerIdempotencyStore {
-  constructor(private readonly store: FakeDurableBrokerStore) {}
+const LEDGER_RECORD_KEYS = new Set([
+  'record_version',
+  'request_id',
+  'quota_subject',
+  'state',
+  'credit_cost',
+  'reason',
+]);
 
-  get(quotaSubject: string, requestId: string): StoredRequest | undefined {
-    return this.store.idempotency.get(this.key(quotaSubject, requestId));
-  }
-
-  begin(quotaSubject: string, requestId: string, payloadHash: string): StoredRequest {
-    const existing = this.get(quotaSubject, requestId);
-    if (existing !== undefined) {
-      existing.created = false;
-      return existing;
-    }
-    const entry: StoredRequest = { payloadHash, quotaSubject, requestId, created: true };
-    this.store.idempotency.set(this.key(quotaSubject, requestId), entry);
-    return entry;
-  }
-
-  setInFlight(entry: StoredRequest, inFlight: Promise<import('./contracts.js').BrokerResponse>): void {
-    entry.inFlight = inFlight;
-  }
-
-  complete(entry: StoredRequest, response: import('./contracts.js').BrokerResponse): void {
-    entry.response = response;
-    entry.inFlight = undefined;
-  }
-
-  forget(quotaSubject: string, requestId: string): void {
-    this.store.idempotency.delete(this.key(quotaSubject, requestId));
-  }
-
-  private key(quotaSubject: string, requestId: string): string {
-    return `${quotaSubject}|${requestId}`;
-  }
+function reservationExpiredOutcome(requestId: string): BrokerTerminalOutcome {
+  return {
+    kind: 'error',
+    failure: { request_id: requestId, condition: 'reservation_lease_expired' },
+  };
 }
 
-export class DurableCreditLedger implements BrokerCreditLedger {
-  constructor(private readonly store: FakeDurableBrokerStore) {}
-
-  get records(): LedgerRecord[] {
-    return this.store.ledgerRecords;
-  }
-
-  get reserveCount(): number {
-    return this.store.reserveCount;
-  }
-
-  get finalizeCount(): number {
-    return this.store.finalizeCount;
-  }
-
-  get refundCount(): number {
-    return this.store.refundCount;
-  }
-
-  get exposedCredits(): number {
-    return this.store.exposedCredits;
-  }
-
-  spentCreditsFor(quotaSubject: string): number {
-    return this.store.ledgerRecords
-      .filter((record) => record.state === 'finalized' && record.quotaSubject === quotaSubject)
-      .reduce((total, record) => total + record.creditCost, 0);
-  }
-
-  exposedCreditsFor(quotaSubject: string): number {
-    return this.store.exposedCreditsFor(quotaSubject);
-  }
-
-  reserve(input: ReserveCreditInput): ReserveCreditResult {
-    if (this.store.oneInFlightPerSubject && this.store.hasReservedFor(input.quotaSubject)) {
-      return this.rejectBeforeReserve(
-        input,
-        'quota_subject_in_flight',
-        'Quota subject already has an in-flight request.',
-      );
-    }
-
-    const perSubjectProjected = this.store.exposedCreditsFor(input.quotaSubject) + input.creditCost;
-    if (perSubjectProjected > this.store.perSubjectMonthlyCap) {
-      return this.rejectBeforeReserve(
-        input,
-        'quota_subject_monthly_cap_exceeded',
-        'Quota subject monthly cap denied the request.',
-      );
-    }
-
-    const brokerProjected = this.store.exposedCredits + input.creditCost;
-    if (brokerProjected > this.store.brokerMonthlyCap) {
-      return this.rejectBeforeReserve(
-        input,
-        'broker_monthly_cap_exceeded',
-        'Broker monthly cap denied the request.',
-      );
-    }
-
-    const record: LedgerRecord = { ...input, state: 'reserved' };
-    this.store.ledgerRecords.push(record);
-    return { ok: true, record };
-  }
-
-  finalize(record: LedgerRecord): void {
-    if (record.state === 'reserved') {
-      record.state = 'finalized';
-    }
-  }
-
-  refund(record: LedgerRecord, reason: string): void {
-    if (record.state === 'reserved') {
-      record.state = 'refunded';
-      record.reason = reason;
-    }
-  }
-
-  private rejectBeforeReserve(
-    input: ReserveCreditInput,
-    code: NonNullable<ReserveCreditResult['code']>,
-    message: string,
-  ): ReserveCreditResult {
-    const record: LedgerRecord = {
-      ...input,
-      state: 'rejected-before-reserve',
-      reason: code,
-    };
-    this.store.ledgerRecords.push(record);
-    return { ok: false, record, code, message };
-  }
-}
-
-export class FakeBrokerTokenVerifier implements BrokerTokenVerifier {
-  constructor(
-    private readonly config: Omit<DurableProtectionConfig, 'quotaHmacSecret'>,
-    private readonly tokenMap: ReadonlyMap<
-      string,
-      { uid: string; appId: string; projectId?: string; signInProvider?: string }
-    > = new Map([
-      ['owner-auth-token|owner-app-check-token', { uid: 'owner-uid', appId: 'owner-test-app' }],
-    ]),
-  ) {}
-
-  async verify(input: VerifyBrokerTokensInput): Promise<VerifyBrokerTokensResult> {
-    const authToken = bearerToken(input.authorizationHeader);
-    if (authToken === undefined) {
-      return { ok: false, code: 'missing_auth_token' };
-    }
-    if (input.appCheckToken === undefined || input.appCheckToken.trim().length === 0) {
-      return { ok: false, code: 'missing_app_check_token' };
-    }
-
-    const mapped = this.tokenMap.get(`${authToken}|${input.appCheckToken}`);
-    if (mapped === undefined) {
-      return { ok: false, code: 'invalid_auth_token' };
-    }
-
-    const projectId = mapped.projectId ?? this.config.projectId;
-    const signInProvider = mapped.signInProvider ?? 'anonymous';
-    if (projectId !== this.config.projectId) {
-      return { ok: false, code: 'identity_project_mismatch' };
-    }
-    if (signInProvider !== 'anonymous') {
-      return { ok: false, code: 'unsupported_auth_provider' };
-    }
-    if (!this.config.allowedAppIds.has(mapped.appId)) {
-      return { ok: false, code: 'unapproved_app' };
-    }
-
-    return {
-      ok: true,
-      auth: {
-        uid: mapped.uid,
-        projectId,
-        signInProvider,
-      },
-      app: {
-        appId: mapped.appId,
-        projectId,
-      },
-    };
-  }
+function terminalReason(outcome: BrokerTerminalOutcome | undefined): string {
+  return outcome?.kind === 'error' ? outcome.failure.condition : 'terminal_refund';
 }
 
 function projectIdFromAuthToken(token: { aud?: string; iss?: string }): string | undefined {
-  if (token.aud !== undefined && token.iss === `https://securetoken.google.com/${token.aud}`) {
-    return token.aud;
-  }
-  return undefined;
+  return token.aud !== undefined && token.iss === `https://securetoken.google.com/${token.aud}`
+    ? token.aud
+    : undefined;
 }
 
 function appCheckTokenMatchesProject(
@@ -985,86 +784,23 @@ function appCheckTokenMatchesProject(
   projectNumber: string,
 ): boolean {
   const audiences = Array.isArray(token.aud) ? token.aud : [token.aud];
-  if (!audiences.includes(projectId)) {
-    return false;
-  }
-  return token.iss === `https://firebaseappcheck.googleapis.com/${projectNumber}`;
+  return audiences.includes(projectId) &&
+    audiences.includes(projectNumber) &&
+    token.iss === `https://firebaseappcheck.googleapis.com/${projectNumber}`;
 }
 
-function storedRequestFromSnapshot(
-  snapshot: DurableFirestoreDocumentSnapshot,
-): StoredRequest | undefined {
-  const data = snapshot.data();
-  const payloadHash = stringField(data?.payloadHash);
-  if (!snapshot.exists || payloadHash === undefined) {
-    return undefined;
-  }
-  const response = brokerResponseField(data?.response);
+function creditSnapshot(value: Record<string, unknown>): {
+  exposed_credits: number;
+  reserved_count: number;
+} {
   return {
-    payloadHash,
-    requestId: stringField(data?.requestId),
-    quotaSubject: stringField(data?.quotaSubject),
-    response,
-    durableInFlight: response === undefined && data?.state === 'in-flight',
-    created: false,
+    exposed_credits: integerField(value.exposed_credits) ?? 0,
+    reserved_count: integerField(value.reserved_count) ?? 0,
   };
 }
 
-function ledgerRecordFromSnapshot(
-  snapshot: DurableFirestoreDocumentSnapshot,
-): LedgerRecord | undefined {
-  const data = snapshot.data();
-  const requestId = stringField(data?.requestId);
-  const quotaSubject = stringField(data?.quotaSubject);
-  const state = ledgerStateField(data?.state);
-  const creditCost = numberField(data?.creditCost);
-  if (
-    !snapshot.exists ||
-    requestId === undefined ||
-    quotaSubject === undefined ||
-    state === undefined ||
-    creditCost === undefined
-  ) {
-    return undefined;
-  }
-  return {
-    requestId,
-    quotaSubject,
-    state,
-    creditCost,
-    reason: stringField(data?.reason),
-  };
-}
-
-function dataFromSnapshot(snapshot: DurableFirestoreDocumentSnapshot): Record<string, unknown> {
-  return snapshot.data() ?? {};
-}
-
-function brokerResponseField(value: unknown): BrokerResponse | undefined {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    return undefined;
-  }
-  return value as BrokerResponse;
-}
-
-function ledgerStateField(value: unknown): LedgerRecord['state'] | undefined {
-  switch (value) {
-    case 'rejected-before-reserve':
-    case 'reserved':
-    case 'finalized':
-    case 'refunded':
-      return value;
-    default:
-      return undefined;
-  }
-}
-
-function stringField(value: unknown): string | undefined {
-  return typeof value === 'string' && value.length > 0 ? value : undefined;
-}
-
-function numberField(value: unknown): number | undefined {
-  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+function integerField(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
 }
 
 function booleanField(value: unknown): boolean | undefined {
@@ -1072,28 +808,23 @@ function booleanField(value: unknown): boolean | undefined {
 }
 
 function docKey(value: string): string {
-  return Buffer.from(value, 'utf8')
-    .toString('base64url')
-    .slice(0, 512);
+  return Buffer.from(value, 'utf8').toString('base64url').slice(0, 512);
 }
 
 function bearerToken(value: string | undefined): string | undefined {
-  if (value === undefined) {
-    return undefined;
-  }
-  const match = /^Bearer (.+)$/i.exec(value.trim());
+  const match = value === undefined ? undefined : /^Bearer (.+)$/i.exec(value.trim());
   return match?.[1];
 }
 
 function parseAllowlist(value: string | undefined): Set<string> {
-  if (value === undefined) {
-    return new Set();
-  }
-
   return new Set(
-    value
+    (value ?? '')
       .split(',')
       .map((entry) => entry.trim())
       .filter((entry) => entry.length > 0),
   );
+}
+
+function nonEmptyString(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0;
 }

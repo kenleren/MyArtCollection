@@ -1,532 +1,176 @@
 # AI Broker Auth And Quota Spec
 
-Status: Proposed
-Issue: [#50](https://github.com/kenleren/MyArtCollection/issues/50)
-Parent: [#42](https://github.com/kenleren/MyArtCollection/issues/42)
-Related docs:
-- [Architecture Plan](ARCHITECTURE.md)
-- [Costed AI Backend Gate Spec](COSTED_AI_BACKEND_GATE_SPEC.md)
-- [AI Artwork Research Spec](AI_ART_RESEARCH_SPEC.md)
-- [Firebase Telemetry Privacy Policy](FIREBASE_TELEMETRY_POLICY.md)
+Status: implemented contract; deployment and live-provider use remain gated
+Issues: #50, #157, #177, #187
 
-## Local fake-broker contract added by #117 and #118
+## Decision
 
-Issues [#117](https://github.com/kenleren/MyArtCollection/issues/117) and
-[#118](https://github.com/kenleren/MyArtCollection/issues/118) add a
-fake-provider-only implementation contract under `backend/broker`. This is a
-local test harness, not the paid broker and not a Firebase deployment.
+Archivale uses the owner-approved Firebase project `my-art-collections` for
+distribution, anonymous Auth, App Check, the broker Function, and broker-owned
+durable control records. Earlier proposals for a separate paid-broker Firebase
+project are obsolete. A token from any other project is a wrong-project token.
 
-The local DTO intentionally models the shape of the future trust boundary
-without verifying real tokens:
+This decision does not authorize a Functions deploy, provider traffic, account
+or billing mutation, secret access, or collector-content testing. Issue #155 is
+the only deployment and live-test gate.
 
-- `app_check_verified` and `auth_verified` are required booleans supplied by
-  tests.
-- `auth_identity.uid`, `auth_identity.project_id`, `app_identity.app_id`, and
-  `app_identity.project_id` must be non-empty.
-- `auth_identity.sign_in_provider` must be `anonymous`.
-- The auth and app placeholder project IDs must match.
-- `quota_subject` must be a pre-derived-looking `quota_subject_v1_...` value.
+## Identity Contract
 
-The fake broker rejects missing auth or missing quota subject at the auth stage
-before consent, payload validation, ledger reservation, or provider work. This
-does not claim production Auth, App Check, project-audience validation,
-revocation checking, allowlisting, or server-side quota-subject derivation.
+Every paid-start request requires both:
 
-The #118 adapter contract adds `handleFakeBrokerAdapterRequest`, a local
-server-side HTTP/callable-style boundary around the broker core. It accepts a
-parsed JSON request plus explicit local auth/app identity placeholders, then
-returns one of two stable envelopes:
+- a Firebase anonymous Auth ID token for `my-art-collections`, verified with
+  revocation checking, exact audience, exact issuer, and non-empty UID;
+- a fresh limited-use App Check token for `my-art-collections`, verified with
+  `consume: true`, exact project ID and number audiences, exact issuer, and an
+  approved Firebase app ID.
 
-| Case | Shape |
-| --- | --- |
-| Success | `{ ok: true, status: 200, body: BrokerResponse }` |
-| Error | `{ ok: false, status, body: { request_id?, status, provider, error: { code, message, stage } } }` |
+Auth verification, including revocation and project checks, happens before App
+Check consumption. A consumed token is rejected as replay. App Check attests
+the app instance; it never substitutes for Auth identity or entitlement.
 
-The adapter deliberately rejects missing App Check/Auth placeholders and missing
-quota subject before calling the broker core. Its status mapping is deterministic
-and coarse: auth placeholder failures are `401`, identity/consent/entitlement
-failures are `403`, malformed payloads are `400`, idempotency conflict is
-`409`, quota cap failures are `429`, breaker-open is `503`, and fake
-provider/output failures are `502`.
+The broker derives its quota subject on the server with an HMAC over the
+project, app ID, and Auth UID. Raw UIDs and raw tokens are not quota keys and
+must not enter broker logs, telemetry, error bodies, or fixtures.
 
-Adapter responses must not echo raw request bodies, raw notes, provider key/env
-names, local env file names, stack traces, or the broker's server-only trace.
-This is still a local fake-provider contract only; real Firebase Functions
-Auth/App Check context, callable replay protection, deployed HTTPS behavior,
-content-free logging, durable quota, and live-provider readiness remain
-unimplemented gates.
+## Gate Order
 
-The local ledger is deterministic and in-memory. It reserves one placeholder
-credit per accepted fake-provider request and records one of four states:
+The paid request path is ordered as follows:
 
-| State | Meaning |
-| --- | --- |
-| `rejected-before-reserve` | A quota cap denied the request before provider work. |
-| `reserved` | A local one-credit reservation exists. |
-| `finalized` | The reservation is spent and counts against subject and broker caps. |
-| `refunded` | The reservation was released and does not count as spent. |
+1. HTTP method and content type.
+2. Per-request server kill-switch check.
+3. Durable broker configuration availability.
+4. JSON decoding.
+5. revoked/project-bound Firebase Auth verification.
+6. limited-use App Check verification and consumption.
+7. owner allowlist.
+8. explicit consent and current consent-copy version.
+9. server-side entitlement.
+10. broker breaker.
+11. request shape, image bounds, RFC 8785 canonical recomputation, and hash
+    equality.
+12. existing request replay/conflict/unsafe-state decision.
+13. transactional one-credit reservation for new work.
+14. provider configuration lookup.
+15. provider construction.
+16. broker request authorization.
+17. durable `dispatch_started` persistence.
+18. provider invocation/fetch.
+19. output validation.
+20. durable terminal outcome persistence.
+21. idempotent refund or finalize settlement.
 
-The #117 placeholder accounting rule is intentionally conservative for future
-paid-provider safety:
+No provider configuration, construction, authorization, or fetch may happen
+for a rejected gate through step 13. Failed `dispatch_started` persistence also
+forbids provider invocation.
 
-- consent, payload, entitlement, breaker, idempotency conflict, and cap failures
-  happen before a provider call and do not spend a credit,
-- fake provider output validation failures finalize the reservation and count as
-  spend because provider work already happened,
-- fake provider exceptions refund the reservation,
-- same `quota_subject` plus same `request_id` and `payload_hash` replays the
-  completed result or awaits the matching in-flight result without a second
-  debit or provider call,
-- same `quota_subject` and `request_id` plus changed `payload_hash` fails as a
-  conflict before reserve or provider work,
-- the default local cap placeholders are three exposed credits per quota
-  subject and 100 exposed credits broker-wide,
-- exposed credits include both `reserved` in-flight credits and `finalized`
-  spent credits so concurrent distinct requests cannot exceed a cap before
-  provider work completes; `refunded` and `rejected-before-reserve` records do
-  not count as exposed.
+Entitlement and breaker are rechecked before replay. Credit availability is not
+a pre-replay gate: a completed matching request is free to replay even when no
+new credits remain.
 
-The remaining gates are unchanged: real Firebase Auth/App Check verification,
-wrong-project checks, revocation, server-side quota-subject HMAC derivation,
-durable entitlement and spend ledgers, live provider adapter review, redaction
-tests, deployment-manager approval, and redteam/privacy review are still
-required before any live provider path or paid rollout.
+## Durable Request Contract
 
-## Problem statement
+Request records use `broker-request-lifecycle-v1` and these states:
 
-Archivale needs a broker access-control model before any paid AI endpoint
-exists. The first paid AI path is expected to be a thin Firebase-hosted broker
-that sends explicit user-approved research requests to OpenAI Responses API web
-search using `gpt-5.4` with high reasoning by default. Before that path is
-implemented, the repo needs a precise answer to four questions:
-
-- what proves a request came from an approved app,
-- what proves which tester or user is asking,
-- how quotas and replay protection prevent duplicate or abusive paid calls,
-- and how the broker fails closed when the wrong Firebase project or wrong app
-  presents a token.
-
-The spec must preserve the repo's local-first posture and must not introduce a
-mobile secret or imply that App Check alone identifies a person.
-
-## Context and evidence
-
-### Repo-local evidence
-
-- [Architecture Plan](ARCHITECTURE.md) requires a thin server-side AI broker
-  and says AI must never be a direct vendor call from the app.
-- [Costed AI Backend Gate Spec](COSTED_AI_BACKEND_GATE_SPEC.md) makes this
-  issue a hard blocker before any paid broker, Blaze enablement, or provider
-  call is allowed.
-- [Firebase Telemetry Privacy Policy](FIREBASE_TELEMETRY_POLICY.md) bans AI
-  prompts, responses, citations, research queries, source URLs, and tokens from
-  Firebase-bound telemetry.
-- The current local research contract already models one request per artwork
-  research job with explicit consent and query summary in
-  [`lib/app/research/online_research_service.dart`](../lib/app/research/online_research_service.dart)
-  and stores provider/job metadata in
-  [`lib/app/storage/ai_research_record.dart`](../lib/app/storage/ai_research_record.dart).
-
-### Current vendor facts that shape the trust model
-
-- Firebase states that App Check protects backend resources by attesting that
-  requests come from the authentic app or an untampered device. Firebase also
-  states that App Check and Firebase Authentication are complementary: App Check
-  is app or device attestation, while Firebase Authentication is user
-  authentication.
-- Firebase says custom backends must verify App Check tokens on every request.
-  A successful verification means the token originated from an app belonging to
-  that Firebase project.
-- Firebase App Check decoded tokens expose `app_id`, `sub`, `aud`, and `iss`.
-  The documented `aud` is a two-element array containing the Firebase project
-  number and project ID, and the documented `iss` format is
-  `https://firebaseappcheck.googleapis.com/<PROJECT_NUMBER>`.
-- Firebase Auth decoded ID tokens expose `uid`, `aud`, and `iss`. The
-  documented `aud` equals the Firebase project ID, and the documented `iss`
-  format is `https://securetoken.google.com/<PROJECT_ID>`.
-- Firebase says `verifyIdToken()` does not check revocation unless the server
-  explicitly asks for revocation checking.
-- Firebase supports anonymous authentication as a temporary account model. It
-  also documents that anonymous sign-up is quota-limited and, with Identity
-  Platform enabled, can be auto-cleaned up after 30 days.
-- Firebase App Check replay protection exists, but the documented Cloud
-  Functions enforcement and one-time token consumption path is for callable
-  functions. Using replay protection also adds latency and does not replace
-  application-level idempotency.
-- OpenAI's current docs say new web-search integrations should use the
-  Responses API `web_search` tool, and current model guidance recommends
-  `gpt-5.5` for most new reasoning workloads. This repo deliberately keeps
-  `gpt-5.4` as the initial broker default by product decision from #42.
-
-Primary sources:
-
-- Firebase App Check overview:
-  <https://firebase.google.com/docs/app-check>
-- Verify App Check tokens from a custom backend:
-  <https://firebase.google.com/docs/app-check/custom-resource-backend>
-- App Check enforcement:
-  <https://firebase.google.com/docs/app-check/enable-enforcement>
-- App Check for Cloud Functions callable replay protection:
-  <https://firebase.google.com/docs/app-check/cloud-functions>
-- Verify Firebase Auth ID tokens:
-  <https://firebase.google.com/docs/auth/admin/verify-id-tokens>
-- Manage Firebase Auth sessions and revocation:
-  <https://firebase.google.com/docs/auth/admin/manage-sessions>
-- Anonymous auth for Flutter:
-  <https://firebase.google.com/docs/auth/flutter/anonymous-auth>
-- Firebase Admin `DecodedAppCheckToken` reference:
-  <https://firebase.google.com/docs/reference/admin/node/firebase-admin.app-check.decodedappchecktoken>
-- Firebase Admin `DecodedIdToken` reference:
-  <https://firebase.google.com/docs/reference/admin/node/firebase-admin.auth.decodedidtoken>
-- Callable Functions protocol/App Check context:
-  <https://firebase.google.com/docs/functions/callable-reference>
-- OpenAI web search guide:
-  <https://developers.openai.com/api/docs/guides/tools-web-search>
-- OpenAI reasoning guidance:
-  <https://developers.openai.com/api/docs/guides/reasoning>
-
-## Non-goals
-
-- No paid endpoint implementation in this issue.
-- No approval for direct mobile vendor calls.
-- No mobile client secrets.
-- No dependence on Firebase App Distribution tester membership as runtime auth.
-- No commitment yet to a permanent end-user account system.
-- No approval for Firestore, Storage, or other cloud data storage for artwork
-  records in the broker project.
-
-## Requirements
-
-Any approved paid broker implementation must satisfy all of the following:
-
-- App Check is treated as app or device attestation only, not as user
-  authentication.
-- Every paid broker request must require both:
-  - a valid App Check token from the broker Firebase project, and
-  - a valid Firebase Auth ID token from the same broker Firebase project.
-- The distribution/telemetry Firebase project and the paid broker Firebase
-  project must stay separate.
-- Wrong-project App Check tokens and wrong-project Auth ID tokens must fail
-  closed before any provider call.
-- The broker start path must fail closed before any provider call unless the
-  mapped local request has an explicit approved research-consent state and the
-  broker envelope carries an allowed `consent_scope`.
-- The first broker identity model must work without a mandatory user-facing
-  account signup flow.
-- Quotas must be keyed to a revocable identity, not to App Check alone and not
-  to App Distribution tester email.
-- Duplicate retries must not create duplicate paid provider calls.
-- Revocation must exist for both the app surface and the user/tester surface.
-- Logs and telemetry must not include raw tokens, raw UIDs, prompts, responses,
-  research queries, source URLs, or other banned user/content data.
-- Redteam review is mandatory before any paid rollout.
-
-## Options considered
-
-| Option | Summary | Pros | Cons | Outcome |
-| --- | --- | --- | --- | --- |
-| A. App Check only | Require App Check and no Firebase Auth identity | Lowest UX friction | Cannot identify or revoke a tester/user cleanly; quota reduces to app-level only; App Check is explicitly not user auth | Reject |
-| B. App Check plus Firebase anonymous auth in a dedicated broker project | Require both App Check and a Firebase Auth anonymous ID token; allow broker only for approved app IDs and approved UIDs | Matches local-first/no-account posture, gives revocable quota subject, avoids permanent signup, keeps app attestation and user identity separate | Anonymous UID can churn on reinstall unless later linked to a durable account | Recommended first path |
-| C. App Check plus mandatory Apple/Google/email login before any broker call | Require durable user login from day one | Stronger person-level identity and entitlement future | Adds account UX and privacy surface before the product needs it | Defer |
-| D. App Distribution tester membership as access control | Reuse beta tester list as runtime authorization | Operationally simple in theory | Not a documented runtime trust signal; not present in broker request tokens; poor revocation and bad separation of concerns | Reject |
-
-## Recommended approach
-
-Decision:
-
-1. Do not implement the paid broker until this spec and the other #42 blockers
-   are accepted.
-2. When implementation begins, use Option B first:
-   App Check plus Firebase anonymous auth in a dedicated broker Firebase
-   project, with Cloud Functions 2nd gen callable entrypoints for the paid
-   "start research" path.
-3. Treat durable login and multi-device entitlements as later work, not as a
-   prerequisite for the first paid beta.
-
-### What would make this recommendation wrong
-
-This recommendation should be revisited if any of the following becomes true:
-
-- the callable-function path cannot support the required payload shape, size, or
-  background execution model,
-- closed beta needs person-level entitlement portability across reinstalls and
-  devices immediately,
-- or Firebase anonymous auth is judged too fragile for tester approval and
-  revocation workflow.
-
-If any of those happen, the next candidate is still not "App Check only". The
-next candidate is a server-verified auth model with a stronger user identity.
-
-### Firebase project topology
-
-Use two Firebase/GCP projects with different purposes:
-
-1. Distribution/telemetry project:
-   - Firebase App Distribution and the limited telemetry surfaces already
-     allowed by repo policy.
-   - No paid OpenAI broker secrets.
-   - No authority over broker Auth or broker App Check decisions.
-
-2. Paid broker project:
-   - Firebase Authentication for broker identity.
-   - Firebase App Check for broker app attestation.
-   - Cloud Functions 2nd gen for broker entrypoints.
-   - No approval from this spec for Firestore/Storage artwork persistence.
-   - This project is the only project whose Auth/App Check tokens the broker
-     trusts.
-
-Implication:
-
-- The mobile app may need to be registered in both projects in the future, but
-  the broker must trust only tokens minted under the paid broker project.
-- A token minted under the distribution project is a wrong-project token for the
-  broker, even if it came from the same shipped app binary.
-
-### Trust model
-
-For the first paid broker entrypoint, require this chain:
-
-1. Valid App Check token proves the request came from an approved app instance
-   registered in the broker project.
-2. Valid Firebase Auth ID token proves which broker user or tester is asking.
-3. Server-side allowlist/entitlement check decides whether that UID may spend
-   paid broker budget.
-4. Server-side quota and replay checks decide whether this specific request may
-   run now.
-5. Only then may the broker call OpenAI.
-
-App Check without Auth is insufficient. Auth without App Check is insufficient.
-
-### Token verification and audience checks
-
-The broker must verify both tokens under the broker project configuration and
-must explicitly assert the documented audience and issuer after verification.
-This second check is intentional defense against misconfiguration.
-
-| Token | Required checks | Expected project binding |
+| State | Meaning | Redrive rule |
 | --- | --- | --- |
-| App Check token | Verify with Firebase Admin App Check in the broker project. Require `aud` to contain the broker project number and broker project ID. Require `iss` to equal `https://firebaseappcheck.googleapis.com/<BROKER_PROJECT_NUMBER>`. Require `sub`/`app_id` to be in the broker allowlist of approved Firebase app IDs. | Broker Firebase project number and ID |
-| Firebase Auth ID token | Verify with Firebase Admin Auth in the broker project and require revocation checking on paid endpoints. Require `aud` to equal the broker project ID. Require `iss` to equal `https://securetoken.google.com/<BROKER_PROJECT_ID>`. Require non-empty `uid`. For the first paid beta, require `firebase.sign_in_provider=anonymous` unless a later spec approves additional providers. | Broker Firebase project ID |
+| `reserved` | Idempotency ownership and one credit were reserved atomically; provider dispatch has not started | Before the 60-second lease boundary, return in-flight. At or after the boundary, persist a terminal expiration and then refund. Never dispatch the same record. |
+| `dispatch_started` | Provider invocation was authorized and dispatch intent was persisted | Never auto-refund or redrive. Before lease expiry return in-flight; afterward return outcome-unknown. |
+| `terminal` | A replayable success or fixed failure was persisted | Replay the stored outcome and recover pending settlement idempotently. |
 
-Wrong-project handling rules:
+Required request fields include:
 
-- If App Check verification fails because the token belongs to another Firebase
-  project, return a generic unauthorized response and classify the event as
-  `wrong_project_app_check`.
-- If Auth verification fails because the token belongs to another Firebase
-  project, return a generic unauthorized response and classify the event as
-  `wrong_project_auth`.
-- Never accept a request where App Check verifies under one project and Auth
-  verifies under another.
+- `record_version`
+- one-way `quota_subject`
+- `request_id`
+- recomputed `payload_hash`
+- `state`
+- `credit_cost=1`
+- `reservation_lease_expires_at`
+- `retention_expires_at`
+- `settlement_state`
+- `terminal_outcome` only for terminal records
 
-### Tester and user identity
+`reservation_lease_expires_at` is a 60-second ownership lease.
+`retention_expires_at` is a 24-hour cleanup signal only. Retention expiry never
+changes replay, refund, finalization, or dispatch behavior. Cleanup must remove
+the settled request and matching ledger safely; it must not reinterpret an
+expired record as absent inside the request path.
 
-Recommended first identity subject:
+Malformed, unversioned, unknown-version, unknown-state, legacy, or orphaned
+request/ledger/control records are unsafe. They fail closed and are never
+treated as absent. This task does not migrate legacy records automatically.
 
-- `uid` from Firebase anonymous auth in the broker project.
+## Credit Contract
 
-Why anonymous auth is justified here:
+The idempotency record, `broker-credit-ledger-v1` reservation, subject
+aggregate, and global aggregate are created in one Firestore transaction.
+Exactly one credit is reserved for new work.
 
-- The product rule says the app should work without an app account.
-- App Check does not identify a person or tester.
-- Anonymous auth gives a revocable, server-verifiable identity with minimal UX.
-- The account can later be linked to Apple, Google, or email without changing
-  the broker's requirement that a request carry a valid Auth ID token.
+Versioned durable supporting records are:
 
-Closed-beta authorization rule:
+- `broker-control-v1`
+- `broker-entitlement-v1`
+- `broker-credit-subject-v1`
+- `broker-credit-global-v1`
+- `broker-credit-ledger-v1`
 
-- Firebase App Distribution membership is not enough.
-- The broker must check a server-side approval record keyed by broker `uid`
-  before allowing paid traffic.
-- A reinstall that creates a new anonymous UID should require re-approval in
-  the closed beta unless a later durable-account flow is approved.
+An unversioned control, entitlement, aggregate, request, or ledger record fails
+closed. Subject and broker credit caps include reserved plus finalized credits.
+One in-flight reservation per quota subject is the default.
 
-### Quota key derivation
+Terminal persistence always precedes settlement. Settlement state is one of
+`pending_refund`, `refunded`, `pending_finalize`, or `finalized`. Refund and
+finalize transactions are idempotent. A crash or injected fault after terminal
+persistence leaves a replayable terminal result and a pending settlement that
+the next replay can recover without another provider call.
 
-Primary quota subject:
+## Provider Outcome Contract
 
-```text
-quota_subject_v1 = HMAC_SHA256(
-  quota_secret,
-  "broker-v1|project:" + auth.aud +
-  "|app:" + app_check.app_id +
-  "|uid:" + auth.uid +
-  "|feature:art_research"
-)
-```
+| Outcome | Durable terminal result | Credit action | Redrive |
+| --- | --- | --- | --- |
+| configuration failure | temporarily unavailable | refund | no same-record redrive |
+| construction failure | temporarily unavailable | refund | no same-record redrive |
+| authorization failure | temporarily unavailable | refund | no same-record redrive |
+| dispatch persistence failure | temporarily unavailable | refund after terminal persistence; fetch forbidden | no same-record redrive |
+| rate limit | `rate_limited` | refund | replay stored failure |
+| provider refusal | `upstream_refusal` | finalize | replay stored failure |
+| timeout | `upstream_timeout` | refund only after terminal persistence | replay stored failure |
+| generic post-dispatch failure | `upstream_failure` | finalize | replay stored failure |
+| invalid output/source grounding | `upstream_invalid_output` | finalize | replay stored failure |
+| success | normalized completed result | finalize | replay stored success |
 
-Rules:
+Provider `Retry-After` values default to 30 seconds, round up to a whole second,
+and clamp to 5 through 300 seconds.
 
-- Use the HMAC output or another one-way derived key for storage and metrics;
-  do not store raw UID as the main quota key.
-- Do not derive quota from App Distribution tester email, raw email address,
-  device fingerprint, or a client-generated install ID alone.
-- App-level limits and global spend limits still exist, but they are secondary
-  guards. The primary per-request quota subject is the revocable Auth identity
-  bound to an attested app.
+## Error And Logging Rules
 
-Minimum quota dimensions:
+All HTTP and broker failures use `broker-error-v1`. The exhaustive mapping is
+checked in `backend/broker/fixtures/broker-error-v1.json`. Auth and wrong-project
+details are collapsed to fixed public messages. `not_entitled` and
+`credits_exhausted` remain distinct public outcomes.
 
-- per `quota_subject_v1` daily paid jobs,
-- per `quota_subject_v1` concurrent running jobs,
-- per approved `app_id` request rate,
-- broker-global spend and concurrency ceilings,
-- optional coarse edge throttles for obvious abuse bursts.
+Logs and evidence may contain fixed event/reason codes, request IDs, one-way
+quota subjects, coarse timing, and aggregate credit counts. They must not
+contain raw Auth/App Check tokens, raw UID, prompts, image bytes, hints, provider
+bodies, source URLs, collector content, secret names or values, or local paths.
 
-### Replay prevention and idempotency
+## Required Evidence
 
-Use two layers, because App Check replay protection alone does not solve paid
-duplicate calls caused by normal client retries.
+The fake-only test pack must prove:
 
-Layer 1: App Check replay protection on sensitive callable endpoints
+- Auth revocation/project verification precedes App Check consumption;
+- consumed, invalid, unapproved-app, and wrong-project tokens fail closed;
+- every pre-reservation rejection produces zero provider config, construction,
+  authorization, and fetch calls;
+- canonical hash mismatch precedes idempotency and provider setup;
+- completed replay is free and a changed hash conflicts;
+- concurrent requests cannot double reserve or dispatch;
+- lease-boundary and retention semantics are separate;
+- timeout is terminal before refund;
+- ambiguous dispatch state never auto-refunds or redrives;
+- malformed and legacy records fail closed;
+- refund and finalize recover idempotently after faults.
 
-- For the paid "start research" callable function, require App Check
-  enforcement.
-- When the endpoint is implemented, consume the App Check token after
-  verification on that callable endpoint so one limited-use token cannot be
-  replayed.
-- This is recommended only on the sensitive paid-start path because Firebase
-  documents added latency for token consumption.
-
-Layer 2: broker idempotency ledger
-
-- Every client request must include a locally persisted `request_id` UUID.
-- The broker must derive an idempotency key from:
-  - `quota_subject_v1`,
-  - `request_id`,
-  - normalized request payload hash.
-- The broker must store a short-lived ledger entry before the provider call.
-- Retries with the same idempotency tuple must return the original accepted job
-  handle or completed result, not start a second OpenAI call.
-- Reusing the same `request_id` with a different payload hash must fail as a
-  conflict.
-
-Recommended initial TTL for the idempotency ledger:
-
-- 24 hours.
-
-This recommendation is conservative because mobile retries and delayed
-foreground resumes can happen well after the original request started.
-
-### Revocation path
-
-User/tester revocation:
-
-- Remove the broker `uid` from the server-side allowlist or entitlement record.
-- Revoke refresh tokens or disable the Firebase Auth user when immediate access
-  removal is required.
-- Paid endpoints must verify ID tokens with revocation checking enabled.
-
-App revocation:
-
-- Remove the Firebase App ID from the broker allowlist of approved `app_id`
-  values.
-- If an app build or platform registration is no longer trusted, its App Check
-  token may still verify structurally, but the broker allowlist check must deny
-  it.
-
-Emergency kill switch:
-
-- A broker-wide shutoff remains the responsibility of [#49](https://github.com/kenleren/MyArtCollection/issues/49),
-  but #50 requires the auth/quota layer to honor a deny-all switch before any
-  provider call.
-
-### Failure semantics and logging
-
-- Fail closed on any missing or invalid token, wrong-project token, missing
-  entitlement, consumed App Check token, or quota breach.
-- Return generic unauthorized, forbidden, or quota-exceeded responses without
-  echoing token claims, project IDs, or allowlist details to the client.
-- Broker logs may record only fixed reason codes and one-way-derived quota
-  subject identifiers. They must not record raw tokens, raw UID, prompts,
-  citations, source URLs, or user content.
-
-## Risks and mitigations
-
-| Risk | Why it matters | Mitigation |
-| --- | --- | --- |
-| Anonymous UID churn on reinstall | Closed-beta tester may lose approval or quota history | Accept this as a beta constraint, document re-approval, and defer durable-login linking until needed |
-| App Check over-trust | App Check does not prove which person is using the app | Require Auth plus allowlist/entitlement checks |
-| Duplicate billing from retries | Mobile clients legitimately retry on flaky networks | Require idempotency ledger in addition to limited-use App Check tokens |
-| Wrong Firebase project wiring | Dual-project setup makes misconfiguration plausible | Explicit post-verify audience and issuer assertions for both token types |
-| Callable-function mismatch with future workload | Large or long-running jobs may outgrow callable constraints | Re-spec the same trust rules on authenticated HTTPS/Cloud Run before changing entrypoint type |
-
-## Acceptance checks and negative tests
-
-No paid rollout is allowed until the following tests exist and pass in the
-future implementation:
-
-1. Missing App Check token is rejected before any provider call.
-2. Missing Firebase Auth ID token is rejected before any provider call.
-3. Valid App Check plus missing Auth is rejected.
-4. Valid Auth plus missing App Check is rejected.
-5. App Check token from the wrong Firebase project is rejected and classified
-   without leaking token contents.
-6. Auth ID token from the wrong Firebase project is rejected and classified
-   without leaking token contents.
-7. App Check token with an `app_id` outside the approved broker allowlist is
-   rejected.
-8. Revoked or disabled Firebase Auth user is rejected on a paid endpoint.
-9. Approved App Distribution tester with no approved broker `uid` is rejected.
-10. Reuse of a consumed limited-use App Check token is rejected on the paid
-    callable entrypoint.
-11. Retry with a fresh valid token but the same idempotency tuple does not
-    create a second provider call.
-12. Reuse of the same `request_id` with a different payload hash is rejected as
-    a conflict.
-13. Quota exhaustion for one subject does not block unrelated approved
-    subjects.
-14. Broker logs and metrics are inspected to prove they do not contain raw
-    tokens, raw UIDs, prompts, research queries, or source URLs.
-
-## Task breakdown
-
-1. Finalize the broker request envelope and auth contract in the implementation
-   plan for the paid start-research endpoint.
-   - Skill: `codex-task-plan`
-
-2. Implement callable broker auth middleware and explicit project/app claim
-   checks.
-   - Skills: `codex-task-work`, `codex-task-review`
-   - Required review: `codex-redteam-review`
-
-3. Add client-side broker identity bootstrap for anonymous auth, App Check
-   token acquisition, and persisted `request_id` retries.
-   - Skills: `codex-task-plan`, `codex-task-work`
-   - Required review: `codex-redteam-review`
-
-4. Implement quota-subject derivation, entitlement/allowlist enforcement, and
-   the broker idempotency ledger.
-   - Skills: `codex-task-plan`, `codex-task-work`
-   - Required review: `codex-redteam-review`
-
-5. Write the negative test pack and rollout evidence for wrong-project,
-   revocation, replay, and duplicate-call scenarios.
-   - Skills: `codex-task-work`, `codex-task-review`
-   - Required review: `codex-redteam-review`, `codex-deployment-manager`
-
-## Open decisions for humans
-
-1. Is anonymous-auth closed beta acceptable for the first paid broker, or is a
-   durable account requirement needed before any paid beta?
-2. Is a 24-hour idempotency TTL acceptable, or should the operator choose a
-   shorter window with stricter client retry behavior?
-3. Are Cloud Functions 2nd gen callable limits sufficient for the planned
-   artwork image/document payloads, or should the implementation path move to an
-   authenticated HTTPS/Cloud Run broker before coding starts?
-4. Should the broker project upgrade to Firebase Authentication with Identity
-   Platform before rollout to get anonymous-account cleanup and stronger audit
-   features?
-
-## Recommendation summary
-
-Do not build the paid broker yet. When #42 is unblocked, the first approved
-auth model should be:
-
-- dedicated broker Firebase project,
-- App Check required,
-- Firebase Auth anonymous ID token required,
-- server-side UID allowlist/entitlement check required,
-- explicit audience and issuer checks for both token types required,
-- limited-use App Check tokens on the paid callable start path,
-- and broker-side idempotency required before any OpenAI call.
+Independent task review and redteam/security review are required before this
+implementation can advance. Deployment review under #155 remains required
+before any environment mutation or live request.

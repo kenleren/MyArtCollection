@@ -181,32 +181,45 @@ class OpenAiResearchProvider implements ProviderClient {
 
   async research(request: BrokerRequest): Promise<ProviderResearchResult> {
     if (!consumeProviderRequestAuthorization(request)) {
-      return {
-        kind: 'output_error',
-        code: 'broker_authorization_required',
-        message: 'OpenAI provider calls require broker authorization.',
-      };
+      return { kind: 'failure' };
     }
 
     this.callCount += 1;
-
-    const response = await this.fetchImpl(this.endpointUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${this.apiKey}`,
-      },
-      body: JSON.stringify(buildOpenAiResponsesRequest(request, {
-        allowedDomains: this.allowedDomains,
-        externalWebAccess: this.externalWebAccess,
-        modelName: this.modelName,
-        reasoningEffort: this.reasoningEffort,
-        searchContextSize: this.searchContextSize,
-      })),
-    });
+    let response: Response;
+    try {
+      response = await this.fetchImpl(this.endpointUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${this.apiKey}`,
+        },
+        body: JSON.stringify(buildOpenAiResponsesRequest(request, {
+          allowedDomains: this.allowedDomains,
+          externalWebAccess: this.externalWebAccess,
+          modelName: this.modelName,
+          reasoningEffort: this.reasoningEffort,
+          searchContextSize: this.searchContextSize,
+        })),
+      });
+    } catch (error) {
+      return isTimeoutError(error) ? { kind: 'timeout' } : { kind: 'failure' };
+    }
 
     if (!response.ok) {
-      throw new Error(`openai_responses_http_${response.status}`);
+      if (response.status === 429) {
+        const retryAfter = Number(response.headers.get('retry-after'));
+        return {
+          kind: 'rate_limited',
+          ...(Number.isFinite(retryAfter) ? { retry_after_seconds: retryAfter } : {}),
+        };
+      }
+      if (response.status === 408 || response.status === 504) {
+        return { kind: 'timeout' };
+      }
+      if (response.status === 400 || response.status === 403 || response.status === 422) {
+        return { kind: 'refusal' };
+      }
+      return { kind: 'failure' };
     }
 
     const body = await response.json() as OpenAiResponseBody;
@@ -641,12 +654,12 @@ function isAllowedDomain(urlString: string, allowedDomains: readonly string[]): 
   });
 }
 
-function outputError(message: string): ProviderResearchResult {
-  return {
-    kind: 'output_error',
-    code: 'provider_output_invalid',
-    message,
-  };
+function outputError(_message: string): ProviderResearchResult {
+  return { kind: 'invalid_output' };
+}
+
+function isTimeoutError(error: unknown): boolean {
+  return error instanceof Error && (error.name === 'AbortError' || error.name === 'TimeoutError');
 }
 
 function parseDomainList(value: string | undefined): string[] {

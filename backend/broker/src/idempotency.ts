@@ -1,57 +1,177 @@
-import type { BrokerResponse } from './contracts.js';
+import type { BrokerTerminalOutcome } from './contracts.js';
+import { isBrokerErrorCondition } from './error_contract.js';
 
-export interface StoredRequest {
-  payloadHash: string;
-  requestId?: string;
-  quotaSubject?: string;
-  response?: BrokerResponse;
-  inFlight?: Promise<BrokerResponse>;
-  durableInFlight?: boolean;
-  created?: boolean;
+export const REQUEST_LIFECYCLE_RECORD_VERSION = 'broker-request-lifecycle-v1';
+
+export type RequestLifecycleState = 'reserved' | 'dispatch_started' | 'terminal';
+export type SettlementState =
+  | 'reserved'
+  | 'pending_refund'
+  | 'refunded'
+  | 'pending_finalize'
+  | 'finalized';
+
+export interface StoredRequestRecord {
+  record_version: typeof REQUEST_LIFECYCLE_RECORD_VERSION;
+  quota_subject: string;
+  request_id: string;
+  payload_hash: string;
+  state: RequestLifecycleState;
+  credit_cost: number;
+  reservation_lease_expires_at: string;
+  retention_expires_at: string;
+  settlement_state: SettlementState;
+  terminal_outcome?: BrokerTerminalOutcome;
 }
 
-export type MaybePromise<T> = T | Promise<T>;
+export type ParsedStoredRequest =
+  | { kind: 'valid'; record: StoredRequestRecord }
+  | { kind: 'absent' }
+  | { kind: 'unsafe' };
 
-export interface BrokerIdempotencyStore {
-  get(quotaSubject: string, requestId: string): MaybePromise<StoredRequest | undefined>;
-  begin(quotaSubject: string, requestId: string, payloadHash: string): MaybePromise<StoredRequest>;
-  setInFlight(entry: StoredRequest, inFlight: Promise<BrokerResponse>): MaybePromise<void>;
-  complete(entry: StoredRequest, response: BrokerResponse): MaybePromise<void>;
-  forget(quotaSubject: string, requestId: string): MaybePromise<void>;
+export function parseStoredRequest(value: unknown): ParsedStoredRequest {
+  if (value === undefined) {
+    return { kind: 'absent' };
+  }
+  if (!isRecord(value)) {
+    return { kind: 'unsafe' };
+  }
+  if (!hasOnlyKeys(value, REQUEST_RECORD_KEYS)) {
+    return { kind: 'unsafe' };
+  }
+  if (
+    value.record_version !== REQUEST_LIFECYCLE_RECORD_VERSION ||
+    !nonEmptyString(value.quota_subject) ||
+    !nonEmptyString(value.request_id) ||
+    !/^[a-f0-9]{64}$/.test(stringOrEmpty(value.payload_hash)) ||
+    !isLifecycleState(value.state) ||
+    value.credit_cost !== 1 ||
+    !isIsoDate(value.reservation_lease_expires_at) ||
+    !isIsoDate(value.retention_expires_at) ||
+    !isSettlementState(value.settlement_state)
+  ) {
+    return { kind: 'unsafe' };
+  }
+
+  const terminalOutcome = parseTerminalOutcome(value.terminal_outcome);
+  if (
+    (value.state === 'terminal' && terminalOutcome === undefined) ||
+    (value.state !== 'terminal' && value.terminal_outcome !== undefined) ||
+    (value.state !== 'terminal' && value.settlement_state !== 'reserved') ||
+    (value.state === 'terminal' && value.settlement_state === 'reserved')
+  ) {
+    return { kind: 'unsafe' };
+  }
+
+  return {
+    kind: 'valid',
+    record: {
+      record_version: REQUEST_LIFECYCLE_RECORD_VERSION,
+      quota_subject: value.quota_subject as string,
+      request_id: value.request_id as string,
+      payload_hash: value.payload_hash as string,
+      state: value.state as RequestLifecycleState,
+      credit_cost: 1,
+      reservation_lease_expires_at: value.reservation_lease_expires_at as string,
+      retention_expires_at: value.retention_expires_at as string,
+      settlement_state: value.settlement_state as SettlementState,
+      ...(terminalOutcome === undefined ? {} : { terminal_outcome: terminalOutcome }),
+    },
+  };
 }
 
-export class InMemoryIdempotencyStore implements BrokerIdempotencyStore {
-  private readonly requests = new Map<string, StoredRequest>();
-
-  get(quotaSubject: string, requestId: string): StoredRequest | undefined {
-    return this.requests.get(this.key(quotaSubject, requestId));
+function parseTerminalOutcome(value: unknown): BrokerTerminalOutcome | undefined {
+  if (!isRecord(value)) {
+    return undefined;
   }
-
-  begin(quotaSubject: string, requestId: string, payloadHash: string): StoredRequest {
-    const existing = this.requests.get(this.key(quotaSubject, requestId));
-    if (existing !== undefined) {
-      existing.created = false;
-      return existing;
-    }
-    const entry: StoredRequest = { payloadHash, quotaSubject, requestId, created: true };
-    this.requests.set(this.key(quotaSubject, requestId), entry);
-    return entry;
+  if (
+    value.kind === 'success' &&
+    hasOnlyKeys(value, new Set(['kind', 'response'])) &&
+    isBrokerResponse(value.response)
+  ) {
+    return value as unknown as BrokerTerminalOutcome;
   }
-
-  setInFlight(entry: StoredRequest, inFlight: Promise<BrokerResponse>): void {
-    entry.inFlight = inFlight;
+  if (
+    value.kind === 'error' &&
+    hasOnlyKeys(value, new Set(['kind', 'failure'])) &&
+    isRecord(value.failure) &&
+    hasOnlyKeys(value.failure, new Set(['request_id', 'condition', 'retry_after_seconds'])) &&
+    isBrokerErrorCondition(value.failure.condition) &&
+    (value.failure.request_id === undefined || nonEmptyString(value.failure.request_id)) &&
+    (value.failure.retry_after_seconds === undefined ||
+      (typeof value.failure.retry_after_seconds === 'number' &&
+        Number.isFinite(value.failure.retry_after_seconds)))
+  ) {
+    return value as unknown as BrokerTerminalOutcome;
   }
-
-  complete(entry: StoredRequest, response: BrokerResponse): void {
-    entry.response = response;
-    entry.inFlight = undefined;
-  }
-
-  forget(quotaSubject: string, requestId: string): void {
-    this.requests.delete(this.key(quotaSubject, requestId));
-  }
-
-  private key(quotaSubject: string, requestId: string): string {
-    return `${quotaSubject}|${requestId}`;
-  }
+  return undefined;
 }
+
+function isBrokerResponse(value: unknown): boolean {
+  return isRecord(value) &&
+    hasOnlyKeys(value, new Set([
+      'request_id',
+      'status',
+      'provider',
+      'model',
+      'reasoning_effort',
+      'completed_at',
+      'sources',
+      'candidate_attributions',
+      'comparable_value_signals',
+      'warnings',
+    ])) &&
+    nonEmptyString(value.request_id) &&
+    value.status === 'completed' &&
+    (value.provider === 'fake-provider' || value.provider === 'openai') &&
+    nonEmptyString(value.model) &&
+    (value.reasoning_effort === 'none' || value.reasoning_effort === 'medium' ||
+      value.reasoning_effort === 'high' || value.reasoning_effort === 'xhigh') &&
+    isIsoDate(value.completed_at) &&
+    Array.isArray(value.sources) &&
+    Array.isArray(value.candidate_attributions) &&
+    Array.isArray(value.comparable_value_signals) &&
+    Array.isArray(value.warnings);
+}
+
+function isLifecycleState(value: unknown): value is RequestLifecycleState {
+  return value === 'reserved' || value === 'dispatch_started' || value === 'terminal';
+}
+
+function isSettlementState(value: unknown): value is SettlementState {
+  return value === 'reserved' || value === 'pending_refund' || value === 'refunded' ||
+    value === 'pending_finalize' || value === 'finalized';
+}
+
+function isIsoDate(value: unknown): value is string {
+  return typeof value === 'string' && Number.isFinite(Date.parse(value));
+}
+
+function nonEmptyString(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0;
+}
+
+function stringOrEmpty(value: unknown): string {
+  return typeof value === 'string' ? value : '';
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function hasOnlyKeys(value: Record<string, unknown>, allowed: ReadonlySet<string>): boolean {
+  return Object.keys(value).every((key) => allowed.has(key));
+}
+
+const REQUEST_RECORD_KEYS = new Set([
+  'record_version',
+  'quota_subject',
+  'request_id',
+  'payload_hash',
+  'state',
+  'credit_cost',
+  'reservation_lease_expires_at',
+  'retention_expires_at',
+  'settlement_state',
+  'terminal_outcome',
+]);
