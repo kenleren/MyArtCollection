@@ -1,7 +1,8 @@
 # AI Backend Kill Switch Runbook
 
-Status: Proposed  
-Issue: [#49](https://github.com/kenleren/MyArtCollection/issues/49)  
+Status: Proposed
+Issue: [#49](https://github.com/kenleren/MyArtCollection/issues/49)
+One-project reconciliation: #190
 Parent: [#42](https://github.com/kenleren/MyArtCollection/issues/42)  
 Related blockers: [#48](https://github.com/kenleren/MyArtCollection/issues/48), [#50](https://github.com/kenleren/MyArtCollection/issues/50), [#51](https://github.com/kenleren/MyArtCollection/issues/51), [#52](https://github.com/kenleren/MyArtCollection/issues/52)
 
@@ -74,7 +75,9 @@ path can be exposed to testers.
 Any paid AI/backend rollout must satisfy all of the following before first
 tester exposure:
 
-- A dedicated paid backend project exists for AI broker traffic.
+- The AI broker is isolated by codebase, function, runtime identity, IAM,
+  provider credentials, Firestore collections, breaker, quotas, and rollback
+  target inside the sole approved project, `my-art-collections`.
 - OpenAI is the first paid provider, using the Responses API hosted
   `web_search` path with `gpt-5.4` and high reasoning by product decision.
 - The server can reject paid research traffic before any provider call is made.
@@ -109,7 +112,9 @@ Use a layered, server-first kill switch. The shutdown order must be:
 3. Disable or deny the broker route/function.
 4. Disable or revoke the provider credential or service-account access.
 5. Lower quotas or usage ceilings where the platform allows it.
-6. Disable billing on the dedicated AI backend project only as a last resort.
+6. Disable billing on the shared `my-art-collections` project only as an
+   explicit owner-approved last resort after accounting for every affected
+   Firebase, Play Billing, distribution, and AI surface.
 
 This sequence is recommended because it stops spend at the narrowest layer
 first, leaves recovery paths intact, and avoids jumping straight to broad,
@@ -124,14 +129,40 @@ destructive billing actions.
 | Route deny / function disable | Block endpoint reachability | Deployment owner | Endpoint returns rejection without provider activity | Prefer reversible deny before delete |
 | Provider key revoke / access removal | Stop any remaining provider calls | Billing owner or OpenAI project owner | Provider-auth failure on isolated operator check | Create replacement key only after deployment-manager approval |
 | Quota reduction | Narrow remaining blast radius | Billing owner | Lower ceilings visible in project/provider console | Restore only after the incident postmortem identifies cause |
-| Billing disable | Last-resort hard stop for dedicated AI project | Billing owner | Project billing disabled | Treat as recovery project work, not same-window rollback |
+| Billing disable | Last-resort shared-project stop | Billing owner plus deployment owner | Project billing disabled and every affected surface recorded | Treat as a cross-service recovery incident, not same-window rollback |
+
+### AI And Play Billing Independence
+
+The AI and Play Billing controls share `my-art-collections` but must not share
+runtime authority or routine rollback:
+
+- AI controls target codebase `broker`, function `artResearchBroker`, the
+  research runtime identity, provider credential, broker breaker, and broker
+  records only.
+- Play Billing uses codebase `play-billing`, callable
+  `verifyPlaySubscription`, a distinct runtime identity, Android Publisher IAM,
+  and the two billing collections defined in `PLAY_BILLING_GATE_SPEC.md`.
+- AI responders must not disable the billing callable, alter billing
+  collections, revoke Android Publisher access, or use
+  `brokerDurableEntitlements` as payment authority.
+- Billing failure or rollback fails plan access to Free but does not grant or
+  revoke AI research consent and does not change the AI breaker.
+- `online_research_enabled=false` stops online professional-source research
+  entry points only. It does not control local on-device AI and is not a
+  subscription or payment switch.
+
+Project-wide billing disablement is the only layer here that couples the blast
+radius. It may stop the AI broker, Play verification, Auth/App Check,
+telemetry, and App Distribution together; it therefore requires explicit owner
+approval, a service inventory, and a cross-service recovery plan.
 
 ## Runbook
 
 ### Preconditions before any rollout
 
-- `#48` names the dedicated AI backend project, billing topology, monthly cost
-  ceiling, OpenAI project owner, and alert recipients.
+- `#48` confirms `my-art-collections` as the only Firebase/GCP project and names
+  the broker isolation controls, billing topology, monthly cost ceiling,
+  OpenAI project owner, and alert recipients.
 - `#50` defines broker identity, App Check role, quota key, replay rejection,
   and revocation behavior.
 - `#51` defines request/response contract, payload minimization, and telemetry
@@ -177,7 +208,8 @@ Notification channels must include:
 
 Before rollout, operators must have quick access to:
 
-- Cloud Billing budget status for the dedicated AI backend project.
+- Cloud Billing budget status for `my-art-collections`, with the isolated
+  broker workload identified by its codebase/runtime/provider signals.
 - Cloud Billing anomaly view for the billing account used by that project.
 - Cloud quota usage and alert status for the broker project.
 - Function metrics: invocations, concurrency, errors, latency, and instance
@@ -192,8 +224,8 @@ Before rollout, operators must have quick access to:
 Use these minimum thresholds unless `#48` approves stricter ones:
 
 - Budget alerts: 50%, 70%, 80%, 90% of monthly ceiling.
-- Cost anomaly: notify on any anomaly detected for the dedicated AI backend
-  billing scope.
+- Cost anomaly: notify on any anomaly detected for `my-art-collections` or the
+  isolated broker provider scope; project totals are not assumed to be AI-only.
 - Function error rate: alert at >2% 5xx over 5 minutes.
 - Provider auth failure: alert at >3 failures over 5 minutes.
 - Breaker rejects: alert on any non-zero reject count outside a planned
@@ -337,22 +369,28 @@ Recovery note:
 
 - This step narrows blast radius; it is not the primary stop control.
 
-### Step 7: Disable billing on the dedicated AI backend project only if all prior controls fail
+### Step 7: Disable shared-project billing only if all prior controls fail
 
 Action:
 
-- Disable billing only for the dedicated AI backend project, not for unrelated
-  Firebase/App Distribution work.
+- Obtain explicit owner approval to disable billing for `my-art-collections`
+  only after recording the impact on the research broker, Play subscription
+  verification, Auth/App Check, telemetry, App Distribution, and any other
+  project services. There is no narrower project to disable.
 
 Verification:
 
-- Billing status for the dedicated project shows disabled.
+- Billing status for `my-art-collections` shows disabled.
 - Paid broker traffic has stopped.
+- Play verification and every other expected affected service are included in
+  incident and recovery evidence; no one interprets their outage as payment or
+  research state.
 
 Recovery note:
 
-- Treat this as a last-resort containment move. Recovery may require manual
-  project repair and explicit review before service returns.
+- Treat this as a last-resort cross-service containment move. Recovery may
+  require manual project repair and explicit billing, deployment, payment, and
+  privacy review before service returns.
 
 ## Smoke checks
 
@@ -427,7 +465,7 @@ After each paid beta rollout, the deployment record should include:
 | Risk | Why it matters | Mitigation |
 | --- | --- | --- |
 | Client-only shutoff fails open | Stale builds can still spend | Server breaker first, then route deny |
-| Shared billing blast radius | Last-resort billing disable could hit unrelated services | Dedicated AI backend project, preferably dedicated billing account |
+| Shared-project billing blast radius | Last-resort billing disable can stop AI, Play verification, Auth/App Check, telemetry, and distribution together | Use broker breaker, route/runtime IAM, provider revoke, and quotas first; require owner-approved cross-service recovery before project-wide action |
 | Key revocation is too coarse | Revoke stops all usage and complicates recovery | Use only after breaker and route controls |
 | Budget alerts arrive late | Spend can exceed threshold before alerts arrive | Conservative quotas, breaker, small beta ceiling, last-resort billing disable |
 | Route delete under pressure slows recovery | Re-deploy work during incident is brittle | Prefer reversible deny path before delete |
@@ -471,7 +509,8 @@ This issue is decision-ready when all of the following are true:
 ## Open decisions for humans
 
 - Confirm the named billing owner, deployment owner, and backup responder.
-- Confirm whether the dedicated AI backend also gets its own billing account.
+- Confirm whether `my-art-collections` uses a dedicated billing account or a
+  shared billing account with explicitly documented weaker isolation.
 - Confirm the monthly ceiling approved in `#48`.
 - Confirm the exact breaker response code and UX copy for shutoff mode.
 - Confirm the reversible route-deny mechanism preferred over deletion.

@@ -4,6 +4,12 @@ Server-only research broker for the `my-art-collections` Firebase project. The
 package is implemented and fake-tested but remains disabled by default. It is
 not deploy or live-provider approval.
 
+`my-art-collections` is also the sole project approved for the planned Play
+Billing verifier, but billing is not part of this package. The verifier must use
+the separate `play-billing` codebase, `verifyPlaySubscription` callable,
+runtime identity, Android Publisher IAM, collections, and rollback target in
+`docs/PLAY_BILLING_GATE_SPEC.md`.
+
 ## Modules
 
 - `src/canonical_payload.ts`: RFC 8785 `canonical-payload-v1` bytes and digest
@@ -89,6 +95,15 @@ Versioned Firestore records expected by code are documented in
 `docs/AI_BROKER_AUTH_AND_QUOTA_SPEC.md`. Provisioning and validation of real
 records are #155 deployment-owner work.
 
+Anonymous Auth is shared identity infrastructure, not shared consent or
+authority. A UID created after the billing-verification disclosure does not
+create AI research consent. This broker must still enforce the owner allowlist,
+current research consent, broker entitlement, breaker, credits, and payload
+gates. It must not call Android Publisher APIs, read or write
+`playBillingPurchaseBindings` or `playBillingRequestReplays`, or treat
+`brokerDurableEntitlements` as payment authority. A Play plan lease cannot be
+minted, cached, restored, or extended by broker code.
+
 ## Local Checks
 
 ```sh
@@ -119,5 +134,9 @@ traffic, credentials, collector content, or account mutation.
 - No automatic durable-record migration.
 - No deploy, API enablement, billing mutation, project selection, secret
   mutation, or account mutation.
+- No Play purchase verification, acknowledgement, purchase-token handling, or
+  billing-collection access from this research package.
+- AI and billing rollback remain independent inside `my-art-collections`;
+  project-wide billing disablement is a human-owned cross-service last resort.
 - Independent task review and redteam/security review are required.
 - #155 remains the only deployment and capped live-test gate.

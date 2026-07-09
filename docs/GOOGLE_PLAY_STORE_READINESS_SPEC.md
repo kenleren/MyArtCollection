@@ -3,6 +3,7 @@
 Issue: #76  
 Project: https://github.com/users/kenleren/projects/1  
 Depends on context from: #53, #9  
+Billing/Data Safety reconciliation: #190
 Status: research/spec only
 
 ## Problem statement
@@ -148,6 +149,9 @@ Not required for first Play readiness:
 
 The team must not fill the Data safety form from aspiration or from platform
 vision docs. It must be based on the exact artifacts intended for each track.
+The internal-testing exemption changes whether the Play form is required; it
+does not remove truthful privacy disclosure, data minimization, security, or
+review duties.
 
 ### 5. Visual assets must come from a release candidate
 
@@ -279,6 +283,15 @@ Track assumptions should be recorded explicitly:
 | Closed/public artifact with Crashlytics only | On | Off | Expect declarations for diagnostics, app info/performance, and installation/Crashlytics identifiers |
 | Closed/public artifact with Crashlytics + Remote Config | On | On | Expect above plus Remote Config coarse environment/app metadata and Firebase Installations ID handling |
 
+Billing/Auth/App Check must be an additional artifact dimension rather than an
+assumption hidden inside these rows:
+
+| Artifact | Actual or planned SDK/runtime surface | Required treatment |
+| --- | --- | --- |
+| Current repo artifact at #190 | `firebase_core`, `firebase_crashlytics`, and `firebase_remote_config`; no Play Billing, Firebase Auth, or Firebase App Check dependency | Use current gated Firebase behavior only; do not declare planned billing identity or purchase verification as shipped |
+| Planned internal billing artifact after #191/#192 | Play Billing Library, anonymous Firebase Auth, Firebase App Check/Play Integrity, Firebase core/Installations, and server `verifyPlaySubscription` verification | Internal-only Data Safety form exemption may apply, but billing disclosure, privacy record, exact-build SDK/permission audit, retention/redaction review, and payment redteam are still required |
+| Any closed/open/production paid artifact | The exact dependency/manifest/runtime set in the release AAB plus the deployed verifier and retention behavior | Blocked by #194 until the full Data Safety worksheet, privacy policy, RTDN/reconciliation/token-custody design, testing, payment redteam, deployment review, and owner approval are accepted |
+
 #### Repo-grounded worksheet notes
 
 Current repo evidence supports these draft inputs:
@@ -288,10 +301,46 @@ Current repo evidence supports these draft inputs:
 - no ads SDK present;
 - no billing SDK present;
 - no app account/auth SDK present;
+- no Firebase App Check SDK present;
 - Crashlytics is currently designed for Android release builds only when both
   Gradle and Dart defines enable it;
 - Remote Config is currently designed for Android release builds only when both
   Gradle and Dart defines enable it.
+
+Those bullets describe the current source/dependency inventory only. They must
+be replaced, not carried forward, when #192 adds the planned Billing/Auth/App
+Check artifact.
+
+#### Planned billing artifact inputs
+
+For the future internal billing artifact, the worksheet and privacy record must
+capture at least:
+
+- package `app.archivale` and the source-controlled product/base-plan/offer
+  allowlist from `PLAY_BILLING_GATE_SPEC.md`;
+- the distinct billing-verification disclosure and the fact that it may create
+  or reuse anonymous Firebase Auth;
+- the separate AI research-consent gate, which billing identity does not
+  satisfy;
+- Play Integrity/App Check attestation and Firebase Installations behavior;
+- transmission of a purchase token to the billing verifier and an Auth-derived
+  one-way `obfuscatedAccountId` to Google Play;
+- server verification through `purchases.subscriptionsv2.get` and server
+  acknowledgement through `purchases.subscriptions.acknowledge`;
+- one-way token/account binding records retained until
+  `max(Play expiry, last verification) + 30 days`, replay metadata retained 24
+  hours, and no persisted paid lease;
+- the absolute ban on raw tokens, raw UID, account binding, order IDs, Play
+  response bodies, and those values in telemetry, screenshots, or evidence;
+- a 15-minute maximum in-memory lease and fail-Free restart/refresh behavior;
+  and
+- downgrade behavior that preserves existing-record view, edit, report, and
+  export access.
+
+The human Play owner must map those facts to the current Play Console taxonomy
+and Google/Firebase SDK disclosure guidance for the exact AAB. This spec does
+not pre-answer whether Google classifies each data class as collected, shared,
+ephemeral, required, optional, or service-provider processed.
 
 #### Firebase SDK disclosure prompts to verify before final answers
 
@@ -418,6 +467,8 @@ Copy rules:
 7. Screenshot, icon, and feature-graphic dependencies are listed.
 8. Human approvals required before any publish action are named.
 9. Work is split into implementation-sized tasks.
+10. Any paid artifact is identified as internal-only or is blocked on #194,
+    with Billing/Auth/App Check and backend retention represented exactly.
 
 ## Recommended task breakdown
 
@@ -539,6 +590,10 @@ Humans must approve before any publication or upload:
 6. final screenshots, app icon, and feature graphic,
 7. tester list / feedback channel / closed-test start,
 8. enabling Managed Publishing release or any actual Play publish action.
+9. final product/base-plan/offer and localized pricing configuration,
+10. the billing disclosure, Auth/App Check setup, runtime IAM/secret custody,
+    and sanitized payment evidence plan,
+11. #194 acceptance before moving any paid artifact beyond internal testing.
 
 ## Open decisions for humans
 
@@ -551,6 +606,10 @@ Humans must approve before any publication or upload:
 4. Does the first public Play build include any AI, Drive backup, export, or
    PDF/report functionality that must appear in policy and listing copy?
 5. Who owns the public support inbox and final publish decision?
+6. Who owns Play Billing configuration, the dedicated verifier runtime
+   identity/IAM, fingerprint-key custody, and payment incident response?
+7. Which exact build first contains Play Billing, anonymous Auth, and App Check,
+   and is it constrained to internal testing until #194 is accepted?
 
 ## Recommended next step
 

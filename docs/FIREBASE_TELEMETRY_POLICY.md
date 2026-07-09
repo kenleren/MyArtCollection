@@ -30,9 +30,32 @@ tester email, or operator-written summary:
 - user notes, condition notes, provenance notes, or free-text field values
 - collection contents, collection size by title/artist, or record lists
 - AI prompts, AI responses, source snippets, citations, or research queries
-- service-account paths, tokens, API keys, or tester email lists
+- raw Play `purchaseToken` or `linkedPurchaseToken`
+- raw Firebase Auth or App Check tokens and raw Firebase UID
+- `obfuscatedAccountId`, returned account identifiers, token/account
+  fingerprints, or account-binding values
+- Play order IDs, developer payloads, cancellation free text, Subscribe with
+  Google profile data, or Play response bodies
+- service-account paths, other tokens, API keys, or tester email lists
 
 When in doubt, do not send it.
+
+### Play Billing Data
+
+The billing verifier may persist only the one-way fields and fixed metadata
+listed in `PLAY_BILLING_GATE_SPEC.md`, and only in
+`playBillingPurchaseBindings` or `playBillingRequestReplays`. Those Firestore
+records are payment-control state, not telemetry. No billing collection field
+may be copied into Crashlytics, Analytics, Performance Monitoring, Remote
+Config, application logs, logcat, console output, dashboards, screenshots,
+fixtures, release notes, or issue/PR/deployment evidence.
+
+Billing logs and evidence may contain only fixed event/reason codes,
+contract/key versions, coarse timing, and aggregate counts. Real or
+synthetic-looking tokens, UIDs, account bindings, fingerprints, order IDs,
+provider response fragments, and secret values/paths are forbidden even when a
+reviewer believes they are redacted. Request-memory raw values must be cleared
+at completion and never attached to an error object passed to telemetry.
 
 ## Default-Off Requirement
 
@@ -210,6 +233,11 @@ Before store or broad beta release, confirm:
 - App Distribution release notes and evidence contain only sanitized fixed
   categories.
 - Firebase credentials, tester lists, and config secrets are outside Git.
+- The exact artifact's Play Billing, anonymous Auth, App Check, Installations,
+  Crashlytics, and Remote Config behavior is represented truthfully; planned
+  SDKs or disabled products are not reported as current behavior.
+- No billing token, UID, account binding/fingerprint, order data, Play response,
+  or billing collection field appears in telemetry or review evidence.
 
 ## Review Gate
 
@@ -222,3 +250,7 @@ Any task that adds or changes Firebase telemetry must include:
 - independent task review,
 - redteam review when adding Analytics, Performance Monitoring, custom
   Crashlytics keys/logs, backend telemetry, or any user/content-derived signal.
+
+Any billing telemetry or observability change additionally requires payment
+redteam and privacy review. #194 owns that gate before paid rollout beyond the
+internal track.

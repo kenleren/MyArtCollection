@@ -1,7 +1,8 @@
 # AI Broker Auth And Quota Spec
 
-Status: implemented contract; deployment and live-provider use remain gated
-Issues: #50, #157, #177, #187
+Status: implemented research contract; deployment and live-provider use remain
+gated
+Issues: #50, #157, #177, #187, #190
 
 ## Decision
 
@@ -16,7 +17,7 @@ the only deployment and live-test gate.
 
 ## Identity Contract
 
-Every paid-start request requires both:
+Every provider-bound research request requires both:
 
 - a Firebase anonymous Auth ID token for `my-art-collections`, verified with
   revocation checking, exact audience, exact issuer, and non-empty UID;
@@ -36,6 +37,37 @@ the app instance; it never substitutes for Auth identity or entitlement.
 The broker derives its quota subject on the server with an HMAC over the
 project, app ID, and Auth UID. Raw UIDs and raw tokens are not quota keys and
 must not enter broker logs, telemetry, error bodies, or fixtures.
+
+## Billing Identity And Consent Separation
+
+The same `my-art-collections` anonymous Auth facility may also be used by the
+Play Billing verifier under `PLAY_BILLING_GATE_SPEC.md`, but the authorities are
+separate:
+
+- AI research identity may be created or reused only after explicit, current-
+  version research consent.
+- Billing identity may be created or reused only after the distinct billing-
+  verification disclosure when the collector initiates purchase or restore.
+- Accepting the billing disclosure never records or implies AI research
+  consent, never enables `online_research_enabled`, and never authorizes
+  collector content or a research request to leave the device.
+- Accepting research consent never proves purchase or authorizes billing
+  verification without the billing disclosure.
+- Reuse of one anonymous UID does not merge these authorities. Each route must
+  enforce its own disclosure/consent and purpose-specific gates.
+
+The research broker has no Android Publisher permission and must not read the
+Play Billing collections. `brokerDurableEntitlements` is a versioned research-
+broker control only: it cannot represent, mint, cache, extend, restore, or
+override a Play payment entitlement or the mobile 15-minute billing lease. A
+paid billing result also does not bypass broker owner allowlist, research
+consent, entitlement, breaker, credit, payload, or provider gates.
+
+Billing uses a distinct `play-billing` codebase, callable, runtime identity,
+collections, fingerprint domain, and rollback target in the same Firebase
+project. A billing outage or kill switch must fail paid plan access to Free
+without enabling research or requiring the AI breaker to change. An AI breaker
+must stop research without altering valid Play purchase state.
 
 ## Gate Order
 

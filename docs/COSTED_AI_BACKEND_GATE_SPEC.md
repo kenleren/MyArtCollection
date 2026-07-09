@@ -2,6 +2,7 @@
 
 Status: Proposed
 Issue: [#42](https://github.com/kenleren/MyArtCollection/issues/42)
+Billing/topology reconciliation: #190
 Scheduling evidence: [issue comment](https://github.com/kenleren/MyArtCollection/issues/42#issuecomment-4883398463)
 Initial implementation evidence: [issue comment](https://github.com/kenleren/MyArtCollection/issues/42#issuecomment-4883425657)
 First review-block reconciliation: [issue comment](https://github.com/kenleren/MyArtCollection/issues/42#issuecomment-4883461683)
@@ -265,6 +266,14 @@ Decision:
   Functions codebase, server-only provider credentials, versioned Firestore
   control/entitlement/credit records, owner/app allowlists, a broker breaker,
   hard provider and credit caps, and broker-only telemetry boundaries.
+- Play Billing uses its own `play-billing` codebase, callable, runtime identity,
+  collections, Android Publisher IAM, fingerprint domain, and rollback target
+  in that same project, as defined by `PLAY_BILLING_GATE_SPEC.md`. The research
+  broker must not call Android Publisher APIs or read billing collections, and
+  `brokerDurableEntitlements` has no payment authority.
+- Anonymous Auth is shared identity infrastructure, not shared authority. The
+  billing disclosure authorizes only purchase verification/refresh; it does
+  not create research consent. Research consent does not prove purchase.
 - Blaze enablement, billing attachment, provider credentials, Functions deploy,
   and production rollout each require explicit owner action and
   deployment-manager review under #155. The one-project decision does not
@@ -450,6 +459,12 @@ Before a paid beta is exposed to any tester, #49 must define and verify:
 - Free/promo research must be explicitly capped.
 - Billing or entitlement copy must state that AI suggestions are draft research
   aids and may require human expert review.
+- Google Play plan access is accepted only through the server-verified,
+  15-minute, memory-only lease in `PLAY_BILLING_GATE_SPEC.md`. The AI broker
+  cannot mint, persist, restore, or extend that lease, and a paid plan cannot
+  bypass research consent, broker breaker, credits, or provider controls.
+- A failed/expired billing lease downgrades to Free while all existing artwork
+  records remain viewable, editable, reportable, and exportable.
 
 ### Explicit answer: can a user's Gemini Pro / AI Pro subscription be used by the app?
 
@@ -498,6 +513,7 @@ Inference from those sources:
 | Direct client AI abuse | Paid surface can be replayed or scripted | Do not approve Firebase AI Logic direct client calls by default |
 | Surprise spend | Budgets are alerts, spend caps are experimental, and processing latency can overrun limits | Isolated broker codebase and service quotas inside the approved project, low policy ceiling, Prepay/Postpay decision, project spend cap, server breaker, manual kill switch, optional last-resort billing disable |
 | Billing-account cross-talk | Shared billing accounts can blur ownership and blast radius | Prefer dedicated billing account; if shared, configure both project-level and billing-account controls and record the weaker isolation |
+| Shared-project shutdown blast radius | Project-wide billing disablement can stop AI, Play verification, Auth/App Check, telemetry, and distribution surfaces together | Use codebase, runtime-IAM, route, and provider controls first; reserve project-wide billing action for explicit owner-approved last resort |
 | Privacy drift in logs | AI queries and citations are sensitive | Keep broker telemetry content-free and align with `FIREBASE_TELEMETRY_POLICY.md` |
 | Provider data retention drift | External providers may retain or inspect data under terms/settings | Require #52 provider data-handling/ZDR decision before real content leaves device |
 | App Check misunderstanding | App Check is attestation, not identity or revocation | Require #50 auth topology, tester/user identity, replay controls, and negative tests |
