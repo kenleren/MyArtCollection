@@ -1,38 +1,52 @@
+import { validateCanonicalPayloadV1 } from './canonical_payload.js';
 import {
-  APPROVED_PAYLOAD_CLASS,
   CURRENT_CONSENT_COPY_VERSION,
-  CURRENT_PAYLOAD_CONTRACT_VERSION,
   type BrokerContext,
+  type BrokerFailure,
   type BrokerRequest,
   type BrokerResearchOutput,
   type BrokerResponse,
+  type BrokerResult,
+  type BrokerTerminalOutcome,
   type ProviderClient,
+  type ProviderResearchResult,
 } from './contracts.js';
-import { PlaceholderCreditLedger, type BrokerCreditLedger } from './credit_ledger.js';
+import type { BrokerErrorCondition } from './error_contract.js';
 import { FakeResearchProvider } from './fake_provider.js';
 import {
-  InMemoryIdempotencyStore,
-  type BrokerIdempotencyStore,
-  type StoredRequest,
-} from './idempotency.js';
+  InMemoryRequestLifecycle,
+  type RequestLifecycleStore,
+  type SettlementIntent,
+} from './request_lifecycle.js';
 import { authorizeProviderRequest } from './provider_authorization.js';
 
+export interface ProviderProvisioner {
+  configure(): unknown | Promise<unknown>;
+  construct(configuration: unknown): ProviderClient | Promise<ProviderClient>;
+}
+
 export interface BrokerDependencies {
-  provider: ProviderClient;
-  idempotency: BrokerIdempotencyStore;
-  creditLedger: BrokerCreditLedger;
+  providerProvisioner: ProviderProvisioner;
+  requestLifecycle: RequestLifecycleStore;
+  authorizeProvider: (request: BrokerRequest) => void | Promise<void>;
   now: () => Date;
   orderTrace?: string[];
+  testProvider?: ProviderClient;
 }
 
 export function createFakeBrokerDependencies(
-  overrides: Partial<BrokerDependencies> = {},
+  overrides: Partial<BrokerDependencies> & { provider?: ProviderClient } = {},
 ): BrokerDependencies {
+  const provider = overrides.provider ?? overrides.testProvider ?? new FakeResearchProvider();
   return {
-    provider: new FakeResearchProvider(),
-    idempotency: new InMemoryIdempotencyStore(),
-    creditLedger: new PlaceholderCreditLedger(),
+    providerProvisioner: {
+      configure: () => ({ mode: 'fake' }),
+      construct: () => provider,
+    },
+    requestLifecycle: new InMemoryRequestLifecycle(),
+    authorizeProvider: authorizeProviderRequest,
     now: () => new Date(),
+    testProvider: provider,
     ...overrides,
   };
 }
@@ -41,294 +55,334 @@ export async function handleResearchRequest(
   request: BrokerRequest,
   context: BrokerContext,
   dependencies: BrokerDependencies = createFakeBrokerDependencies(),
-): Promise<BrokerResponse> {
+): Promise<BrokerResult> {
   const trace = dependencies.orderTrace;
-  const creditCost = 1;
-  const fail = (code: string, message: string, stage: string): BrokerResponse => ({
-    request_id: request.request_id,
-    status: code === 'idempotency_conflict' ? 'conflict' : 'rejected',
-    provider: dependencies.provider.providerName,
-    model: dependencies.provider.modelName,
-    reasoning_effort: dependencies.provider.reasoningEffort,
-    sources: [],
-    candidate_attributions: [],
-    comparable_value_signals: [],
-    warnings: [],
-    error: { code, message, stage },
-  });
 
-  trace?.push('auth');
-  const authError = validateAuthAndQuotaSubject(context);
+  trace?.push('auth_context');
+  const authError = validateAuthContext(context);
   if (authError !== undefined) {
-    return fail(authError.code, authError.message, 'auth');
-  }
-  if (!context.app_check_verified || !context.auth_verified) {
-    return fail('unauthorized', 'Broker auth placeholders failed closed.', 'auth');
+    return failure(authError, request.request_id);
   }
 
   trace?.push('consent');
   if (request.consent_status !== 'approved') {
-    return fail('consent_required', 'Approved research consent is required.', 'consent');
+    return failure('consent_required', request.request_id);
   }
   if (request.consent_copy_version !== CURRENT_CONSENT_COPY_VERSION) {
-    return fail('stale_consent', 'Consent copy version is not current.', 'consent');
-  }
-
-  trace?.push('payload_receipt');
-  const receiptError = validatePayloadReceipt(request);
-  if (receiptError !== undefined) {
-    return fail(receiptError.code, receiptError.message, 'payload_receipt');
+    return failure('stale_consent', request.request_id);
   }
 
   trace?.push('entitlement');
-  if (!context.entitled || !context.credit_available) {
-    return fail('entitlement_or_credit_denied', 'Entitlement or credit placeholder denied the request.', 'entitlement');
+  if (!context.entitled) {
+    return failure('not_entitled', request.request_id);
   }
 
   trace?.push('breaker');
   if (context.breaker_open) {
-    return fail('broker_breaker_open', 'Broker breaker is open.', 'breaker');
+    return failure('broker_breaker_open', request.request_id);
   }
 
-  trace?.push('payload');
-  const payloadError = validatePayload(request);
-  if (payloadError !== undefined) {
-    return fail(payloadError.code, payloadError.message, 'payload');
+  trace?.push('canonical_payload');
+  const canonicalError = validateCanonicalPayloadV1(request);
+  if (canonicalError !== undefined) {
+    return failure(canonicalError, request.request_id);
   }
 
-  trace?.push('idempotency');
-  const existing = await dependencies.idempotency.get(context.quota_subject, request.request_id);
-  if (existing !== undefined) {
-    if (existing.payloadHash !== request.payload_hash) {
-      return fail(
-        'idempotency_conflict',
-        'The request id already exists with a different payload hash.',
-        'idempotency',
-      );
-    }
-    const replay = await replayExistingRequest(existing);
-    if (replay !== undefined) {
-      return replay;
-    }
-    if (existing.durableInFlight === true) {
-      return fail(
-        'quota_subject_in_flight',
-        'The request is already in flight on another broker instance.',
-        'idempotency',
-      );
-    }
-  }
-
-  const idempotencyEntry = await dependencies.idempotency.begin(
-    context.quota_subject,
-    request.request_id,
-    request.payload_hash,
-  );
-  if (idempotencyEntry.created === false) {
-    const replay = await replayExistingRequest(idempotencyEntry);
-    if (replay !== undefined) {
-      return replay;
-    }
-    if (idempotencyEntry.durableInFlight === true) {
-      return fail(
-        'quota_subject_in_flight',
-        'The request is already in flight on another broker instance.',
-        'idempotency',
-      );
-    }
-  }
-  const inFlight = runReservedProviderRequest(
-    request,
-    context.quota_subject,
-    dependencies,
-    fail,
-    trace,
-    creditCost,
-  );
-  await dependencies.idempotency.setInFlight(idempotencyEntry, inFlight);
-
+  trace?.push('idempotency_replay');
+  trace?.push('credit_reservation');
+  let acquired;
   try {
-    const response = await inFlight;
-    await dependencies.idempotency.complete(idempotencyEntry, response);
-    return response;
-  } catch (error) {
-    await dependencies.idempotency.forget(context.quota_subject, request.request_id);
-    throw error;
+    acquired = await dependencies.requestLifecycle.acquire({
+      quota_subject: context.quota_subject,
+      request_id: request.request_id,
+      payload_hash: request.payload_hash,
+      credit_cost: 1,
+      now: dependencies.now(),
+    });
+  } catch {
+    return failure('durable_store_failure', request.request_id);
   }
-}
 
-async function replayExistingRequest(
-  existing: StoredRequest,
-): Promise<BrokerResponse | undefined> {
-  const response = completedResponse(existing);
-  if (response !== undefined) {
-    return { ...response, replayed: true };
+  switch (acquired.kind) {
+    case 'replay':
+      await settlePendingBestEffort(acquired.record, dependencies, trace);
+      return replayedResult(acquired.outcome);
+    case 'conflict':
+      return failure('idempotency_conflict', request.request_id);
+    case 'in_flight':
+      return failure('quota_subject_in_flight', request.request_id);
+    case 'outcome_unknown':
+      return failure('dispatch_outcome_unknown', request.request_id);
+    case 'credits_exhausted':
+      return failure('credits_exhausted', request.request_id);
+    case 'unsafe_record':
+      return failure('malformed_durable_record', request.request_id);
+    case 'reserved':
+      break;
   }
-  const inFlight = inFlightResponse(existing);
-  if (inFlight !== undefined) {
-    const completed = await inFlight;
-    return { ...completed, replayed: true };
-  }
-  await nextEventLoopTurn();
-  const responseAfterMicrotask = completedResponse(existing);
-  if (responseAfterMicrotask !== undefined) {
-    return { ...responseAfterMicrotask, replayed: true };
-  }
-  const inFlightAfterMicrotask = inFlightResponse(existing);
-  if (inFlightAfterMicrotask !== undefined) {
-    const completed = await inFlightAfterMicrotask;
-    return { ...completed, replayed: true };
-  }
-  return undefined;
-}
 
-function completedResponse(existing: StoredRequest): BrokerResponse | undefined {
-  return existing.response;
-}
-
-function inFlightResponse(existing: StoredRequest): Promise<BrokerResponse> | undefined {
-  return existing.inFlight;
-}
-
-function nextEventLoopTurn(): Promise<void> {
-  return new Promise((resolve) => {
-    setImmediate(resolve);
-  });
-}
-
-async function runReservedProviderRequest(
-  request: BrokerRequest,
-  quotaSubject: string,
-  dependencies: BrokerDependencies,
-  fail: (code: string, message: string, stage: string) => BrokerResponse,
-  trace: string[] | undefined,
-  creditCost: number,
-): Promise<BrokerResponse> {
-  trace?.push('credit_reserve');
-  const reservation = await dependencies.creditLedger.reserve({
-    requestId: request.request_id,
-    quotaSubject,
-    creditCost,
-  });
-  if (!reservation.ok) {
-    return fail(
-      reservation.code ?? 'quota_denied',
-      reservation.message ?? 'Quota placeholder denied the request.',
-      'credit_reserve',
+  const record = acquired.record;
+  let configuration: unknown;
+  trace?.push('provider_config');
+  try {
+    configuration = await dependencies.providerProvisioner.configure();
+  } catch {
+    return terminalError(
+      record,
+      'provider_config_failure',
+      'refund',
+      dependencies,
+      trace,
     );
   }
 
-  const record = reservation.record;
-  trace?.push('provider');
-  let providerResult;
+  let provider: ProviderClient;
+  trace?.push('provider_construction');
   try {
-    authorizeProviderRequest(request);
-    providerResult = await dependencies.provider.research(request);
+    provider = await dependencies.providerProvisioner.construct(configuration);
   } catch {
-    await dependencies.creditLedger.refund(record, 'provider_exception');
-    return fail('provider_failure', 'Provider failed before output validation.', 'provider');
+    return terminalError(
+      record,
+      'provider_construction_failure',
+      'refund',
+      dependencies,
+      trace,
+    );
   }
 
-  if (providerResult.kind === 'output_error') {
-    trace?.push('output_validation');
-    await dependencies.creditLedger.finalize(record);
-    return fail(providerResult.code, providerResult.message, 'output_validation');
+  trace?.push('provider_authorization');
+  try {
+    await dependencies.authorizeProvider(request);
+  } catch {
+    return terminalError(
+      record,
+      'provider_authorization_failure',
+      'refund',
+      dependencies,
+      trace,
+    );
   }
 
-  const providerOutput: BrokerResearchOutput = providerResult.output;
+  trace?.push('dispatch_persistence');
+  let dispatchStarted;
+  try {
+    dispatchStarted = await dependencies.requestLifecycle.markDispatchStarted(
+      record,
+      dependencies.now(),
+    );
+  } catch {
+    return terminalError(
+      record,
+      'dispatch_persistence_failure',
+      'refund',
+      dependencies,
+      trace,
+    );
+  }
+  if (dispatchStarted.kind === 'lease_expired') {
+    await settlePendingBestEffort(dispatchStarted.record, dependencies, trace);
+    return outcomeToResult(dispatchStarted.outcome);
+  }
+
+  trace?.push('provider_fetch');
+  let providerResult: ProviderResearchResult;
+  try {
+    providerResult = await provider.research(request);
+  } catch {
+    providerResult = { kind: 'failure' };
+  }
+
+  return completeProviderResult(
+    request,
+    provider,
+    providerResult,
+    record,
+    dependencies,
+    trace,
+  );
+}
+
+async function completeProviderResult(
+  request: BrokerRequest,
+  provider: ProviderClient,
+  providerResult: ProviderResearchResult,
+  record: Parameters<RequestLifecycleStore['markDispatchStarted']>[0],
+  dependencies: BrokerDependencies,
+  trace: string[] | undefined,
+): Promise<BrokerResult> {
+  switch (providerResult.kind) {
+    case 'rate_limited':
+      return terminalError(
+        record,
+        'provider_rate_limited',
+        'refund',
+        dependencies,
+        trace,
+        providerResult.retry_after_seconds,
+      );
+    case 'refusal':
+      return terminalError(record, 'provider_refusal', 'finalize', dependencies, trace);
+    case 'timeout':
+      return terminalError(record, 'provider_timeout', 'refund', dependencies, trace);
+    case 'failure':
+      return terminalError(record, 'provider_failure', 'finalize', dependencies, trace);
+    case 'invalid_output':
+      return terminalError(record, 'provider_invalid_output', 'finalize', dependencies, trace);
+    case 'success':
+      break;
+  }
+
   trace?.push('output_validation');
-  const outputError = validateOutput(providerOutput);
-  if (outputError !== undefined) {
-    await dependencies.creditLedger.finalize(record);
-    return fail(outputError.code, outputError.message, 'output_validation');
+  if (validateOutput(providerResult.output) !== undefined) {
+    return terminalError(record, 'provider_invalid_output', 'finalize', dependencies, trace);
   }
-
-  trace?.push('credit_finalize');
-  await dependencies.creditLedger.finalize(record);
 
   const response: BrokerResponse = {
     request_id: request.request_id,
     status: 'completed',
-    provider: dependencies.provider.providerName,
-    model: dependencies.provider.modelName,
-    reasoning_effort: dependencies.provider.reasoningEffort,
+    provider: provider.providerName,
+    model: provider.modelName,
+    reasoning_effort: provider.reasoningEffort,
     completed_at: dependencies.now().toISOString(),
-    sources: providerOutput.sources,
-    candidate_attributions: providerOutput.candidate_attributions,
-    comparable_value_signals: providerOutput.comparable_value_signals,
-    warnings: providerOutput.warnings,
+    sources: providerResult.output.sources,
+    candidate_attributions: providerResult.output.candidate_attributions,
+    comparable_value_signals: providerResult.output.comparable_value_signals,
+    warnings: providerResult.output.warnings,
   };
-  return response;
+  return persistTerminalAndSettle(
+    record,
+    { kind: 'success', response },
+    'finalize',
+    dependencies,
+    trace,
+  );
 }
 
-function validatePayload(request: BrokerRequest): { code: string; message: string } | undefined {
-  if (request.image.mime_type !== 'image/jpeg' && request.image.mime_type !== 'image/webp') {
-    return { code: 'unsupported_image_mime_type', message: 'Image derivative MIME type is not allowed.' };
-  }
-  if (request.image.byte_size <= 0 || request.image.byte_size > 1_500_000) {
-    return { code: 'invalid_image_size', message: 'Image derivative size is outside the v1 bounds.' };
-  }
-  if (request.image.long_edge_px <= 0 || request.image.long_edge_px > 1600) {
-    return { code: 'invalid_image_dimensions', message: 'Image derivative dimensions are outside the v1 bounds.' };
-  }
-  return undefined;
+async function terminalError(
+  record: Parameters<RequestLifecycleStore['markDispatchStarted']>[0],
+  condition: BrokerErrorCondition,
+  settlement: SettlementIntent,
+  dependencies: BrokerDependencies,
+  trace: string[] | undefined,
+  retryAfterSeconds?: number,
+): Promise<BrokerResult> {
+  const outcome: BrokerTerminalOutcome = {
+    kind: 'error',
+    failure: {
+      request_id: record.request_id,
+      condition,
+      ...(retryAfterSeconds === undefined ? {} : { retry_after_seconds: retryAfterSeconds }),
+    },
+  };
+  return persistTerminalAndSettle(record, outcome, settlement, dependencies, trace);
 }
 
-function validateAuthAndQuotaSubject(context: BrokerContext): { code: string; message: string } | undefined {
+async function persistTerminalAndSettle(
+  record: Parameters<RequestLifecycleStore['markDispatchStarted']>[0],
+  outcome: BrokerTerminalOutcome,
+  settlement: SettlementIntent,
+  dependencies: BrokerDependencies,
+  trace: string[] | undefined,
+): Promise<BrokerResult> {
+  trace?.push('terminal_persistence');
+  try {
+    await dependencies.requestLifecycle.persistTerminal(record, outcome, settlement);
+  } catch {
+    return failure('terminal_persistence_failure', record.request_id);
+  }
+
+  await settlePendingBestEffort(record, dependencies, trace);
+  return outcomeToResult(outcome);
+}
+
+async function settlePendingBestEffort(
+  record: Parameters<RequestLifecycleStore['markDispatchStarted']>[0],
+  dependencies: BrokerDependencies,
+  trace: string[] | undefined,
+): Promise<void> {
+  if (record.settlement_state !== 'pending_refund' && record.settlement_state !== 'pending_finalize') {
+    return;
+  }
+  trace?.push(record.settlement_state === 'pending_refund' ? 'credit_refund' : 'credit_finalize');
+  try {
+    await dependencies.requestLifecycle.settle(record);
+  } catch {
+    trace?.push('settlement_pending');
+  }
+}
+
+function replayedResult(outcome: BrokerTerminalOutcome): BrokerResult {
+  if (outcome.kind === 'success') {
+    return { ok: true, response: { ...outcome.response, replayed: true } };
+  }
+  return {
+    ok: false,
+    failure: { ...outcome.failure, replayed: true },
+  };
+}
+
+function outcomeToResult(outcome: BrokerTerminalOutcome): BrokerResult {
+  return outcome.kind === 'success'
+    ? { ok: true, response: outcome.response }
+    : { ok: false, failure: outcome.failure };
+}
+
+function failure(
+  condition: BrokerErrorCondition,
+  requestId?: string,
+  retryAfterSeconds?: number,
+): BrokerResult {
+  const safeRequestId = requestId !== undefined && isUuid(requestId) ? requestId : undefined;
+  const brokerFailure: BrokerFailure = {
+    condition,
+    ...(safeRequestId === undefined ? {} : { request_id: safeRequestId }),
+    ...(retryAfterSeconds === undefined ? {} : { retry_after_seconds: retryAfterSeconds }),
+  };
+  return { ok: false, failure: brokerFailure };
+}
+
+function isUuid(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(value);
+}
+
+function validateAuthContext(context: BrokerContext): BrokerErrorCondition | undefined {
+  if (!context.app_check_verified || !context.auth_verified) {
+    return 'invalid_auth_token';
+  }
   if (
     context.auth_identity.uid.length === 0 ||
     context.auth_identity.project_id.length === 0 ||
     context.app_identity.app_id.length === 0 ||
     context.app_identity.project_id.length === 0
   ) {
-    return { code: 'missing_auth_subject', message: 'Broker auth and app identity placeholders are required.' };
+    return 'invalid_auth_token';
   }
   if (context.auth_identity.project_id !== context.app_identity.project_id) {
-    return { code: 'identity_project_mismatch', message: 'Broker auth and app identity placeholders must share a project.' };
+    return 'identity_project_mismatch';
   }
   if (context.auth_identity.sign_in_provider !== 'anonymous') {
-    return { code: 'unsupported_auth_provider', message: 'Only anonymous auth placeholder is allowed locally.' };
+    return 'unsupported_auth_provider';
   }
-  if (context.quota_subject.length === 0 || !/^quota_subject_v1_[a-f0-9]{16,}$/.test(context.quota_subject)) {
-    return { code: 'invalid_quota_subject', message: 'A derived quota subject placeholder is required.' };
-  }
-  return undefined;
-}
-
-function validatePayloadReceipt(request: BrokerRequest): { code: string; message: string } | undefined {
-  if (!isUuid(request.request_id)) {
-    return { code: 'invalid_request_id', message: 'request_id must be a UUID.' };
-  }
-  if (request.payload_contract_version !== CURRENT_PAYLOAD_CONTRACT_VERSION) {
-    return { code: 'payload_contract_mismatch', message: 'Payload contract version is not current.' };
-  }
-  if (request.approved_payload_class !== APPROVED_PAYLOAD_CLASS) {
-    return { code: 'payload_class_mismatch', message: 'Payload class is not approved.' };
-  }
-  if (!/^[a-f0-9]{64}$/.test(request.payload_hash)) {
-    return { code: 'invalid_payload_hash', message: 'payload_hash must be a lowercase SHA-256 hex digest.' };
+  if (!/^quota_subject_v1_[a-f0-9]{16,}$/.test(context.quota_subject)) {
+    return 'invalid_auth_token';
   }
   return undefined;
 }
 
-function validateOutput(output: BrokerResearchOutput): { code: string; message: string } | undefined {
+function validateOutput(output: BrokerResearchOutput): BrokerErrorCondition | undefined {
   const sourceIds = new Set(output.sources.map((source) => source.source_id));
   for (const source of output.sources) {
     if (!source.source_url.startsWith('https://')) {
-      return { code: 'invalid_source_url', message: 'Output source URL must be HTTPS.' };
+      return 'provider_invalid_output';
     }
   }
   for (const candidate of output.candidate_attributions) {
-    if (candidate.source_refs.length === 0) {
-      return { code: 'candidate_missing_source', message: 'Every candidate requires at least one source ref.' };
-    }
-    if (candidate.source_refs.some((sourceRef) => !sourceIds.has(sourceRef))) {
-      return { code: 'candidate_unknown_source', message: 'Candidate source ref does not match a source.' };
+    if (
+      candidate.source_refs.length === 0 ||
+      candidate.source_refs.some((sourceRef) => !sourceIds.has(sourceRef))
+    ) {
+      return 'provider_invalid_output';
     }
   }
   return undefined;
-}
-
-function isUuid(value: string): boolean {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(value);
 }

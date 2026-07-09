@@ -1,0 +1,72 @@
+{
+  "contract_version": "canonical-payload-v1",
+  "canonicalization": "RFC 8785 JSON Canonicalization Scheme",
+  "encoding": "UTF-8 without Unicode normalization; lone surrogates are rejected",
+  "digest": "SHA-256 encoded as 64 lowercase hexadecimal characters",
+  "array_order": "preserved",
+  "optional_fields": "omitted when absent; null is not accepted by the request schema",
+  "image_representation": "canonical padded RFC 4648 base64 without a data URL prefix or whitespace",
+  "included_fields": [
+    "canonical_payload_version",
+    "consent_status",
+    "consent_scope",
+    "consent_copy_version",
+    "payload_contract_version",
+    "approved_payload_class",
+    "image.mime_type",
+    "image.byte_size",
+    "image.long_edge_px",
+    "image.content_base64",
+    "draft_hints.title_hint when present",
+    "draft_hints.artist_hint when present",
+    "draft_hints.search_terms when present"
+  ],
+  "excluded_fields": ["request_id", "payload_hash"],
+  "vectors": [
+    {
+      "name": "image-only-minimal",
+      "request": {
+        "request_id": "11111111-1111-4111-8111-111111111111",
+        "consent_status": "approved",
+        "consent_scope": "image_only",
+        "consent_copy_version": "research-consent-v1",
+        "payload_contract_version": "art-research-payload-v1",
+        "payload_hash": "80b063f2780980bae27588f96f46966dd39484a5e3eacdc4b7630271b1808261",
+        "approved_payload_class": "image_only_or_image_plus_draft_hints",
+        "image": {
+          "mime_type": "image/jpeg",
+          "byte_size": 3,
+          "long_edge_px": 1600,
+          "content_base64": "AQID"
+        }
+      },
+      "canonical_json": "{\"approved_payload_class\":\"image_only_or_image_plus_draft_hints\",\"canonical_payload_version\":\"canonical-payload-v1\",\"consent_copy_version\":\"research-consent-v1\",\"consent_scope\":\"image_only\",\"consent_status\":\"approved\",\"image\":{\"byte_size\":3,\"content_base64\":\"AQID\",\"long_edge_px\":1600,\"mime_type\":\"image/jpeg\"},\"payload_contract_version\":\"art-research-payload-v1\"}",
+      "sha256": "80b063f2780980bae27588f96f46966dd39484a5e3eacdc4b7630271b1808261"
+    },
+    {
+      "name": "hints-unicode-and-array-order",
+      "request": {
+        "request_id": "22222222-2222-4222-8222-222222222222",
+        "consent_status": "approved",
+        "consent_scope": "image_plus_draft_hints",
+        "consent_copy_version": "research-consent-v1",
+        "payload_contract_version": "art-research-payload-v1",
+        "payload_hash": "98bd82649f8a0a00d3443606ef36460614ec639fb461b5d4e2652857a8e313db",
+        "approved_payload_class": "image_only_or_image_plus_draft_hints",
+        "image": {
+          "mime_type": "image/webp",
+          "byte_size": 4,
+          "long_edge_px": 1024,
+          "content_base64": "AAECAw=="
+        },
+        "draft_hints": {
+          "title_hint": "Å study",
+          "artist_hint": "Ångström",
+          "search_terms": ["zeta", "alpha", "é"]
+        }
+      },
+      "canonical_json": "{\"approved_payload_class\":\"image_only_or_image_plus_draft_hints\",\"canonical_payload_version\":\"canonical-payload-v1\",\"consent_copy_version\":\"research-consent-v1\",\"consent_scope\":\"image_plus_draft_hints\",\"consent_status\":\"approved\",\"draft_hints\":{\"artist_hint\":\"Ångström\",\"search_terms\":[\"zeta\",\"alpha\",\"é\"],\"title_hint\":\"Å study\"},\"image\":{\"byte_size\":4,\"content_base64\":\"AAECAw==\",\"long_edge_px\":1024,\"mime_type\":\"image/webp\"},\"payload_contract_version\":\"art-research-payload-v1\"}",
+      "sha256": "98bd82649f8a0a00d3443606ef36460614ec639fb461b5d4e2652857a8e313db"
+    }
+  ]
+}
