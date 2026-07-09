@@ -457,10 +457,7 @@ class _PlanStatusPanel extends StatelessWidget {
 }
 
 class AddArtworkScreen extends StatelessWidget {
-  const AddArtworkScreen({
-    super.key,
-    this.isOnboardingFirstAdd = false,
-  });
+  const AddArtworkScreen({super.key, this.isOnboardingFirstAdd = false});
 
   final bool isOnboardingFirstAdd;
 
@@ -471,9 +468,7 @@ class AddArtworkScreen extends StatelessWidget {
       title: 'Add artwork',
       subtitle: 'Start a lasting record with one artwork image',
       child: dependencies == null
-          ? _AddArtworkActions(
-              isOnboardingFirstAdd: isOnboardingFirstAdd,
-            )
+          ? _AddArtworkActions(isOnboardingFirstAdd: isOnboardingFirstAdd)
           : FutureBuilder<_CreationGate>(
               future: _loadCreationGate(dependencies),
               builder: (context, snapshot) {
@@ -488,10 +483,7 @@ class AddArtworkScreen extends StatelessWidget {
 }
 
 class _AddArtworkActions extends StatelessWidget {
-  const _AddArtworkActions({
-    this.gate,
-    required this.isOnboardingFirstAdd,
-  });
+  const _AddArtworkActions({this.gate, required this.isOnboardingFirstAdd});
 
   final _CreationGate? gate;
   final bool isOnboardingFirstAdd;
@@ -1366,12 +1358,12 @@ class _ArtworkDetailsScreenState extends State<ArtworkDetailsScreen> {
           ),
           const SizedBox(height: 16),
           for (final field in displayedFields) ...[
-            FieldSourceTile(field: field),
+            FieldSourceTile(field: _detailDisplayField(field)),
             const SizedBox(height: 10),
           ],
           PrimaryActionButton(
             icon: Icons.edit_note_outlined,
-            label: 'Edit record fields',
+            label: 'Edit record details',
             routeName: AppRoutes.artworkEdit(artwork.id),
           ),
           const SizedBox(height: 12),
@@ -1407,7 +1399,7 @@ class _ArtworkDetailsScreenState extends State<ArtworkDetailsScreen> {
           return AlertDialog(
             title: const Text('Remove from current holdings?'),
             content: const Text(
-              'The local record and files stay on this device, but the artwork is marked removed and no longer treated as a current holding.',
+              'This private record and its files stay on this device, but the artwork will no longer count as a current holding.',
             ),
             actions: [
               TextButton(
@@ -1416,7 +1408,7 @@ class _ArtworkDetailsScreenState extends State<ArtworkDetailsScreen> {
               ),
               FilledButton(
                 onPressed: () => Navigator.pop(context, true),
-                child: const Text('Mark removed'),
+                child: const Text('Mark as removed'),
               ),
             ],
           );
@@ -1531,8 +1523,8 @@ class _ArtworkEditScreenState extends State<ArtworkEditScreen> {
       builder: (context, snapshot) {
         if (snapshot.connectionState != ConnectionState.done) {
           return const PrototypeScreenFrame(
-            title: 'Edit record fields',
-            subtitle: 'Loading local record',
+            title: 'Edit private record',
+            subtitle: 'Loading your saved details',
             child: Center(child: CircularProgressIndicator()),
           );
         }
@@ -1540,13 +1532,13 @@ class _ArtworkEditScreenState extends State<ArtworkEditScreen> {
         final record = snapshot.requireData;
         if (record == null) {
           return const PrototypeScreenFrame(
-            title: 'Edit record fields',
-            subtitle: 'Local record unavailable',
+            title: 'Edit private record',
+            subtitle: 'Saved record unavailable',
             child: _StatusPanel(
               icon: Icons.error_outline,
               title: 'Record not found',
               body:
-                  'Return to Collection and reopen the artwork before editing.',
+                  'Return to Collection and open this artwork again before editing.',
             ),
           );
         }
@@ -1554,15 +1546,15 @@ class _ArtworkEditScreenState extends State<ArtworkEditScreen> {
         _seedControllers(record);
 
         return PrototypeScreenFrame(
-          title: 'Edit record fields',
-          subtitle: 'Your values outrank AI suggestions',
+          title: 'Edit private record',
+          subtitle: 'Confirm the details you want to keep',
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               const _Notice(
                 icon: Icons.verified_user_outlined,
                 text:
-                    'Saved values are labeled User confirmed. AI and research suggestions stay as suggestions until you save your edits.',
+                    'Saved edits are marked User confirmed. AI and research suggestions stay separate until you review and save them.',
               ),
               const SizedBox(height: 16),
               for (final field in _editableArtworkFields) ...[
@@ -1599,7 +1591,8 @@ class _ArtworkEditScreenState extends State<ArtworkEditScreen> {
                           decoration: const InputDecoration(
                             border: OutlineInputBorder(),
                             labelText: 'Amount',
-                            helperText: 'Numbers only, no currency symbol.',
+                            helperText:
+                                'Numbers only. Leave out the currency symbol.',
                           ),
                         ),
                       ),
@@ -1613,7 +1606,8 @@ class _ArtworkEditScreenState extends State<ArtworkEditScreen> {
                           decoration: const InputDecoration(
                             border: OutlineInputBorder(),
                             labelText: 'Currency',
-                            helperText: 'USD, EUR, NOK.',
+                            helperText:
+                                'Use a three-letter code such as USD, EUR, or NOK.',
                           ),
                         ),
                       ),
@@ -1625,14 +1619,14 @@ class _ArtworkEditScreenState extends State<ArtworkEditScreen> {
               if (_errorMessage != null) ...[
                 _StatusPanel(
                   icon: Icons.error_outline,
-                  title: 'Could not save edits',
+                  title: 'Could not save this record',
                   body: _errorMessage!,
                 ),
                 const SizedBox(height: 14),
               ],
               _ActionButton(
                 icon: Icons.save_outlined,
-                label: _isSaving ? 'Saving...' : 'Save user-confirmed fields',
+                label: _isSaving ? 'Saving...' : 'Save confirmed details',
                 onPressed: _isSaving ? null : () => _save(record),
               ),
               const SizedBox(height: 10),
@@ -1669,11 +1663,20 @@ class _ArtworkEditScreenState extends State<ArtworkEditScreen> {
     _seededArtworkId = record.id;
     for (final field in _editableArtworkFields) {
       final value = record.field(field.key);
-      _controllers[field.key]!.text = value?.value ?? '';
+      final fieldValue = value?.value ?? '';
+      _controllers[field.key]!.text =
+          _isPlaceholderCoreFieldValue(field.key, fieldValue) ? '' : fieldValue;
       if (field.usesStructuredMoney) {
-        _moneyAmountControllers[field.key]!.text = value?.moneyAmount ?? '';
-        _moneyCurrencyControllers[field.key]!.text =
-            value?.moneyCurrencyCode ?? '';
+        final usesPlaceholder = _isPlaceholderCoreFieldValue(
+          field.key,
+          fieldValue,
+        );
+        _moneyAmountControllers[field.key]!.text = usesPlaceholder
+            ? ''
+            : value?.moneyAmount ?? '';
+        _moneyCurrencyControllers[field.key]!.text = usesPlaceholder
+            ? ''
+            : value?.moneyCurrencyCode ?? '';
       }
     }
   }
@@ -1702,7 +1705,7 @@ class _ArtworkEditScreenState extends State<ArtworkEditScreen> {
         if (field.usesStructuredMoney &&
             ((normalizedAmount == null) != (normalizedCurrency == null))) {
           throw StateError(
-            '${field.label} needs both a structured amount and an ISO currency code.',
+            '${field.label} needs both an amount and a three-letter currency code.',
           );
         }
 
@@ -1733,9 +1736,9 @@ class _ArtworkEditScreenState extends State<ArtworkEditScreen> {
               ? ArtworkFieldSource.userConfirmed
               : (previousValue?.source ?? ArtworkFieldSource.unknown),
           note: shouldConfirm
-              ? 'Edited and confirmed by you.'
+              ? 'Saved as part of your confirmed record.'
               : (previousValue?.note ??
-                    'This field still needs user confirmation.'),
+                    'Please confirm this detail before you rely on it.'),
           lastConfirmedAt: shouldConfirm ? now : previousValue?.lastConfirmedAt,
           moneyAmount: normalizedAmount,
           moneyCurrencyCode: normalizedCurrency,
@@ -3879,7 +3882,7 @@ class _LifecycleStatusPanel extends StatelessWidget {
               const SizedBox(width: 10),
               Expanded(
                 child: Text(
-                  'Lifecycle status',
+                  'Record status',
                   style: Theme.of(context).textTheme.titleSmall,
                 ),
               ),
@@ -3905,7 +3908,7 @@ class _LifecycleStatusPanel extends StatelessWidget {
           if (errorMessage != null) ...[
             const SizedBox(height: 10),
             Text(
-              'Could not update lifecycle status: $errorMessage',
+              'Could not update record status: $errorMessage',
               style: TextStyle(color: Theme.of(context).colorScheme.error),
             ),
           ],
@@ -3982,15 +3985,15 @@ IconData _lifecycleIcon(ArtworkLifecycleStatus status) {
 String _lifecycleDescription(ArtworkLifecycleStatus status) {
   return switch (status) {
     ArtworkLifecycleStatus.active =>
-      'This artwork is treated as a current holding.',
+      'This artwork counts as part of your current holdings.',
     ArtworkLifecycleStatus.sold =>
-      'This artwork is retained in your records but marked sold.',
+      'This record stays in your archive and is marked sold.',
     ArtworkLifecycleStatus.lost =>
-      'This artwork is retained in your records but marked lost.',
+      'This record stays in your archive and is marked lost.',
     ArtworkLifecycleStatus.stolen =>
-      'This artwork is retained in your records but marked stolen.',
+      'This record stays in your archive and is marked stolen.',
     ArtworkLifecycleStatus.removed =>
-      'This artwork is retained locally but removed from current holdings.',
+      'This private record stays on this device and no longer counts as a current holding.',
   };
 }
 
@@ -4053,7 +4056,7 @@ class _CompletenessPanel extends StatelessWidget {
               const SizedBox(width: 12),
               Expanded(
                 child: Text(
-                  'Record completeness',
+                  'Record review',
                   style: Theme.of(context).textTheme.titleMedium,
                 ),
               ),
@@ -4070,7 +4073,7 @@ class _CompletenessPanel extends StatelessWidget {
           ),
           const SizedBox(height: 10),
           Text(
-            '$reviewedCount of $totalCount core fields are user-confirmed or document-reviewed.',
+            '$reviewedCount of $totalCount core fields are confirmed by you or supported by document review.',
           ),
           const SizedBox(height: 10),
           _StatusLine(
@@ -4080,7 +4083,7 @@ class _CompletenessPanel extends StatelessWidget {
           const _StatusLine(
             icon: Icons.inventory_2_outlined,
             text:
-                'Supporting documents enrich the archive when available; they are tracked separately from confirmed fields.',
+                'Supporting records can document provenance, condition, and location, but they stay separate from your confirmed fields.',
           ),
         ],
       ),
@@ -4515,17 +4518,17 @@ const _editableArtworkFields = [
   _EditableArtworkField(
     key: ArtworkFieldKeys.title,
     label: 'Title',
-    helperText: 'Use your preferred record title.',
+    helperText: 'Record the title you use for this work.',
   ),
   _EditableArtworkField(
     key: ArtworkFieldKeys.artist,
     label: 'Artist',
-    helperText: 'Leave blank if the artist is still unknown.',
+    helperText: 'Leave blank until the artist is confirmed.',
   ),
   _EditableArtworkField(
     key: ArtworkFieldKeys.year,
     label: 'Year or date',
-    helperText: 'Use a year, range, or date text you can support.',
+    helperText: 'Enter a year, range, or date you can support.',
   ),
   _EditableArtworkField(
     key: ArtworkFieldKeys.medium,
@@ -4540,25 +4543,29 @@ const _editableArtworkFields = [
   _EditableArtworkField(
     key: ArtworkFieldKeys.purchasePrice,
     label: 'Purchase price',
-    helperText: 'Keep legacy text or add a structured amount and ISO currency.',
+    helperText:
+        'Keep legacy text or add an amount with a three-letter currency code.',
     usesStructuredMoney: true,
   ),
   _EditableArtworkField(
     key: ArtworkFieldKeys.currentLocation,
     label: 'Current location',
-    helperText: 'Private location label for your own records.',
+    helperText:
+        'Private location label for storage, display, or loan tracking.',
   ),
   _EditableArtworkField(
     key: ArtworkFieldKeys.insuranceValue,
     label: 'User-provided insurance value',
-    helperText: 'Keep legacy text or add a structured amount and ISO currency.',
+    helperText:
+        'User-provided only. Add an amount with a three-letter currency code when helpful.',
     keyboardType: TextInputType.text,
     usesStructuredMoney: true,
   ),
   _EditableArtworkField(
     key: ArtworkFieldKeys.conditionNotes,
     label: 'Condition notes',
-    helperText: 'Describe visible condition, damage, or frame notes.',
+    helperText:
+        'Record visible condition, damage, framing, or treatment notes.',
     maxLines: 4,
   ),
 ];
@@ -4579,6 +4586,33 @@ class _EditableArtworkField {
   final TextInputType keyboardType;
   final int maxLines;
   final bool usesStructuredMoney;
+}
+
+PrototypeField _detailDisplayField(PrototypeField field) {
+  if (!_isPlaceholderPrototypeFieldValue(field.label, field.value)) {
+    return field;
+  }
+
+  final guidanceValue = switch (field.label) {
+    'Title' => 'Add a title for this work.',
+    'Artist' => 'Artist not yet confirmed.',
+    'Year' => 'Please confirm the year or date.',
+    'Medium' => 'Please confirm medium or material.',
+    'Dimensions' => 'Add dimensions when available.',
+    'Purchase price' => 'Purchase price not recorded.',
+    'Current location' => 'Add the current location.',
+    'User-provided insurance value' =>
+      'Add a user-provided insurance value when needed.',
+    'Condition notes' => 'Add visible condition notes.',
+    _ => field.value,
+  };
+
+  return PrototypeField(
+    label: field.label,
+    value: guidanceValue,
+    source: field.source,
+    note: 'This detail still needs your review before you rely on it.',
+  );
 }
 
 bool _hasCompleteReviewedCoreFields(Map<String, ArtworkFieldValue> fields) {
@@ -4821,9 +4855,7 @@ String? _normalizeMoneyAmount(String rawValue) {
 
   final normalized = trimmed.replaceAll(',', '.');
   if (!RegExp(r'^\d+(?:\.\d+)?$').hasMatch(normalized)) {
-    throw StateError(
-      'Structured money amount must use digits with an optional decimal part.',
-    );
+    throw StateError('Enter digits with an optional decimal amount.');
   }
   return normalized;
 }
@@ -4836,9 +4868,7 @@ String? _normalizeCurrencyCode(String rawValue) {
 
   final normalized = trimmed.toUpperCase();
   if (!RegExp(r'^[A-Z]{3}$').hasMatch(normalized)) {
-    throw StateError(
-      'Structured money currency must be a three-letter ISO code.',
-    );
+    throw StateError('Use a three-letter currency code such as USD.');
   }
   return normalized;
 }

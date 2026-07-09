@@ -472,7 +472,7 @@ void main() {
       tester,
       routeName: AppRoutes.artworkEdit('placeholder-draft'),
       dependencies: fixture.dependencies,
-      ensureVisibleFinder: find.text('Save user-confirmed fields'),
+      ensureVisibleFinder: find.text('Save confirmed details'),
       fileName: 'issue-129-01-edit-placeholder-draft.png',
     );
 
@@ -1340,7 +1340,9 @@ void main() {
     expect(find.text('Blue Interior Study'), findsWidgets);
     expect(find.text('Record state: Needs review'), findsOneWidget);
     expect(
-      find.text('3 of 8 core fields are user-confirmed or document-reviewed.'),
+      find.text(
+        '3 of 8 core fields are confirmed by you or supported by document review.',
+      ),
       findsOneWidget,
     );
 
@@ -2179,16 +2181,16 @@ void main() {
       await tapVisible(tester, find.text('Open record'));
       await pumpLiveData(tester);
 
-      expect(find.text('Lifecycle status'), findsOneWidget);
+      expect(find.text('Record status'), findsOneWidget);
       expect(
-        find.text('This artwork is treated as a current holding.'),
+        find.text('This artwork counts as part of your current holdings.'),
         findsOneWidget,
       );
 
       await tapVisible(tester, find.widgetWithText(ActionChip, 'Sold'));
       await pumpLiveData(tester);
       expect(
-        find.text('This artwork is retained in your records but marked sold.'),
+        find.text('This record stays in your archive and is marked sold.'),
         findsOneWidget,
       );
 
@@ -2222,7 +2224,7 @@ void main() {
 
       await tapVisible(tester, find.widgetWithText(ActionChip, 'Removed'));
       expect(find.text('Remove from current holdings?'), findsOneWidget);
-      await tester.tap(find.text('Mark removed'));
+      await tester.tap(find.text('Mark as removed'));
       await pumpLiveData(tester);
 
       saved = await tester.runAsync<ArtworkRecord?>(
@@ -2249,7 +2251,7 @@ void main() {
       expect(find.text('Lifecycle UI Artwork'), findsOneWidget);
       expect(find.text('Removed'), findsOneWidget);
       expect(
-        find.textContaining('Marked removed; retained in the local record.'),
+        find.textContaining('Marked removed; kept in your record history.'),
         findsOneWidget,
       );
     },
@@ -2297,13 +2299,13 @@ void main() {
       );
       await pumpLiveData(tester);
 
-      await waitForFinder(tester, find.text('Lifecycle status'));
+      await waitForFinder(tester, find.text('Record status'));
       await pumpLiveData(tester);
-      expect(find.text('Lifecycle status'), findsOneWidget);
+      expect(find.text('Record status'), findsOneWidget);
       await waitForFinder(
         tester,
         find.text(
-          'This artwork is retained in your records but marked sold.',
+          'This record stays in your archive and is marked sold.',
           skipOffstage: false,
         ),
         attempts: 60,
@@ -2379,7 +2381,9 @@ void main() {
 
     expect(find.text('Sold Incomplete Artwork is marked sold'), findsOneWidget);
     expect(
-      find.textContaining('not treated as a current incomplete holding'),
+      find.textContaining(
+        'not treated as an active artwork that needs review',
+      ),
       findsOneWidget,
     );
     expect(find.text('Sold Incomplete Artwork needs review'), findsNothing);
@@ -2415,11 +2419,13 @@ void main() {
     );
     await pumpLiveData(tester);
 
-    expect(find.text('Untitled artwork'), findsOneWidget);
-    expect(find.text('Unknown'), findsOneWidget);
-    expect(find.text('Needs review'), findsWidgets);
+    expect(find.text('Edit private record'), findsOneWidget);
+    expect(find.text('Confirm the details you want to keep'), findsOneWidget);
+    expect(find.text('Untitled artwork'), findsNothing);
+    expect(find.text('Unknown'), findsNothing);
+    expect(find.text('Needs review'), findsNothing);
 
-    await tapVisible(tester, find.text('Save user-confirmed fields'));
+    await tapVisible(tester, find.text('Save confirmed details'));
     await pumpLiveData(tester);
 
     final saved = await tester.runAsync(
@@ -2427,15 +2433,8 @@ void main() {
     );
     expect(saved, isNotNull);
     expect(saved!.recordState, ArtworkRecordState.needsReview);
-    expect(
-      saved.field(ArtworkFieldKeys.title)?.source,
-      ArtworkFieldSource.unknown,
-    );
-    expect(saved.field(ArtworkFieldKeys.title)?.lastConfirmedAt, isNull);
-    expect(
-      saved.field(ArtworkFieldKeys.conditionNotes)?.source,
-      ArtworkFieldSource.unknown,
-    );
+    expect(saved.field(ArtworkFieldKeys.title), isNull);
+    expect(saved.field(ArtworkFieldKeys.conditionNotes), isNull);
 
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump();
@@ -2453,9 +2452,13 @@ void main() {
 
     expect(find.text('Record state: Needs review'), findsOneWidget);
     expect(
-      find.text('0 of 8 core fields are user-confirmed or document-reviewed.'),
+      find.text(
+        '0 of 8 core fields are confirmed by you or supported by document review.',
+      ),
       findsOneWidget,
     );
+    expect(find.text('Add a title for this work.'), findsOneWidget);
+    expect(find.text('Artist not yet confirmed.'), findsOneWidget);
     expect(find.text('Verified by you'), findsNothing);
 
     await tester.pumpWidget(const SizedBox.shrink());
@@ -2504,7 +2507,7 @@ void main() {
       find.byKey(const ValueKey('artwork-edit-title')),
       'Confirmed Partial Title',
     );
-    await tapVisible(tester, find.text('Save user-confirmed fields'));
+    await tapVisible(tester, find.text('Save confirmed details'));
     await pumpLiveData(tester);
 
     final saved = await tester.runAsync(
@@ -2516,11 +2519,7 @@ void main() {
       saved.field(ArtworkFieldKeys.title)?.source,
       ArtworkFieldSource.userConfirmed,
     );
-    expect(
-      saved.field(ArtworkFieldKeys.artist)?.source,
-      ArtworkFieldSource.unknown,
-    );
-    expect(saved.field(ArtworkFieldKeys.artist)?.lastConfirmedAt, isNull);
+    expect(saved.field(ArtworkFieldKeys.artist), isNull);
 
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump();
@@ -2539,7 +2538,9 @@ void main() {
     expect(find.text('Confirmed Partial Title'), findsWidgets);
     expect(find.text('Record state: Needs review'), findsOneWidget);
     expect(
-      find.text('1 of 8 core fields are user-confirmed or document-reviewed.'),
+      find.text(
+        '1 of 8 core fields are confirmed by you or supported by document review.',
+      ),
       findsOneWidget,
     );
     expect(find.text('Verified by you'), findsNothing);
@@ -2586,7 +2587,7 @@ void main() {
 
     await tapVisible(tester, find.text('Edit record fields'));
     await pumpLiveData(tester);
-    expect(find.text('Your values outrank AI suggestions'), findsOneWidget);
+    expect(find.text('Confirm the details you want to keep'), findsOneWidget);
 
     await enterVisibleText(
       tester,
@@ -2629,7 +2630,7 @@ void main() {
       'Small crease in lower-left margin.',
     );
 
-    await tapVisible(tester, find.text('Save user-confirmed fields'));
+    await tapVisible(tester, find.text('Save confirmed details'));
     await pumpLiveData(tester);
     await tester.pump(const Duration(seconds: 1));
     await pumpLiveData(tester);
@@ -2701,7 +2702,9 @@ void main() {
     expect(find.text('Manual Artist'), findsOneWidget);
     expect(find.text('1998'), findsWidgets);
     expect(
-      find.text('8 of 8 core fields are user-confirmed or document-reviewed.'),
+      find.text(
+        '8 of 8 core fields are confirmed by you or supported by document review.',
+      ),
       findsOneWidget,
     );
     expect(find.text('NOK 12,000'), findsOneWidget);
@@ -3455,6 +3458,76 @@ void main() {
     );
   });
 
+  testWidgets('visual evidence covers issue 169 artwork detail and edit copy', (
+    WidgetTester tester,
+  ) async {
+    final testDependencies = await tester.runAsync(
+      () async => _LiveDependencyFixture.create(),
+    );
+    final fixture = testDependencies!;
+    addTearDown(() async {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.runAsync(fixture.dispose);
+    });
+
+    await tester.runAsync(() async {
+      await fixture.repository.upsert(
+        _artworkRecord(
+          id: 'issue-169-detail-record',
+          title: 'Issue 169 Detail Record',
+          state: ArtworkRecordState.needsReview,
+          source: ArtworkFieldSource.userConfirmed,
+          missingFieldKeys: {
+            ArtworkFieldKeys.currentLocation,
+            ArtworkFieldKeys.conditionNotes,
+          },
+        ),
+      );
+      await fixture.addPrimaryImage(artworkId: 'issue-169-detail-record');
+      await fixture.addSupportingPhoto(
+        artworkId: 'issue-169-detail-record',
+        fileName: 'issue-169-supporting-photo.png',
+      );
+      await fixture.repository.upsert(
+        _placeholderDraftRecord(id: 'issue-169-edit-record'),
+      );
+      await fixture.addPrimaryImage(artworkId: 'issue-169-edit-record');
+    });
+
+    await captureArtifactForApp(
+      tester,
+      routeName: AppRoutes.artworkDetails('issue-169-detail-record'),
+      dependencies: fixture.dependencies,
+      themeMode: ThemeMode.light,
+      fileName: 'issue-169-details-light.png',
+      ensureVisibleFinder: find.text('Record review'),
+    );
+    await captureArtifactForApp(
+      tester,
+      routeName: AppRoutes.artworkDetails('issue-169-detail-record'),
+      dependencies: fixture.dependencies,
+      themeMode: ThemeMode.dark,
+      fileName: 'issue-169-details-dark.png',
+      ensureVisibleFinder: find.text('Record review'),
+    );
+    await captureArtifactForApp(
+      tester,
+      routeName: AppRoutes.artworkEdit('issue-169-edit-record'),
+      dependencies: fixture.dependencies,
+      themeMode: ThemeMode.light,
+      fileName: 'issue-169-edit-light.png',
+      ensureVisibleFinder: find.text('Confirm the details you want to keep'),
+    );
+    await captureArtifactForApp(
+      tester,
+      routeName: AppRoutes.artworkEdit('issue-169-edit-record'),
+      dependencies: fixture.dependencies,
+      themeMode: ThemeMode.dark,
+      fileName: 'issue-169-edit-dark.png',
+      ensureVisibleFinder: find.text('Confirm the details you want to keep'),
+    );
+  });
+
   testWidgets(
     'visual evidence covers issue 131 report export settings states',
     (WidgetTester tester) async {
@@ -3819,7 +3892,7 @@ Future<void> capturePlaceholderSaveVisualEvidence(
     ),
   );
   await pumpLiveData(tester);
-  await tapVisible(tester, find.text('Save user-confirmed fields'));
+  await tapVisible(tester, find.text('Save confirmed details'));
   await pumpLiveData(tester);
   await tester.runAsync(
     () async => Future<void>.delayed(const Duration(milliseconds: 500)),
