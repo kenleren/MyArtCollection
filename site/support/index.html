@@ -6,7 +6,7 @@
     <title>Support | Archivale: Art Records</title>
     <meta
       name="description"
-      content="Support and early access contact for Archivale: Art Records."
+      content="Private support for Archivale collectors, including privacy, export, deletion, and general record questions."
     >
     <link rel="stylesheet" href="/styles.css">
     <script type="application/ld+json">
@@ -16,7 +16,7 @@
         "@id": "https://archivale.app/support/#webpage",
         "url": "https://archivale.app/support/",
         "name": "Support | Archivale: Art Records",
-        "description": "Support and early access contact for Archivale: Art Records.",
+        "description": "Private support for Archivale collectors, including privacy, export, deletion, and general record questions.",
         "isPartOf": {
           "@type": "WebSite",
           "@id": "https://archivale.app/#website",
@@ -46,15 +46,15 @@
     <main>
       <section class="page-intro">
         <p class="eyebrow">Support</p>
-        <h1>Have a store or privacy question?</h1>
+        <h1>Need help with a record?</h1>
         <p class="lead">
-          Use the support route for questions and deletion requests. Until the
-          reviewed beta backend is explicitly enabled, this is also the honest
-          route for early-access questions.
+          Use this page for privacy questions, export help, deletion requests,
+          and other collector support. Send only the minimum details needed to
+          identify your request.
         </p>
         <div class="cta-row">
-          <a class="button" href="/beta/">Request beta access</a>
-          <a class="button-secondary" href="#support-form">Open support form</a>
+          <a class="button" href="#support-form">Write to support</a>
+          <a class="button-secondary" href="#message-guidelines">What to include</a>
         </div>
       </section>
 
@@ -62,14 +62,31 @@
         <div class="section-head">
           <div>
             <p class="eyebrow">Support inbox</p>
-            <h2>One direct route.</h2>
+            <h2>One careful route.</h2>
           </div>
           <p>
-            General support still uses a static form that opens your mail
-            client. The dedicated beta-signup backend is kept disabled in the
-            default public Hosting config until its durable queue and deploy
-            gate are approved.
+            Use the form below for privacy, export, deletion, and general
+            support requests. Keep the note brief and private; if we need more
+            information, we will ask for it directly.
           </p>
+        </div>
+        <div class="trust-grid">
+          <article class="page-card" id="message-guidelines">
+            <h2>What to send</h2>
+            <ul class="plain-list">
+              <li>Your name and email</li>
+              <li>A short subject such as privacy, export, deletion, or support</li>
+              <li>A plain description of the request or question</li>
+            </ul>
+          </article>
+          <article class="page-card">
+            <h2>What to keep private</h2>
+            <ul class="plain-list">
+              <li>Artwork photos, receipts, certificates, appraisal files, and provenance notes</li>
+              <li>Prices, full collection lists, account passwords, and other sensitive records</li>
+              <li>Anything you do not want to share unless support asks for the minimum needed</li>
+            </ul>
+          </article>
         </div>
         <form
           id="support-form"
@@ -81,9 +98,9 @@
           <div>
             <label for="topic">Topic</label>
             <select id="topic" name="Topic">
-              <option>Early access</option>
               <option>Privacy question</option>
-              <option>Pricing question</option>
+              <option>Export request</option>
+              <option>Deletion request</option>
               <option>Support request</option>
             </select>
           </div>
@@ -101,11 +118,11 @@
               id="message"
               name="Message"
               rows="7"
-              placeholder="Describe your support question. Do not include artwork, document, price, or collection details."
+              placeholder="Tell us what you need and include only the minimum details needed to identify the request. Do not include artwork photos, receipts, provenance files, prices, or your full collection list."
             ></textarea>
           </div>
           <div class="form-full form-actions">
-            <button class="button" type="submit">Send request</button>
+            <button class="button" type="submit">Send message</button>
             <p class="muted-note">
               Your email app will open with the form contents so you can review
               the message before sending.
@@ -118,8 +135,8 @@
     <footer class="site-footer">
       <div class="footer-card">
         <p>
-          Support inbox owner: Archivale. Messages are sent through the form
-          above. <a href="/blog/">Read collector notes</a>.
+          Support and privacy requests are handled through the form above.
+          <a href="/blog/">Read collector notes</a>.
         </p>
       </div>
     </footer>
