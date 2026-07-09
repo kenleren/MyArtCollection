@@ -1,6 +1,19 @@
 {
   "functions": [
     {
+      "source": "backend/forms",
+      "codebase": "forms",
+      "ignore": [
+        "node_modules",
+        ".git",
+        "firebase-debug.log",
+        "firebase-debug.*.log"
+      ],
+      "predeploy": [
+        "npm --prefix \"$RESOURCE_DIR\" run build"
+      ]
+    },
+    {
       "source": "backend/broker",
       "codebase": "broker",
       "ignore": [
@@ -156,6 +169,15 @@
             "value": "public, max-age=3600, must-revalidate"
           }
         ]
+      }
+    ],
+    "rewrites": [
+      {
+        "source": "/api/site/pageview",
+        "function": {
+          "functionId": "sitePageview",
+          "region": "us-central1"
+        }
       }
     ]
   }

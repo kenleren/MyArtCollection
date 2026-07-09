@@ -10,6 +10,7 @@
     "test": "npm run build && node --test build/dist-test/*.test.js"
   },
   "dependencies": {
+    "firebase-admin": "^13.10.0",
     "firebase-functions": "^7.2.5"
   },
   "devDependencies": {

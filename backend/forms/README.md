@@ -1,8 +1,9 @@
 # Archivale Forms Backend
 
-This package contains the repo-side beta signup endpoint for Firebase Functions
-2nd gen. It is intentionally separate from `backend/broker` because beta signup
-submissions are manual queue records, not AI/provider broker traffic.
+This package contains repo-side public website endpoints for Firebase Functions
+2nd gen. It is intentionally separate from `backend/broker` because these
+requests are website form or aggregate counter traffic, not AI/provider broker
+traffic.
 
 ## Endpoint
 
@@ -57,20 +58,41 @@ npm test
 No `.env.local`, Firebase credential files, service accounts, tester lists, or
 provider keys are required or should be read for these checks.
 
+## Aggregate Site Counter
+
+- Hosting route: `POST /api/site/pageview`
+- Firebase export: `sitePageview`
+- Runtime adapter: `src/firebase.ts`
+- Pure testable handler: `src/site_analytics.ts`
+- Firestore collection: `site_daily_pageviews` by default, or
+  `SITE_PAGEVIEW_COLLECTION` when set
+
+The public request body accepts only:
+
+- `path`: normalized site path only, without query string or hash
+- `referrerCategory`: `direct`, `internal`, or `external`
+- `screenBucket`: `small`, `medium`, `large`, or `unknown`
+
+The handler requires same-origin JSON POST requests and writes daily aggregate
+increments by path. It does not store IP address, user-agent, raw referrer,
+cookies, local storage identifiers, visitor IDs, email addresses, artwork
+details, prompts, provider responses, or per-visitor event rows.
+
 ## Deployment Gate
 
 `firebase.json` does not expose the beta-signup Hosting rewrite by default. The
-Firebase export in `src/firebase.ts` also fails closed with `503
+beta-signup Firebase export in `src/firebase.ts` also fails closed with `503
 beta_signup_disabled` unless both of these non-default settings are present:
 
 - `BETA_SIGNUP_HTTP_ENABLED=true`
 - `BETA_SIGNUP_QUEUE_MODE=durable`
 
-Those flags are a deployment-manager gate only. This repo does not include a
-durable queue/deletion implementation yet, so the Firebase export still returns
-`503 beta_signup_disabled` even when both flags are set. No deploy is
-authorized by this package. A real deploy still requires task review,
-redteam/privacy review, visual review, deployment-manager approval, owner
-approval for the Firebase project and billing posture, App Check or reCAPTCHA
-decision, budget alert evidence, durable queue/deletion implementation, and
-explicit deploy approval.
+Those beta-signup flags are a deployment-manager gate only. This repo does not
+include a durable beta signup queue/deletion implementation yet, so the
+beta-signup export still returns `503 beta_signup_disabled` even when both flags
+are set.
+
+The aggregate site counter is intentionally narrower and may be deployed
+independently when the owner approves website analytics. It still requires
+normal review, Firebase project approval, rollback evidence, and post-deploy
+smoke checks.

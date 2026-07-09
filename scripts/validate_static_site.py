@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import re
 import sys
+import xml.etree.ElementTree as ET
 from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import unquote, urlparse
@@ -14,6 +15,7 @@ from urllib.parse import unquote, urlparse
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SITE_ROOT = REPO_ROOT / "site"
 PUBLIC_ORIGIN = "https://archivale.app"
+SITEMAP_PATH = SITE_ROOT / "sitemap.xml"
 ALLOWED_FORM_ACTIONS = {
     "/api/forms/beta-signup",
 }
@@ -403,6 +405,44 @@ def validate_homepage_copy(path: Path) -> list[str]:
     return errors
 
 
+def validate_sitemap(routes: set[str]) -> list[str]:
+    errors: list[str] = []
+    if not SITEMAP_PATH.exists():
+        return ["missing sitemap.xml"]
+
+    try:
+        root = ET.fromstring(SITEMAP_PATH.read_text(encoding="utf-8"))
+    except ET.ParseError as exc:
+        return [f"sitemap.xml does not parse: {exc}"]
+
+    namespace = {"sm": "http://www.sitemaps.org/schemas/sitemap/0.9"}
+    if root.tag != "{http://www.sitemaps.org/schemas/sitemap/0.9}urlset":
+        errors.append("sitemap.xml root is not a sitemap urlset")
+
+    sitemap_urls = []
+    for loc in root.findall("sm:url/sm:loc", namespace):
+        if loc.text is None:
+            errors.append("sitemap.xml contains empty loc")
+            continue
+        sitemap_urls.append(loc.text.strip())
+
+    expected_urls = {PUBLIC_ORIGIN + route for route in routes}
+    actual_urls = set(sitemap_urls)
+
+    duplicate_urls = sorted(
+        url for url in actual_urls if sitemap_urls.count(url) > 1
+    )
+    if duplicate_urls:
+        errors.extend(f"sitemap.xml has duplicate URL: {url}" for url in duplicate_urls)
+
+    missing_urls = expected_urls - actual_urls
+    extra_urls = actual_urls - expected_urls
+    errors.extend(f"sitemap.xml missing URL: {url}" for url in sorted(missing_urls))
+    errors.extend(f"sitemap.xml has stale URL: {url}" for url in sorted(extra_urls))
+
+    return errors
+
+
 def main() -> int:
     html_paths = sorted(SITE_ROOT.glob("**/*.html"))
     routes = {route_for_html(path) for path in html_paths}
@@ -424,6 +464,7 @@ def main() -> int:
         errors.extend(validate_support_copy(path))
 
     errors.extend(validate_beta_copy_surface())
+    errors.extend(validate_sitemap(routes))
 
     if errors:
         print("Static site validation failed:")

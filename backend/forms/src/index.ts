@@ -11,3 +11,8 @@ export {
   createInMemoryBetaSignupQueue,
   InMemoryBetaSignupQueue,
 } from "./in_memory_queue.js";
+export {
+  createSitePageviewHttpHandler,
+  type SitePageviewAggregate,
+  type SitePageviewAggregateStore,
+} from "./site_analytics.js";
