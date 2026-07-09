@@ -515,7 +515,7 @@ class _AddArtworkActions extends StatelessWidget {
           icon: Icons.attach_file,
           title: 'Add supporting records next',
           body:
-              'Create the artwork record first, then add supporting photos. Receipt and certificate file upload is not part of this first step yet.',
+              'Create the artwork record first, then add supporting photos and records when they are ready.',
         ),
         const SizedBox(height: 20),
         const _Notice(

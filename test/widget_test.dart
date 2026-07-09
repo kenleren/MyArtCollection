@@ -117,6 +117,25 @@ void main() {
     expect(find.text('Privacy and storage'), findsOneWidget);
   });
 
+  testWidgets('onboarding first-add route shows collector-facing copy', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(
+      const ArchivaleApp(initialRoute: AppRoutes.onboardingFirstAdd),
+    );
+    await pumpReady(tester);
+
+    final materialApp = tester.widget<MaterialApp>(find.byType(MaterialApp));
+    expect(materialApp.initialRoute, AppRoutes.onboardingFirstAdd);
+    expect(find.text('Add supporting records next'), findsOneWidget);
+    expect(
+      find.text(
+        'Create the artwork record first, then add supporting photos and records when they are ready.',
+      ),
+      findsOneWidget,
+    );
+  });
+
   testWidgets('visual evidence covers refreshed core mobile screens', (
     WidgetTester tester,
   ) async {
