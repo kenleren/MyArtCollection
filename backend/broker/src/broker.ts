@@ -11,6 +11,7 @@ import {
 import { PlaceholderCreditLedger } from './credit_ledger.js';
 import { FakeResearchProvider } from './fake_provider.js';
 import { InMemoryIdempotencyStore } from './idempotency.js';
+import { authorizeProviderRequest } from './provider_authorization.js';
 
 export interface BrokerDependencies {
   provider: ProviderClient;
@@ -161,6 +162,7 @@ async function runReservedProviderRequest(
   trace?.push('provider');
   let providerResult;
   try {
+    authorizeProviderRequest(request);
     providerResult = await dependencies.provider.research(request);
   } catch {
     dependencies.creditLedger.refund(record, 'provider_exception');

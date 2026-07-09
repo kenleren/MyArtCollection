@@ -27,6 +27,7 @@ export const BROKER_HTTP_ENABLED_ENV = 'BROKER_HTTP_ENABLED';
 export const BROKER_PROVIDER_MODE_ENV = 'BROKER_PROVIDER_MODE';
 export const BROKER_OPENAI_LIVE_TEST_ENABLED_ENV = 'BROKER_OPENAI_LIVE_TEST_ENABLED';
 export const BROKER_OWNER_UID_ALLOWLIST_ENV = 'BROKER_OWNER_UID_ALLOWLIST';
+export const DURABLE_PROTECTION_UNAVAILABLE_CODE = 'durable_protection_unavailable';
 
 export interface ResearchBrokerHttpHandlerOptions {
   env?: NodeJS.ProcessEnv;
@@ -40,6 +41,7 @@ export type ConfiguredBrokerDependenciesResult =
       kind: 'ready';
       dependencies: BrokerDependencies;
       ownerUidAllowlist: ReadonlySet<string>;
+      durableProtection: true;
     }
   | {
       kind: 'disabled';
@@ -64,6 +66,7 @@ export function createConfiguredResearchBrokerDependencies(
     currentEnv: NodeJS.ProcessEnv,
     currentOverrides: Partial<OpenAiProviderConfig>,
   ) => ReturnType<typeof readOpenAiProviderConfigFromEnv> = readOpenAiProviderConfigFromEnv,
+  durableProtectionAvailable = false,
 ): ConfiguredBrokerDependenciesResult {
   if (!isResearchBrokerLiveEnabled(env)) {
     return { kind: 'disabled' };
@@ -74,6 +77,10 @@ export function createConfiguredResearchBrokerDependencies(
     return { kind: 'misconfigured', code: 'missing_owner_uid_allowlist' };
   }
 
+  if (!durableProtectionAvailable) {
+    return { kind: 'misconfigured', code: DURABLE_PROTECTION_UNAVAILABLE_CODE };
+  }
+
   const providerConfig = configReader(env, overrides);
   if (!providerConfig.ok) {
     return { kind: 'misconfigured', code: providerConfig.code };
@@ -82,6 +89,7 @@ export function createConfiguredResearchBrokerDependencies(
   return {
     kind: 'ready',
     ownerUidAllowlist,
+    durableProtection: true,
     dependencies: createFakeBrokerDependencies({
       provider: createOpenAiProvider(providerConfig.config),
     }),
@@ -94,7 +102,6 @@ export function createResearchBrokerHttpHandler(
   const env = options.env ?? process.env;
   const dependenciesFactory = options.dependenciesFactory ?? ((currentEnv) =>
     createConfiguredResearchBrokerDependencies(currentEnv));
-  let configured: ConfiguredBrokerDependenciesResult | undefined;
 
   return async function researchBrokerHttpHandler(
     request: MinimalRequest,
@@ -112,12 +119,21 @@ export function createResearchBrokerHttpHandler(
       return;
     }
 
-    configured ??= dependenciesFactory(env);
+    if (!isResearchBrokerLiveEnabled(env)) {
+      sendJson(response, 503, { ok: false, error: 'research_broker_disabled' });
+      return;
+    }
+
+    const configured = dependenciesFactory(env);
     if (configured.kind === 'disabled') {
       sendJson(response, 503, { ok: false, error: 'research_broker_disabled' });
       return;
     }
     if (configured.kind === 'misconfigured') {
+      sendJson(response, 503, { ok: false, error: 'research_broker_disabled' });
+      return;
+    }
+    if (configured.durableProtection !== true) {
       sendJson(response, 503, { ok: false, error: 'research_broker_disabled' });
       return;
     }

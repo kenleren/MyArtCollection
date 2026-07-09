@@ -15,7 +15,6 @@ export {
   type BrokerDependencies,
 } from './broker.js';
 export {
-  createOpenAiProvider,
   readOpenAiProviderConfigFromEnv,
   type OpenAiProviderConfig,
 } from './openai_provider.js';

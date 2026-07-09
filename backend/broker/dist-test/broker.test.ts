@@ -27,6 +27,7 @@ import {
   createOpenAiProvider,
   readOpenAiProviderConfigFromEnv,
 } from '../src/openai_provider.js';
+import { authorizeProviderRequest } from '../src/provider_authorization.js';
 import {
   createConfiguredResearchBrokerDependencies,
   createResearchBrokerHttpHandler,
@@ -376,6 +377,60 @@ test('stale consent rejects before provider call and credit reserve', async () =
   assert.equal(deps.provider.callCount, 0);
   assert.equal(deps.creditLedger.reserveCount, 0);
   assert.equal(deps.creditLedger.records.length, 0);
+});
+
+test('entitlement and credit-denied gates reject before provider call or credit reserve', async () => {
+  const cases: Array<{
+    name: string;
+    context: BrokerContext;
+  }> = [
+    {
+      name: 'entitlement denied',
+      context: { ...baseContext, entitled: false },
+    },
+    {
+      name: 'credit denied',
+      context: { ...baseContext, credit_available: false },
+    },
+  ];
+
+  for (const current of cases) {
+    await test(current.name, async () => {
+      const trace: string[] = [];
+      const deps = createFakeBrokerDependencies({ orderTrace: trace });
+
+      const response = await handleResearchRequest(request(), current.context, deps);
+
+      assert.equal(response.status, 'rejected');
+      assert.equal(response.error?.code, 'entitlement_or_credit_denied');
+      assert.equal(response.error?.stage, 'entitlement');
+      assert.equal(deps.provider.callCount, 0);
+      assert.equal(deps.creditLedger.reserveCount, 0);
+      assert.equal(deps.creditLedger.finalizeCount, 0);
+      assert.equal(deps.creditLedger.records.length, 0);
+      assert.deepEqual(trace, ['auth', 'consent', 'payload_receipt', 'entitlement']);
+    });
+  }
+});
+
+test('breaker-open gate rejects before provider call or credit reserve', async () => {
+  const trace: string[] = [];
+  const deps = createFakeBrokerDependencies({ orderTrace: trace });
+
+  const response = await handleResearchRequest(
+    request(),
+    { ...baseContext, breaker_open: true },
+    deps,
+  );
+
+  assert.equal(response.status, 'rejected');
+  assert.equal(response.error?.code, 'broker_breaker_open');
+  assert.equal(response.error?.stage, 'breaker');
+  assert.equal(deps.provider.callCount, 0);
+  assert.equal(deps.creditLedger.reserveCount, 0);
+  assert.equal(deps.creditLedger.finalizeCount, 0);
+  assert.equal(deps.creditLedger.records.length, 0);
+  assert.deepEqual(trace, ['auth', 'consent', 'payload_receipt', 'entitlement', 'breaker']);
 });
 
 test('stale payload contract rejects before entitlement, credit reserve, or provider call', async () => {
@@ -906,14 +961,16 @@ test('openai provider sends a Responses API request with store=false, required w
     }) as typeof fetch,
   });
 
-  const result = await provider.research(request({
+  const brokerRequest = request({
     image: {
       mime_type: 'image/jpeg',
       byte_size: 120_000,
       long_edge_px: 1400,
       content_base64: 'ZmFrZS1pbWFnZS1ieXRlcw==',
     },
-  }));
+  });
+  authorizeProviderRequest(brokerRequest);
+  const result = await provider.research(brokerRequest);
 
   assert.equal(result.kind, 'success');
   assert.equal(result.output.sources[0]?.source_url, 'https://museum.example/works/123');
@@ -995,10 +1052,40 @@ test('openai provider rejects ungrounded or non-allowlisted sources as invalid o
     }) as Response) as typeof fetch,
   });
 
-  const result = await provider.research(request());
+  const brokerRequest = request();
+  authorizeProviderRequest(brokerRequest);
+  const result = await provider.research(brokerRequest);
 
   assert.equal(result.kind, 'output_error');
   assert.equal(result.code, 'provider_output_invalid');
+});
+
+test('package public API does not expose direct OpenAI provider execution', async () => {
+  const packageApi = await import('../src/index.js');
+
+  assert.equal('createOpenAiProvider' in packageApi, false);
+});
+
+test('direct OpenAI provider call without broker authorization cannot reach fetch', async () => {
+  let fetchCallCount = 0;
+  const provider = createOpenAiProvider({
+    apiKey: 'test-openai-key',
+    allowedDomains: ['museum.example'],
+    fetchImpl: (async () => {
+      fetchCallCount += 1;
+      throw new Error('fetch should not be reached');
+    }) as typeof fetch,
+  });
+
+  const result = await provider.research(request({
+    consent_status: 'declined',
+    consent_copy_version: 'research-consent-v0',
+  }));
+
+  assert.equal(result.kind, 'output_error');
+  assert.equal(result.code, 'broker_authorization_required');
+  assert.equal(fetchCallCount, 0);
+  assert.equal(provider.callCount, 0);
 });
 
 test('disabled live gate returns a safe 503 before any OpenAI config lookup', async () => {
@@ -1037,6 +1124,60 @@ test('disabled live gate returns a safe 503 before any OpenAI config lookup', as
 
   assert.equal(response.statusCode, 503);
   assert.deepEqual(response.json, { ok: false, error: 'research_broker_disabled' });
+});
+
+test('enabled live config fails closed before OpenAI config lookup without durable protection', async () => {
+  let configLookupCount = 0;
+  const configured = createConfiguredResearchBrokerDependencies(
+    {
+      BROKER_HTTP_ENABLED: 'true',
+      BROKER_PROVIDER_MODE: 'openai',
+      BROKER_OPENAI_LIVE_TEST_ENABLED: 'true',
+      BROKER_OWNER_UID_ALLOWLIST: 'owner-uid',
+      OPENAI_API_KEY: 'should-not-be-read',
+      OPENAI_ALLOWED_DOMAINS: 'museum.example',
+    },
+    {},
+    () => {
+      configLookupCount += 1;
+      return {
+        ok: false,
+        code: 'missing_openai_api_key',
+        message: 'should not be reached',
+      };
+    },
+  );
+
+  assert.deepEqual(configured, {
+    kind: 'misconfigured',
+    code: 'durable_protection_unavailable',
+  });
+  assert.equal(configLookupCount, 0);
+});
+
+test('live shell refuses provider calls when injected dependencies are not durable-protected', async () => {
+  const deps = createFakeBrokerDependencies();
+  const handler = createResearchBrokerHttpHandler({
+    env: {
+      BROKER_HTTP_ENABLED: 'true',
+      BROKER_PROVIDER_MODE: 'openai',
+      BROKER_OPENAI_LIVE_TEST_ENABLED: 'true',
+      BROKER_OWNER_UID_ALLOWLIST: 'owner-uid',
+    },
+    dependenciesFactory: () => ({
+      kind: 'ready',
+      dependencies: deps,
+      ownerUidAllowlist: new Set(['owner-uid']),
+    } as unknown as ReturnType<typeof createConfiguredResearchBrokerDependencies>),
+  });
+
+  const response = createHttpResponse();
+  await handler(createHttpRequest({ data: request() }), response.responder);
+
+  assert.equal(response.statusCode, 503);
+  assert.deepEqual(response.json, { ok: false, error: 'research_broker_disabled' });
+  assert.equal(deps.provider.callCount, 0);
+  assert.equal(deps.creditLedger.reserveCount, 0);
 });
 
 test('live shell stays disabled until explicit gates and owner allowlist are present', async () => {
@@ -1111,6 +1252,7 @@ test('live shell stays disabled until explicit gates and owner allowlist are pre
       kind: 'ready',
       dependencies: deps,
       ownerUidAllowlist: new Set(['owner-uid']),
+      durableProtection: true,
     }),
   });
 
@@ -1142,6 +1284,57 @@ test('live shell stays disabled until explicit gates and owner allowlist are pre
   assert.equal(allowedResponse.json.status, 'completed');
   assert.equal(allowedResponse.json.provider, 'openai');
   assert.equal(deps.provider.callCount, 1);
+});
+
+test('warm live shell rechecks kill switch before cached provider/config work', async () => {
+  const env = {
+    BROKER_HTTP_ENABLED: 'true',
+    BROKER_PROVIDER_MODE: 'openai',
+    BROKER_OPENAI_LIVE_TEST_ENABLED: 'true',
+    BROKER_OWNER_UID_ALLOWLIST: 'owner-uid',
+  };
+  const deps = createFakeBrokerDependencies();
+  let factoryCalls = 0;
+  const handler = createResearchBrokerHttpHandler({
+    env,
+    dependenciesFactory: () => {
+      factoryCalls += 1;
+      return {
+        kind: 'ready',
+        dependencies: deps,
+        ownerUidAllowlist: new Set(['owner-uid']),
+        durableProtection: true,
+      };
+    },
+  });
+
+  const firstResponse = createHttpResponse();
+  await handler(createHttpRequest({ data: request() }), firstResponse.responder);
+
+  assert.equal(firstResponse.statusCode, 200);
+  assert.equal(firstResponse.json.status, 'completed');
+  assert.equal(factoryCalls, 1);
+  assert.equal(deps.provider.callCount, 1);
+  assert.equal(deps.creditLedger.reserveCount, 1);
+
+  env.BROKER_HTTP_ENABLED = 'false';
+
+  const secondResponse = createHttpResponse();
+  await handler(
+    createHttpRequest({
+      data: request({
+        request_id: '22222222-2222-4222-8222-222222222222',
+        payload_hash: 'b'.repeat(64),
+      }),
+    }),
+    secondResponse.responder,
+  );
+
+  assert.equal(secondResponse.statusCode, 503);
+  assert.deepEqual(secondResponse.json, { ok: false, error: 'research_broker_disabled' });
+  assert.equal(factoryCalls, 1);
+  assert.equal(deps.provider.callCount, 1);
+  assert.equal(deps.creditLedger.reserveCount, 1);
 });
 
 test('broker scaffold keeps env lookup server-only and never references local secret files', async () => {

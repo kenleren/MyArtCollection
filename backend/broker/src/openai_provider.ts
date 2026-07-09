@@ -6,6 +6,7 @@ import type {
   ProviderClient,
   ProviderResearchResult,
 } from './contracts.js';
+import { consumeProviderRequestAuthorization } from './provider_authorization.js';
 
 export const OPENAI_API_KEY_ENV_NAMES = [
   'OPENAI_API_KEY',
@@ -179,6 +180,14 @@ class OpenAiResearchProvider implements ProviderClient {
   private readonly apiKey: string;
 
   async research(request: BrokerRequest): Promise<ProviderResearchResult> {
+    if (!consumeProviderRequestAuthorization(request)) {
+      return {
+        kind: 'output_error',
+        code: 'broker_authorization_required',
+        message: 'OpenAI provider calls require broker authorization.',
+      };
+    }
+
     this.callCount += 1;
 
     const response = await this.fetchImpl(this.endpointUrl, {

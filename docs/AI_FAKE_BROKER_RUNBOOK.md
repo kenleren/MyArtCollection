@@ -18,8 +18,11 @@ still not approved for deploy or live provider traffic by default.
 - `handleBrokerAdapterRequest` is now the generic server-side adapter used by
   both fake and live-shell wiring.
 - `FakeResearchProvider` remains the default provider in local tests.
-- `OpenAiResearchProvider` is now available behind the same provider interface.
-  It uses a dependency-injected `fetch`, builds a Responses API request with
+- The OpenAI provider adapter is service-private implementation code behind the
+  same provider interface. It is not exported from the package public API, and
+  it refuses to call `fetch` unless the broker core issued request-specific
+  authorization after the pre-provider gates passed. It uses a
+  dependency-injected `fetch`, builds a Responses API request with
   `store=false`, hosted `web_search`, `tool_choice="required"`, and strict
   `text.format` JSON Schema output, then validates returned source URLs against
   the broker allowlist and OpenAI web-search citations before the broker
@@ -48,8 +51,16 @@ still not approved for deploy or live provider traffic by default.
   - `BROKER_OWNER_UID_ALLOWLIST=<comma-separated owner UIDs>`
   - `OPENAI_ALLOWED_DOMAINS=<comma-separated professional-source domains>`
   - `OPENAI_API_KEY` or `ARCHIVALE_OPENAI_API_KEY`
+- Even with those env gates present, the default live configuration currently
+  fails closed with durable protection unavailable before OpenAI config lookup.
+  It must stay that way until reviewed cross-instance entitlement, credit,
+  idempotency, and one-in-flight storage replaces the in-memory placeholders.
 - The live shell still fails closed even when enabled unless the request UID is
   in `BROKER_OWNER_UID_ALLOWLIST`.
+- The live HTTP handler re-checks the env kill switch on every request. A warm
+  instance must return `503 research_broker_disabled` before dependency/config
+  work when `BROKER_HTTP_ENABLED`, `BROKER_PROVIDER_MODE`, or
+  `BROKER_OPENAI_LIVE_TEST_ENABLED` changes to a disabled value.
 - The adapter performs the first local identity check before entering the broker
   core. Missing App Check/Auth placeholders or missing quota subject therefore
   produce fixed auth envelopes without broker trace entries, ledger records, or
@@ -151,13 +162,20 @@ Broker tests now cover:
 - adapter success and failure envelopes,
 - auth and quota-subject pre-broker rejection,
 - consent/version/hash gates,
+- entitlement/credit-denied and breaker-open gates before any provider call or
+  credit reserve/finalize work,
 - idempotency and one-in-flight behavior,
 - no provider/ledger reserve for pre-provider rejects,
 - output-validation spend semantics,
+- no package-public direct OpenAI provider constructor and no direct provider
+  `fetch` without broker-issued request authorization,
 - OpenAI Responses request shape with `store=false`, hosted `web_search`,
   strict schema output, and no banned local fields,
 - citation/allowlist rejection for bad provider output,
 - disabled live-shell gate behavior before OpenAI config lookup,
+- default live-shell durable-protection fail-closed behavior before OpenAI
+  config lookup,
+- warm-instance kill-switch re-checks before dependency/config/provider work,
 - and response redaction for raw notes, provider env names, and trace internals.
 
 ## Remaining live gates
@@ -171,6 +189,8 @@ owner live test or rollout, the project still needs:
 - real Auth/App Check verification against the broker Firebase project,
 - server-derived quota subjects using a one-way key, not client input,
 - durable entitlement, quota, credit, one-in-flight, and spend accounting,
+  with tests proving duplicate request IDs cannot double-spend across instances
+  or restarts,
 - production-safe error mapping and content-free operational logging on the
   deployed boundary,
 - log redaction tests proving prompts, images, notes, source URLs, raw tokens,

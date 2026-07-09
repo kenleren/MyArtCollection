@@ -15,9 +15,14 @@ supports:
 - Pure broker core: `src/broker.ts`
 - Generic server-side adapter: `src/adapter.ts`
 - Fake provider: `src/fake_provider.ts`
-- OpenAI provider adapter: `src/openai_provider.ts`
 - Disabled-by-default HTTP shell: `src/live_broker.ts`
 - Firebase Functions export: `src/firebase.ts`
+
+The OpenAI provider adapter is service-private implementation code. The package
+public API does not export its constructor, and the adapter refuses to fetch
+unless the broker core has authorized the exact request object after auth,
+consent, entitlement/credit, breaker, payload, idempotency, and credit-reserve
+gates pass.
 
 ## Live shell gate
 
@@ -44,6 +49,9 @@ Optional OpenAI env vars:
 
 The shell does not read `.env.local`, mobile config files, or service-account
 files. It reads provider credentials only from runtime env/secret injection.
+The default live configuration still returns `503 research_broker_disabled`
+before OpenAI config lookup because durable cross-instance entitlement, credit,
+and idempotency protection is not implemented in this package.
 
 ## Current live-test posture
 
@@ -86,11 +94,16 @@ git diff --check
 - No Secret Manager mutation in this package.
 - No deploy from this issue.
 - No live OpenAI calls during implementation/tests.
+- No direct OpenAI provider constructor in the package public API.
+- No live provider fetch without broker-issued request authorization.
+- No live shell provider calls until durable cross-instance spend protection is
+  implemented and reviewed.
 
 ## Remaining gates before any owner live test
 
 - real Firebase Auth/App Check verification instead of header placeholders,
-- reviewed durable entitlement/credit/idempotency storage,
+- reviewed durable entitlement/credit/idempotency storage, wired into the live
+  shell before provider config lookup or provider execution is enabled,
 - exact #52 ZDR/data-handling approval for the rollout org/project,
 - deployment-manager approval in #155,
 - task review plus redteam/privacy review for this change,
