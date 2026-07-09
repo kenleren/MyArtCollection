@@ -78,6 +78,20 @@
     ]
   },
   {
+    "id": "malformed-dependency-metadata",
+    "description": "a nonnumeric audit dependency count",
+    "mutations": [
+      { "target": "audit", "operation": "set", "path": ["metadata", "dependencies", "total"], "value": "253" }
+    ]
+  },
+  {
+    "id": "extra-dependency-metadata-field",
+    "description": "an extra audit dependency metadata field",
+    "mutations": [
+      { "target": "audit", "operation": "set", "path": ["metadata", "dependencies", "injected"], "value": 1 }
+    ]
+  },
+  {
     "id": "extra-peer-node",
     "description": "an extra peer-metavulnerability node",
     "mutations": [

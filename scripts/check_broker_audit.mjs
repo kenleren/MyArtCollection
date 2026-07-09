@@ -32,41 +32,21 @@ const policy = {
     'firebase-admin': '^13.10.0',
     'firebase-functions': '^7.2.5',
   },
-  auditMetadata: {
-    vulnerabilities: {
-      info: 0,
-      low: 0,
-      moderate: 8,
-      high: 0,
-      critical: 0,
-      total: 8,
-    },
-    dependencies: {
-      prod: 160,
-      dev: 1,
-      optional: 93,
-      peer: 0,
-      peerOptional: 0,
-      total: 253,
-    },
+  auditVulnerabilityCounts: {
+    info: 0,
+    low: 0,
+    moderate: 8,
+    high: 0,
+    critical: 0,
+    total: 8,
   },
-  auditMetadataWithPeer: {
-    vulnerabilities: {
-      info: 0,
-      low: 0,
-      moderate: 9,
-      high: 0,
-      critical: 0,
-      total: 9,
-    },
-    dependencies: {
-      prod: 160,
-      dev: 1,
-      optional: 93,
-      peer: 0,
-      peerOptional: 0,
-      total: 253,
-    },
+  auditVulnerabilityCountsWithPeer: {
+    info: 0,
+    low: 0,
+    moderate: 9,
+    high: 0,
+    critical: 0,
+    total: 9,
   },
   auditPackages: new Map([
     ['@google-cloud/firestore', {
@@ -299,9 +279,11 @@ function checkAudit(audit, { allowPeerMetadata = false, label }) {
 
   const vulnerabilities = { ...audit.vulnerabilities };
   const hasPeerMetadata = allowPeerMetadata && Object.hasOwn(vulnerabilities, 'firebase-functions');
-  compareJsonExact(
+  checkAuditMetadata(
     audit.metadata,
-    hasPeerMetadata ? policy.auditMetadataWithPeer : policy.auditMetadata,
+    hasPeerMetadata
+      ? policy.auditVulnerabilityCountsWithPeer
+      : policy.auditVulnerabilityCounts,
     `${label} metadata`,
   );
   if (hasPeerMetadata) {
@@ -312,6 +294,24 @@ function checkAudit(audit, { allowPeerMetadata = false, label }) {
 
   for (const [name, expected] of policy.auditPackages) {
     checkVulnerability(name, vulnerabilities[name], expected, label, hasPeerMetadata);
+  }
+}
+
+function checkAuditMetadata(metadata, expectedVulnerabilities, label) {
+  if (!isPlainObject(metadata)) throw new Error(`${label} is malformed`);
+  compareExact(Object.keys(metadata), ['dependencies', 'vulnerabilities'], `${label} fields`);
+  compareJsonExact(metadata.vulnerabilities, expectedVulnerabilities, `${label} vulnerability counts`);
+  if (!isPlainObject(metadata.dependencies)) throw new Error(`${label} dependency counts are malformed`);
+  const expectedFields = ['dev', 'optional', 'peer', 'peerOptional', 'prod', 'total'];
+  compareExact(Object.keys(metadata.dependencies), expectedFields, `${label} dependency fields`);
+  for (const field of expectedFields) {
+    const count = metadata.dependencies[field];
+    if (!Number.isSafeInteger(count) || count < 0) {
+      throw new Error(`${label} dependency count ${field} is not a nonnegative integer`);
+    }
+  }
+  if (metadata.dependencies.total < policy.lockPackages.size) {
+    throw new Error(`${label} dependency total is smaller than the approved policy package set`);
   }
 }
 
