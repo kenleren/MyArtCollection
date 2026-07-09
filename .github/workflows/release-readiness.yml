@@ -13,6 +13,7 @@ permissions:
 env:
   NODE_VERSION: 22.23.1
   JAVA_VERSION: 17.0.19+10
+  PYTHON_VERSION: 3.12.13
   FLUTTER_VERSION: 3.44.4
   FLUTTER_LINUX_X64_SHA256: c853cda0312a162854c481fe6a1bc286d84fbb74bfab7037c39750061dc9b466
 
@@ -130,6 +131,8 @@ jobs:
           npm --prefix backend/broker test
           npm --prefix backend/forms ci
           npm --prefix backend/forms test
+      - name: Require a clean forms dependency audit
+        run: npm --prefix backend/forms audit --package-lock-only --audit-level=info
       - name: Enforce broker audit policy
         shell: bash
         run: |
@@ -151,6 +154,10 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: 3.12.13
       - name: Validate static site
         run: python3 scripts/validate_static_site.py
 
