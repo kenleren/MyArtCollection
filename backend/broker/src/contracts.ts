@@ -1,10 +1,13 @@
+import type { BrokerErrorCondition } from './error_contract.js';
+
 export const CURRENT_CONSENT_COPY_VERSION = 'research-consent-v1';
 export const CURRENT_PAYLOAD_CONTRACT_VERSION = 'art-research-payload-v1';
+export const CURRENT_CANONICAL_PAYLOAD_VERSION = 'canonical-payload-v1';
+export const CURRENT_ERROR_CONTRACT_VERSION = 'broker-error-v1';
 export const APPROVED_PAYLOAD_CLASS = 'image_only_or_image_plus_draft_hints';
 
 export type ConsentScope = 'image_only' | 'image_plus_draft_hints';
 export type ConsentStatus = 'approved' | 'declined' | 'missing';
-export type BrokerStatus = 'completed' | 'rejected' | 'conflict';
 
 export interface BrokerRequest {
   request_id: string;
@@ -18,7 +21,7 @@ export interface BrokerRequest {
     mime_type: 'image/jpeg' | 'image/webp';
     byte_size: number;
     long_edge_px: number;
-    content_base64?: string;
+    content_base64: string;
   };
   draft_hints?: {
     title_hint?: string;
@@ -41,7 +44,6 @@ export interface BrokerContext {
   };
   quota_subject: string;
   entitled: boolean;
-  credit_available: boolean;
   breaker_open: boolean;
 }
 
@@ -82,33 +84,40 @@ export interface BrokerResearchOutput {
 
 export interface BrokerResponse {
   request_id: string;
-  status: BrokerStatus;
+  status: 'completed';
   provider: 'fake-provider' | 'openai';
   model: string;
   reasoning_effort: 'none' | 'medium' | 'high' | 'xhigh';
-  completed_at?: string;
+  completed_at: string;
   replayed?: boolean;
   sources: BrokerSource[];
   candidate_attributions: BrokerCandidate[];
   comparable_value_signals: BrokerResearchOutput['comparable_value_signals'];
   warnings: string[];
-  error?: {
-    code: string;
-    message: string;
-    stage: string;
-  };
 }
 
+export interface BrokerFailure {
+  request_id?: string;
+  condition: BrokerErrorCondition;
+  retry_after_seconds?: number;
+  replayed?: boolean;
+}
+
+export type BrokerResult =
+  | { ok: true; response: BrokerResponse }
+  | { ok: false; failure: BrokerFailure };
+
+export type BrokerTerminalOutcome =
+  | { kind: 'success'; response: BrokerResponse }
+  | { kind: 'error'; failure: BrokerFailure };
+
 export type ProviderResearchResult =
-  | {
-      kind: 'success';
-      output: BrokerResearchOutput;
-    }
-  | {
-      kind: 'output_error';
-      code: string;
-      message: string;
-    };
+  | { kind: 'success'; output: BrokerResearchOutput }
+  | { kind: 'invalid_output' }
+  | { kind: 'rate_limited'; retry_after_seconds?: number }
+  | { kind: 'refusal' }
+  | { kind: 'timeout' }
+  | { kind: 'failure' };
 
 export interface ProviderClient {
   readonly providerName: BrokerResponse['provider'];

@@ -1,151 +1,105 @@
-export type LedgerState = 'rejected-before-reserve' | 'reserved' | 'finalized' | 'refunded';
+export const CREDIT_LEDGER_RECORD_VERSION = 'broker-credit-ledger-v1';
+
+export type LedgerState = 'reserved' | 'finalized' | 'refunded';
 
 export interface LedgerRecord {
-  requestId: string;
-  quotaSubject: string;
+  record_version: typeof CREDIT_LEDGER_RECORD_VERSION;
+  request_id: string;
+  quota_subject: string;
   state: LedgerState;
-  creditCost: number;
+  credit_cost: 1;
   reason?: string;
 }
 
-export type MaybePromise<T> = T | Promise<T>;
-
-export interface ReserveCreditInput {
-  requestId: string;
-  quotaSubject: string;
-  creditCost: number;
+export interface CreditSnapshot {
+  exposed_credits: number;
+  reserved_count: number;
 }
 
-export interface ReserveCreditResult {
-  ok: boolean;
-  record: LedgerRecord;
-  code?:
-    | 'quota_subject_monthly_cap_exceeded'
-    | 'broker_monthly_cap_exceeded'
-    | 'quota_subject_in_flight';
-  message?: string;
+export function parseLedgerRecord(value: unknown): LedgerRecord | undefined {
+  if (!isRecord(value) || !hasOnlyKeys(value, LEDGER_RECORD_KEYS)) {
+    return undefined;
+  }
+  if (
+    value.record_version !== CREDIT_LEDGER_RECORD_VERSION ||
+    !nonEmptyString(value.request_id) ||
+    !nonEmptyString(value.quota_subject) ||
+    (value.state !== 'reserved' && value.state !== 'finalized' && value.state !== 'refunded') ||
+    value.credit_cost !== 1 ||
+    (value.state === 'refunded' ? !nonEmptyString(value.reason) : value.reason !== undefined)
+  ) {
+    return undefined;
+  }
+  return value as unknown as LedgerRecord;
 }
 
-export interface BrokerCreditLedger {
-  readonly records: LedgerRecord[];
-  readonly reserveCount: number;
-  readonly finalizeCount: number;
-  readonly refundCount: number;
-  readonly exposedCredits: number;
-  spentCreditsFor(quotaSubject: string): number;
-  exposedCreditsFor(quotaSubject: string): number;
-  reserve(input: ReserveCreditInput): MaybePromise<ReserveCreditResult>;
-  finalize(record: LedgerRecord): MaybePromise<void>;
-  refund(record: LedgerRecord, reason: string): MaybePromise<void>;
-}
-
-export interface PlaceholderCreditLedgerOptions {
-  perSubjectMonthlyCap?: number;
-  brokerMonthlyCap?: number;
-}
-
-export class PlaceholderCreditLedger implements BrokerCreditLedger {
-  readonly records: LedgerRecord[] = [];
-  readonly perSubjectMonthlyCap: number;
-  readonly brokerMonthlyCap: number;
-
-  constructor(options: PlaceholderCreditLedgerOptions = {}) {
-    this.perSubjectMonthlyCap = options.perSubjectMonthlyCap ?? 3;
-    this.brokerMonthlyCap = options.brokerMonthlyCap ?? 100;
+export function ledgerMatchesRequest(
+  ledger: LedgerRecord,
+  request: {
+    quota_subject: string;
+    request_id: string;
+    credit_cost: number;
+    state: string;
+    settlement_state: string;
+    terminal_outcome?: { kind: string; failure?: { condition?: string } };
+  },
+): boolean {
+  if (
+    ledger.quota_subject !== request.quota_subject ||
+    ledger.request_id !== request.request_id ||
+    ledger.credit_cost !== request.credit_cost
+  ) {
+    return false;
   }
-
-  get reserveCount(): number {
-    return this.records.filter((record) => record.state !== 'rejected-before-reserve').length;
+  if (request.state !== 'terminal') {
+    return request.settlement_state === 'reserved' && ledger.state === 'reserved';
   }
-
-  get finalizeCount(): number {
-    return this.records.filter((record) => record.state === 'finalized').length;
-  }
-
-  get refundCount(): number {
-    return this.records.filter((record) => record.state === 'refunded').length;
-  }
-
-  get releaseCount(): number {
-    return this.refundCount;
-  }
-
-  get spentCredits(): number {
-    return this.records
-      .filter((record) => record.state === 'finalized')
-      .reduce((total, record) => total + record.creditCost, 0);
-  }
-
-  get exposedCredits(): number {
-    return this.records
-      .filter((record) => record.state === 'reserved' || record.state === 'finalized')
-      .reduce((total, record) => total + record.creditCost, 0);
-  }
-
-  spentCreditsFor(quotaSubject: string): number {
-    return this.records
-      .filter((record) => record.state === 'finalized' && record.quotaSubject === quotaSubject)
-      .reduce((total, record) => total + record.creditCost, 0);
-  }
-
-  exposedCreditsFor(quotaSubject: string): number {
-    return this.records
-      .filter(
-        (record) =>
-          record.quotaSubject === quotaSubject &&
-          (record.state === 'reserved' || record.state === 'finalized'),
-      )
-      .reduce((total, record) => total + record.creditCost, 0);
-  }
-
-  reserve(input: ReserveCreditInput): ReserveCreditResult {
-    const perSubjectProjected = this.exposedCreditsFor(input.quotaSubject) + input.creditCost;
-    if (perSubjectProjected > this.perSubjectMonthlyCap) {
-      return this.rejectBeforeReserve(
-        input,
-        'quota_subject_monthly_cap_exceeded',
-        'Quota subject monthly cap placeholder denied the request.',
-      );
-    }
-
-    const brokerProjected = this.exposedCredits + input.creditCost;
-    if (brokerProjected > this.brokerMonthlyCap) {
-      return this.rejectBeforeReserve(
-        input,
-        'broker_monthly_cap_exceeded',
-        'Broker monthly cap placeholder denied the request.',
-      );
-    }
-
-    const record: LedgerRecord = { ...input, state: 'reserved' };
-    this.records.push(record);
-    return { ok: true, record };
-  }
-
-  finalize(record: LedgerRecord): void {
-    if (record.state === 'reserved') {
-      record.state = 'finalized';
-    }
-  }
-
-  refund(record: LedgerRecord, reason: string): void {
-    if (record.state === 'reserved') {
-      record.state = 'refunded';
-      record.reason = reason;
-    }
-  }
-
-  private rejectBeforeReserve(
-    input: ReserveCreditInput,
-    code: ReserveCreditResult['code'],
-    message: string,
-  ): ReserveCreditResult {
-    const record: LedgerRecord = {
-      ...input,
-      state: 'rejected-before-reserve',
-      reason: code,
-    };
-    this.records.push(record);
-    return { ok: false, record, code, message };
+  switch (request.settlement_state) {
+    case 'pending_refund':
+    case 'pending_finalize':
+      return ledger.state === 'reserved';
+    case 'refunded':
+      return ledger.state === 'refunded' &&
+        request.terminal_outcome?.kind === 'error' &&
+        ledger.reason === request.terminal_outcome.failure?.condition;
+    case 'finalized':
+      return ledger.state === 'finalized';
+    default:
+      return false;
   }
 }
+
+export function applyFinalize(snapshot: CreditSnapshot, creditCost: number): CreditSnapshot {
+  return {
+    exposed_credits: snapshot.exposed_credits,
+    reserved_count: Math.max(0, snapshot.reserved_count - creditCost),
+  };
+}
+
+export function applyRefund(snapshot: CreditSnapshot, creditCost: number): CreditSnapshot {
+  return {
+    exposed_credits: Math.max(0, snapshot.exposed_credits - creditCost),
+    reserved_count: Math.max(0, snapshot.reserved_count - creditCost),
+  };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function hasOnlyKeys(value: Record<string, unknown>, allowed: ReadonlySet<string>): boolean {
+  return Object.keys(value).every((key) => allowed.has(key));
+}
+
+function nonEmptyString(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0;
+}
+
+const LEDGER_RECORD_KEYS = new Set([
+  'record_version',
+  'request_id',
+  'quota_subject',
+  'state',
+  'credit_cost',
+  'reason',
+]);

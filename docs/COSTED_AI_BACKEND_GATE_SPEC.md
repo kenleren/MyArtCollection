@@ -141,8 +141,9 @@ Any approved paid AI/backend implementation must satisfy all of the following:
 - Local-first product posture remains intact.
 - No mobile client secrets.
 - No direct mobile AI calls by default.
-- Paid AI/backend traffic runs in a dedicated paid backend project, separate
-  from Firebase App Distribution / crash-triage concerns.
+- Paid AI/backend traffic runs only through the isolated broker codebase and
+  controls in the owner-approved `my-art-collections` project; payloads and
+  broker telemetry remain separated from App Distribution and crash triage.
 - Default paid research provider is OpenAI via a server-side broker using the
   Responses API with hosted web search, not direct calls from Flutter.
 - Default paid research model is `gpt-5.4` with high reasoning for art
@@ -256,22 +257,21 @@ Decision:
 
 ### Mandatory architecture guardrails
 
-- Dedicated paid backend project for AI work. Do not attach paid AI broker work
-  to the same Firebase/GCP project used for App Distribution or other existing
-  beta operations.
-- The paid AI beta and any later production paid AI backend must have an
-  environment topology decision before rollout. Default topology:
-  - beta paid AI backend project: placeholder `myartcollection-ai-beta`,
-  - future production paid AI backend project: placeholder
-    `myartcollection-ai-prod`,
-  - only the beta project may be considered for Blaze during MVP beta,
-  - production Blaze enablement requires a separate human approval and
-    deployment-manager review.
-- Prefer a dedicated billing account for the AI backend project if the team
-  wants stronger blast-radius isolation. If a shared billing account is used,
-  configure both project-level Gemini spend caps and billing-account-level
-  controls, and still treat them as supplementary because spend caps are
-  experimental and can overrun during processing latency.
+- Use the owner-approved Firebase/GCP project `my-art-collections` for App
+  Distribution, anonymous Auth, App Check, and the broker Function. Earlier
+  `myartcollection-ai-beta` / `myartcollection-ai-prod` project proposals are
+  obsolete and must not be provisioned from this plan.
+- Preserve isolation inside the one approved project with a separate broker
+  Functions codebase, server-only provider credentials, versioned Firestore
+  control/entitlement/credit records, owner/app allowlists, a broker breaker,
+  hard provider and credit caps, and broker-only telemetry boundaries.
+- Blaze enablement, billing attachment, provider credentials, Functions deploy,
+  and production rollout each require explicit owner action and
+  deployment-manager review under #155. The one-project decision does not
+  weaken those gates or authorize account mutation.
+- Configure project-level provider spend controls and billing-account-level
+  alerts where available, and treat both as supplementary because billing and
+  processing latency can permit overrun before shutdown takes effect.
 - Record the paid provider billing model before rollout. For OpenAI, #48 must
   name the OpenAI project/account owner, budget/quota limits, API key custody,
   usage alerts, and whether billing/project limits make the `USD 25/month`
@@ -296,8 +296,9 @@ No paid backend task may start until #48 records all of the following:
 
 - named human billing owner,
 - named human deployment owner,
-- explicit approval or rejection of Blaze for the beta paid backend project,
-- approved Firebase/GCP project ids or final placeholders,
+- explicit approval or rejection of Blaze for the approved
+  `my-art-collections` project,
+- confirmation of the approved Firebase/GCP project ID,
 - approved billing account topology,
 - approved OpenAI project/account and API-key custody posture,
 - approved fallback-provider billing posture if any fallback provider is
@@ -311,7 +312,8 @@ issue with the decision, date, owner, and scope.
 
 ### Recommended beta cost ceiling
 
-- Internal total ceiling for the dedicated AI backend project: `USD 25/month`.
+- Internal total ceiling for the isolated broker workload inside
+  `my-art-collections`: `USD 25/month`.
 - Do not raise that ceiling until:
   - at least 30 completed research jobs have measured cost evidence,
   - the per-job median and p95 cost are documented,
@@ -335,15 +337,15 @@ Rationale:
 - `minInstances = 0` for all broker functions in beta.
 - Small `maxInstances` ceiling in beta, with conservative concurrency, so a bug
   cannot fan out uncontrolled cost.
-- Budget alerts for the dedicated AI backend project at 50%, 70%, 80%, and 90%
-  of the monthly ceiling.
-- Gemini API project-level spend cap configured for the AI backend project when
+- Budget alerts for `my-art-collections` at 50%, 70%, 80%, and 90% of the
+  monthly broker ceiling.
+- Gemini API project-level spend cap configured for `my-art-collections` when
   available, plus billing-account-level caps or alerts according to the chosen
   billing topology.
 - OpenAI project/account usage limits, alerts, and API-key custody controls
   configured according to #48 before any paid OpenAI call is reachable.
-- Quota alerts for the broker project and any Gemini-related quotas in Cloud
-  Monitoring.
+- Quota alerts for the broker workload and any Gemini-related quotas in the
+  approved project through Cloud Monitoring.
 - Quota alerts for OpenAI request count, token use, web-search tool calls,
   search context budget, error rates, and model/provider failures.
 - Server-side breaker before client-side controls: the broker must be able to
@@ -355,8 +357,9 @@ Rationale:
   3. disable or deny the broker route/function,
   4. disable, rotate, or revoke OpenAI/provider credentials/API keys,
   5. lower provider quotas where possible,
-  6. disable billing on the dedicated paid backend project only as a last
-     resort.
+  6. only with explicit owner/deployment approval, disable billing on
+     `my-art-collections` as a last resort after accounting for the impact on
+     every service sharing the approved project.
 - Every kill-switch step requires a verification command or console check and a
   recovery note. Rollback is not complete until a new request is rejected before
   provider spend is incurred.
@@ -493,7 +496,7 @@ Inference from those sources:
 | Risk | Why it matters | Mitigation |
 | --- | --- | --- |
 | Direct client AI abuse | Paid surface can be replayed or scripted | Do not approve Firebase AI Logic direct client calls by default |
-| Surprise spend | Budgets are alerts, spend caps are experimental, and processing latency can overrun limits | Dedicated paid project, low policy ceiling, Prepay/Postpay decision, project spend cap, quota caps, server breaker, manual kill switch, optional last-resort billing disable |
+| Surprise spend | Budgets are alerts, spend caps are experimental, and processing latency can overrun limits | Isolated broker codebase and service quotas inside the approved project, low policy ceiling, Prepay/Postpay decision, project spend cap, server breaker, manual kill switch, optional last-resort billing disable |
 | Billing-account cross-talk | Shared billing accounts can blur ownership and blast radius | Prefer dedicated billing account; if shared, configure both project-level and billing-account controls and record the weaker isolation |
 | Privacy drift in logs | AI queries and citations are sensitive | Keep broker telemetry content-free and align with `FIREBASE_TELEMETRY_POLICY.md` |
 | Provider data retention drift | External providers may retain or inspect data under terms/settings | Require #52 provider data-handling/ZDR decision before real content leaves device |
@@ -515,7 +518,8 @@ This issue is decision-ready when all of the following are true:
 - The default rejected path is clear: Firebase AI Logic direct client use.
 - Gemini Developer API and Vertex/Gemini Enterprise Agent Platform are clear
   alternate/deferred provider paths, not the owner-preferred default.
-- A dedicated paid backend project requirement is documented.
+- The one-project isolation decision and broker-specific controls are
+  documented.
 - A monthly cost ceiling is documented.
 - Gemini project-level and billing-account-level cap behavior, plus Prepay or
   Postpay decision requirements, are documented without claiming false hard
@@ -539,10 +543,10 @@ This issue is decision-ready when all of the following are true:
 
 ## Task breakdown
 
-1. [#48](https://github.com/kenleren/MyArtCollection/issues/48): create the
-   dedicated paid backend approval, provider choice, environment, and billing
-   topology decision record. Required review: `codex-deployment-manager`, plus
-   human owner decision copied into GitHub.
+1. [#48](https://github.com/kenleren/MyArtCollection/issues/48): record the
+   one-project broker approval, provider choice, environment, and billing
+   topology. Required review: `codex-deployment-manager`, plus the human owner
+   decision copied into GitHub.
 2. [#49](https://github.com/kenleren/MyArtCollection/issues/49): prepare
    deployment gates, kill-switch/rollback runbook, monitoring, alerting, and
    budget/quota evidence. Required review: `codex-deployment-manager`.
@@ -565,8 +569,8 @@ This issue is decision-ready when all of the following are true:
 - Approve or reject paid AI/backend work for beta after this gate.
 - Confirm OpenAI as the first paid research provider, with `gpt-5.4` and high
   reasoning as the MVP default.
-- Confirm whether the AI backend gets its own billing account, or only its own
-  project.
+- Confirm whether `my-art-collections` uses a dedicated billing account or a
+  shared billing account with explicitly documented weaker isolation.
 - Confirm the named human billing owner and deployment owner.
 - Confirm OpenAI project/account owner, API-key custody, usage limits, and alert
   recipients.
