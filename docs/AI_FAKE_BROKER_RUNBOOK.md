@@ -29,17 +29,19 @@ still not approved for deploy or live provider traffic by default.
   accepts the result.
 - A Firebase Functions 2nd gen shell now exists in `backend/broker/src/firebase.ts`
   with a pure HTTP handler in `backend/broker/src/live_broker.ts`.
-- The auth input is a strict local DTO stub. It requires verified App Check and
-  Auth booleans, a non-empty anonymous-auth placeholder UID, a non-empty app ID,
-  matching placeholder project IDs, and a pre-derived
-  `quota_subject_v1_...` value. This is not Firebase Auth, not App Check token
-  verification, and not a production quota subject derivation.
+- The repo root `firebase.json` makes that shell deploy-addressable from
+  `backend/broker` as codebase `broker`, exported function target
+  `artResearchBroker`, in region `us-central1`.
+- The production live shell expects Firebase Auth and App Check tokens at the
+  HTTP boundary and uses Firebase Admin plus Firestore-backed durable broker
+  protection to derive server-side quota subjects and check entitlements,
+  breaker state, credit, one-in-flight, and idempotency gates. Local tests use
+  fake Admin/store adapters only.
 - The validation order is:
-  auth/App Check/quota-subject placeholders -> consent/version checks ->
-  payload receipt checks -> entitlement/credit placeholder -> breaker -> payload
-  validation -> idempotency conflict/in-flight check -> credit reserve
-  placeholder -> fake provider -> output validation placeholder -> credit
-  finalize placeholder.
+  Auth/App Check/quota-subject identity gates -> consent/version checks ->
+  payload receipt checks -> entitlement/credit gate -> breaker -> payload
+  validation -> idempotency conflict/in-flight check -> credit reserve ->
+  provider -> output validation -> credit finalize/refund.
 - Missing auth or missing quota subject rejects at the auth stage before
   consent, payload validation, ledger, or provider work.
 - The live shell returns `503 research_broker_disabled` before any provider
@@ -49,22 +51,27 @@ still not approved for deploy or live provider traffic by default.
   - `BROKER_PROVIDER_MODE=openai`
   - `BROKER_OPENAI_LIVE_TEST_ENABLED=true`
   - `BROKER_OWNER_UID_ALLOWLIST=<comma-separated owner UIDs>`
+  - `BROKER_FIREBASE_PROJECT_ID=<broker Firebase project ID>`
+  - `BROKER_FIREBASE_PROJECT_NUMBER=<broker Firebase project number>`
+  - `BROKER_APP_ID_ALLOWLIST=<comma-separated approved Firebase App Check app IDs>`
+  - `BROKER_DURABLE_STORE_CONFIGURED=true`
+  - `BROKER_QUOTA_HMAC_SECRET=<server-only HMAC secret from runtime secret injection>`
   - `OPENAI_ALLOWED_DOMAINS=<comma-separated professional-source domains>`
   - `OPENAI_API_KEY` or `ARCHIVALE_OPENAI_API_KEY`
-- Even with those env gates present, the default live configuration currently
-  fails closed with durable protection unavailable before OpenAI config lookup.
-  It must stay that way until reviewed cross-instance entitlement, credit,
-  idempotency, and one-in-flight storage replaces the in-memory placeholders.
+- Even with those env gates present, the live configuration fails closed before
+  OpenAI config lookup if Firebase Admin, App Check, Firestore, durable config,
+  entitlement, credit, idempotency, or breaker dependencies are missing or deny
+  the request.
 - The live shell still fails closed even when enabled unless the request UID is
   in `BROKER_OWNER_UID_ALLOWLIST`.
 - The live HTTP handler re-checks the env kill switch on every request. A warm
   instance must return `503 research_broker_disabled` before dependency/config
   work when `BROKER_HTTP_ENABLED`, `BROKER_PROVIDER_MODE`, or
   `BROKER_OPENAI_LIVE_TEST_ENABLED` changes to a disabled value.
-- The adapter performs the first local identity check before entering the broker
-  core. Missing App Check/Auth placeholders or missing quota subject therefore
-  produce fixed auth envelopes without broker trace entries, ledger records, or
-  provider calls.
+- The adapter performs the first identity check before entering the broker core.
+  Missing Auth/App Check tokens or unavailable server-derived quota identity
+  therefore produce fixed auth envelopes without broker trace entries, ledger
+  records, or provider calls.
 - Adapter error statuses are deterministic and intentionally coarse:
   unauthorized/missing quota subject -> `401`, identity/consent/entitlement
   failures -> `403`, malformed payloads -> `400`, idempotency conflict -> `409`,
@@ -153,6 +160,29 @@ Run the Flutter wrapper test for the guard:
 flutter test test/mobile_broker_bypass_guard_test.dart
 ```
 
+Run Firebase CLI no-deploy sanity from the repository root:
+
+```sh
+firebase use --json
+firebase functions:list --project my-art-collections --json
+```
+
+`firebase use --json` is expected to fail with no active project unless the
+deployment owner intentionally selects one. Keep deploy command examples
+explicit instead:
+
+```sh
+firebase deploy --project my-art-collections --only functions:broker:artResearchBroker
+```
+
+Do not use `firebase deploy --dry-run` as evidence for this issue because
+Firebase CLI 15.22.4 states dry-run may still enable APIs on the target
+project. If `firebase functions:list --project my-art-collections --json`
+fails, diagnose it as a no-mutation readiness signal, such as no deployed
+functions yet, Functions API readiness, permissions, or CLI/account state. Do
+not enable APIs, select the project, deploy, read secrets, or mutate accounts
+from this no-deploy task.
+
 These checks require no provider secret values. They must not read local env
 files, service-account files, signing files, keystores, or Firebase app
 configuration files.
@@ -204,3 +234,24 @@ owner live test or rollout, the project still needs:
 Hard blocks remain: no deploy, no Blaze enablement, no provider/billing
 mutation, no Secret Manager mutation, no real OpenAI/provider calls, no mobile
 secrets, and no direct mobile provider path.
+
+## Rollback and evidence redaction
+
+The preferred rollback/disable sequence remains server breaker first, Remote
+Config off, route deny or unauthenticated invoke deny, provider credential
+disable/revoke, quota reduction, and billing disable only as a last resort. If
+the approved rollback requires deleting the deployed function, the command shape
+is:
+
+```sh
+firebase functions:delete artResearchBroker --region us-central1 --project my-art-collections
+```
+
+Rollback, preflight, and smoke evidence may include commit SHA, project id,
+project number, region, function target, command shape, result status, request
+ids, coarse status/latency, and aggregate usage deltas. Evidence must not
+include prompts, private artwork details, source URLs, raw UIDs, Firebase Auth
+tokens, App Check tokens, tester emails or lists, secret names or values,
+provider request/response bodies, service-account material, screenshots of
+credential consoles, local filesystem paths, keystore/signing material, billing
+account secrets, or collector content.

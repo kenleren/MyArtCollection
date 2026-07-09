@@ -5,6 +5,9 @@
   "main": "build/src/index.js",
   "description": "Archivale research broker scaffold with fake-provider tests and a disabled-by-default OpenAI shell.",
   "type": "module",
+  "engines": {
+    "node": "22"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "test": "npm run build && node --test build/dist-test/*.test.js"

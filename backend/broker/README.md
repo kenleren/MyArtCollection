@@ -19,6 +19,30 @@ supports:
 - Disabled-by-default HTTP shell: `src/live_broker.ts`
 - Firebase Functions export: `src/firebase.ts`
 
+## Firebase Functions deploy surface
+
+The repository root `firebase.json` declares this package as the Firebase
+Functions source:
+
+- source directory: `backend/broker`
+- codebase: `broker`
+- exported function target: `artResearchBroker`
+- region: `us-central1`
+- runtime: Node.js 22
+- local predeploy check: `npm --prefix "$RESOURCE_DIR" run build`
+
+There is intentionally no checked-in `.firebaserc`. Until the project target is
+explicitly pinned by the deployment owner, every Firebase CLI command for this
+broker must pass the project id:
+
+```sh
+firebase deploy --project my-art-collections --only functions:broker:artResearchBroker
+```
+
+Do not use `firebase deploy --dry-run` as no-deploy evidence for this broker.
+Firebase CLI 15.22.4 documents that dry-run validation may still enable APIs on
+the target project. Use the no-deploy preflight below instead.
+
 The OpenAI provider adapter is service-private implementation code. The package
 public API does not export its constructor, and the adapter refuses to fetch
 unless the broker core has authorized the exact request object after auth,
@@ -117,10 +141,24 @@ npm audit
 From the repo root:
 
 ```sh
+firebase use --json
+firebase functions:list --project my-art-collections --json
 node scripts/mobile_broker_bypass_guard.mjs
 scripts/secret_scan.sh
 git diff --check
 ```
+
+`firebase use --json` is expected to report no active project until the
+deployment owner intentionally selects one, so deploy and list commands must use
+`--project my-art-collections`. `firebase functions:list --project
+my-art-collections --json` is read-only and may fail before the Functions API is
+enabled or before any function has been deployed. Treat that failure as a
+readiness signal for #155, not as permission to enable APIs or deploy from this
+task.
+
+No local preflight may read `.env.local`, Firebase app config files,
+service-account files, Secret Manager values, provider keys, tester lists,
+keystores, signing files, billing secrets, or collector content.
 
 ## Hard boundaries
 
@@ -134,6 +172,28 @@ git diff --check
 - No live shell provider calls until environment-specific Admin credentials,
   Firestore documents/rules/index posture, secret injection, and
   breaker/entitlement configuration are reviewed under #155.
+- No deploy, API enablement, Blaze/billing mutation, project selection mutation,
+  or secret provisioning from the no-deploy preflight for this package.
+
+## Rollback and disable command shapes
+
+The first rollback action must be the server-side breaker or route-deny control
+approved under #155, not a same-window delete. If the approved response requires
+disabling the deployed function, the command shape is:
+
+```sh
+firebase functions:delete artResearchBroker --region us-central1 --project my-art-collections
+```
+
+Use that command only during an approved rollback window. Keep evidence
+sanitized: record commit SHA, project id, project number, region, function
+target, command shape, result status, request ids, status codes, latency
+buckets, and aggregate usage deltas only. Do not record prompts, private
+artwork details, source URLs, raw UIDs, Firebase tokens, App Check tokens,
+tester emails, secret names or values, local paths, stack traces with local
+paths, provider request/response bodies, screenshots of consoles containing
+credentials, or billing-account identifiers beyond the approved project id and
+project number.
 
 ## Remaining gates before any owner live test
 

@@ -274,6 +274,25 @@ Action:
 - Apply the pre-approved route deny, unauthenticated invoke deny, or function
   disable path for the broker.
 - Use deletion only if the approved deny path is unavailable or ineffective.
+- For the checked-in Firebase Functions broker surface, the deploy-addressable
+  target is codebase `broker`, function `artResearchBroker`, region
+  `us-central1`, project `my-art-collections`:
+
+  ```sh
+  firebase deploy --project my-art-collections --only functions:broker:artResearchBroker
+  ```
+
+- If the approved rollback requires deleting the deployed function, the command
+  shape is:
+
+  ```sh
+  firebase functions:delete artResearchBroker --region us-central1 --project my-art-collections
+  ```
+
+- Do not run either command without #155 deployment-manager approval and the
+  explicit rollback/release window. Do not use `firebase deploy --dry-run` as
+  no-deploy evidence because Firebase CLI 15.22.4 warns that dry-run may still
+  enable APIs on the target project.
 
 Verification:
 
