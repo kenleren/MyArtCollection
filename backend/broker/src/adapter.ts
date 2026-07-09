@@ -94,9 +94,11 @@ export function parseBrokerRequest(value: unknown): RequestParseResult {
     return { ok: false, condition: 'invalid_request_payload' };
   }
 
-  const requestId = stringValue(value.request_id);
+  const rawRequestId = stringValue(value.request_id);
+  const requestId = rawRequestId !== undefined && isUuid(rawRequestId) ? rawRequestId : undefined;
   const image = value.image;
   if (
+    rawRequestId === undefined ||
     requestId === undefined ||
     !isConsentStatus(value.consent_status) ||
     !isConsentScope(value.consent_scope) ||
@@ -224,6 +226,10 @@ function stringValue(value: unknown): string | undefined {
 
 function numberValue(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+function isUuid(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(value);
 }
 
 function hasOnlyAllowedKeys(value: Record<string, unknown>, allowed: ReadonlySet<string>): boolean {

@@ -5,11 +5,14 @@ import {
   CREDIT_LEDGER_RECORD_VERSION,
   applyFinalize,
   applyRefund,
+  ledgerMatchesRequest,
+  parseLedgerRecord,
   type LedgerRecord,
 } from './credit_ledger.js';
 import {
   REQUEST_LIFECYCLE_RECORD_VERSION,
   parseStoredRequest,
+  storedRequestMatchesKey,
   type StoredRequestRecord,
 } from './idempotency.js';
 import {
@@ -18,6 +21,7 @@ import {
   RETENTION_MILLISECONDS,
   type AcquireRequestInput,
   type AcquireRequestResult,
+  type DispatchStartResult,
   type RequestLifecycleStore,
   type SettlementIntent,
 } from './request_lifecycle.js';
@@ -94,12 +98,15 @@ export interface DurableGateStore {
 }
 
 export interface DurableBrokerProtection {
-  verifyAndBuildIdentity(input: VerifyBrokerTokensInput): Promise<DurableBrokerIdentityResult>;
+  verifyIdentity(input: VerifyBrokerTokensInput): Promise<DurableBrokerIdentityResult>;
+  readAccess(identity: VerifiedBrokerIdentity): Promise<DurableAccessResult>;
   createRequestLifecycle(): RequestLifecycleStore;
 }
 
+export type VerifiedBrokerIdentity = Omit<BrokerAdapterIdentity, 'entitled' | 'breakerOpen'>;
+
 export type DurableBrokerIdentityResult =
-  | { ok: true; identity: BrokerAdapterIdentity }
+  | { ok: true; identity: VerifiedBrokerIdentity }
   | {
       ok: false;
       code: VerifyBrokerTokensErrorCode | typeof MISSING_DURABLE_CONFIG_CODE | typeof MISSING_QUOTA_SECRET_CODE;
@@ -122,11 +129,13 @@ export interface FirebaseAdminAppCheckLike {
     token: string,
     options: { consume: boolean },
   ): Promise<{
-    appId?: string;
-    app_id?: string;
-    aud?: string | string[];
-    iss?: string;
-    sub?: string;
+    appId: string;
+    token: {
+      aud?: string | string[];
+      iss?: string;
+      sub?: string;
+      app_id?: string;
+    };
     alreadyConsumed?: boolean;
   }>;
 }
@@ -178,14 +187,19 @@ export class FirebaseAdminBrokerTokenVerifier implements BrokerTokenVerifier {
       return { ok: false, code: 'app_check_replayed' };
     }
     if (!appCheckTokenMatchesProject(
-      appBody,
+      appBody.token,
       this.options.config.projectId,
       this.options.config.projectNumber,
     )) {
       return { ok: false, code: 'wrong_project_app_check' };
     }
-    const appId = appBody.appId ?? appBody.app_id ?? appBody.sub;
-    if (!nonEmptyString(appId)) {
+    const appId = appBody.appId;
+    if (
+      !nonEmptyString(appId) ||
+      !nonEmptyString(appBody.token.sub) ||
+      appBody.token.sub !== appId ||
+      (appBody.token.app_id !== undefined && appBody.token.app_id !== appId)
+    ) {
       return { ok: false, code: 'invalid_app_check_token' };
     }
     if (!this.options.config.allowedAppIds.has(appId)) {
@@ -208,7 +222,7 @@ export class ConfiguredDurableBrokerProtection implements DurableBrokerProtectio
     private readonly config: DurableProtectionConfig,
   ) {}
 
-  async verifyAndBuildIdentity(input: VerifyBrokerTokensInput): Promise<DurableBrokerIdentityResult> {
+  async verifyIdentity(input: VerifyBrokerTokensInput): Promise<DurableBrokerIdentityResult> {
     if (this.config.quotaHmacSecret.trim().length === 0) {
       return { ok: false, code: MISSING_QUOTA_SECRET_CODE };
     }
@@ -226,17 +240,6 @@ export class ConfiguredDurableBrokerProtection implements DurableBrokerProtectio
       projectId: verified.auth.projectId,
       secret: this.config.quotaHmacSecret,
     });
-    let access: DurableAccessResult;
-    try {
-      access = await this.gateStore.readAccess({
-        uid: verified.auth.uid,
-        appId: verified.app.appId,
-        quotaSubject,
-      });
-    } catch {
-      return { ok: false, code: MISSING_DURABLE_CONFIG_CODE };
-    }
-
     return {
       ok: true,
       identity: {
@@ -249,10 +252,16 @@ export class ConfiguredDurableBrokerProtection implements DurableBrokerProtectio
         },
         app: { appId: verified.app.appId, appProjectId: verified.app.projectId },
         quotaSubject,
-        entitled: access.entitled,
-        breakerOpen: access.breakerOpen,
       },
     };
+  }
+
+  async readAccess(identity: VerifiedBrokerIdentity): Promise<DurableAccessResult> {
+    return this.gateStore.readAccess({
+      uid: identity.auth.uid ?? '',
+      appId: identity.app.appId ?? '',
+      quotaSubject: identity.quotaSubject ?? '',
+    });
   }
 
   createRequestLifecycle(): RequestLifecycleStore {
@@ -293,25 +302,16 @@ export interface DurableFirestoreLike {
 
 export interface FirestoreDurableBrokerStoreOptions {
   collectionPrefix?: string;
-  perSubjectCreditCap?: number;
-  brokerCreditCap?: number;
-  oneInFlightPerSubject?: boolean;
 }
 
 export class FirestoreDurableBrokerStore implements DurableGateStore {
   readonly collectionPrefix: string;
-  readonly perSubjectCreditCap: number;
-  readonly brokerCreditCap: number;
-  readonly oneInFlightPerSubject: boolean;
 
   constructor(
     readonly firestore: DurableFirestoreLike,
     options: FirestoreDurableBrokerStoreOptions = {},
   ) {
     this.collectionPrefix = options.collectionPrefix ?? 'brokerDurable';
-    this.perSubjectCreditCap = options.perSubjectCreditCap ?? 3;
-    this.brokerCreditCap = options.brokerCreditCap ?? 100;
-    this.oneInFlightPerSubject = options.oneInFlightPerSubject ?? true;
   }
 
   async readAccess(input: DurableAccessInput): Promise<DurableAccessResult> {
@@ -319,17 +319,19 @@ export class FirestoreDurableBrokerStore implements DurableGateStore {
       this.controlRef().get(),
       this.entitlementRef(input.uid).get(),
     ]);
-    const controlData = control.data();
-    const entitlementData = entitlement.data();
-    if (!control.exists || controlData?.record_version !== CONTROL_RECORD_VERSION) {
+    const controlData = controlRecordFromSnapshot(control);
+    const entitlementData = entitlement.exists
+      ? entitlementRecordFromSnapshot(entitlement)
+      : { entitled: false };
+    if (controlData === undefined) {
       throw new Error('unsafe_control_record');
     }
-    if (entitlement.exists && entitlementData?.record_version !== ENTITLEMENT_RECORD_VERSION) {
+    if (entitlementData === undefined) {
       throw new Error('unsafe_entitlement_record');
     }
     return {
-      entitled: entitlementData?.entitled === true,
-      breakerOpen: controlData.breakerOpen === true,
+      entitled: entitlementData.entitled,
+      breakerOpen: controlData.breakerOpen,
     };
   }
 
@@ -372,13 +374,25 @@ export class FirestoreRequestLifecycle implements RequestLifecycleStore {
   async acquire(input: AcquireRequestInput): Promise<AcquireRequestResult> {
     return this.store.transaction(async (transaction) => {
       const requestRef = this.store.requestRef(input.quota_subject, input.request_id);
-      const requestSnapshot = await transaction.get(requestRef);
+      const ledgerRef = this.store.ledgerRef(input.quota_subject, input.request_id);
+      const [requestSnapshot, ledgerSnapshot] = await Promise.all([
+        transaction.get(requestRef),
+        transaction.get(ledgerRef),
+      ]);
       const parsed = parseStoredRequest(requestSnapshot.exists ? requestSnapshot.data() : undefined);
+      const existingLedger = ledgerRecordFromSnapshot(ledgerSnapshot);
       if (parsed.kind === 'unsafe') {
         return { kind: 'unsafe_record' };
       }
       if (parsed.kind === 'valid') {
         const existing = parsed.record;
+        if (
+          !storedRequestMatchesKey(existing, input.quota_subject, input.request_id) ||
+          existingLedger === undefined ||
+          !ledgerMatchesRequest(existingLedger, existing)
+        ) {
+          return { kind: 'unsafe_record' };
+        }
         if (existing.payload_hash !== input.payload_hash) {
           return { kind: 'conflict' };
         }
@@ -405,41 +419,41 @@ export class FirestoreRequestLifecycle implements RequestLifecycleStore {
         return { kind: 'replay', record: terminal, outcome };
       }
 
-      const ledgerRef = this.store.ledgerRef(input.quota_subject, input.request_id);
+      if (ledgerSnapshot.exists) {
+        return { kind: 'unsafe_record' };
+      }
+
       const controlRef = this.store.controlRef();
       const subjectRef = this.store.subjectRef(input.quota_subject);
       const globalRef = this.store.globalUsageRef();
-      const [ledgerSnapshot, controlSnapshot, subjectSnapshot, globalSnapshot] = await Promise.all([
-        transaction.get(ledgerRef),
+      const [controlSnapshot, subjectSnapshot, globalSnapshot] = await Promise.all([
         transaction.get(controlRef),
         transaction.get(subjectRef),
         transaction.get(globalRef),
       ]);
-      if (ledgerSnapshot.exists) {
+      const control = controlRecordFromSnapshot(controlSnapshot);
+      const subject = subjectSnapshot.exists
+        ? subjectCreditFromSnapshot(subjectSnapshot)
+        : { exposed_credits: 0, reserved_count: 0 };
+      const global = globalSnapshot.exists
+        ? globalCreditFromSnapshot(globalSnapshot)
+        : { exposed_credits: 0 };
+      if (control === undefined || subject === undefined || global === undefined) {
         return { kind: 'unsafe_record' };
       }
-      const control = controlSnapshot.data() ?? {};
-      const subject = subjectSnapshot.data() ?? {};
-      const global = globalSnapshot.data() ?? {};
       if (
-        !controlSnapshot.exists ||
-        control.record_version !== CONTROL_RECORD_VERSION ||
-        (subjectSnapshot.exists && subject.record_version !== SUBJECT_CREDIT_RECORD_VERSION) ||
-        (globalSnapshot.exists && global.record_version !== GLOBAL_CREDIT_RECORD_VERSION)
+        subject.reserved_count > subject.exposed_credits ||
+        global.exposed_credits < subject.exposed_credits ||
+        (subjectSnapshot.exists && !globalSnapshot.exists)
       ) {
         return { kind: 'unsafe_record' };
       }
-      const oneInFlight = booleanField(control.oneInFlightPerSubject) ?? this.store.oneInFlightPerSubject;
-      const perSubjectCap = integerField(control.perSubjectCreditCap) ?? this.store.perSubjectCreditCap;
-      const brokerCap = integerField(control.brokerCreditCap) ?? this.store.brokerCreditCap;
-      const subjectSnapshotValue = creditSnapshot(subject);
-      const globalExposed = integerField(global.exposed_credits) ?? 0;
-      if (oneInFlight && subjectSnapshotValue.reserved_count > 0) {
+      if (control.oneInFlightPerSubject && subject.reserved_count > 0) {
         return { kind: 'in_flight' };
       }
       if (
-        subjectSnapshotValue.exposed_credits + input.credit_cost > perSubjectCap ||
-        globalExposed + input.credit_cost > brokerCap
+        subject.exposed_credits + input.credit_cost > control.perSubjectCreditCap ||
+        global.exposed_credits + input.credit_cost > control.brokerCreditCap
       ) {
         return { kind: 'credits_exhausted' };
       }
@@ -468,27 +482,61 @@ export class FirestoreRequestLifecycle implements RequestLifecycleStore {
       transaction.set(ledgerRef, { ...ledger });
       transaction.set(subjectRef, {
         record_version: SUBJECT_CREDIT_RECORD_VERSION,
-        exposed_credits: subjectSnapshotValue.exposed_credits + 1,
-        reserved_count: subjectSnapshotValue.reserved_count + 1,
+        exposed_credits: subject.exposed_credits + 1,
+        reserved_count: subject.reserved_count + 1,
       }, { merge: true });
       transaction.set(globalRef, {
         record_version: GLOBAL_CREDIT_RECORD_VERSION,
-        exposed_credits: globalExposed + 1,
+        exposed_credits: global.exposed_credits + 1,
       }, { merge: true });
       return { kind: 'reserved', record };
     });
   }
 
-  async markDispatchStarted(record: StoredRequestRecord): Promise<void> {
-    await this.store.transaction(async (transaction) => {
+  async markDispatchStarted(record: StoredRequestRecord, now: Date): Promise<DispatchStartResult> {
+    const result = await this.store.transaction(async (transaction): Promise<DispatchStartResult> => {
       const ref = this.store.requestRef(record.quota_subject, record.request_id);
-      const current = validRecordFromSnapshot(await transaction.get(ref));
+      const ledgerRef = this.store.ledgerRef(record.quota_subject, record.request_id);
+      const [requestSnapshot, ledgerSnapshot] = await Promise.all([
+        transaction.get(ref),
+        transaction.get(ledgerRef),
+      ]);
+      const current = validRecordFromSnapshot(requestSnapshot);
+      const ledger = ledgerRecordFromSnapshot(ledgerSnapshot);
+      if (
+        !storedRequestMatchesKey(current, record.quota_subject, record.request_id) ||
+        current.reservation_lease_expires_at !== record.reservation_lease_expires_at ||
+        ledger === undefined ||
+        !ledgerMatchesRequest(ledger, current)
+      ) {
+        throw new Error('unsafe_dispatch_transition');
+      }
+      if (current.state === 'terminal' && isReservationExpiry(current)) {
+        return { kind: 'lease_expired', record: current, outcome: current.terminal_outcome! };
+      }
       if (current.state !== 'reserved' || current.settlement_state !== 'reserved') {
         throw new Error('unsafe_dispatch_transition');
       }
+      if (now.getTime() >= Date.parse(current.reservation_lease_expires_at)) {
+        const outcome = reservationExpiredOutcome(current.request_id);
+        const terminal: StoredRequestRecord = {
+          ...current,
+          state: 'terminal',
+          settlement_state: 'pending_refund',
+          terminal_outcome: outcome,
+        };
+        transaction.set(ref, { ...terminal });
+        return { kind: 'lease_expired', record: terminal, outcome };
+      }
       transaction.set(ref, { state: 'dispatch_started' }, { merge: true });
+      return { kind: 'started' };
     });
-    record.state = 'dispatch_started';
+    if (result.kind === 'started') {
+      record.state = 'dispatch_started';
+    } else {
+      Object.assign(record, result.record);
+    }
+    return result;
   }
 
   async persistTerminal(
@@ -498,15 +546,33 @@ export class FirestoreRequestLifecycle implements RequestLifecycleStore {
   ): Promise<void> {
     await this.store.transaction(async (transaction) => {
       const ref = this.store.requestRef(record.quota_subject, record.request_id);
-      const current = validRecordFromSnapshot(await transaction.get(ref));
+      const ledgerRef = this.store.ledgerRef(record.quota_subject, record.request_id);
+      const [requestSnapshot, ledgerSnapshot] = await Promise.all([
+        transaction.get(ref),
+        transaction.get(ledgerRef),
+      ]);
+      const current = validRecordFromSnapshot(requestSnapshot);
+      const ledger = ledgerRecordFromSnapshot(ledgerSnapshot);
+      if (
+        !storedRequestMatchesKey(current, record.quota_subject, record.request_id) ||
+        ledger === undefined ||
+        !ledgerMatchesRequest(ledger, current)
+      ) {
+        throw new Error('unsafe_terminal_transition');
+      }
       if (current.state !== 'reserved' && current.state !== 'dispatch_started') {
         throw new Error('unsafe_terminal_transition');
       }
-      transaction.set(ref, {
+      const terminal: StoredRequestRecord = {
+        ...current,
         state: 'terminal',
         terminal_outcome: outcome,
         settlement_state: settlement === 'refund' ? 'pending_refund' : 'pending_finalize',
-      }, { merge: true });
+      };
+      if (parseStoredRequest(terminal).kind !== 'valid') {
+        throw new Error('unsafe_terminal_outcome');
+      }
+      transaction.set(ref, { ...terminal });
     });
     record.state = 'terminal';
     record.terminal_outcome = outcome;
@@ -526,27 +592,34 @@ export class FirestoreRequestLifecycle implements RequestLifecycleStore {
         transaction.get(globalRef),
       ]);
       const current = validRecordFromSnapshot(requestSnapshot);
-      if (current.state !== 'terminal') {
-        throw new Error('settlement_requires_terminal');
+      const ledger = ledgerRecordFromSnapshot(ledgerSnapshot);
+      if (
+        !storedRequestMatchesKey(current, record.quota_subject, record.request_id) ||
+        current.state !== 'terminal' ||
+        ledger === undefined ||
+        !ledgerMatchesRequest(ledger, current)
+      ) {
+        throw new Error('unsafe_ledger_record');
       }
       if (current.settlement_state === 'refunded' || current.settlement_state === 'finalized') {
         record.settlement_state = current.settlement_state;
         return;
       }
-      const ledger = ledgerRecordFromSnapshot(ledgerSnapshot);
-      if (ledger === undefined || ledger.state !== 'reserved') {
+      if (ledger.state !== 'reserved') {
         throw new Error('unsafe_ledger_record');
       }
+      const subject = subjectCreditFromSnapshot(subjectSnapshot);
+      const global = globalCreditFromSnapshot(globalSnapshot);
       if (
-        !subjectSnapshot.exists ||
-        subjectSnapshot.data()?.record_version !== SUBJECT_CREDIT_RECORD_VERSION ||
-        !globalSnapshot.exists ||
-        globalSnapshot.data()?.record_version !== GLOBAL_CREDIT_RECORD_VERSION
+        subject === undefined ||
+        global === undefined ||
+        subject.reserved_count < 1 ||
+        subject.exposed_credits < 1 ||
+        global.exposed_credits < subject.exposed_credits ||
+        global.exposed_credits < 1
       ) {
         throw new Error('unsafe_credit_aggregate');
       }
-      const subject = creditSnapshot(subjectSnapshot.data() ?? {});
-      const globalExposed = integerField(globalSnapshot.data()?.exposed_credits) ?? 0;
       const refund = current.settlement_state === 'pending_refund';
       const nextSubject = refund ? applyRefund(subject, 1) : applyFinalize(subject, 1);
 
@@ -558,7 +631,7 @@ export class FirestoreRequestLifecycle implements RequestLifecycleStore {
       if (refund) {
         transaction.set(globalRef, {
           record_version: GLOBAL_CREDIT_RECORD_VERSION,
-          exposed_credits: Math.max(0, globalExposed - 1),
+          exposed_credits: global.exposed_credits - 1,
         }, { merge: true });
       }
       transaction.set(requestRef, {
@@ -581,6 +654,7 @@ export class FakeDurableBrokerStore implements DurableGateStore {
   readonly entitledUids: Set<string>;
   readonly lifecycle: InMemoryRequestLifecycle;
   breakerOpen: boolean;
+  accessReadCount = 0;
 
   constructor(options: FakeDurableBrokerStoreOptions = {}) {
     this.entitledUids = new Set(options.entitledUids ?? ['owner-uid']);
@@ -593,6 +667,7 @@ export class FakeDurableBrokerStore implements DurableGateStore {
   }
 
   async readAccess(input: DurableAccessInput): Promise<DurableAccessResult> {
+    this.accessReadCount += 1;
     return {
       entitled: this.entitledUids.has(input.uid),
       breakerOpen: this.breakerOpen,
@@ -736,30 +811,87 @@ function validRecordFromSnapshot(snapshot: DurableFirestoreDocumentSnapshot): St
 }
 
 function ledgerRecordFromSnapshot(snapshot: DurableFirestoreDocumentSnapshot): LedgerRecord | undefined {
+  return snapshot.exists ? parseLedgerRecord(snapshot.data()) : undefined;
+}
+
+function controlRecordFromSnapshot(snapshot: DurableFirestoreDocumentSnapshot): {
+  breakerOpen: boolean;
+  perSubjectCreditCap: number;
+  brokerCreditCap: number;
+  oneInFlightPerSubject: boolean;
+} | undefined {
   const data = snapshot.data();
   if (
     !snapshot.exists ||
-    data === undefined ||
-    !Object.keys(data).every((key) => LEDGER_RECORD_KEYS.has(key)) ||
-    data?.record_version !== CREDIT_LEDGER_RECORD_VERSION ||
-    !nonEmptyString(data.request_id) ||
-    !nonEmptyString(data.quota_subject) ||
-    (data.state !== 'reserved' && data.state !== 'finalized' && data.state !== 'refunded') ||
-    data.credit_cost !== 1
+    !isRecord(data) ||
+    !hasExactKeys(data, CONTROL_RECORD_KEYS) ||
+    data.record_version !== CONTROL_RECORD_VERSION ||
+    typeof data.breakerOpen !== 'boolean' ||
+    nonNegativeInteger(data.perSubjectCreditCap) === undefined ||
+    nonNegativeInteger(data.brokerCreditCap) === undefined ||
+    typeof data.oneInFlightPerSubject !== 'boolean'
   ) {
     return undefined;
   }
-  return data as unknown as LedgerRecord;
+  return {
+    breakerOpen: data.breakerOpen,
+    perSubjectCreditCap: data.perSubjectCreditCap as number,
+    brokerCreditCap: data.brokerCreditCap as number,
+    oneInFlightPerSubject: data.oneInFlightPerSubject,
+  };
 }
 
-const LEDGER_RECORD_KEYS = new Set([
-  'record_version',
-  'request_id',
-  'quota_subject',
-  'state',
-  'credit_cost',
-  'reason',
-]);
+function entitlementRecordFromSnapshot(
+  snapshot: DurableFirestoreDocumentSnapshot,
+): { entitled: boolean } | undefined {
+  const data = snapshot.data();
+  if (
+    !snapshot.exists ||
+    !isRecord(data) ||
+    !hasExactKeys(data, ENTITLEMENT_RECORD_KEYS) ||
+    data.record_version !== ENTITLEMENT_RECORD_VERSION ||
+    typeof data.entitled !== 'boolean'
+  ) {
+    return undefined;
+  }
+  return { entitled: data.entitled };
+}
+
+function subjectCreditFromSnapshot(
+  snapshot: DurableFirestoreDocumentSnapshot,
+): { exposed_credits: number; reserved_count: number } | undefined {
+  const data = snapshot.data();
+  if (
+    !snapshot.exists ||
+    !isRecord(data) ||
+    !hasExactKeys(data, SUBJECT_RECORD_KEYS) ||
+    data.record_version !== SUBJECT_CREDIT_RECORD_VERSION ||
+    nonNegativeInteger(data.exposed_credits) === undefined ||
+    nonNegativeInteger(data.reserved_count) === undefined
+  ) {
+    return undefined;
+  }
+  return {
+    exposed_credits: data.exposed_credits as number,
+    reserved_count: data.reserved_count as number,
+  };
+}
+
+function globalCreditFromSnapshot(
+  snapshot: DurableFirestoreDocumentSnapshot,
+): { exposed_credits: number } | undefined {
+  const data = snapshot.data();
+  if (
+    !snapshot.exists ||
+    !isRecord(data) ||
+    !hasExactKeys(data, GLOBAL_RECORD_KEYS) ||
+    data.record_version !== GLOBAL_CREDIT_RECORD_VERSION ||
+    nonNegativeInteger(data.exposed_credits) === undefined
+  ) {
+    return undefined;
+  }
+  return { exposed_credits: data.exposed_credits as number };
+}
 
 function reservationExpiredOutcome(requestId: string): BrokerTerminalOutcome {
   return {
@@ -770,6 +902,11 @@ function reservationExpiredOutcome(requestId: string): BrokerTerminalOutcome {
 
 function terminalReason(outcome: BrokerTerminalOutcome | undefined): string {
   return outcome?.kind === 'error' ? outcome.failure.condition : 'terminal_refund';
+}
+
+function isReservationExpiry(record: StoredRequestRecord): boolean {
+  return record.terminal_outcome?.kind === 'error' &&
+    record.terminal_outcome.failure.condition === 'reservation_lease_expired';
 }
 
 function projectIdFromAuthToken(token: { aud?: string; iss?: string }): string | undefined {
@@ -789,23 +926,29 @@ function appCheckTokenMatchesProject(
     token.iss === `https://firebaseappcheck.googleapis.com/${projectNumber}`;
 }
 
-function creditSnapshot(value: Record<string, unknown>): {
-  exposed_credits: number;
-  reserved_count: number;
-} {
-  return {
-    exposed_credits: integerField(value.exposed_credits) ?? 0,
-    reserved_count: integerField(value.reserved_count) ?? 0,
-  };
-}
-
-function integerField(value: unknown): number | undefined {
+function nonNegativeInteger(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
 }
 
-function booleanField(value: unknown): boolean | undefined {
-  return typeof value === 'boolean' ? value : undefined;
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
+
+function hasExactKeys(value: Record<string, unknown>, allowed: ReadonlySet<string>): boolean {
+  return Object.keys(value).length === allowed.size &&
+    Object.keys(value).every((key) => allowed.has(key));
+}
+
+const CONTROL_RECORD_KEYS = new Set([
+  'record_version',
+  'breakerOpen',
+  'perSubjectCreditCap',
+  'brokerCreditCap',
+  'oneInFlightPerSubject',
+]);
+const ENTITLEMENT_RECORD_KEYS = new Set(['record_version', 'entitled']);
+const SUBJECT_RECORD_KEYS = new Set(['record_version', 'exposed_credits', 'reserved_count']);
+const GLOBAL_RECORD_KEYS = new Set(['record_version', 'exposed_credits']);
 
 function docKey(value: string): string {
   return Buffer.from(value, 'utf8').toString('base64url').slice(0, 512);

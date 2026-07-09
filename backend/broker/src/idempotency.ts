@@ -63,21 +63,38 @@ export function parseStoredRequest(value: unknown): ParsedStoredRequest {
     return { kind: 'unsafe' };
   }
 
+  if (Date.parse(value.reservation_lease_expires_at) > Date.parse(value.retention_expires_at)) {
+    return { kind: 'unsafe' };
+  }
+
+  const record = {
+    record_version: REQUEST_LIFECYCLE_RECORD_VERSION,
+    quota_subject: value.quota_subject as string,
+    request_id: value.request_id as string,
+    payload_hash: value.payload_hash as string,
+    state: value.state as RequestLifecycleState,
+    credit_cost: 1,
+    reservation_lease_expires_at: value.reservation_lease_expires_at as string,
+    retention_expires_at: value.retention_expires_at as string,
+    settlement_state: value.settlement_state as SettlementState,
+    ...(terminalOutcome === undefined ? {} : { terminal_outcome: terminalOutcome }),
+  } satisfies StoredRequestRecord;
+  if (!hasConsistentTerminalBinding(record)) {
+    return { kind: 'unsafe' };
+  }
+
   return {
     kind: 'valid',
-    record: {
-      record_version: REQUEST_LIFECYCLE_RECORD_VERSION,
-      quota_subject: value.quota_subject as string,
-      request_id: value.request_id as string,
-      payload_hash: value.payload_hash as string,
-      state: value.state as RequestLifecycleState,
-      credit_cost: 1,
-      reservation_lease_expires_at: value.reservation_lease_expires_at as string,
-      retention_expires_at: value.retention_expires_at as string,
-      settlement_state: value.settlement_state as SettlementState,
-      ...(terminalOutcome === undefined ? {} : { terminal_outcome: terminalOutcome }),
-    },
+    record,
   };
+}
+
+export function storedRequestMatchesKey(
+  record: StoredRequestRecord,
+  quotaSubject: string,
+  requestId: string,
+): boolean {
+  return record.quota_subject === quotaSubject && record.request_id === requestId;
 }
 
 function parseTerminalOutcome(value: unknown): BrokerTerminalOutcome | undefined {
@@ -97,7 +114,7 @@ function parseTerminalOutcome(value: unknown): BrokerTerminalOutcome | undefined
     isRecord(value.failure) &&
     hasOnlyKeys(value.failure, new Set(['request_id', 'condition', 'retry_after_seconds'])) &&
     isBrokerErrorCondition(value.failure.condition) &&
-    (value.failure.request_id === undefined || nonEmptyString(value.failure.request_id)) &&
+    nonEmptyString(value.failure.request_id) &&
     (value.failure.retry_after_seconds === undefined ||
       (typeof value.failure.retry_after_seconds === 'number' &&
         Number.isFinite(value.failure.retry_after_seconds)))
@@ -105,6 +122,44 @@ function parseTerminalOutcome(value: unknown): BrokerTerminalOutcome | undefined
     return value as unknown as BrokerTerminalOutcome;
   }
   return undefined;
+}
+
+function hasConsistentTerminalBinding(record: StoredRequestRecord): boolean {
+  if (record.state !== 'terminal') {
+    return true;
+  }
+  const outcome = record.terminal_outcome!;
+  if (outcome.kind === 'success') {
+    return outcome.response.request_id === record.request_id &&
+      (record.settlement_state === 'pending_finalize' || record.settlement_state === 'finalized');
+  }
+  if (outcome.failure.request_id !== record.request_id) {
+    return false;
+  }
+  const expected = settlementIntentForCondition(outcome.failure.condition);
+  return expected === 'refund'
+    ? record.settlement_state === 'pending_refund' || record.settlement_state === 'refunded'
+    : expected === 'finalize' &&
+        (record.settlement_state === 'pending_finalize' || record.settlement_state === 'finalized');
+}
+
+function settlementIntentForCondition(condition: string): 'refund' | 'finalize' | undefined {
+  switch (condition) {
+    case 'reservation_lease_expired':
+    case 'provider_config_failure':
+    case 'provider_construction_failure':
+    case 'provider_authorization_failure':
+    case 'dispatch_persistence_failure':
+    case 'provider_rate_limited':
+    case 'provider_timeout':
+      return 'refund';
+    case 'provider_refusal':
+    case 'provider_failure':
+    case 'provider_invalid_output':
+      return 'finalize';
+    default:
+      return undefined;
+  }
 }
 
 function isBrokerResponse(value: unknown): boolean {

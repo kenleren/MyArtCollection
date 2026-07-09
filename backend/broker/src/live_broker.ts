@@ -1,5 +1,6 @@
-import { handleBrokerAdapterRequest } from './adapter.js';
+import { handleBrokerAdapterRequest, parseBrokerRequest } from './adapter.js';
 import type { BrokerDependencies } from './broker.js';
+import { CURRENT_CONSENT_COPY_VERSION } from './contracts.js';
 import { authorizeProviderRequest } from './provider_authorization.js';
 import {
   durableConfigFromEnv,
@@ -148,9 +149,9 @@ export function createResearchBrokerHttpHandler(options: ResearchBrokerHttpHandl
       return;
     }
 
-    let identityResult: Awaited<ReturnType<DurableBrokerProtection['verifyAndBuildIdentity']>>;
+    let identityResult: Awaited<ReturnType<DurableBrokerProtection['verifyIdentity']>>;
     try {
-      identityResult = await configured.protection.verifyAndBuildIdentity({
+      identityResult = await configured.protection.verifyIdentity({
         authorizationHeader: header(request, 'authorization'),
         appCheckToken: header(request, 'x-firebase-appcheck'),
       });
@@ -175,6 +176,33 @@ export function createResearchBrokerHttpHandler(options: ResearchBrokerHttpHandl
       return;
     }
 
+    const brokerRequest = parseBrokerRequest(unwrapCallableData(parsedBody.value));
+    if (!brokerRequest.ok) {
+      sendError(response, brokerRequest.condition, brokerRequest.requestId);
+      return;
+    }
+    if (brokerRequest.request.consent_status !== 'approved') {
+      sendError(response, 'consent_required', brokerRequest.request.request_id);
+      return;
+    }
+    if (brokerRequest.request.consent_copy_version !== CURRENT_CONSENT_COPY_VERSION) {
+      sendError(response, 'stale_consent', brokerRequest.request.request_id);
+      return;
+    }
+
+    let access: Awaited<ReturnType<DurableBrokerProtection['readAccess']>>;
+    try {
+      access = await configured.protection.readAccess(identityResult.identity);
+    } catch {
+      sendError(response, 'broker_misconfigured', brokerRequest.request.request_id);
+      return;
+    }
+    const brokerIdentity = {
+      ...identityResult.identity,
+      entitled: access.entitled,
+      breakerOpen: access.breakerOpen,
+    };
+
     let dependencies: BrokerDependencies;
     try {
       dependencies = configured.createDependencies();
@@ -183,8 +211,8 @@ export function createResearchBrokerHttpHandler(options: ResearchBrokerHttpHandl
       return;
     }
     const envelope = await handleBrokerAdapterRequest(
-      unwrapCallableData(parsedBody.value),
-      identityResult.identity,
+      brokerRequest.request,
+      brokerIdentity,
       dependencies,
     );
     if (!envelope.ok && envelope.body.error.retry_after_seconds !== undefined) {
@@ -232,8 +260,12 @@ function unwrapCallableData(body: unknown): unknown {
   return keys.length === 1 && keys[0] === 'data' ? body.data : body;
 }
 
-function sendError(response: MinimalResponse, condition: BrokerErrorCondition): void {
-  const envelope = brokerErrorEnvelope(condition);
+function sendError(
+  response: MinimalResponse,
+  condition: BrokerErrorCondition,
+  requestId?: string,
+): void {
+  const envelope = brokerErrorEnvelope(condition, requestId);
   if (envelope.body.error.retry_after_seconds !== undefined) {
     response.setHeader('Retry-After', String(envelope.body.error.retry_after_seconds));
   }

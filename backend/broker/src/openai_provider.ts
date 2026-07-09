@@ -37,6 +37,7 @@ export const DEFAULT_OPENAI_RESPONSES_URL = 'https://api.openai.com/v1/responses
 export const DEFAULT_OPENAI_MODEL = 'gpt-5.4';
 export const DEFAULT_SEARCH_CONTEXT_SIZE = 'medium';
 export const DEFAULT_REASONING_EFFORT = 'high';
+export const DEFAULT_PROVIDER_TIMEOUT_MILLISECONDS = 55_000;
 
 type FetchLike = typeof fetch;
 
@@ -49,6 +50,9 @@ export interface OpenAiProviderConfig {
   searchContextSize?: 'low' | 'medium' | 'high';
   externalWebAccess?: boolean;
   fetchImpl?: FetchLike;
+  providerTimeoutMs?: number;
+  scheduleTimeout?: (callback: () => void, delayMs: number) => ReturnType<typeof setTimeout>;
+  cancelTimeout?: (handle: ReturnType<typeof setTimeout>) => void;
 }
 
 export type ReadOpenAiProviderConfigResult =
@@ -147,6 +151,9 @@ export function readOpenAiProviderConfigFromEnv(
         firstConfiguredEnvValue(env, OPENAI_EXTERNAL_WEB_ACCESS_ENV_NAMES),
       ) ?? false,
       fetchImpl: overrides.fetchImpl,
+      providerTimeoutMs: overrides.providerTimeoutMs,
+      scheduleTimeout: overrides.scheduleTimeout,
+      cancelTimeout: overrides.cancelTimeout,
     },
   };
 }
@@ -164,6 +171,9 @@ class OpenAiResearchProvider implements ProviderClient {
   private readonly fetchImpl: FetchLike;
   private readonly searchContextSize: 'low' | 'medium' | 'high';
   private readonly externalWebAccess: boolean;
+  private readonly providerTimeoutMs: number;
+  private readonly scheduleTimeout: NonNullable<OpenAiProviderConfig['scheduleTimeout']>;
+  private readonly cancelTimeout: NonNullable<OpenAiProviderConfig['cancelTimeout']>;
   callCount = 0;
 
   constructor(config: OpenAiProviderConfig) {
@@ -174,6 +184,12 @@ class OpenAiResearchProvider implements ProviderClient {
     this.fetchImpl = config.fetchImpl ?? fetch;
     this.searchContextSize = config.searchContextSize ?? DEFAULT_SEARCH_CONTEXT_SIZE;
     this.externalWebAccess = config.externalWebAccess ?? false;
+    this.providerTimeoutMs = Number.isFinite(config.providerTimeoutMs) &&
+      (config.providerTimeoutMs ?? 0) > 0
+      ? Math.min(DEFAULT_PROVIDER_TIMEOUT_MILLISECONDS, Math.ceil(config.providerTimeoutMs!))
+      : DEFAULT_PROVIDER_TIMEOUT_MILLISECONDS;
+    this.scheduleTimeout = config.scheduleTimeout ?? setTimeout;
+    this.cancelTimeout = config.cancelTimeout ?? clearTimeout;
     this.apiKey = config.apiKey;
   }
 
@@ -185,14 +201,18 @@ class OpenAiResearchProvider implements ProviderClient {
     }
 
     this.callCount += 1;
-    let response: Response;
+    const abortController = new AbortController();
+    const timeoutHandle = this.scheduleTimeout(() => {
+      abortController.abort(new DOMException('Provider deadline exceeded.', 'TimeoutError'));
+    }, this.providerTimeoutMs);
     try {
-      response = await this.fetchImpl(this.endpointUrl, {
+      const response = await this.fetchImpl(this.endpointUrl, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${this.apiKey}`,
         },
+        signal: abortController.signal,
         body: JSON.stringify(buildOpenAiResponsesRequest(request, {
           allowedDomains: this.allowedDomains,
           externalWebAccess: this.externalWebAccess,
@@ -201,29 +221,31 @@ class OpenAiResearchProvider implements ProviderClient {
           searchContextSize: this.searchContextSize,
         })),
       });
+
+      if (!response.ok) {
+        if (response.status === 429) {
+          const retryAfter = Number(response.headers.get('retry-after'));
+          return {
+            kind: 'rate_limited',
+            ...(Number.isFinite(retryAfter) ? { retry_after_seconds: retryAfter } : {}),
+          };
+        }
+        if (response.status === 408 || response.status === 504) {
+          return { kind: 'timeout' };
+        }
+        if (response.status === 400 || response.status === 403 || response.status === 422) {
+          return { kind: 'refusal' };
+        }
+        return { kind: 'failure' };
+      }
+
+      const body = await response.json() as OpenAiResponseBody;
+      return normalizeOpenAiResponse(body, this.allowedDomains);
     } catch (error) {
       return isTimeoutError(error) ? { kind: 'timeout' } : { kind: 'failure' };
+    } finally {
+      this.cancelTimeout(timeoutHandle);
     }
-
-    if (!response.ok) {
-      if (response.status === 429) {
-        const retryAfter = Number(response.headers.get('retry-after'));
-        return {
-          kind: 'rate_limited',
-          ...(Number.isFinite(retryAfter) ? { retry_after_seconds: retryAfter } : {}),
-        };
-      }
-      if (response.status === 408 || response.status === 504) {
-        return { kind: 'timeout' };
-      }
-      if (response.status === 400 || response.status === 403 || response.status === 422) {
-        return { kind: 'refusal' };
-      }
-      return { kind: 'failure' };
-    }
-
-    const body = await response.json() as OpenAiResponseBody;
-    return normalizeOpenAiResponse(body, this.allowedDomains);
   }
 }
 

@@ -24,8 +24,11 @@ object before fetch.
 ## Contract Summary
 
 The server verifies revoked/project-bound Auth before consuming a fresh
-limited-use App Check token. Consent, entitlement, breaker, payload shape,
-canonical hash, replay, and atomic one-credit reservation all precede provider
+limited-use App Check token. Firebase Admin App Check claims are read from the
+SDK response's decoded `token`; the root `appId` must match the token subject.
+The owner UID allowlist and valid current consent run before any durable
+entitlement or breaker read. Entitlement, breaker, payload shape, canonical
+hash, replay, and atomic one-credit reservation all precede provider
 configuration.
 
 `canonical-payload-v1` uses RFC 8785 UTF-8 bytes and a 64-character lowercase
@@ -41,7 +44,10 @@ Durable requests use `broker-request-lifecycle-v1` states:
 
 The reservation lease is 60 seconds. The retention signal is 24 hours and does
 not change execution behavior. Unversioned, malformed, unknown, or orphaned
-durable records fail closed and are never treated as absent.
+durable records fail closed and are never treated as absent. Request and ledger
+identity, state, settlement, cost, and terminal outcome must agree before
+replay or settlement. The transactional dispatch compare-and-set rejects the
+exact lease boundary before provider fetch.
 
 Terminal persistence precedes refund/finalize. Pending settlement recovers
 idempotently on replay. A `dispatch_started` request is never automatically
@@ -49,7 +55,10 @@ refunded or redriven.
 
 All failures use `broker-error-v1`; see
 `fixtures/broker-error-v1.json`. Rate-limit Retry-After defaults to 30 seconds
-and clamps to 5-300 seconds.
+and clamps to 5-300 seconds. Only a validated UUID may be reflected as a public
+request ID. Provider fetch and response parsing use an abort deadline of at
+most 55 seconds, leaving a margin before the 60-second Function timeout for
+durable terminal timeout persistence and refund.
 
 ## Firebase Surface
 

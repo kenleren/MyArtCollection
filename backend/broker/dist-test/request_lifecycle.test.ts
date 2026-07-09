@@ -40,7 +40,7 @@ test('dispatch_started remains ambiguous after lease expiry and is never redrive
   if (acquired.kind !== 'reserved') {
     return;
   }
-  await lifecycle.markDispatchStarted(acquired.record);
+  await lifecycle.markDispatchStarted(acquired.record, FIXED_NOW);
   assert.equal(
     (await lifecycle.acquire(input(new Date(FIXED_NOW.getTime() + 59_999)))).kind,
     'in_flight',
@@ -51,6 +51,24 @@ test('dispatch_started remains ambiguous after lease expiry and is never redrive
   );
   assert.equal(lifecycle.reserveCount, 1);
   assert.equal(lifecycle.refundCount, 0);
+});
+
+test('dispatch compare-and-set rejects the exact lease boundary and refunds', async () => {
+  const lifecycle = new InMemoryRequestLifecycle();
+  const acquired = await lifecycle.acquire(input(FIXED_NOW));
+  assert.equal(acquired.kind, 'reserved');
+  if (acquired.kind !== 'reserved') {
+    return;
+  }
+  const dispatch = await lifecycle.markDispatchStarted(
+    acquired.record,
+    new Date(FIXED_NOW.getTime() + 60_000),
+  );
+  assert.equal(dispatch.kind, 'lease_expired');
+  if (dispatch.kind === 'lease_expired') {
+    await lifecycle.settle(dispatch.record);
+  }
+  assert.equal(lifecycle.refundCount, 1);
 });
 
 test('retention expiry is a deletion signal only and never changes replay behavior', async () => {
@@ -66,8 +84,6 @@ test('retention expiry is a deletion signal only and never changes replay behavi
   }, 'refund');
   await lifecycle.settle(acquired.record);
 
-  acquired.record.retention_expires_at = new Date(FIXED_NOW.getTime() - 1).toISOString();
-  lifecycle.seedRaw(baseContext.quota_subject, request().request_id, acquired.record);
   const replay = await lifecycle.acquire(input(new Date(FIXED_NOW.getTime() + 86_400_001)));
   assert.equal(replay.kind, 'replay');
 });

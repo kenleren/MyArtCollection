@@ -164,8 +164,12 @@ export async function handleResearchRequest(
   }
 
   trace?.push('dispatch_persistence');
+  let dispatchStarted;
   try {
-    await dependencies.requestLifecycle.markDispatchStarted(record);
+    dispatchStarted = await dependencies.requestLifecycle.markDispatchStarted(
+      record,
+      dependencies.now(),
+    );
   } catch {
     return terminalError(
       record,
@@ -174,6 +178,10 @@ export async function handleResearchRequest(
       dependencies,
       trace,
     );
+  }
+  if (dispatchStarted.kind === 'lease_expired') {
+    await settlePendingBestEffort(dispatchStarted.record, dependencies, trace);
+    return outcomeToResult(dispatchStarted.outcome);
   }
 
   trace?.push('provider_fetch');
@@ -324,12 +332,17 @@ function failure(
   requestId?: string,
   retryAfterSeconds?: number,
 ): BrokerResult {
+  const safeRequestId = requestId !== undefined && isUuid(requestId) ? requestId : undefined;
   const brokerFailure: BrokerFailure = {
     condition,
-    ...(requestId === undefined ? {} : { request_id: requestId }),
+    ...(safeRequestId === undefined ? {} : { request_id: safeRequestId }),
     ...(retryAfterSeconds === undefined ? {} : { retry_after_seconds: retryAfterSeconds }),
   };
   return { ok: false, failure: brokerFailure };
+}
+
+function isUuid(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(value);
 }
 
 function validateAuthContext(context: BrokerContext): BrokerErrorCondition | undefined {

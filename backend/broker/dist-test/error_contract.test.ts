@@ -60,6 +60,10 @@ test('error envelopes are versioned, fixed-shape, and sanitized', () => {
     },
   });
   assert.equal(JSON.stringify(envelope).includes('project'), false);
+  assert.equal(
+    brokerErrorEnvelope('invalid_request_payload', 'collector notes must not echo').body.request_id,
+    undefined,
+  );
 });
 
 test('rate-limit retry delay defaults and clamps to 5-300 seconds', () => {

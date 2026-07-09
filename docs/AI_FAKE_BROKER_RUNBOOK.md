@@ -22,14 +22,17 @@ The HTTP path executes in this order:
 2. warm-instance kill-switch recheck;
 3. durable dependency availability and JSON decoding;
 4. revoked/project-bound anonymous Auth verification;
-5. limited-use App Check verification with `consume: true`;
-6. owner allowlist, consent, entitlement, and breaker;
-7. `canonical-payload-v1` recomputation and hash equality;
-8. durable replay/conflict/unsafe-state check;
-9. atomic request-plus-one-credit reservation;
-10. provider config, construction, and request authorization;
-11. `dispatch_started` persistence;
-12. provider fetch, output validation, terminal persistence, and settlement.
+5. limited-use App Check verification with `consume: true`, reading decoded
+   claims from Firebase Admin's `response.token`;
+6. owner UID allowlist;
+7. current approved consent;
+8. durable entitlement and breaker reads;
+9. `canonical-payload-v1` recomputation and hash equality;
+10. durable replay/conflict/unsafe-state check;
+11. atomic request-plus-one-credit reservation;
+12. provider config, construction, and request authorization;
+13. transactional lease-aware `dispatch_started` compare-and-set;
+14. provider fetch, output validation, terminal persistence, and settlement.
 
 Provider config, construction, authorization, and fetch counters must remain
 zero for rejections through reservation. Fetch must remain zero when dispatch
@@ -50,7 +53,9 @@ by the request path is versioned:
 
 Do not seed or repair these records from this task. Unversioned, malformed,
 unknown, or orphaned records return a safe unavailable error and do not permit
-provider work. No automatic legacy migration exists.
+provider work. Same-version record fields are exact; request/ledger identity,
+state, cost, terminal outcome, settlement intent, and refund reason must agree.
+No automatic legacy migration exists.
 
 `reservation_lease_expires_at` is 60 seconds. At the exact boundary, a
 pre-dispatch `reserved` request terminalizes and then refunds. A
@@ -76,6 +81,11 @@ and leave a pending settlement. A later replay retries settlement idempotently
 without provider work. If terminal persistence fails after dispatch, leave
 `dispatch_started`; do not refund, delete, or redrive.
 
+The provider fetch and response body share a deadline capped at 55 seconds,
+below the Function's 60-second timeout. A deadline abort maps to terminal
+timeout and refund; replay must return that stored timeout without another
+provider call.
+
 ## Public Errors
 
 All failures use `broker-error-v1`. Fixtures are authoritative:
@@ -86,6 +96,7 @@ All failures use `broker-error-v1`. Fixtures are authoritative:
 Do not add ad hoc HTTP bodies. Error output must not contain provider names,
 stage traces, project/token claims, configuration names, prompts, hints, image
 bytes, source URLs, stack traces, or local paths.
+Never reflect a request ID until it passes UUID validation.
 
 ## Local Checks
 
@@ -117,7 +128,11 @@ The broker tests cover:
 - all provider settlement outcomes;
 - authorization, dispatch, terminal, refund, and finalize fault injection;
 - 60-second lease boundary and independent retention behavior;
-- malformed/unversioned/unknown durable state rejection;
+- exact-boundary dispatch races and cross-instance no-double-dispatch;
+- malformed/unversioned/unknown durable state, request/ledger orphans, and
+  mismatched replay/refund bindings;
+- provider abort deadline with terminal timeout/refund persistence;
+- malformed request-ID non-reflection;
 - direct provider bypass rejection and minimized OpenAI request construction.
 
 ## Disabled And Rollback Posture

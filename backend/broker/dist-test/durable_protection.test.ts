@@ -78,7 +78,7 @@ function readyFactory(options: {
   };
 }
 
-test('Firebase verifier checks revoked Auth and project before consuming App Check', async () => {
+test('Firebase verifier uses the SDK response.token claims after revoked Auth verification', async () => {
   const order: string[] = [];
   const verifier = new FirebaseAdminBrokerTokenVerifier({
     auth: {
@@ -99,8 +99,12 @@ test('Firebase verifier checks revoked Auth and project before consuming App Che
         assert.deepEqual(options, { consume: true });
         return {
           appId: 'owner-test-app',
-          aud: ['123456789', 'my-art-collections'],
-          iss: 'https://firebaseappcheck.googleapis.com/123456789',
+          token: {
+            aud: ['123456789', 'my-art-collections'],
+            iss: 'https://firebaseappcheck.googleapis.com/123456789',
+            sub: 'owner-test-app',
+            app_id: 'owner-test-app',
+          },
           alreadyConsumed: false,
         };
       },
@@ -147,14 +151,22 @@ test('consumed and wrong-project App Check tokens fail closed', async () => {
   for (const body of [
     {
       appId: 'owner-test-app',
-      aud: ['123456789', 'my-art-collections'],
-      iss: 'https://firebaseappcheck.googleapis.com/123456789',
+      token: {
+        aud: ['123456789', 'my-art-collections'],
+        iss: 'https://firebaseappcheck.googleapis.com/123456789',
+        sub: 'owner-test-app',
+        app_id: 'owner-test-app',
+      },
       alreadyConsumed: true,
     },
     {
       appId: 'owner-test-app',
-      aud: ['999999999', 'wrong-project'],
-      iss: 'https://firebaseappcheck.googleapis.com/999999999',
+      token: {
+        aud: ['999999999', 'wrong-project'],
+        iss: 'https://firebaseappcheck.googleapis.com/999999999',
+        sub: 'owner-test-app',
+        app_id: 'owner-test-app',
+      },
       alreadyConsumed: false,
     },
   ]) {
@@ -200,6 +212,7 @@ test('Firestore acquire transaction creates one request and one credit under con
   const db = new MemoryFirestore();
   db.seed('brokerDurableControl/live', {
     record_version: 'broker-control-v1',
+    breakerOpen: false,
     perSubjectCreditCap: 3,
     brokerCreditCap: 100,
     oneInFlightPerSubject: true,
@@ -224,27 +237,50 @@ test('Firestore acquire transaction creates one request and one credit under con
   });
 });
 
-test('Firestore malformed and orphan records are unsafe rather than absent', async () => {
-  const db = new MemoryFirestore();
-  const store = new FirestoreDurableBrokerStore(db);
-  const lifecycle = store.createRequestLifecycle();
+test('Firestore malformed and request-ledger orphan records are unsafe rather than absent', async () => {
   const current = request();
-  const requestRef = store.requestRef('quota_subject_v1_aaaaaaaaaaaaaaaa', current.request_id);
-  db.seed(requestRef.path, { payload_hash: current.payload_hash, state: 'completed' });
-  const result = await lifecycle.acquire({
-    quota_subject: 'quota_subject_v1_aaaaaaaaaaaaaaaa',
-    request_id: current.request_id,
-    payload_hash: current.payload_hash,
-    credit_cost: 1,
-    now: FIXED_NOW,
-  });
-  assert.equal(result.kind, 'unsafe_record');
+  {
+    const db = new MemoryFirestore();
+    const store = new FirestoreDurableBrokerStore(db);
+    db.seed(store.requestRef(lifecycleInput().quota_subject, current.request_id).path, {
+      payload_hash: current.payload_hash,
+      state: 'completed',
+    });
+    assert.equal(
+      (await store.createRequestLifecycle().acquire(lifecycleInput())).kind,
+      'unsafe_record',
+    );
+  }
+  {
+    const db = validControlFirestore();
+    const store = new FirestoreDurableBrokerStore(db);
+    db.seed(store.ledgerRef(lifecycleInput().quota_subject, current.request_id).path, {
+      record_version: 'broker-credit-ledger-v1',
+      quota_subject: lifecycleInput().quota_subject,
+      request_id: current.request_id,
+      state: 'reserved',
+      credit_cost: 1,
+    });
+    assert.equal(
+      (await store.createRequestLifecycle().acquire(lifecycleInput())).kind,
+      'unsafe_record',
+    );
+  }
+  {
+    const db = validControlFirestore();
+    const store = new FirestoreDurableBrokerStore(db);
+    const lifecycle = store.createRequestLifecycle();
+    assert.equal((await lifecycle.acquire(lifecycleInput())).kind, 'reserved');
+    db.documents.delete(store.ledgerRef(lifecycleInput().quota_subject, current.request_id).path);
+    assert.equal((await lifecycle.acquire(lifecycleInput())).kind, 'unsafe_record');
+  }
 });
 
 test('Firestore terminal settlement is atomic and idempotent', async () => {
   const db = new MemoryFirestore();
   db.seed('brokerDurableControl/live', {
     record_version: 'broker-control-v1',
+    breakerOpen: false,
     perSubjectCreditCap: 3,
     brokerCreditCap: 100,
     oneInFlightPerSubject: true,
@@ -263,7 +299,7 @@ test('Firestore terminal settlement is atomic and idempotent', async () => {
   if (acquired.kind !== 'reserved') {
     return;
   }
-  await lifecycle.markDispatchStarted(acquired.record);
+  await lifecycle.markDispatchStarted(acquired.record, FIXED_NOW);
   await lifecycle.persistTerminal(acquired.record, {
     kind: 'error',
     failure: { request_id: current.request_id, condition: 'provider_timeout' },
@@ -355,3 +391,445 @@ test('quota subject is one-way derived from the single approved project identity
   assert.match(value, /^quota_subject_v1_[a-f0-9]{64}$/);
   assert.equal(value.includes('owner-uid'), false);
 });
+
+test('owner allowlist and consent reject before durable entitlement or breaker reads', async () => {
+  const cases = [
+    {
+      name: 'forbidden uid',
+      store: new FakeDurableBrokerStore(),
+      tokenMap: new Map([
+        ['owner-auth-token|owner-app-check-token', { uid: 'not-allowed', appId: 'owner-test-app' }],
+      ]),
+      body: request(),
+      expected: 'forbidden',
+    },
+    {
+      name: 'missing consent',
+      store: new FakeDurableBrokerStore(),
+      body: request({ consent_status: 'missing' }),
+      expected: 'consent_required',
+    },
+    {
+      name: 'stale consent',
+      store: new FakeDurableBrokerStore(),
+      body: request({ consent_copy_version: 'research-consent-v0' }),
+      expected: 'consent_stale',
+    },
+  ];
+  for (const current of cases) {
+    const protection = fakeProtection(current.store, current.tokenMap);
+    const handler = createResearchBrokerHttpHandler({
+      env: durableEnv(),
+      dependenciesFactory: () => readyFactory({ protection }),
+    });
+    const response = createHttpResponse();
+    await handler(createHttpRequest({ data: current.body }), response.responder);
+    assert.equal((response.json.error as Record<string, unknown>).code, current.expected, current.name);
+    assert.equal(current.store.accessReadCount, 0, current.name);
+  }
+});
+
+test('malformed request IDs are never reflected into broker-error-v1', async () => {
+  const store = new FakeDurableBrokerStore();
+  const protection = fakeProtection(store);
+  const handler = createResearchBrokerHttpHandler({
+    env: durableEnv(),
+    dependenciesFactory: () => readyFactory({ protection }),
+  });
+  const response = createHttpResponse();
+  await handler(createHttpRequest({
+    data: { ...request(), request_id: 'private collector notes must not echo' },
+  }), response.responder);
+  assert.equal(response.statusCode, 400);
+  assert.equal(response.json.request_id, undefined);
+  assert.equal(response.body.includes('private collector notes'), false);
+  assert.equal(store.accessReadCount, 0);
+});
+
+test('same-version malformed credit controls and aggregates fail closed', async () => {
+  const cases: Array<{
+    name: string;
+    control?: Record<string, unknown>;
+    subject?: Record<string, unknown>;
+    global?: Record<string, unknown>;
+  }> = [
+    {
+      name: 'string breaker state',
+      control: { breakerOpen: 'false' },
+    },
+    {
+      name: 'string subject cap',
+      control: { perSubjectCreditCap: '3' },
+    },
+    {
+      name: 'string broker cap',
+      control: { brokerCreditCap: '100' },
+    },
+    {
+      name: 'string one-in-flight policy',
+      control: { oneInFlightPerSubject: 'true' },
+    },
+    {
+      name: 'unknown control field',
+      control: { unexpected: false },
+    },
+    {
+      name: 'string subject exposure',
+      subject: {
+        record_version: 'broker-credit-subject-v1',
+        exposed_credits: '0',
+        reserved_count: 0,
+      },
+      global: { record_version: 'broker-credit-global-v1', exposed_credits: 0 },
+    },
+    {
+      name: 'string subject reservation count',
+      subject: {
+        record_version: 'broker-credit-subject-v1',
+        exposed_credits: 0,
+        reserved_count: '0',
+      },
+      global: { record_version: 'broker-credit-global-v1', exposed_credits: 0 },
+    },
+    {
+      name: 'unknown subject aggregate field',
+      subject: {
+        record_version: 'broker-credit-subject-v1',
+        exposed_credits: 0,
+        reserved_count: 0,
+        unexpected: 0,
+      },
+      global: { record_version: 'broker-credit-global-v1', exposed_credits: 0 },
+    },
+    {
+      name: 'string global exposure',
+      global: { record_version: 'broker-credit-global-v1', exposed_credits: '0' },
+    },
+    {
+      name: 'unknown global aggregate field',
+      global: {
+        record_version: 'broker-credit-global-v1',
+        exposed_credits: 0,
+        unexpected: 0,
+      },
+    },
+    {
+      name: 'reserved exceeds exposure',
+      subject: {
+        record_version: 'broker-credit-subject-v1',
+        exposed_credits: 0,
+        reserved_count: 1,
+      },
+      global: { record_version: 'broker-credit-global-v1', exposed_credits: 0 },
+    },
+    {
+      name: 'global exposure below subject exposure',
+      subject: {
+        record_version: 'broker-credit-subject-v1',
+        exposed_credits: 2,
+        reserved_count: 0,
+      },
+      global: { record_version: 'broker-credit-global-v1', exposed_credits: 1 },
+    },
+    {
+      name: 'subject aggregate orphaned from global aggregate',
+      subject: {
+        record_version: 'broker-credit-subject-v1',
+        exposed_credits: 0,
+        reserved_count: 0,
+      },
+    },
+  ];
+  for (const current of cases) {
+    const db = new MemoryFirestore();
+    const store = new FirestoreDurableBrokerStore(db);
+    db.seed('brokerDurableControl/live', {
+      record_version: 'broker-control-v1',
+      breakerOpen: false,
+      perSubjectCreditCap: 3,
+      brokerCreditCap: 100,
+      oneInFlightPerSubject: true,
+      ...current.control,
+    });
+    if (current.subject !== undefined) {
+      db.seed(store.subjectRef('quota_subject_v1_aaaaaaaaaaaaaaaa').path, current.subject);
+    }
+    if (current.global !== undefined) {
+      db.seed(store.globalUsageRef().path, current.global);
+    }
+    const result = await store.createRequestLifecycle().acquire(lifecycleInput());
+    assert.equal(result.kind, 'unsafe_record', current.name);
+    assert.equal(db.find('brokerDurableIdempotency/').length, 0, current.name);
+    assert.equal(db.find('brokerDurableLedger/').length, 0, current.name);
+  }
+});
+
+test('terminal replay requires matching request, outcome, settlement, and ledger records', async () => {
+  const mutations: Array<{
+    name: string;
+    mutate: (db: MemoryFirestore, store: FirestoreDurableBrokerStore) => void;
+  }> = [
+    {
+      name: 'missing ledger',
+      mutate: (db, store) => db.documents.delete(
+        store.ledgerRef('quota_subject_v1_aaaaaaaaaaaaaaaa', request().request_id).path,
+      ),
+    },
+    {
+      name: 'mismatched ledger request id',
+      mutate: (db, store) => {
+        const ref = store.ledgerRef('quota_subject_v1_aaaaaaaaaaaaaaaa', request().request_id);
+        db.seed(ref.path, { ...db.read(ref.path)!, request_id: '22222222-2222-4222-8222-222222222222' });
+      },
+    },
+    {
+      name: 'ledger-only orphan',
+      mutate: (db, store) => db.documents.delete(
+        store.requestRef('quota_subject_v1_aaaaaaaaaaaaaaaa', request().request_id).path,
+      ),
+    },
+    {
+      name: 'mismatched ledger quota subject',
+      mutate: (db, store) => {
+        const ref = store.ledgerRef('quota_subject_v1_aaaaaaaaaaaaaaaa', request().request_id);
+        db.seed(ref.path, { ...db.read(ref.path)!, quota_subject: 'quota_subject_v1_bbbbbbbbbbbbbbbb' });
+      },
+    },
+    {
+      name: 'malformed ledger state',
+      mutate: (db, store) => {
+        const ref = store.ledgerRef('quota_subject_v1_aaaaaaaaaaaaaaaa', request().request_id);
+        db.seed(ref.path, { ...db.read(ref.path)!, state: 'settled' });
+      },
+    },
+    {
+      name: 'malformed ledger credit cost',
+      mutate: (db, store) => {
+        const ref = store.ledgerRef('quota_subject_v1_aaaaaaaaaaaaaaaa', request().request_id);
+        db.seed(ref.path, { ...db.read(ref.path)!, credit_cost: 2 });
+      },
+    },
+    {
+      name: 'reserved ledger has an unexpected refund reason',
+      mutate: (db, store) => {
+        const ref = store.ledgerRef('quota_subject_v1_aaaaaaaaaaaaaaaa', request().request_id);
+        db.seed(ref.path, { ...db.read(ref.path)!, reason: 'provider_timeout' });
+      },
+    },
+    {
+      name: 'ledger has an unknown field',
+      mutate: (db, store) => {
+        const ref = store.ledgerRef('quota_subject_v1_aaaaaaaaaaaaaaaa', request().request_id);
+        db.seed(ref.path, { ...db.read(ref.path)!, unexpected: true });
+      },
+    },
+    {
+      name: 'mismatched stored quota subject',
+      mutate: (db, store) => {
+        const ref = store.requestRef('quota_subject_v1_aaaaaaaaaaaaaaaa', request().request_id);
+        db.seed(ref.path, { ...db.read(ref.path)!, quota_subject: 'quota_subject_v1_bbbbbbbbbbbbbbbb' });
+      },
+    },
+    {
+      name: 'mismatched terminal outcome request id',
+      mutate: (db, store) => {
+        const ref = store.requestRef('quota_subject_v1_aaaaaaaaaaaaaaaa', request().request_id);
+        const record = db.read(ref.path)!;
+        db.seed(ref.path, {
+          ...record,
+          terminal_outcome: {
+            kind: 'error',
+            failure: {
+              request_id: '22222222-2222-4222-8222-222222222222',
+              condition: 'provider_timeout',
+            },
+          },
+        });
+      },
+    },
+    {
+      name: 'finalized failure disguised as pending refund',
+      mutate: (db, store) => {
+        const ref = store.requestRef('quota_subject_v1_aaaaaaaaaaaaaaaa', request().request_id);
+        const record = db.read(ref.path)!;
+        db.seed(ref.path, {
+          ...record,
+          settlement_state: 'pending_refund',
+          terminal_outcome: {
+            kind: 'error',
+            failure: { request_id: request().request_id, condition: 'provider_failure' },
+          },
+        });
+      },
+    },
+    {
+      name: 'refunded ledger reason does not match terminal failure',
+      mutate: (db, store) => {
+        const requestRef = store.requestRef('quota_subject_v1_aaaaaaaaaaaaaaaa', request().request_id);
+        const ledgerRef = store.ledgerRef('quota_subject_v1_aaaaaaaaaaaaaaaa', request().request_id);
+        db.seed(requestRef.path, { ...db.read(requestRef.path)!, settlement_state: 'refunded' });
+        db.seed(ledgerRef.path, {
+          ...db.read(ledgerRef.path)!,
+          state: 'refunded',
+          reason: 'provider_rate_limited',
+        });
+      },
+    },
+  ];
+  for (const current of mutations) {
+    const { db, store } = await terminalTimeoutStore();
+    current.mutate(db, store);
+    const result = await store.createRequestLifecycle().acquire(lifecycleInput());
+    assert.equal(result.kind, 'unsafe_record', current.name);
+  }
+});
+
+test('refund rejects malformed or orphan credit aggregates without partial settlement', async () => {
+  const mutations: Array<{
+    name: string;
+    mutate: (db: MemoryFirestore, store: FirestoreDurableBrokerStore) => void;
+  }> = [
+    {
+      name: 'missing subject aggregate',
+      mutate: (db, store) => db.documents.delete(store.subjectRef(lifecycleInput().quota_subject).path),
+    },
+    {
+      name: 'missing global aggregate',
+      mutate: (db, store) => db.documents.delete(store.globalUsageRef().path),
+    },
+    {
+      name: 'malformed subject exposure',
+      mutate: (db, store) => {
+        const ref = store.subjectRef(lifecycleInput().quota_subject);
+        db.seed(ref.path, { ...db.read(ref.path)!, exposed_credits: '1' });
+      },
+    },
+    {
+      name: 'malformed subject reservation count',
+      mutate: (db, store) => {
+        const ref = store.subjectRef(lifecycleInput().quota_subject);
+        db.seed(ref.path, { ...db.read(ref.path)!, reserved_count: '1' });
+      },
+    },
+    {
+      name: 'malformed global exposure',
+      mutate: (db, store) => {
+        const ref = store.globalUsageRef();
+        db.seed(ref.path, { ...db.read(ref.path)!, exposed_credits: '1' });
+      },
+    },
+    {
+      name: 'subject reservation aggregate is empty',
+      mutate: (db, store) => {
+        const ref = store.subjectRef(lifecycleInput().quota_subject);
+        db.seed(ref.path, { ...db.read(ref.path)!, reserved_count: 0 });
+      },
+    },
+    {
+      name: 'global exposure is below subject exposure',
+      mutate: (db, store) => {
+        const ref = store.globalUsageRef();
+        db.seed(ref.path, { ...db.read(ref.path)!, exposed_credits: 0 });
+      },
+    },
+  ];
+  for (const current of mutations) {
+    const { db, store } = await terminalTimeoutStore();
+    const lifecycle = store.createRequestLifecycle();
+    const replay = await lifecycle.acquire(lifecycleInput());
+    assert.equal(replay.kind, 'replay', current.name);
+    if (replay.kind !== 'replay') {
+      continue;
+    }
+    current.mutate(db, store);
+    await assert.rejects(lifecycle.settle(replay.record), /unsafe_credit_aggregate/, current.name);
+    assert.equal(
+      db.read(store.requestRef(lifecycleInput().quota_subject, request().request_id).path)?.settlement_state,
+      'pending_refund',
+      current.name,
+    );
+    assert.equal(
+      db.read(store.ledgerRef(lifecycleInput().quota_subject, request().request_id).path)?.state,
+      'reserved',
+      current.name,
+    );
+  }
+});
+
+test('Firestore dispatch CAS prevents exact-boundary and cross-instance double dispatch', async () => {
+  const db = validControlFirestore();
+  const store = new FirestoreDurableBrokerStore(db);
+  const lifecycleA = store.createRequestLifecycle();
+  const lifecycleB = store.createRequestLifecycle();
+  const acquired = await lifecycleA.acquire(lifecycleInput());
+  assert.equal(acquired.kind, 'reserved');
+  if (acquired.kind !== 'reserved') {
+    return;
+  }
+  const boundary = new Date(FIXED_NOW.getTime() + 60_000);
+  const [expiry, dispatch] = await Promise.all([
+    lifecycleB.acquire(lifecycleInput(boundary)),
+    lifecycleA.markDispatchStarted(acquired.record, boundary),
+  ]);
+  assert.equal(expiry.kind, 'replay');
+  assert.equal(dispatch.kind, 'lease_expired');
+
+  const secondDb = validControlFirestore();
+  const secondStore = new FirestoreDurableBrokerStore(secondDb);
+  const firstInstance = secondStore.createRequestLifecycle();
+  const secondInstance = secondStore.createRequestLifecycle();
+  const secondAcquired = await firstInstance.acquire(lifecycleInput());
+  assert.equal(secondAcquired.kind, 'reserved');
+  if (secondAcquired.kind !== 'reserved') {
+    return;
+  }
+  const attempts = await Promise.allSettled([
+    firstInstance.markDispatchStarted(secondAcquired.record, FIXED_NOW),
+    secondInstance.markDispatchStarted({ ...secondAcquired.record }, FIXED_NOW),
+  ]);
+  assert.equal(attempts.filter((entry) => entry.status === 'fulfilled').length, 1);
+  assert.equal(attempts.filter((entry) => entry.status === 'rejected').length, 1);
+});
+
+function lifecycleInput(now: Date = FIXED_NOW) {
+  const current = request();
+  return {
+    quota_subject: 'quota_subject_v1_aaaaaaaaaaaaaaaa',
+    request_id: current.request_id,
+    payload_hash: current.payload_hash,
+    credit_cost: 1 as const,
+    now,
+  };
+}
+
+function validControlFirestore(): MemoryFirestore {
+  const db = new MemoryFirestore();
+  db.seed('brokerDurableControl/live', {
+    record_version: 'broker-control-v1',
+    breakerOpen: false,
+    perSubjectCreditCap: 3,
+    brokerCreditCap: 100,
+    oneInFlightPerSubject: true,
+  });
+  return db;
+}
+
+async function terminalTimeoutStore(): Promise<{
+  db: MemoryFirestore;
+  store: FirestoreDurableBrokerStore;
+}> {
+  const db = validControlFirestore();
+  const store = new FirestoreDurableBrokerStore(db);
+  const lifecycle = store.createRequestLifecycle();
+  const acquired = await lifecycle.acquire(lifecycleInput());
+  assert.equal(acquired.kind, 'reserved');
+  if (acquired.kind !== 'reserved') {
+    throw new Error('fixture reservation failed');
+  }
+  await lifecycle.markDispatchStarted(acquired.record, FIXED_NOW);
+  await lifecycle.persistTerminal(acquired.record, {
+    kind: 'error',
+    failure: { request_id: request().request_id, condition: 'provider_timeout' },
+  }, 'refund');
+  return { db, store };
+}

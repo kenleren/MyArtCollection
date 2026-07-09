@@ -242,6 +242,7 @@ export function brokerErrorEnvelope(
   retryAfterSeconds?: number,
 ): { status: number; body: BrokerErrorEnvelope } {
   const definition = BROKER_ERROR_DEFINITIONS[condition];
+  const safeRequestId = requestId !== undefined && isUuid(requestId) ? requestId : undefined;
   const dynamicRetryAfter = condition === 'provider_rate_limited'
     ? clampRetryAfterSeconds(retryAfterSeconds)
     : definition.retry_after_seconds;
@@ -250,7 +251,7 @@ export function brokerErrorEnvelope(
     body: {
       ok: false,
       error_contract_version: CURRENT_ERROR_CONTRACT_VERSION,
-      ...(requestId === undefined ? {} : { request_id: requestId }),
+      ...(safeRequestId === undefined ? {} : { request_id: safeRequestId }),
       status: condition === 'idempotency_conflict' ? 'conflict' : 'rejected',
       error: {
         code: definition.code,
@@ -262,6 +263,10 @@ export function brokerErrorEnvelope(
       },
     },
   };
+}
+
+function isUuid(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(value);
 }
 
 export function clampRetryAfterSeconds(value: number | undefined): number {

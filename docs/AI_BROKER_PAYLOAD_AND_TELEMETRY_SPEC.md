@@ -117,9 +117,11 @@ breaker, durable-state, provider, and output failure uses one body:
 }
 ```
 
-`request_id` and `retry_after_seconds` are optional. Idempotency conflict uses
-`status=conflict`. The exhaustive HTTP/code/message/retry mapping is versioned
-in `backend/broker/fixtures/broker-error-v1.json` and checked against source.
+`request_id` and `retry_after_seconds` are optional. `request_id` is reflected
+only after UUID validation; malformed or free-form values are omitted.
+Idempotency conflict uses `status=conflict`. The exhaustive
+HTTP/code/message/retry mapping is versioned in
+`backend/broker/fixtures/broker-error-v1.json` and checked against source.
 
 Public codes distinguish `not_entitled`, `credits_exhausted`, `rate_limited`,
 `request_in_flight`, `request_outcome_unknown`, upstream timeout/refusal/failure,

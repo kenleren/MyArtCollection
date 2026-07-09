@@ -29,6 +29,7 @@ function dependencies(options: {
   configFailure?: boolean;
   constructionFailure?: boolean;
   authorizationFailure?: boolean;
+  onConfigure?: () => void;
 } = {}): { deps: BrokerDependencies; counters: DependencyCounters; provider: ProviderClient } {
   const counters = { config: 0, construction: 0, authorization: 0 };
   const provider = options.provider ?? new ResultProvider();
@@ -37,6 +38,7 @@ function dependencies(options: {
     providerProvisioner: {
       configure: () => {
         counters.config += 1;
+        options.onConfigure?.();
         if (options.configFailure) {
           throw new Error('injected config failure');
         }
@@ -297,6 +299,25 @@ test('failed dispatch persistence forbids fetch and replays the terminal failure
   }
   assert.equal(provider.callCount, 0);
   assert.equal(counters.config, 1);
+  assert.equal(lifecycle.refundCount, 1);
+});
+
+test('provider setup crossing the reservation boundary terminalizes and refunds without fetch', async () => {
+  let now = FIXED_NOW;
+  const lifecycle = new InMemoryRequestLifecycle();
+  const { deps, provider } = dependencies({
+    lifecycle,
+    now: () => now,
+    onConfigure: () => {
+      now = new Date(FIXED_NOW.getTime() + 60_000);
+    },
+  });
+  const result = await handleResearchRequest(request(), baseContext, deps);
+  assert.equal(result.ok, false);
+  if (!result.ok) {
+    assert.equal(result.failure.condition, 'reservation_lease_expired');
+  }
+  assert.equal(provider.callCount, 0);
   assert.equal(lifecycle.refundCount, 1);
 });
 

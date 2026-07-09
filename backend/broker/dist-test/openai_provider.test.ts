@@ -1,13 +1,16 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import { createFakeBrokerDependencies, handleResearchRequest } from '../src/broker.js';
 import type { BrokerRequest } from '../src/contracts.js';
 import {
+  DEFAULT_PROVIDER_TIMEOUT_MILLISECONDS,
   buildOpenAiResponsesRequest,
   createOpenAiProvider,
 } from '../src/openai_provider.js';
 import { authorizeProviderRequest } from '../src/provider_authorization.js';
-import { request } from './test_helpers.js';
+import { InMemoryRequestLifecycle } from '../src/request_lifecycle.js';
+import { FIXED_NOW, baseContext, request } from './test_helpers.js';
 
 test('direct provider use without broker authorization cannot fetch', async () => {
   let fetchCalls = 0;
@@ -38,6 +41,73 @@ test('provider maps rate limits without reading response content', async () => {
     kind: 'rate_limited',
     retry_after_seconds: 999,
   });
+});
+
+test('provider deadline aborts before the Function timeout and persists terminal timeout refund', async () => {
+  let scheduledDelay: number | undefined;
+  let fireTimeout: (() => void) | undefined;
+  let cancelCount = 0;
+  let fetchCalls = 0;
+  let capturedSignal: AbortSignal | undefined;
+  const provider = createOpenAiProvider({
+    apiKey: 'test-only-key',
+    allowedDomains: ['museum.example'],
+    scheduleTimeout: (callback, delayMs) => {
+      fireTimeout = callback;
+      scheduledDelay = delayMs;
+      return 1 as unknown as ReturnType<typeof setTimeout>;
+    },
+    cancelTimeout: () => {
+      cancelCount += 1;
+    },
+    fetchImpl: (async (_input, init) => {
+      fetchCalls += 1;
+      capturedSignal = init?.signal as AbortSignal;
+      return new Promise<Response>((_resolve, reject) => {
+        capturedSignal?.addEventListener('abort', () => {
+          reject(new DOMException('aborted by fake deadline', 'AbortError'));
+        }, { once: true });
+      });
+    }) as typeof fetch,
+  });
+  const lifecycle = new InMemoryRequestLifecycle();
+  const dependencies = createFakeBrokerDependencies({
+    requestLifecycle: lifecycle,
+    providerProvisioner: {
+      configure: () => ({}),
+      construct: () => provider,
+    },
+    authorizeProvider: authorizeProviderRequest,
+    now: () => FIXED_NOW,
+    testProvider: provider,
+  });
+
+  const pending = handleResearchRequest(request(), baseContext, dependencies);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(scheduledDelay, DEFAULT_PROVIDER_TIMEOUT_MILLISECONDS);
+  assert.equal(DEFAULT_PROVIDER_TIMEOUT_MILLISECONDS < 60_000, true);
+  assert.equal(capturedSignal instanceof AbortSignal, true);
+  assert.equal(capturedSignal?.aborted, false);
+  fireTimeout?.();
+
+  const result = await pending;
+  assert.equal(result.ok, false);
+  if (!result.ok) {
+    assert.equal(result.failure.condition, 'provider_timeout');
+  }
+  assert.equal(capturedSignal?.aborted, true);
+  assert.equal(fetchCalls, 1);
+  assert.equal(cancelCount, 1);
+  assert.equal(lifecycle.refundCount, 1);
+
+  const replay = await handleResearchRequest(request(), baseContext, dependencies);
+  assert.equal(replay.ok, false);
+  if (!replay.ok) {
+    assert.equal(replay.failure.condition, 'provider_timeout');
+    assert.equal(replay.failure.replayed, true);
+  }
+  assert.equal(fetchCalls, 1);
+  assert.equal(lifecycle.refundCount, 1);
 });
 
 test('OpenAI request remains minimized, stateless, and allowlisted', () => {
