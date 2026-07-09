@@ -63,6 +63,25 @@ UNSAFE_STRUCTURED_DATA_PATTERNS = [
     r"\bcertified provenance\b",
 ]
 
+HOMEPAGE_BANNED_COPY_PATTERNS = [
+    r"\bbroker\b",
+    r"\bprovider\b",
+    r"\brollout\b",
+    r"\bdeploy(?:ed|ment|s)?\b",
+    r"\benable(?:d|s|ment)?\b",
+    r"\bfirebase\b",
+    r"\bsdk\b",
+    r"\bremote config\b",
+    r"\bservice-boundary\b",
+    r"\bpayload\b",
+    r"\bbeta\b",
+    r"\brelease track\b",
+    r"\bflags?\b",
+    r"\btodo\b",
+    r"\brelease note\b",
+    r"\bimplementation\b",
+]
+
 
 class SiteParser(HTMLParser):
     def __init__(self) -> None:
@@ -304,6 +323,19 @@ def validate_html_shape(path: Path, parser: SiteParser) -> list[str]:
     return errors
 
 
+def validate_homepage_copy(path: Path) -> list[str]:
+    route = route_for_html(path)
+    if route != "/":
+        return []
+
+    errors: list[str] = []
+    text = path.read_text(encoding="utf-8").lower()
+    for pattern in HOMEPAGE_BANNED_COPY_PATTERNS:
+        if re.search(pattern, text):
+            errors.append(f"{route}: banned homepage copy matched {pattern!r}")
+    return errors
+
+
 def main() -> int:
     html_paths = sorted(SITE_ROOT.glob("**/*.html"))
     routes = {route_for_html(path) for path in html_paths}
@@ -321,6 +353,7 @@ def main() -> int:
         errors.extend(validate_html_shape(path, parser))
         errors.extend(validate_json_ld(path, parser))
         errors.extend(validate_links_and_assets(path, parser))
+        errors.extend(validate_homepage_copy(path))
 
     if errors:
         print("Static site validation failed:")
