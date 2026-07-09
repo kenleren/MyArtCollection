@@ -2757,6 +2757,18 @@ String _defaultComparableCaveat(ComparableValueKind kind) {
   };
 }
 
+String _researchSourceTypeLabel(ResearchSourceType type) {
+  return switch (type) {
+    ResearchSourceType.museumCollection => 'Museum collection',
+    ResearchSourceType.culturalHeritageApi => 'Cultural archive',
+    ResearchSourceType.gallery => 'Gallery',
+    ResearchSourceType.artistFoundation => 'Artist foundation',
+    ResearchSourceType.auctionHouse => 'Auction house',
+    ResearchSourceType.reference ||
+    ResearchSourceType.unknown => 'Reference source',
+  };
+}
+
 ResearchSourceHit? _linkedAuctionSource(
   ComparableValueSignal signal,
   List<ResearchSourceHit> sourceHits,
@@ -2867,7 +2879,9 @@ class _CandidateCitationCard extends StatelessWidget {
           const SizedBox(height: 12),
           if (sourceHit != null) ...[
             Text('Source: ${sourceHit.sourceName}'),
-            Text('Source type: ${sourceHit.sourceType.storageValue}'),
+            Text(
+              'Source type: ${_researchSourceTypeLabel(sourceHit.sourceType)}',
+            ),
             if (sourceHit.sourceUrl != null)
               Text('Citation: ${sourceHit.sourceUrl!}'),
             if (sourceHit.rawSnippet != null)
