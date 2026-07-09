@@ -1573,6 +1573,7 @@ class _ArtworkEditScreenState extends State<ArtworkEditScreen> {
                     border: const OutlineInputBorder(),
                     labelText: field.label,
                     helperText: field.helperText,
+                    helperMaxLines: field.helperMaxLines,
                   ),
                 ),
                 if (field.usesStructuredMoney) ...[
@@ -1593,6 +1594,7 @@ class _ArtworkEditScreenState extends State<ArtworkEditScreen> {
                             labelText: 'Amount',
                             helperText:
                                 'Numbers only. Leave out the currency symbol.',
+                            helperMaxLines: 2,
                           ),
                         ),
                       ),
@@ -1606,8 +1608,8 @@ class _ArtworkEditScreenState extends State<ArtworkEditScreen> {
                           decoration: const InputDecoration(
                             border: OutlineInputBorder(),
                             labelText: 'Currency',
-                            helperText:
-                                'Use a three-letter code such as USD, EUR, or NOK.',
+                            helperText: 'Use USD, EUR, or NOK.',
+                            helperMaxLines: 2,
                           ),
                         ),
                       ),
@@ -4543,8 +4545,8 @@ const _editableArtworkFields = [
   _EditableArtworkField(
     key: ArtworkFieldKeys.purchasePrice,
     label: 'Purchase price',
-    helperText:
-        'Keep legacy text or add an amount with a three-letter currency code.',
+    helperText: 'Legacy text is fine, or add amount and currency.',
+    helperMaxLines: 2,
     usesStructuredMoney: true,
   ),
   _EditableArtworkField(
@@ -4559,6 +4561,7 @@ const _editableArtworkFields = [
     helperText:
         'User-provided only. Add an amount with a three-letter currency code when helpful.',
     keyboardType: TextInputType.text,
+    helperMaxLines: 2,
     usesStructuredMoney: true,
   ),
   _EditableArtworkField(
@@ -4577,6 +4580,7 @@ class _EditableArtworkField {
     required this.helperText,
     this.keyboardType = TextInputType.text,
     this.maxLines = 1,
+    this.helperMaxLines = 1,
     this.usesStructuredMoney = false,
   });
 
@@ -4585,6 +4589,7 @@ class _EditableArtworkField {
   final String helperText;
   final TextInputType keyboardType;
   final int maxLines;
+  final int helperMaxLines;
   final bool usesStructuredMoney;
 }
 
@@ -4594,16 +4599,15 @@ PrototypeField _detailDisplayField(PrototypeField field) {
   }
 
   final guidanceValue = switch (field.label) {
-    'Title' => 'Add a title for this work.',
+    'Title' => 'Title pending review.',
     'Artist' => 'Artist not yet confirmed.',
-    'Year' => 'Please confirm the year or date.',
-    'Medium' => 'Please confirm medium or material.',
-    'Dimensions' => 'Add dimensions when available.',
+    'Year' => 'Year pending review.',
+    'Medium' => 'Medium pending review.',
+    'Dimensions' => 'Dimensions pending review.',
     'Purchase price' => 'Purchase price not recorded.',
-    'Current location' => 'Add the current location.',
-    'User-provided insurance value' =>
-      'Add a user-provided insurance value when needed.',
-    'Condition notes' => 'Add visible condition notes.',
+    'Current location' => 'Location pending review.',
+    'User-provided insurance value' => 'Insurance value pending review.',
+    'Condition notes' => 'Condition notes pending review.',
     _ => field.value,
   };
 
@@ -4672,6 +4676,7 @@ bool _isPlaceholderCoreFieldValue(String key, String value) {
     ArtworkFieldKeys.currentLocation ||
     ArtworkFieldKeys.conditionNotes =>
       normalized == 'needs review' || normalized == 'unknown',
+    ArtworkFieldKeys.purchasePrice => normalized == 'not set',
     ArtworkFieldKeys.insuranceValue =>
       normalized == 'not set' ||
           normalized == 'needs review' ||
@@ -4688,6 +4693,7 @@ bool _isPlaceholderPrototypeFieldValue(String label, String value) {
     'year' => ArtworkFieldKeys.year,
     'medium' => ArtworkFieldKeys.medium,
     'dimensions' => ArtworkFieldKeys.dimensions,
+    'purchase price' => ArtworkFieldKeys.purchasePrice,
     'current location' => ArtworkFieldKeys.currentLocation,
     'user-provided insurance value' => ArtworkFieldKeys.insuranceValue,
     'condition notes' => ArtworkFieldKeys.conditionNotes,
@@ -4737,16 +4743,34 @@ Future<ArtworkRouteData> artworkDataForRoute(
   final researchJobs = await dependencies.artworkRepository
       .researchJobsForArtwork(record.id);
   return ArtworkRouteData(
-    artwork: prototypeArtworkFromRecord(
-      record,
-      attachments: attachments,
-      locale: locale,
+    artwork: _detailArtworkFromRecord(
+      prototypeArtworkFromRecord(
+        record,
+        attachments: attachments,
+        locale: locale,
+      ),
     ),
     isAiDraftReview:
         aiDraftJobs.isNotEmpty &&
         aiDraftJobs.first.status == AiDraftJobStatus.completed,
     latestAiDraftJob: aiDraftJobs.isEmpty ? null : aiDraftJobs.first,
     latestResearchJob: researchJobs.isEmpty ? null : researchJobs.first,
+  );
+}
+
+PrototypeArtwork _detailArtworkFromRecord(PrototypeArtwork artwork) {
+  return PrototypeArtwork(
+    id: artwork.id,
+    title: _detailDisplayField(artwork.title),
+    artist: _detailDisplayField(artwork.artist),
+    year: _detailDisplayField(artwork.year),
+    medium: _detailDisplayField(artwork.medium),
+    dimensions: _detailDisplayField(artwork.dimensions),
+    purchasePrice: _detailDisplayField(artwork.purchasePrice),
+    location: _detailDisplayField(artwork.location),
+    insuranceValue: _detailDisplayField(artwork.insuranceValue),
+    condition: _detailDisplayField(artwork.condition),
+    documents: artwork.documents,
   );
 }
 

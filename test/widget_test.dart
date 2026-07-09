@@ -2381,9 +2381,7 @@ void main() {
 
     expect(find.text('Sold Incomplete Artwork is marked sold'), findsOneWidget);
     expect(
-      find.textContaining(
-        'not treated as an active artwork that needs review',
-      ),
+      find.textContaining('not treated as an active artwork that needs review'),
       findsOneWidget,
     );
     expect(find.text('Sold Incomplete Artwork needs review'), findsNothing);
@@ -2457,8 +2455,11 @@ void main() {
       ),
       findsOneWidget,
     );
-    expect(find.text('Add a title for this work.'), findsOneWidget);
+    expect(find.text('Title pending review.'), findsWidgets);
     expect(find.text('Artist not yet confirmed.'), findsOneWidget);
+    expect(find.text('Purchase price not recorded.'), findsOneWidget);
+    expect(find.text('Untitled artwork'), findsNothing);
+    expect(find.text('Not set'), findsNothing);
     expect(find.text('Verified by you'), findsNothing);
 
     await tester.pumpWidget(const SizedBox.shrink());
@@ -3478,8 +3479,10 @@ void main() {
           state: ArtworkRecordState.needsReview,
           source: ArtworkFieldSource.userConfirmed,
           missingFieldKeys: {
+            ArtworkFieldKeys.title,
             ArtworkFieldKeys.currentLocation,
             ArtworkFieldKeys.conditionNotes,
+            ArtworkFieldKeys.insuranceValue,
           },
         ),
       );
@@ -3493,6 +3496,18 @@ void main() {
       );
       await fixture.addPrimaryImage(artworkId: 'issue-169-edit-record');
     });
+
+    await tester.pumpWidget(
+      ArchivaleApp(
+        initialRoute: AppRoutes.artworkDetails('issue-169-detail-record'),
+        dependencies: fixture.dependencies,
+      ),
+    );
+    await pumpLiveData(tester);
+    expect(find.text('Untitled artwork'), findsNothing);
+    expect(find.text('Not set'), findsNothing);
+    expect(find.text('Title pending review.'), findsWidgets);
+    expect(find.text('Insurance value pending review.'), findsOneWidget);
 
     await captureArtifactForApp(
       tester,
