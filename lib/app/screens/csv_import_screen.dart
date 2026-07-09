@@ -189,10 +189,10 @@ class _CsvImportScreenState extends State<CsvImportScreen> {
           controller: _testHarnessPathController,
           enabled: !isBusy,
           decoration: const InputDecoration(
-            labelText: 'Spreadsheet path',
-            hintText: '/path/to/collector-spreadsheet.csv',
-            helperText:
-                'Optional local path if you want to load a spreadsheet directly.',
+            labelText: 'Test file path',
+            hintText: '/path/to/records.csv',
+            helperText: 'Optional local path to load this import quickly.',
+            helperMaxLines: 2,
           ),
         ),
         const SizedBox(height: 12),
@@ -389,7 +389,7 @@ class _CsvImportScreenState extends State<CsvImportScreen> {
     final rawPath = _testHarnessPathController.text.trim();
     if (rawPath.isEmpty) {
       setState(() {
-        _errorMessage = 'Add a spreadsheet path before loading it.';
+        _errorMessage = 'Add a file path before loading it.';
       });
       return;
     }
@@ -418,7 +418,7 @@ class _CsvImportScreenState extends State<CsvImportScreen> {
         return;
       }
       setState(() {
-        _errorMessage = 'Could not read that spreadsheet path. $error';
+        _errorMessage = 'Could not read that file path. $error';
       });
     } finally {
       if (mounted) {
