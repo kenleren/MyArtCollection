@@ -11,6 +11,7 @@ import {
 import { brokerErrorEnvelope, type BrokerErrorCondition } from './error_contract.js';
 import {
   createOpenAiProvider,
+  DEFAULT_PROVIDER_TIMEOUT_MILLISECONDS,
   readOpenAiProviderConfigFromEnv,
   type OpenAiProviderConfig,
 } from './openai_provider.js';
@@ -36,12 +37,13 @@ export const DURABLE_PROTECTION_UNAVAILABLE_CODE = 'durable_protection_unavailab
 export interface ResearchBrokerHttpHandlerOptions {
   env?: NodeJS.ProcessEnv;
   dependenciesFactory?: (env: NodeJS.ProcessEnv) => ConfiguredBrokerDependenciesResult;
+  nowMilliseconds?: () => number;
 }
 
 export type ConfiguredBrokerDependenciesResult =
   | {
       kind: 'ready';
-      createDependencies: () => BrokerDependencies;
+      createDependencies: (providerDeadlineAtMs?: number) => BrokerDependencies;
       ownerUidAllowlist: ReadonlySet<string>;
       durableProtection: true;
       protection: DurableBrokerProtection;
@@ -84,11 +86,14 @@ export function createConfiguredResearchBrokerDependencies(
     ownerUidAllowlist,
     durableProtection: true,
     protection,
-    createDependencies: () => ({
+    createDependencies: (providerDeadlineAtMs) => ({
       requestLifecycle: protection.createRequestLifecycle(),
       providerProvisioner: {
         configure: () => {
-          const result = configReader(env, overrides);
+          const result = configReader(env, {
+            ...overrides,
+            ...(providerDeadlineAtMs === undefined ? {} : { providerDeadlineAtMs }),
+          });
           if (!result.ok) {
             throw new BrokerProviderConfigError(result.code);
           }
@@ -104,6 +109,7 @@ export function createConfiguredResearchBrokerDependencies(
 
 export function createResearchBrokerHttpHandler(options: ResearchBrokerHttpHandlerOptions = {}) {
   const env = options.env ?? process.env;
+  const nowMilliseconds = options.nowMilliseconds ?? Date.now;
   const dependenciesFactory = options.dependenciesFactory ?? ((currentEnv) =>
     createConfiguredResearchBrokerDependencies(currentEnv));
 
@@ -111,6 +117,7 @@ export function createResearchBrokerHttpHandler(options: ResearchBrokerHttpHandl
     request: MinimalRequest,
     response: MinimalResponse,
   ): Promise<void> {
+    const providerDeadlineAtMs = nowMilliseconds() + DEFAULT_PROVIDER_TIMEOUT_MILLISECONDS;
     setSecurityHeaders(response);
     if (request.method !== 'POST') {
       sendError(response, 'method_not_allowed');
@@ -205,7 +212,7 @@ export function createResearchBrokerHttpHandler(options: ResearchBrokerHttpHandl
 
     let dependencies: BrokerDependencies;
     try {
-      dependencies = configured.createDependencies();
+      dependencies = configured.createDependencies(providerDeadlineAtMs);
     } catch {
       sendError(response, 'broker_misconfigured');
       return;

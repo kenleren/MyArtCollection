@@ -49,6 +49,7 @@ function readyFactory(options: {
   protection: DurableBrokerProtection;
   provider?: ProviderClient;
   counters?: { config: number; construction: number; authorization: number };
+  onProviderDeadline?: (providerDeadlineAtMs: number | undefined) => void;
 }): ConfiguredBrokerDependenciesResult {
   const provider = options.provider ?? new ResultProvider();
   const counters = options.counters ?? { config: 0, construction: 0, authorization: 0 };
@@ -57,24 +58,27 @@ function readyFactory(options: {
     durableProtection: true,
     ownerUidAllowlist: new Set(['owner-uid']),
     protection: options.protection,
-    createDependencies: () => createFakeBrokerDependencies({
-      requestLifecycle: options.protection.createRequestLifecycle(),
-      providerProvisioner: {
-        configure: () => {
-          counters.config += 1;
-          return {};
+    createDependencies: (providerDeadlineAtMs) => {
+      options.onProviderDeadline?.(providerDeadlineAtMs);
+      return createFakeBrokerDependencies({
+        requestLifecycle: options.protection.createRequestLifecycle(),
+        providerProvisioner: {
+          configure: () => {
+            counters.config += 1;
+            return {};
+          },
+          construct: () => {
+            counters.construction += 1;
+            return provider;
+          },
         },
-        construct: () => {
-          counters.construction += 1;
-          return provider;
+        authorizeProvider: () => {
+          counters.authorization += 1;
         },
-      },
-      authorizeProvider: () => {
-        counters.authorization += 1;
-      },
-      now: () => FIXED_NOW,
-      testProvider: provider,
-    }),
+        now: () => FIXED_NOW,
+        testProvider: provider,
+      });
+    },
   };
 }
 
@@ -332,6 +336,25 @@ test('HTTP protocol and kill-switch errors always use broker-error-v1', async ()
   assert.equal(response.statusCode, 503);
   assert.equal(response.json.error_contract_version, 'broker-error-v1');
   assert.equal((response.json.error as Record<string, unknown>).code, 'temporarily_unavailable');
+});
+
+test('HTTP handler captures the provider deadline at function entry', async () => {
+  let capturedDeadline: number | undefined;
+  const protection = fakeProtection();
+  const handler = createResearchBrokerHttpHandler({
+    env: durableEnv(),
+    nowMilliseconds: () => 1_000,
+    dependenciesFactory: () => readyFactory({
+      protection,
+      onProviderDeadline: (value) => {
+        capturedDeadline = value;
+      },
+    }),
+  });
+  const response = createHttpResponse();
+  await handler(createHttpRequest({ data: request() }), response.responder);
+  assert.equal(response.statusCode, 200);
+  assert.equal(capturedDeadline, 56_000);
 });
 
 test('live prechecks cause zero provider setup or fetch and split entitlement from credits', async () => {

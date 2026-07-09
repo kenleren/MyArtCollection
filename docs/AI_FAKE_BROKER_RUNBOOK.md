@@ -81,10 +81,11 @@ and leave a pending settlement. A later replay retries settlement idempotently
 without provider work. If terminal persistence fails after dispatch, leave
 `dispatch_started`; do not refund, delete, or redrive.
 
-The provider fetch and response body share a deadline capped at 55 seconds,
-below the Function's 60-second timeout. A deadline abort maps to terminal
-timeout and refund; replay must return that stored timeout without another
-provider call.
+The provider fetch and response body share an absolute deadline captured at
+handler entry and capped at 55 seconds, below the Function's 60-second timeout.
+Provider construction receives only the remaining budget. A deadline abort
+maps to terminal timeout and refund; replay must return that stored timeout
+without another provider call.
 
 ## Public Errors
 

@@ -43,6 +43,26 @@ test('provider maps rate limits without reading response content', async () => {
   });
 });
 
+test('provider uses only the remaining handler-wide deadline budget', async () => {
+  let scheduledDelay: number | undefined;
+  const current = request();
+  authorizeProviderRequest(current);
+  const provider = createOpenAiProvider({
+    apiKey: 'test-only-key',
+    allowedDomains: ['museum.example'],
+    providerDeadlineAtMs: 10_000,
+    nowMilliseconds: () => 9_250,
+    scheduleTimeout: (_callback, delayMs) => {
+      scheduledDelay = delayMs;
+      return 1 as unknown as ReturnType<typeof setTimeout>;
+    },
+    cancelTimeout: () => {},
+    fetchImpl: (async () => new Response('', { status: 429 })) as typeof fetch,
+  });
+  await provider.research(current);
+  assert.equal(scheduledDelay, 750);
+});
+
 test('provider deadline aborts before the Function timeout and persists terminal timeout refund', async () => {
   let scheduledDelay: number | undefined;
   let fireTimeout: (() => void) | undefined;

@@ -159,9 +159,11 @@ the next replay can recover without another provider call.
 Provider `Retry-After` values default to 30 seconds, round up to a whole second,
 and clamp to 5 through 300 seconds.
 
-Provider fetch and response-body parsing share an abort deadline capped at 55
-seconds. This is below the 60-second Function timeout so the broker can persist
-a terminal timeout and complete or leave recoverable pending refund settlement.
+Provider fetch and response-body parsing share an absolute abort deadline
+captured at handler entry and capped at 55 seconds. Provider construction uses
+only the remaining budget, keeping the deadline below the 60-second Function
+timeout so the broker can persist a terminal timeout and complete or leave
+recoverable pending refund settlement.
 
 ## Error And Logging Rules
 

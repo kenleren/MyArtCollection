@@ -56,9 +56,9 @@ refunded or redriven.
 All failures use `broker-error-v1`; see
 `fixtures/broker-error-v1.json`. Rate-limit Retry-After defaults to 30 seconds
 and clamps to 5-300 seconds. Only a validated UUID may be reflected as a public
-request ID. Provider fetch and response parsing use an abort deadline of at
-most 55 seconds, leaving a margin before the 60-second Function timeout for
-durable terminal timeout persistence and refund.
+request ID. Provider fetch and response parsing use an absolute abort deadline
+captured at handler entry and capped at 55 seconds, leaving a margin before the
+60-second Function timeout for durable terminal timeout persistence and refund.
 
 ## Firebase Surface
 

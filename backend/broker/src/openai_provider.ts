@@ -51,6 +51,8 @@ export interface OpenAiProviderConfig {
   externalWebAccess?: boolean;
   fetchImpl?: FetchLike;
   providerTimeoutMs?: number;
+  providerDeadlineAtMs?: number;
+  nowMilliseconds?: () => number;
   scheduleTimeout?: (callback: () => void, delayMs: number) => ReturnType<typeof setTimeout>;
   cancelTimeout?: (handle: ReturnType<typeof setTimeout>) => void;
 }
@@ -152,6 +154,8 @@ export function readOpenAiProviderConfigFromEnv(
       ) ?? false,
       fetchImpl: overrides.fetchImpl,
       providerTimeoutMs: overrides.providerTimeoutMs,
+      providerDeadlineAtMs: overrides.providerDeadlineAtMs,
+      nowMilliseconds: overrides.nowMilliseconds,
       scheduleTimeout: overrides.scheduleTimeout,
       cancelTimeout: overrides.cancelTimeout,
     },
@@ -172,6 +176,8 @@ class OpenAiResearchProvider implements ProviderClient {
   private readonly searchContextSize: 'low' | 'medium' | 'high';
   private readonly externalWebAccess: boolean;
   private readonly providerTimeoutMs: number;
+  private readonly providerDeadlineAtMs: number | undefined;
+  private readonly nowMilliseconds: NonNullable<OpenAiProviderConfig['nowMilliseconds']>;
   private readonly scheduleTimeout: NonNullable<OpenAiProviderConfig['scheduleTimeout']>;
   private readonly cancelTimeout: NonNullable<OpenAiProviderConfig['cancelTimeout']>;
   callCount = 0;
@@ -188,6 +194,10 @@ class OpenAiResearchProvider implements ProviderClient {
       (config.providerTimeoutMs ?? 0) > 0
       ? Math.min(DEFAULT_PROVIDER_TIMEOUT_MILLISECONDS, Math.ceil(config.providerTimeoutMs!))
       : DEFAULT_PROVIDER_TIMEOUT_MILLISECONDS;
+    this.providerDeadlineAtMs = Number.isFinite(config.providerDeadlineAtMs)
+      ? config.providerDeadlineAtMs
+      : undefined;
+    this.nowMilliseconds = config.nowMilliseconds ?? Date.now;
     this.scheduleTimeout = config.scheduleTimeout ?? setTimeout;
     this.cancelTimeout = config.cancelTimeout ?? clearTimeout;
     this.apiKey = config.apiKey;
@@ -202,9 +212,13 @@ class OpenAiResearchProvider implements ProviderClient {
 
     this.callCount += 1;
     const abortController = new AbortController();
+    const remainingDeadlineMs = this.providerDeadlineAtMs === undefined
+      ? this.providerTimeoutMs
+      : Math.max(1, Math.ceil(this.providerDeadlineAtMs - this.nowMilliseconds()));
+    const timeoutMs = Math.min(this.providerTimeoutMs, remainingDeadlineMs);
     const timeoutHandle = this.scheduleTimeout(() => {
       abortController.abort(new DOMException('Provider deadline exceeded.', 'TimeoutError'));
-    }, this.providerTimeoutMs);
+    }, timeoutMs);
     try {
       const response = await this.fetchImpl(this.endpointUrl, {
         method: 'POST',
