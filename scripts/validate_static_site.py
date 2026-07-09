@@ -25,13 +25,18 @@ EXPECTED_SCHEMA_ROUTES = {
     "/support/",
     "/privacy/",
     "/blog/",
+    "/blog/annual-art-collection-record-review-checklist/",
     "/blog/art-inventory-template-private-collectors/",
+    "/blog/artwork-location-inventory-for-private-collections/",
     "/blog/artwork-condition-report-checklist-private-collectors/",
     "/blog/collector-records-that-age-well/",
     "/blog/how-to-document-artwork-for-insurance-conversations/",
     "/blog/how-to-organize-provenance-records-private-art-collection/",
+    "/blog/how-to-photograph-artwork-for-private-records/",
     "/blog/how-to-prepare-artwork-records-before-a-move/",
+    "/blog/how-to-prepare-art-records-for-family-handoff/",
     "/blog/how-to-record-artwork-labels-and-inscriptions/",
+    "/blog/what-to-record-after-buying-artwork/",
 }
 
 SUPPORT_COPY_BANNED_PATTERNS = [
