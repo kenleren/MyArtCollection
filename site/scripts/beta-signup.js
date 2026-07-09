@@ -94,7 +94,7 @@
       }
       showStatus(
         "success",
-        "Thanks. Your request was queued for manual review. If there is a fit for the current beta, Archivale will contact you with separate tester instructions.",
+        "Thanks. Your request was queued for manual review. If there is a fit for the current beta, Archivale will send early-access details.",
       );
     } catch (error) {
       showStatus(

@@ -63,6 +63,20 @@ UNSAFE_STRUCTURED_DATA_PATTERNS = [
     r"\bcertified provenance\b",
 ]
 
+BETA_COPY_SURFACE_FILES = (
+    SITE_ROOT / "beta/index.html",
+    SITE_ROOT / "scripts/beta-signup.js",
+)
+
+BETA_COPY_BANNED_PATTERNS = [
+    r"\bseparate tester instructions\b",
+    r"\bfirebase\b",
+    r"\bapp distribution\b",
+    r"\bplay tester\b",
+    r"\bdeploy route\b",
+    r"\bbackend process\b",
+]
+
 
 class SiteParser(HTMLParser):
     def __init__(self) -> None:
@@ -282,6 +296,24 @@ def validate_links_and_assets(path: Path, parser: SiteParser) -> list[str]:
     return errors
 
 
+def validate_beta_copy_surface() -> list[str]:
+    errors: list[str] = []
+
+    for path in BETA_COPY_SURFACE_FILES:
+        if not path.exists():
+            errors.append(f"beta copy surface missing file: {path.relative_to(REPO_ROOT)}")
+            continue
+
+        content = path.read_text(encoding="utf-8").lower()
+        for pattern in BETA_COPY_BANNED_PATTERNS:
+            if re.search(pattern, content):
+                errors.append(
+                    f"beta copy surface {path.relative_to(REPO_ROOT)} matched banned pattern {pattern!r}"
+                )
+
+    return errors
+
+
 def validate_html_shape(path: Path, parser: SiteParser) -> list[str]:
     route = route_for_html(path)
     errors: list[str] = []
@@ -321,6 +353,8 @@ def main() -> int:
         errors.extend(validate_html_shape(path, parser))
         errors.extend(validate_json_ld(path, parser))
         errors.extend(validate_links_and_assets(path, parser))
+
+    errors.extend(validate_beta_copy_surface())
 
     if errors:
         print("Static site validation failed:")
