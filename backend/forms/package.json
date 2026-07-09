@@ -5,6 +5,9 @@
   "main": "build/src/index.js",
   "description": "Repo-side beta signup form backend scaffold for Firebase Functions.",
   "type": "module",
+  "engines": {
+    "node": "22"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "test": "npm run build && node --test build/dist-test/*.test.js"
