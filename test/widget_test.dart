@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:ui' as ui;
@@ -1738,6 +1739,89 @@ void main() {
     expect(find.text('Attachment needs attention'), findsOneWidget);
     expect(find.text('Attach document'), findsNothing);
   });
+
+  testWidgets(
+    'supporting photo busy state matches import and capture intake modes',
+    (WidgetTester tester) async {
+      final testDependencies = await tester.runAsync(
+        () async => _LiveDependencyFixture.create(),
+      );
+      final fixture = testDependencies!;
+      addTearDown(() async {
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.runAsync(fixture.dispose);
+      });
+
+      await tester.runAsync(() async {
+        await fixture.repository.upsert(
+          _artworkRecord(
+            id: 'supporting-busy-state',
+            title: 'Supporting Busy State',
+            state: ArtworkRecordState.verifiedByYou,
+            source: ArtworkFieldSource.userConfirmed,
+          ),
+        );
+        await fixture.addPrimaryImage(artworkId: 'supporting-busy-state');
+      });
+
+      final importPicker = _PendingImagePicker();
+      await tester.pumpWidget(
+        ArchivaleApp(
+          initialRoute: AppRoutes.artworkSupportingPhotoImport(
+            'supporting-busy-state',
+          ),
+          dependencies: fixture.dependenciesWithPicker(importPicker),
+        ),
+      );
+      await pumpLiveData(tester);
+      await waitForFinder(tester, find.text('Choose a supporting photo'));
+
+      await tapVisible(tester, find.text('Choose a supporting photo'));
+      await pumpLiveData(tester);
+
+      expect(find.text('Opening photo picker'), findsOneWidget);
+      expect(
+        find.text(
+          'Choose one photo to keep with this artwork as a supporting record.',
+        ),
+        findsOneWidget,
+      );
+
+      importPicker.complete(ArtworkImagePickMode.gallery, null);
+      await pumpLiveData(tester);
+      expect(find.text('Supporting photo cancelled'), findsOneWidget);
+
+      final capturePicker = _PendingImagePicker();
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+      await tester.pumpWidget(
+        ArchivaleApp(
+          initialRoute: AppRoutes.artworkSupportingPhotoCapture(
+            'supporting-busy-state',
+          ),
+          dependencies: fixture.dependenciesWithPicker(capturePicker),
+        ),
+      );
+      await pumpLiveData(tester);
+      await waitForFinder(tester, find.text('Take a supporting photo'));
+
+      await tapVisible(tester, find.text('Take a supporting photo'));
+      await pumpLiveData(tester);
+
+      expect(find.text('Opening camera'), findsOneWidget);
+      expect(
+        find.text(
+          'Take one photo to keep with this artwork as a supporting record.',
+        ),
+        findsOneWidget,
+      );
+      expect(find.text('Opening photo picker'), findsNothing);
+
+      capturePicker.complete(ArtworkImagePickMode.camera, null);
+      await pumpLiveData(tester);
+      expect(find.text('Supporting photo cancelled'), findsOneWidget);
+    },
+  );
 
   testWidgets('collection lists local record after repository reload', (
     WidgetTester tester,
@@ -4348,6 +4432,28 @@ class _SingleImagePicker implements ArtworkImagePicker {
   @override
   Future<XFile?> pick(ArtworkImagePickMode mode) async {
     return XFile(file.path, name: p.basename(file.path), mimeType: 'image/png');
+  }
+
+  @override
+  Future<XFile?> retrieveLostImage() async => null;
+}
+
+class _PendingImagePicker implements ArtworkImagePicker {
+  final Map<ArtworkImagePickMode, Completer<XFile?>> _completers = {
+    ArtworkImagePickMode.gallery: Completer<XFile?>(),
+    ArtworkImagePickMode.camera: Completer<XFile?>(),
+  };
+
+  @override
+  Future<XFile?> pick(ArtworkImagePickMode mode) {
+    return _completers[mode]!.future;
+  }
+
+  void complete(ArtworkImagePickMode mode, XFile? file) {
+    final completer = _completers[mode]!;
+    if (!completer.isCompleted) {
+      completer.complete(file);
+    }
   }
 
   @override

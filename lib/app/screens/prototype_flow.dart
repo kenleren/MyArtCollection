@@ -935,11 +935,12 @@ class _SupportingPhotoStatePanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (isBusy) {
-      return const _StatusPanel(
+      return _StatusPanel(
         icon: Icons.hourglass_top,
-        title: 'Opening photo picker',
-        body:
-            'Choose one photo to keep with this artwork as a supporting record.',
+        title: isImport ? 'Opening photo picker' : 'Opening camera',
+        body: isImport
+            ? 'Choose one photo to keep with this artwork as a supporting record.'
+            : 'Take one photo to keep with this artwork as a supporting record.',
       );
     }
 
