@@ -153,16 +153,22 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          audit_cache="$RUNNER_TEMP/broker-audit-cache"
-          mkdir -p "$audit_cache"
+          full_audit_cache="$RUNNER_TEMP/broker-full-audit-cache"
+          core_audit_cache="$RUNNER_TEMP/broker-core-audit-cache"
+          mkdir -p "$full_audit_cache" "$core_audit_cache"
           set +e
           npm --prefix backend/broker audit --package-lock-only --json \
-            --cache "$audit_cache" > "$RUNNER_TEMP/broker-audit.json"
-          audit_status=$?
+            --cache "$full_audit_cache" > "$RUNNER_TEMP/broker-audit.json"
+          full_audit_status=$?
+          npm --prefix backend/broker audit --package-lock-only --omit=peer --json \
+            --cache "$core_audit_cache" > "$RUNNER_TEMP/broker-core-audit.json"
+          core_audit_status=$?
           set -e
-          test "$audit_status" -eq 1 || { echo "npm audit did not report the expected policy input" >&2; exit 1; }
+          test "$full_audit_status" -eq 1 || { echo "full npm audit did not report the expected policy input" >&2; exit 1; }
+          test "$core_audit_status" -eq 1 || { echo "peer-normalized npm audit did not report the expected policy input" >&2; exit 1; }
           node scripts/check_broker_audit.mjs \
             --audit "$RUNNER_TEMP/broker-audit.json" \
+            --core-audit "$RUNNER_TEMP/broker-core-audit.json" \
             --lock backend/broker/package-lock.json
       - name: Test broker audit parser fixtures
         run: node --test test/broker_audit_policy_test.mjs

@@ -21,22 +21,38 @@ test('accepts the exact current npm audit and lock graph before expiry', async (
   assert.match(result.stdout, /5 exact uuid@9\.0\.1 paths/);
 });
 
+test('accepts only the exact known full-audit peer metadata edge', async () => {
+  const temporaryDirectory = await mkdtemp(path.join(os.tmpdir(), 'broker-peer-audit-'));
+  try {
+    const auditPath = path.join(temporaryDirectory, 'audit.json');
+    await writeFile(auditPath, JSON.stringify(await createPeerAudit()));
+    const result = await run(auditPath, fixture('allowed-lock.json'));
+    assert.equal(result.code, 0, result.stderr);
+  } finally {
+    await rm(temporaryDirectory, { recursive: true, force: true });
+  }
+});
+
 test('accepts the exception deterministically on its last allowed date', () => {
   assert.doesNotThrow(() => checkExpiryForTest(policyDates.lastAllowedDate));
 });
 
 const expectedFailures = new Map([
-  ['top-level-error', /top-level error/],
-  ['unknown-top-level-field', /audit top-level fields changed/],
+  ['top-level-error', /top-level npm error/],
+  ['unknown-top-level-field', /full audit top-level fields changed/],
   ['untrusted-advisory-origin', /exact trusted GitHub advisory origin and path/],
-  ['extra-advisory-field', /uuid audit edges changed/],
-  ['extra-uuid-node-and-effect', /uuid effects changed/],
+  ['extra-advisory-field', /uuid full audit edges changed/],
+  ['extra-uuid-node-and-effect', /uuid full audit effects changed/],
   ['new-advisory', /exact trusted GitHub advisory origin and path/],
   ['high-severity', /uuid severity is not exactly moderate/],
-  ['extra-audit-edge', /firebase-admin audit edges changed/],
-  ['rerouted-audit-edge', /@google-cloud\/storage audit edges changed/],
-  ['missing-audit-field', /uuid vulnerability fields changed/],
-  ['changed-audit-metadata', /audit metadata changed/],
+  ['extra-audit-edge', /firebase-admin full audit edges changed/],
+  ['rerouted-audit-edge', /@google-cloud\/storage full audit edges changed/],
+  ['missing-audit-field', /uuid full audit vulnerability fields changed/],
+  ['changed-audit-metadata', /full audit metadata changed/],
+  ['extra-peer-node', /firebase-functions peer metadata nodes changed/],
+  ['extra-peer-effect', /firebase-functions peer metadata effects changed/],
+  ['rerouted-peer-edge', /firebase-functions peer metadata edges changed/],
+  ['rerouted-root-peer', /broker root dependency declarations changed/],
   ['extra-lock-edge', /firebase-admin locked vulnerable edges changed/],
   ['rerouted-lock-range', /@google-cloud\/storage locked vulnerable edges changed/],
   ['changed-uuid-version', /node_modules\/uuid version changed/],
@@ -57,7 +73,15 @@ for (const adversarialCase of adversarialCases) {
 test('rejects a standalone npm audit exit-1 error response', async () => {
   const result = await run(fixture('npm-error-audit.json'), fixture('allowed-lock.json'));
   assert.notEqual(result.code, 0);
-  assert.match(result.stderr, /top-level error/);
+  assert.match(result.stderr, /top-level npm error/);
+});
+
+test('rejects a peer-normalized npm audit exit-1 error response', async () => {
+  const result = await run(fixture('allowed-audit.json'), fixture('allowed-lock.json'), {
+    coreAuditPath: fixture('npm-error-audit.json'),
+  });
+  assert.notEqual(result.code, 0);
+  assert.match(result.stderr, /peer-normalized audit reported a top-level npm error/);
 });
 
 test('rejects malformed audit JSON', async () => {
@@ -86,7 +110,7 @@ test('does not expose the deterministic clock override on the production CLI', a
   const result = await run(
     fixture('allowed-audit.json'),
     fixture('allowed-lock.json'),
-    ['--as-of', policyDates.lastAllowedDate],
+    { extraArgs: ['--as-of', policyDates.lastAllowedDate] },
   );
   assert.notEqual(result.code, 0);
   assert.match(result.stderr, /usage:/);
@@ -96,17 +120,31 @@ async function runMutationCase(adversarialCase) {
   const temporaryDirectory = await mkdtemp(path.join(os.tmpdir(), 'broker-audit-policy-'));
   try {
     const audit = await readJsonFixture('allowed-audit.json');
+    const coreAudit = await readJsonFixture('allowed-audit.json');
     const lock = await readJsonFixture('allowed-lock.json');
     for (const mutation of adversarialCase.mutations) {
-      applyMutation(mutation.target === 'audit' ? audit : lock, mutation);
+      if (mutation.target === 'audit') {
+        applyMutation(audit, mutation);
+        applyMutation(coreAudit, mutation);
+      } else if (mutation.target === 'peerAudit') {
+        if (!audit.vulnerabilities['firebase-functions']) {
+          const peerAudit = await createPeerAudit();
+          Object.assign(audit, peerAudit);
+        }
+        applyMutation(audit, mutation);
+      } else {
+        applyMutation(lock, mutation);
+      }
     }
     const auditPath = path.join(temporaryDirectory, 'audit.json');
+    const coreAuditPath = path.join(temporaryDirectory, 'core-audit.json');
     const lockPath = path.join(temporaryDirectory, 'package-lock.json');
     await Promise.all([
       writeFile(auditPath, JSON.stringify(audit)),
+      writeFile(coreAuditPath, JSON.stringify(coreAudit)),
       writeFile(lockPath, JSON.stringify(lock)),
     ]);
-    return await run(auditPath, lockPath);
+    return await run(auditPath, lockPath, { coreAuditPath });
   } finally {
     await rm(temporaryDirectory, { recursive: true, force: true });
   }
@@ -127,10 +165,23 @@ async function readJsonFixture(name) {
   return JSON.parse(await readFile(fixture(name), 'utf8'));
 }
 
-async function run(auditPath, lockPath, extraArgs = []) {
+async function createPeerAudit() {
+  const audit = await readJsonFixture('allowed-audit.json');
+  audit.vulnerabilities['firebase-functions'] = await readJsonFixture('allowed-peer-metadata.json');
+  audit.metadata.vulnerabilities.moderate = 9;
+  audit.metadata.vulnerabilities.total = 9;
+  return audit;
+}
+
+async function run(
+  auditPath,
+  lockPath,
+  { coreAuditPath = fixture('allowed-audit.json'), extraArgs = [] } = {},
+) {
   const args = [
     script,
     '--audit', auditPath,
+    '--core-audit', coreAuditPath,
     '--lock', lockPath,
     ...extraArgs,
   ];

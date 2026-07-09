@@ -55,9 +55,10 @@ The only caches are dependency-download directories: `~/.pub-cache` and npm's
 repository, build outputs, Android Gradle workspace, `.env*`, Firebase
 configuration or tokens, service accounts, signing files, keystores, or
 provisioning material.
-The broker audit uses an isolated temporary npm cache so stale audit metadata
-cannot alter the graph input; the forms audit also uses an isolated temporary
-cache. Neither audit cache is persisted. Every checkout uses
+The full and peer-normalized broker audits use separate isolated temporary npm
+caches so stale audit metadata cannot alter or couple their graph inputs; the
+forms audit also uses an isolated temporary cache. No audit cache is persisted.
+Every checkout uses
 `persist-credentials: false`, and CI verifies that checkout leaves no local git
 credential configuration without printing any credential value.
 
@@ -76,12 +77,22 @@ upload, Firebase CLI command, or provider call.
 
 `scripts/check_broker_audit.mjs` is fail-closed. Until **2026-08-31**, it
 accepts only moderate `GHSA-w5hq-g745-h8pq` in the current eight-node broker
-audit graph. The policy requires npm audit report version 2 with no top-level
-error or unknown report fields. It compares exact vulnerability names, ranges,
-directness, `via`, `nodes`, `effects`, fix metadata, counts, and the advisory's
-source, trusted GitHub origin/path, CWE, CVSS, and affected range. The lock
-policy checks exact package versions, registry URLs, integrity values,
-dependency fields/ranges, concrete resolved paths, and a single top-level UUID
+audit graph. The policy validates both npm's full report and a separately
+fetched `--omit=peer` report. Both must use audit report version 2 with no
+top-level error or unknown report fields. The peer-normalized report and all
+eight core entries in the full report must match exact vulnerability names,
+ranges, directness, `via`, `nodes`, `effects`, fix metadata, counts, and the
+advisory's source, trusted GitHub origin/path, CWE, CVSS, and affected range.
+
+npm may add only its known derived `firebase-functions > firebase-admin`
+peer-metavulnerability entry to the full report. That entry must have the exact
+field set, direct state, `via`, empty effects, and top-level node; its range and
+fix recommendation must retain the npm v2 types. The lock binds the peer edge
+to exact top-level `firebase-functions@7.2.5` and `firebase-admin@13.10.0`
+installations. Any other peer package or peer graph change fails.
+
+The lock policy also checks exact registry URLs, integrity values, dependency
+fields/ranges, concrete resolved paths, and a single top-level UUID
 installation. The complete approved paths from `firebase-admin` to the locked
 `uuid@9.0.1` are:
 

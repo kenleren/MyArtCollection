@@ -28,6 +28,10 @@ const policy = {
   advisoryId: 'GHSA-w5hq-g745-h8pq',
   expiresOn: '2026-08-31',
   uuidVersion: '9.0.1',
+  rootDependencies: {
+    'firebase-admin': '^13.10.0',
+    'firebase-functions': '^7.2.5',
+  },
   auditMetadata: {
     vulnerabilities: {
       info: 0,
@@ -36,6 +40,24 @@ const policy = {
       high: 0,
       critical: 0,
       total: 8,
+    },
+    dependencies: {
+      prod: 160,
+      dev: 1,
+      optional: 93,
+      peer: 0,
+      peerOptional: 0,
+      total: 253,
+    },
+  },
+  auditMetadataWithPeer: {
+    vulnerabilities: {
+      info: 0,
+      low: 0,
+      moderate: 9,
+      high: 0,
+      critical: 0,
+      total: 9,
     },
     dependencies: {
       prod: 160,
@@ -113,6 +135,14 @@ const policy = {
     }],
   ]),
   lockPackages: new Map([
+    ['firebase-functions', {
+      version: '7.2.5',
+      resolved: 'https://registry.npmjs.org/firebase-functions/-/firebase-functions-7.2.5.tgz',
+      integrity: 'sha512-K+pP0AknluAguLRbD96hibyXbnOgwnvd4hkExWdGrxnNCLoj8LBFj08uvJYxyvhsCgYzQumrUaHBW4lsXKSiRg==',
+      edges: [
+        ['peerDependencies', 'firebase-admin', '^11.10.0 || ^12.0.0 || ^13.0.0'],
+      ],
+    }],
     ['firebase-admin', {
       version: '13.10.0',
       resolved: 'https://registry.npmjs.org/firebase-admin/-/firebase-admin-13.10.0.tgz',
@@ -188,12 +218,14 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1
 async function main() {
   try {
     const args = parseArgs(process.argv.slice(2));
-    const [audit, lock] = await Promise.all([
+    const [audit, coreAudit, lock] = await Promise.all([
       readJson(args.audit, 'audit'),
+      readJson(args.coreAudit, 'peer-normalized audit'),
       readJson(args.lock, 'lock'),
     ]);
     checkExpiry();
-    checkAudit(audit);
+    checkAudit(audit, { allowPeerMetadata: true, label: 'full audit' });
+    checkAudit(coreAudit, { label: 'peer-normalized audit' });
     checkLock(lock);
     console.log(
       `Broker audit policy passed: ${policy.advisoryId} is the only accepted advisory through ${policy.paths.length} exact uuid@${policy.uuidVersion} paths until ${policy.expiresOn}.`,
@@ -210,18 +242,19 @@ function parseArgs(args) {
   for (let index = 0; index < args.length; index += 2) {
     const name = args[index];
     const value = args[index + 1];
-    const allowed = name === '--audit' || name === '--lock';
+    const allowed = name === '--audit' || name === '--core-audit' || name === '--lock';
     if (!allowed || !value || values.has(name)) throw new Error(usage());
     values.set(name, value);
   }
   const audit = values.get('--audit');
+  const coreAudit = values.get('--core-audit');
   const lock = values.get('--lock');
-  if (!audit || !lock) throw new Error(usage());
-  return { audit, lock };
+  if (!audit || !coreAudit || !lock) throw new Error(usage());
+  return { audit, coreAudit, lock };
 }
 
 function usage() {
-  return 'usage: check_broker_audit.mjs --audit <npm-audit.json> --lock <package-lock.json>';
+  return 'usage: check_broker_audit.mjs --audit <npm-audit.json> --core-audit <peer-normalized.json> --lock <package-lock.json>';
 }
 
 async function readJson(path, label) {
@@ -253,37 +286,90 @@ export function checkExpiryForTest(asOf) {
   checkExpiry(asOf);
 }
 
-function checkAudit(audit) {
+function checkAudit(audit, { allowPeerMetadata = false, label }) {
   if (!isPlainObject(audit)) throw new Error('audit JSON is not an object');
-  if (Object.hasOwn(audit, 'error')) throw new Error('npm audit reported a top-level error');
-  compareExact(Object.keys(audit), ['auditReportVersion', 'metadata', 'vulnerabilities'], 'audit top-level fields');
-  if (audit.auditReportVersion !== 2) throw new Error('audit report version is not exactly 2');
-  if (!isPlainObject(audit.vulnerabilities)) throw new Error('audit JSON has no vulnerabilities object');
-  compareJsonExact(audit.metadata, policy.auditMetadata, 'audit metadata');
-  compareExact(Object.keys(audit.vulnerabilities), [...policy.auditPackages.keys()], 'audit package set');
+  if (Object.hasOwn(audit, 'error')) throw new Error(`${label} reported a top-level npm error`);
+  compareExact(
+    Object.keys(audit),
+    ['auditReportVersion', 'metadata', 'vulnerabilities'],
+    `${label} top-level fields`,
+  );
+  if (audit.auditReportVersion !== 2) throw new Error(`${label} report version is not exactly 2`);
+  if (!isPlainObject(audit.vulnerabilities)) throw new Error(`${label} has no vulnerabilities object`);
+
+  const vulnerabilities = { ...audit.vulnerabilities };
+  const hasPeerMetadata = allowPeerMetadata && Object.hasOwn(vulnerabilities, 'firebase-functions');
+  compareJsonExact(
+    audit.metadata,
+    hasPeerMetadata ? policy.auditMetadataWithPeer : policy.auditMetadata,
+    `${label} metadata`,
+  );
+  if (hasPeerMetadata) {
+    checkPeerMetadataVulnerability(vulnerabilities['firebase-functions']);
+    delete vulnerabilities['firebase-functions'];
+  }
+  compareExact(Object.keys(vulnerabilities), [...policy.auditPackages.keys()], `${label} package set`);
 
   for (const [name, expected] of policy.auditPackages) {
-    checkVulnerability(name, audit.vulnerabilities[name], expected);
+    checkVulnerability(name, vulnerabilities[name], expected, label);
   }
 }
 
-function checkVulnerability(name, vulnerability, expected) {
+function checkVulnerability(name, vulnerability, expected, label) {
   if (!isPlainObject(vulnerability)) throw new Error(`${name} vulnerability is malformed`);
   compareExact(
     Object.keys(vulnerability),
     ['effects', 'fixAvailable', 'isDirect', 'name', 'nodes', 'range', 'severity', 'via'],
-    `${name} vulnerability fields`,
+    `${name} ${label} vulnerability fields`,
   );
   if (vulnerability.name !== name) throw new Error(`${name} vulnerability name changed`);
   if (vulnerability.severity !== 'moderate') throw new Error(`${name} severity is not exactly moderate`);
   if (vulnerability.isDirect !== expected.isDirect) throw new Error(`${name} direct-dependency state changed`);
   if (vulnerability.range !== expected.range) throw new Error(`${name} vulnerable range changed`);
-  compareExactArray(vulnerability.effects, expected.effects, `${name} effects`);
-  compareExactArray(vulnerability.nodes, expected.nodes, `${name} nodes`);
+  compareExactArray(vulnerability.effects, expected.effects, `${name} ${label} effects`);
+  compareExactArray(vulnerability.nodes, expected.nodes, `${name} ${label} nodes`);
 
   if (name === 'uuid') validateAdvisoryOrigin(vulnerability.via);
-  compareJsonExact(vulnerability.via, expected.via, `${name} audit edges`);
-  compareJsonExact(vulnerability.fixAvailable, expected.fixAvailable, `${name} fix metadata`);
+  compareJsonExact(vulnerability.via, expected.via, `${name} ${label} edges`);
+  compareJsonExact(vulnerability.fixAvailable, expected.fixAvailable, `${name} ${label} fix metadata`);
+}
+
+function checkPeerMetadataVulnerability(vulnerability) {
+  const name = 'firebase-functions';
+  if (!isPlainObject(vulnerability)) throw new Error(`${name} peer metadata is malformed`);
+  compareExact(
+    Object.keys(vulnerability),
+    ['effects', 'fixAvailable', 'isDirect', 'name', 'nodes', 'range', 'severity', 'via'],
+    `${name} peer metadata fields`,
+  );
+  if (vulnerability.name !== name) throw new Error(`${name} peer metadata name changed`);
+  if (vulnerability.severity !== 'moderate') throw new Error(`${name} peer metadata severity changed`);
+  if (vulnerability.isDirect !== true) throw new Error(`${name} peer metadata direct state changed`);
+  compareExactArray(vulnerability.via, ['firebase-admin'], `${name} peer metadata edges`);
+  compareExactArray(vulnerability.effects, [], `${name} peer metadata effects`);
+  compareExactArray(vulnerability.nodes, ['node_modules/firebase-functions'], `${name} peer metadata nodes`);
+  if (typeof vulnerability.range !== 'string' || vulnerability.range.length === 0) {
+    throw new Error(`${name} peer metadata range is malformed`);
+  }
+  checkPeerFixMetadata(vulnerability.fixAvailable);
+}
+
+function checkPeerFixMetadata(fixAvailable) {
+  if (typeof fixAvailable === 'boolean') return;
+  if (!isPlainObject(fixAvailable)) throw new Error('firebase-functions peer fix metadata is malformed');
+  compareExact(
+    Object.keys(fixAvailable),
+    ['isSemVerMajor', 'name', 'version'],
+    'firebase-functions peer fix metadata fields',
+  );
+  if (
+    fixAvailable.name !== 'firebase-functions' ||
+    typeof fixAvailable.version !== 'string' ||
+    !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(fixAvailable.version) ||
+    typeof fixAvailable.isSemVerMajor !== 'boolean'
+  ) {
+    throw new Error('firebase-functions peer fix metadata changed shape');
+  }
 }
 
 function validateAdvisoryOrigin(via) {
@@ -311,6 +397,19 @@ function checkLock(lock) {
     throw new Error('lock JSON is not a package-lock v3 packages object');
   }
   const packages = lock.packages;
+  if (!isPlainObject(packages[''])) throw new Error('lock is missing its root package entry');
+  compareJsonExact(
+    packages[''].dependencies,
+    policy.rootDependencies,
+    'broker root dependency declarations',
+  );
+  const firebaseFunctionsInstallations = Object.keys(packages)
+    .filter((path) => /(^|\/)node_modules\/firebase-functions$/.test(path));
+  compareExact(
+    firebaseFunctionsInstallations,
+    ['node_modules/firebase-functions'],
+    'firebase-functions installation paths',
+  );
   const uuidInstallations = Object.keys(packages).filter((path) => /(^|\/)node_modules\/uuid$/.test(path));
   compareExact(uuidInstallations, ['node_modules/uuid'], 'uuid installation paths');
 

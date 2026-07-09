@@ -78,6 +78,34 @@
     ]
   },
   {
+    "id": "extra-peer-node",
+    "description": "an extra peer-metavulnerability node",
+    "mutations": [
+      { "target": "peerAudit", "operation": "append", "path": ["vulnerabilities", "firebase-functions", "nodes"], "value": "node_modules/evil/node_modules/firebase-functions" }
+    ]
+  },
+  {
+    "id": "extra-peer-effect",
+    "description": "an extra peer-metavulnerability effect",
+    "mutations": [
+      { "target": "peerAudit", "operation": "append", "path": ["vulnerabilities", "firebase-functions", "effects"], "value": "evil" }
+    ]
+  },
+  {
+    "id": "rerouted-peer-edge",
+    "description": "a rerouted peer-metavulnerability edge",
+    "mutations": [
+      { "target": "peerAudit", "operation": "set", "path": ["vulnerabilities", "firebase-functions", "via"], "value": ["uuid"] }
+    ]
+  },
+  {
+    "id": "rerouted-root-peer",
+    "description": "a rerouted root peer dependency declaration",
+    "mutations": [
+      { "target": "lock", "operation": "set", "path": ["packages", "", "dependencies", "firebase-functions"], "value": "^8.0.0" }
+    ]
+  },
+  {
     "id": "extra-lock-edge",
     "description": "an extra vulnerable lock edge",
     "mutations": [
