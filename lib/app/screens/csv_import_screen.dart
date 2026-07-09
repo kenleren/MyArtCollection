@@ -45,17 +45,17 @@ class _CsvImportScreenState extends State<CsvImportScreen> {
         ?.dependencies;
     if (dependencies == null) {
       return PrototypeScreenFrame(
-        title: 'Import collector CSV',
-        subtitle: 'Local records only',
+        title: 'Bring in your spreadsheet',
+        subtitle: 'Private records stay on this device',
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: const [
             _CsvPanel(
               child: _CsvPanelBody(
                 icon: Icons.table_view_outlined,
-                title: 'CSV import requires app storage access',
+                title: 'Open this in the app',
                 body:
-                    'Open this route from the local app build to select a CSV file, review mappings, and save records on-device.',
+                    'Use the app build to choose a spreadsheet, review each record, and add it to your collection.',
               ),
             ),
           ],
@@ -67,17 +67,17 @@ class _CsvImportScreenState extends State<CsvImportScreen> {
     final summary = _summary;
 
     return PrototypeScreenFrame(
-      title: 'Import collector CSV',
-      subtitle: 'Private local records only',
+      title: 'Bring in your spreadsheet',
+      subtitle: 'Private records stay on this device',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const _CsvPanel(
             child: _CsvPanelBody(
               icon: Icons.privacy_tip_outlined,
-              title: 'Local-only CSV review',
+              title: 'Review everything before it is added',
               body:
-                  'CSV files stay on this device until you confirm. This flow does not connect to Drive, Google Sheets, or any online import service.',
+                  'Your spreadsheet stays on this device while you review titles, notes, possible duplicates, and anything that needs a closer look.',
             ),
           ),
           const SizedBox(height: 12),
@@ -87,7 +87,7 @@ class _CsvImportScreenState extends State<CsvImportScreen> {
             _CsvPanel(
               child: _CsvPanelBody(
                 icon: Icons.error_outline,
-                title: 'Import needs attention',
+                title: 'This spreadsheet needs attention',
                 body: _errorMessage!,
                 color: Theme.of(context).colorScheme.error,
               ),
@@ -102,9 +102,9 @@ class _CsvImportScreenState extends State<CsvImportScreen> {
             const _CsvPanel(
               child: _CsvPanelBody(
                 icon: Icons.hourglass_top,
-                title: 'Previewing local records',
+                title: 'Preparing your preview',
                 body:
-                    'Checking header mappings, warnings, duplicate candidates, and blocked rows before anything is written.',
+                    'Reviewing your columns, notes to check, possible duplicates, and rows that still need more information.',
               ),
             ),
           ],
@@ -154,12 +154,12 @@ class _CsvImportScreenState extends State<CsvImportScreen> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          'Select a local CSV file',
+          'Choose a spreadsheet',
           style: Theme.of(context).textTheme.titleMedium,
         ),
         const SizedBox(height: 6),
         const Text(
-          'Existing records stay unchanged until preview is confirmed. Imported records can start without photos and will land in the normal review and missing-document flow.',
+          'Nothing in your collection changes until you review and confirm. New records arrive as drafts so you can add photos, documents, and your own confirmation next.',
         ),
         if (selectedFile != null) ...[
           const SizedBox(height: 12),
@@ -180,7 +180,7 @@ class _CsvImportScreenState extends State<CsvImportScreen> {
           child: FilledButton.icon(
             onPressed: isBusy ? null : _selectCsvFile,
             icon: const Icon(Icons.upload_file_outlined),
-            label: const Text('Choose CSV file'),
+            label: const Text('Choose spreadsheet'),
           ),
         ),
         const SizedBox(height: 12),
@@ -189,9 +189,10 @@ class _CsvImportScreenState extends State<CsvImportScreen> {
           controller: _testHarnessPathController,
           enabled: !isBusy,
           decoration: const InputDecoration(
-            labelText: 'Local CSV path',
-            hintText: '/path/to/collector-import.csv',
-            helperText: 'Optional local file path for importing a CSV.',
+            labelText: 'Test file path',
+            hintText: '/path/to/records.csv',
+            helperText: 'Optional local path to load this import quickly.',
+            helperMaxLines: 2,
           ),
         ),
         const SizedBox(height: 12),
@@ -200,7 +201,7 @@ class _CsvImportScreenState extends State<CsvImportScreen> {
           child: OutlinedButton.icon(
             onPressed: isBusy ? null : _loadFromHarnessPath,
             icon: const Icon(Icons.terminal_outlined),
-            label: const Text('Load local path'),
+            label: const Text('Load from path'),
           ),
         ),
       ],
@@ -213,10 +214,13 @@ class _CsvImportScreenState extends State<CsvImportScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text('Header mapping', style: Theme.of(context).textTheme.titleMedium),
+        Text(
+          'Match each column',
+          style: Theme.of(context).textTheme.titleMedium,
+        ),
         const SizedBox(height: 6),
         const Text(
-          'Adjust any header before importing. Columns can map to canonical fields, stay as unresolved references, append to notes, or be skipped.',
+          'Pair each column with the right collection field. Extra details can stay in notes, be held as references to review later, or be left out.',
         ),
         const SizedBox(height: 12),
         for (var index = 0; index < headerMappings.length; index += 1) ...[
@@ -252,35 +256,35 @@ class _CsvImportScreenState extends State<CsvImportScreen> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          'Preview categories',
+          'Preview your import',
           style: Theme.of(context).textTheme.titleMedium,
         ),
         const SizedBox(height: 6),
         Text(
-          '${preview.rows.length} row${preview.rows.length == 1 ? '' : 's'} checked. Headers: ${preview.headers.join(', ')}',
+          '${preview.rows.length} row${preview.rows.length == 1 ? '' : 's'} reviewed. Columns: ${preview.headers.join(', ')}',
         ),
         const SizedBox(height: 12),
         _CsvInlineStatus(
           icon: Icons.check_circle_outline,
-          text: 'Ready: ${categories[_PreviewCategory.ready]}',
+          text: 'Ready to add: ${categories[_PreviewCategory.ready]}',
         ),
         _CsvInlineStatus(
           icon: Icons.warning_amber_outlined,
-          text: 'Warning: ${categories[_PreviewCategory.warning]}',
+          text: 'Needs review: ${categories[_PreviewCategory.warning]}',
         ),
         _CsvInlineStatus(
           icon: Icons.copy_all_outlined,
-          text:
-              'Duplicate candidate: ${categories[_PreviewCategory.duplicate]}',
+          text: 'Possible duplicate: ${categories[_PreviewCategory.duplicate]}',
         ),
         _CsvInlineStatus(
           icon: Icons.block_outlined,
-          text: 'Blocked: ${categories[_PreviewCategory.blocked]}',
+          text:
+              'Needs more information: ${categories[_PreviewCategory.blocked]}',
         ),
         if (preview.skippedColumns.isNotEmpty)
           _CsvInlineStatus(
             icon: Icons.skip_next_outlined,
-            text: 'Skipped columns: ${preview.skippedColumns.join(', ')}',
+            text: 'Left out: ${preview.skippedColumns.join(', ')}',
           ),
       ],
     );
@@ -299,26 +303,26 @@ class _CsvImportScreenState extends State<CsvImportScreen> {
               ? Icons.info_outline
               : Icons.check_circle_outline,
           title: summary.importedRecordIds.isEmpty
-              ? 'No rows were written'
-              : 'Local CSV import complete',
+              ? 'Nothing was added'
+              : 'Import ready for review',
           body: summary.message,
         ),
         const SizedBox(height: 12),
         _CsvInlineStatus(
           icon: Icons.save_outlined,
-          text: 'Imported records: ${summary.importedRecordIds.length}',
+          text: 'Records added: ${summary.importedRecordIds.length}',
         ),
         _CsvInlineStatus(
           icon: Icons.copy_all_outlined,
-          text: 'Skipped duplicate candidates: ${summary.skippedDuplicates}',
+          text: 'Possible duplicates left out: ${summary.skippedDuplicates}',
         ),
         _CsvInlineStatus(
           icon: Icons.warning_amber_outlined,
-          text: 'Imported with warnings: ${summary.importedWarnings}',
+          text: 'Added with details to review: ${summary.importedWarnings}',
         ),
         _CsvInlineStatus(
           icon: Icons.block_outlined,
-          text: 'Blocked rows left unchanged: ${summary.blockedRows}',
+          text: 'Rows not added yet: ${summary.blockedRows}',
         ),
         const SizedBox(height: 16),
         if (firstImportedId != null) ...[
@@ -332,8 +336,8 @@ class _CsvImportScreenState extends State<CsvImportScreen> {
               icon: const Icon(Icons.open_in_new_outlined),
               label: Text(
                 summary.importedRecordIds.length == 1
-                    ? 'Open imported record'
-                    : 'Open first imported record',
+                    ? 'Open record'
+                    : 'Open first record',
               ),
             ),
           ),
@@ -345,7 +349,7 @@ class _CsvImportScreenState extends State<CsvImportScreen> {
             onPressed: () =>
                 Navigator.pushReplacementNamed(context, AppRoutes.collection),
             icon: const Icon(Icons.collections_bookmark_outlined),
-            label: const Text('Back to collection'),
+            label: const Text('Return to collection'),
           ),
         ),
       ],
@@ -372,7 +376,7 @@ class _CsvImportScreenState extends State<CsvImportScreen> {
         return;
       }
       setState(() {
-        _errorMessage = 'Could not open the selected CSV file. $error';
+        _errorMessage = 'Could not open that spreadsheet. $error';
       });
     } finally {
       if (mounted) {
@@ -385,7 +389,7 @@ class _CsvImportScreenState extends State<CsvImportScreen> {
     final rawPath = _testHarnessPathController.text.trim();
     if (rawPath.isEmpty) {
       setState(() {
-        _errorMessage = 'Enter a local CSV file path before loading it.';
+        _errorMessage = 'Add a file path before loading it.';
       });
       return;
     }
@@ -414,7 +418,7 @@ class _CsvImportScreenState extends State<CsvImportScreen> {
         return;
       }
       setState(() {
-        _errorMessage = 'Could not read the local CSV path. $error';
+        _errorMessage = 'Could not read that file path. $error';
       });
     } finally {
       if (mounted) {
@@ -506,7 +510,7 @@ class _CsvImportScreenState extends State<CsvImportScreen> {
         _preview = null;
         _headerMappings = null;
         _duplicateChoices = {};
-        _errorMessage = 'Could not preview this CSV file. $error';
+        _errorMessage = 'Could not preview that spreadsheet. $error';
       });
     } finally {
       if (mounted) {
@@ -588,7 +592,8 @@ class _CsvImportScreenState extends State<CsvImportScreen> {
         return;
       }
       setState(() {
-        _errorMessage = 'Could not save imported records locally. $error';
+        _errorMessage =
+            'Could not add those records to your collection. $error';
       });
     } finally {
       if (mounted) {
@@ -728,7 +733,7 @@ class _CsvPreviewRowCard extends StatelessWidget {
           if (row.duplicateCandidates.isNotEmpty) ...[
             const SizedBox(height: 12),
             Text(
-              'Duplicate choice',
+              'Possible duplicate',
               style: Theme.of(context).textTheme.labelLarge,
             ),
             const SizedBox(height: 8),
@@ -736,12 +741,12 @@ class _CsvPreviewRowCard extends StatelessWidget {
               segments: const [
                 ButtonSegment<_DuplicateImportChoice>(
                   value: _DuplicateImportChoice.skip,
-                  label: Text('Skip'),
+                  label: Text('Leave out'),
                   icon: Icon(Icons.skip_next_outlined),
                 ),
                 ButtonSegment<_DuplicateImportChoice>(
                   value: _DuplicateImportChoice.importAsNew,
-                  label: Text('Import as new'),
+                  label: Text('Add anyway'),
                   icon: Icon(Icons.add_box_outlined),
                 ),
               ],
@@ -783,9 +788,9 @@ class _CsvPreviewRowCard extends StatelessWidget {
   String _duplicateText(CsvArtworkDuplicateCandidate candidate) {
     return switch (candidate.source) {
       CsvArtworkDuplicateSource.existingRecord =>
-        'Matches existing record ${candidate.existingArtworkId}: ${candidate.reason}',
+        'Looks close to record ${candidate.existingArtworkId}: ${candidate.reason}',
       CsvArtworkDuplicateSource.incomingRow =>
-        'Matches incoming row ${candidate.incomingRowNumber}: ${candidate.reason}',
+        'Looks close to row ${candidate.incomingRowNumber}: ${candidate.reason}',
     };
   }
 }
@@ -929,11 +934,11 @@ class _CsvImportWriteSummary {
 
   String get message {
     if (importedRecordIds.isEmpty) {
-      return 'All duplicate candidates were skipped or every row was blocked. Existing records were left unchanged.';
+      return 'Everything that looked like a duplicate was left out, or the remaining rows still need more information. Your collection was left unchanged.';
     }
 
     final importedCount = importedRecordIds.length;
-    return '$importedCount record${importedCount == 1 ? '' : 's'} saved in local storage. Nothing left the device during CSV review or import.';
+    return '$importedCount record${importedCount == 1 ? '' : 's'} ${importedCount == 1 ? 'was' : 'were'} added as draft ${importedCount == 1 ? 'record' : 'records'} for your review. Your spreadsheet stayed on this device throughout the import.';
   }
 
   factory _CsvImportWriteSummary.fromPreview({
@@ -975,10 +980,10 @@ class _CsvImportWriteSummary {
 enum _DuplicateImportChoice { skip, importAsNew }
 
 enum _PreviewCategory {
-  ready('Ready'),
-  warning('Warning'),
-  duplicate('Duplicate candidate'),
-  blocked('Blocked');
+  ready('Ready to add'),
+  warning('Needs review'),
+  duplicate('Possible duplicate'),
+  blocked('Needs more information');
 
   const _PreviewCategory(this.label);
 
@@ -1017,7 +1022,7 @@ class _CsvConfirmActions extends StatelessWidget {
               _CsvPanel(
                 child: _CsvPanelBody(
                   icon: Icons.workspace_premium_outlined,
-                  title: 'Plan limit before import',
+                  title: 'This import needs more room',
                   body: planGate.limitMessage,
                 ),
               ),
@@ -1039,10 +1044,10 @@ class _CsvConfirmActions extends StatelessWidget {
                 icon: const Icon(Icons.check_circle_outline),
                 label: Text(
                   isSaving
-                      ? 'Saving locally...'
+                      ? 'Adding to collection...'
                       : isCheckingPlan
-                      ? 'Checking plan...'
-                      : 'Confirm local import',
+                      ? 'Checking your plan...'
+                      : 'Add to collection',
                 ),
               ),
             ),
@@ -1068,7 +1073,7 @@ class _CancelImportButton extends StatelessWidget {
       child: OutlinedButton.icon(
         onPressed: isSaving ? null : onCancel,
         icon: const Icon(Icons.close),
-        label: const Text('Cancel without writing'),
+        label: const Text('Start over'),
       ),
     );
   }
@@ -1108,7 +1113,7 @@ class _CsvImportPlanGate {
       }
     }
 
-    return 'This import would add $selectedImportRowCount active artwork${selectedImportRowCount == 1 ? '' : 's'} to $currentActiveArtworkCount existing active artwork${currentActiveArtworkCount == 1 ? '' : 's'}. Existing records remain editable and exportable. Upgrade to ${upgradePlan.name} (${upgradePlan.priceLabel}) when Play Billing is connected.';
+    return 'This import would add $selectedImportRowCount active artwork${selectedImportRowCount == 1 ? '' : 's'} to the $currentActiveArtworkCount already in your collection. Your current records stay editable and exportable. Upgrade to ${upgradePlan.name} (${upgradePlan.priceLabel}) to bring in this group together.';
   }
 }
 

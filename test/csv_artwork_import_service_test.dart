@@ -212,7 +212,7 @@ void main() {
       expect(
         row.warnings,
         contains(
-          'Row has more cells than headers; extra cells were preserved in notes.',
+          'This row has more cells than headings, so the extra details were kept in notes.',
         ),
       );
       expect(row.rawValues['Unmapped column 3'], 'extra');
@@ -239,7 +239,10 @@ void main() {
 
         expect(preview.rows.single.isImportable, isFalse);
         expect(preview.rows.single.record, isNull);
-        expect(preview.rows.single.errors.single, contains('Row needs'));
+        expect(
+          preview.rows.single.errors.single,
+          contains('Add at least a title'),
+        );
       },
     );
 
@@ -255,23 +258,31 @@ void main() {
       expect(row.isImportable, isTrue);
       expect(
         row.warnings,
-        contains('Year is ambiguous and was preserved as imported.'),
+        contains('Year looks uncertain, so it was kept exactly as imported.'),
       );
       expect(
         row.warnings,
-        contains('Purchase price is ambiguous and was preserved as imported.'),
+        contains(
+          'Purchase price needs a closer look, so it was kept exactly as imported.',
+        ),
       );
       expect(
         row.warnings,
-        contains('Purchase date is ambiguous and was preserved as imported.'),
+        contains(
+          'Purchase date looks uncertain, so it was kept exactly as imported.',
+        ),
       );
       expect(
         row.warnings,
-        contains('Dimensions are ambiguous and were preserved as imported.'),
+        contains(
+          'Dimensions need a closer look, so they were kept exactly as imported.',
+        ),
       );
       expect(
         row.warnings,
-        contains('Insurance value is ambiguous and was preserved as imported.'),
+        contains(
+          'Insurance value needs a closer look, so it was kept exactly as imported.',
+        ),
       );
       expect(
         row.record!.field(ArtworkFieldKeys.purchasePrice)?.value,

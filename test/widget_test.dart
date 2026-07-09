@@ -184,7 +184,7 @@ void main() {
       csvPath: visualCsvFile.path,
       fileName: 'issue-109-csv-preview-warning-duplicate-mobile.png',
       ensureVisibleFinder: find.text(
-        'Duplicate candidate: 1',
+        'Possible duplicate: 1',
         skipOffstage: false,
       ),
     );
@@ -797,12 +797,12 @@ void main() {
       );
       await pumpLiveData(tester);
 
-      expect(find.text('Import collector CSV'), findsOneWidget);
-      expect(find.text('Private local records only'), findsOneWidget);
-      expect(find.text('Local-only CSV review'), findsOneWidget);
-      expect(find.textContaining('does not connect to Drive'), findsOneWidget);
-      expect(find.text('Choose CSV file'), findsOneWidget);
-      expect(find.text('Load local path'), findsOneWidget);
+      expect(find.text('Bring in your spreadsheet'), findsOneWidget);
+      expect(find.text('Private records stay on this device'), findsOneWidget);
+      expect(find.text('Review everything before it is added'), findsOneWidget);
+      expect(find.textContaining('possible duplicates'), findsOneWidget);
+      expect(find.text('Choose spreadsheet'), findsOneWidget);
+      expect(find.text('Load from path'), findsOneWidget);
       expect(find.text('Choose from system picker'), findsNothing);
 
       await enterVisibleText(
@@ -812,7 +812,7 @@ void main() {
       );
       await pressAsyncButton(
         tester,
-        find.widgetWithText(OutlinedButton, 'Load local path'),
+        find.widgetWithText(OutlinedButton, 'Load from path'),
       );
       await waitForFinder(
         tester,
@@ -825,20 +825,20 @@ void main() {
       );
       await pumpLiveData(tester);
 
-      expect(find.text('Preview categories'), findsOneWidget);
-      expect(find.text('Ready: 1'), findsOneWidget);
-      expect(find.text('Warning: 1'), findsOneWidget);
-      expect(find.text('Duplicate candidate: 1'), findsOneWidget);
-      expect(find.text('Blocked: 1'), findsOneWidget);
-      expect(find.text('Skip'), findsOneWidget);
-      expect(find.text('Import as new'), findsOneWidget);
+      expect(find.text('Preview your import'), findsOneWidget);
+      expect(find.text('Ready to add: 1'), findsOneWidget);
+      expect(find.text('Needs review: 1'), findsOneWidget);
+      expect(find.text('Possible duplicate: 1'), findsOneWidget);
+      expect(find.text('Needs more information: 1'), findsOneWidget);
+      expect(find.text('Leave out'), findsOneWidget);
+      expect(find.text('Add anyway'), findsOneWidget);
 
-      await tapVisible(tester, find.text('Cancel without writing'));
+      await tapVisible(tester, find.text('Start over'));
 
       final recordsAfterCancel = await tester.runAsync(fixture.repository.list);
       expect(recordsAfterCancel!.map((record) => record.id), ['existing-001']);
-      expect(find.text('Choose CSV file'), findsOneWidget);
-      expect(find.text('Preview categories'), findsNothing);
+      expect(find.text('Choose spreadsheet'), findsOneWidget);
+      expect(find.text('Preview your import'), findsNothing);
     },
   );
 
@@ -874,7 +874,7 @@ void main() {
 
       await pressAsyncButton(
         tester,
-        find.widgetWithText(FilledButton, 'Choose CSV file'),
+        find.widgetWithText(FilledButton, 'Choose spreadsheet'),
       );
       await waitForFinder(
         tester,
@@ -886,17 +886,17 @@ void main() {
         'field:title',
       );
       await pumpLiveData(tester);
-      await tapVisible(tester, find.text('Import as new'));
+      await tapVisible(tester, find.text('Add anyway'));
       await pressAsyncButton(
         tester,
-        find.widgetWithText(FilledButton, 'Confirm local import'),
+        find.widgetWithText(FilledButton, 'Add to collection'),
       );
 
-      expect(find.text('Local CSV import complete'), findsOneWidget);
-      expect(find.text('Imported records: 3'), findsOneWidget);
-      expect(find.text('Skipped duplicate candidates: 0'), findsOneWidget);
-      expect(find.text('Imported with warnings: 1'), findsOneWidget);
-      expect(find.text('Blocked rows left unchanged: 1'), findsOneWidget);
+      expect(find.text('Import ready for review'), findsOneWidget);
+      expect(find.text('Records added: 3'), findsOneWidget);
+      expect(find.text('Possible duplicates left out: 0'), findsOneWidget);
+      expect(find.text('Added with details to review: 1'), findsOneWidget);
+      expect(find.text('Rows not added yet: 1'), findsOneWidget);
 
       final recordsAfterImport = await tester.runAsync(fixture.repository.list);
       expect(recordsAfterImport, hasLength(4));
@@ -931,7 +931,7 @@ void main() {
         isTrue,
       );
 
-      await tapVisible(tester, find.text('Open first imported record'));
+      await tapVisible(tester, find.text('Open first record'));
       await pumpLiveData(tester);
 
       expect(find.text('Draft review'), findsWidgets);
@@ -986,7 +986,7 @@ void main() {
     );
     await pressAsyncButton(
       tester,
-      find.widgetWithText(OutlinedButton, 'Load local path'),
+      find.widgetWithText(OutlinedButton, 'Load from path'),
     );
     await waitForFinder(
       tester,
@@ -999,13 +999,13 @@ void main() {
     );
     await pumpLiveData(tester);
 
-    expect(find.text('Plan limit before import'), findsOneWidget);
+    expect(find.text('This import needs more room'), findsOneWidget);
     expect(
       find.textContaining('This import would add 3 active artworks'),
       findsOneWidget,
     );
     expect(
-      find.widgetWithText(FilledButton, 'Confirm local import'),
+      find.widgetWithText(FilledButton, 'Add to collection'),
       findsNothing,
     );
 
@@ -1071,7 +1071,7 @@ void main() {
     );
     await pressAsyncButton(
       tester,
-      find.widgetWithText(OutlinedButton, 'Load local path'),
+      find.widgetWithText(OutlinedButton, 'Load from path'),
     );
     await waitForFinder(
       tester,
@@ -1084,13 +1084,13 @@ void main() {
     );
     await pumpLiveData(tester);
 
-    expect(find.text('Plan limit before import'), findsNothing);
+    expect(find.text('This import needs more room'), findsNothing);
     await pressAsyncButton(
       tester,
-      find.widgetWithText(FilledButton, 'Confirm local import'),
+      find.widgetWithText(FilledButton, 'Add to collection'),
     );
 
-    expect(find.text('Local CSV import complete'), findsOneWidget);
+    expect(find.text('Import ready for review'), findsOneWidget);
     final records = await tester.runAsync(fixture.repository.list);
     expect(records, hasLength(6));
     expect(
@@ -1150,7 +1150,7 @@ void main() {
       dependencies: fixture.dependencies,
       csvPath: csvFile!.path,
       fileName: 'issue-139-csv-limit-light.png',
-      ensureVisibleFinder: find.text('Plan limit before import'),
+      ensureVisibleFinder: find.text('This import needs more room'),
     );
   });
 
@@ -3700,7 +3700,7 @@ Future<void> captureCsvImportPreviewVisualEvidence(
   );
   await pressAsyncButton(
     tester,
-    find.widgetWithText(OutlinedButton, 'Load local path'),
+    find.widgetWithText(OutlinedButton, 'Load from path'),
   );
   await waitForFinder(
     tester,
@@ -3712,9 +3712,7 @@ Future<void> captureCsvImportPreviewVisualEvidence(
     'field:title',
   );
   await pumpLiveData(tester);
-  await tester.ensureVisible(
-    ensureVisibleFinder ?? find.text('Cancel without writing'),
-  );
+  await tester.ensureVisible(ensureVisibleFinder ?? find.text('Start over'));
   await tester.pump();
 
   await captureBoundaryToArtifacts(tester, boundaryKey, fileName);
@@ -3746,13 +3744,13 @@ Future<void> captureCsvImportMappingVisualEvidence(
   );
   await pressAsyncButton(
     tester,
-    find.widgetWithText(OutlinedButton, 'Load local path'),
+    find.widgetWithText(OutlinedButton, 'Load from path'),
   );
   await waitForFinder(
     tester,
     find.byKey(const ValueKey('csv-mapping-Work Name')),
   );
-  await tester.ensureVisible(find.text('Header mapping'));
+  await tester.ensureVisible(find.text('Match each column'));
   await tester.pump();
 
   await captureBoundaryToArtifacts(tester, boundaryKey, fileName);
@@ -3784,7 +3782,7 @@ Future<void> captureCsvImportCancelVisualEvidence(
   );
   await pressAsyncButton(
     tester,
-    find.widgetWithText(OutlinedButton, 'Load local path'),
+    find.widgetWithText(OutlinedButton, 'Load from path'),
   );
   await waitForFinder(
     tester,
@@ -3796,9 +3794,9 @@ Future<void> captureCsvImportCancelVisualEvidence(
     'field:title',
   );
   await pumpLiveData(tester);
-  await tapVisible(tester, find.text('Cancel without writing'));
-  await waitForFinder(tester, find.text('Choose CSV file'));
-  await tester.ensureVisible(find.text('Choose CSV file'));
+  await tapVisible(tester, find.text('Start over'));
+  await waitForFinder(tester, find.text('Choose spreadsheet'));
+  await tester.ensureVisible(find.text('Choose spreadsheet'));
   await tester.pump();
 
   await captureBoundaryToArtifacts(tester, boundaryKey, fileName);
@@ -3825,7 +3823,7 @@ Future<void> captureCsvImportSuccessVisualEvidence(
   await pumpLiveData(tester);
   await pressAsyncButton(
     tester,
-    find.widgetWithText(FilledButton, 'Choose CSV file'),
+    find.widgetWithText(FilledButton, 'Choose spreadsheet'),
   );
   await waitForFinder(
     tester,
@@ -3837,13 +3835,13 @@ Future<void> captureCsvImportSuccessVisualEvidence(
     'field:title',
   );
   await pumpLiveData(tester);
-  await tapVisible(tester, find.text('Import as new'));
+  await tapVisible(tester, find.text('Add anyway'));
   await pressAsyncButton(
     tester,
-    find.widgetWithText(FilledButton, 'Confirm local import'),
+    find.widgetWithText(FilledButton, 'Add to collection'),
   );
-  await waitForFinder(tester, find.text('Open first imported record'));
-  await tester.ensureVisible(find.text('Open first imported record'));
+  await waitForFinder(tester, find.text('Open first record'));
+  await tester.ensureVisible(find.text('Open first record'));
   await tester.pump();
 
   await captureBoundaryToArtifacts(
@@ -3853,7 +3851,7 @@ Future<void> captureCsvImportSuccessVisualEvidence(
     resetAfterCapture: importedDraftFileName == null,
   );
   if (importedDraftFileName != null) {
-    await tapVisible(tester, find.text('Open first imported record'));
+    await tapVisible(tester, find.text('Open first record'));
     await pumpLiveData(tester);
     await waitForFinder(tester, find.text('Add evidence photos next'));
     await tester.ensureVisible(find.text('Primary image preview unavailable'));
