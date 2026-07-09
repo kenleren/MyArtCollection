@@ -25,6 +25,9 @@ branch-protection contract.
 Flutter test files run with one worker because several existing suites mutate
 process-global Flutter/database test state. Serial execution keeps the hosted
 result deterministic while still running every test.
+The Linux runner maps Roboto and Material Icons from the checksum-verified
+Flutter SDK to the macOS-compatible paths used by the existing screenshot test
+harness, keeping text metrics and lazy-list visibility consistent across hosts.
 
 ## Reproducibility and cache boundary
 
