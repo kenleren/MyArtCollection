@@ -549,7 +549,7 @@ void main() {
     await pumpReady(tester);
 
     expect(find.text('Collection'), findsWidgets);
-    expect(find.text('Incomplete'), findsOneWidget);
+    expect(find.text('Needs review'), findsOneWidget);
     expect(find.text('Reports'), findsOneWidget);
     expect(find.text('Settings'), findsOneWidget);
     expect(find.text('No artworks yet'), findsOneWidget);
@@ -822,10 +822,10 @@ void main() {
       expect(find.text('Reports'), findsWidgets);
       expect(find.text('Untitled artwork'), findsOneWidget);
       expect(find.text('Blue Interior Study'), findsNothing);
-      expect(find.text('Artwork report'), findsOneWidget);
+      expect(find.text('Open artwork report'), findsOneWidget);
       expect(find.text('Export your archive'), findsOneWidget);
 
-      await tapVisible(tester, find.text('Artwork report'));
+      await tapVisible(tester, find.text('Open artwork report'));
       await pumpLiveData(tester);
 
       expect(find.text('Report preview'), findsWidgets);
@@ -855,9 +855,9 @@ void main() {
     );
     await pumpLiveData(tester);
 
-    expect(find.text('No local records available'), findsOneWidget);
+    expect(find.text('No records ready for a report'), findsOneWidget);
     expect(find.text('Blue Interior Study'), findsNothing);
-    expect(find.text('Artwork report'), findsNothing);
+    expect(find.text('Open artwork report'), findsNothing);
     expect(find.text('Export your archive'), findsNothing);
   });
 
@@ -1673,7 +1673,7 @@ void main() {
     expect(find.text('Reloaded Local Artwork'), findsOneWidget);
     expect(find.text('Needs review'), findsOneWidget);
     expect(find.text('No artworks yet'), findsNothing);
-    expect(find.textContaining('incomplete queue items'), findsOneWidget);
+    expect(find.textContaining('details still need review'), findsOneWidget);
   });
 
   testWidgets('cold start opens collection when local records exist', (
@@ -2049,7 +2049,7 @@ void main() {
       find.text('Needs Local Review needs supporting records'),
       findsNothing,
     );
-    expect(find.text('No incomplete records'), findsOneWidget);
+    expect(find.text('Nothing needs review'), findsOneWidget);
   });
 
   testWidgets('incomplete missing-values action preserves draft provenance', (
@@ -2655,10 +2655,7 @@ void main() {
 
     expect(find.text('Manual Confirmed Title'), findsOneWidget);
     expect(find.text('Verified by you'), findsOneWidget);
-    expect(
-      find.text('1 incomplete queue item needs attention.'),
-      findsOneWidget,
-    );
+    expect(find.text('1 detail still needs review.'), findsOneWidget);
 
     await tapVisible(tester, find.text('Open record'));
     await pumpLiveData(tester);
@@ -3314,12 +3311,112 @@ void main() {
       await pumpReady(tester);
 
       expect(find.text('Settings'), findsWidgets);
-      expect(find.text('Privacy and storage'), findsWidgets);
-      expect(find.text('Backup connection unavailable'), findsOneWidget);
-      expect(find.text('Archive export preview only'), findsOneWidget);
+      expect(find.text('Privacy, backup, and exports'), findsWidgets);
+      expect(find.text('Backup not connected'), findsOneWidget);
+      expect(find.text('Export from a saved report'), findsOneWidget);
       expect(find.text('Disconnect backup'), findsNothing);
       expect(find.text('No artworks yet'), findsNothing);
     }
+  });
+
+  testWidgets('visual evidence covers issue 165 collection tab copy states', (
+    WidgetTester tester,
+  ) async {
+    final testDependencies = await tester.runAsync(
+      () async => _LiveDependencyFixture.create(),
+    );
+    final fixture = testDependencies!;
+    addTearDown(() async {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.runAsync(fixture.dispose);
+    });
+
+    await tester.runAsync(() async {
+      await fixture.repository.upsert(
+        _artworkRecord(
+          id: 'issue-165-report-record',
+          title: 'North Wall Landscape',
+          state: ArtworkRecordState.verifiedByYou,
+          source: ArtworkFieldSource.userConfirmed,
+        ),
+      );
+      await fixture.addSupportingPhoto(
+        artworkId: 'issue-165-report-record',
+        fileName: 'issue-165-supporting-photo.png',
+      );
+      await fixture.repository.upsert(
+        _artworkRecord(
+          id: 'issue-165-review-record',
+          title: 'Studio Portrait',
+          state: ArtworkRecordState.needsReview,
+        ),
+      );
+    });
+
+    await captureArtifactForApp(
+      tester,
+      routeName: AppRoutes.collection,
+      dependencies: fixture.dependencies,
+      themeMode: ThemeMode.light,
+      fileName: 'issue-165-collection-light.png',
+      ensureVisibleFinder: find.text('North Wall Landscape'),
+    );
+    await captureArtifactForApp(
+      tester,
+      routeName: AppRoutes.collectionIncomplete,
+      dependencies: fixture.dependencies,
+      themeMode: ThemeMode.light,
+      fileName: 'issue-165-needs-review-light.png',
+      ensureVisibleFinder: find.text('Studio Portrait needs review'),
+    );
+    await captureArtifactForApp(
+      tester,
+      routeName: AppRoutes.collectionReport,
+      dependencies: fixture.dependencies,
+      themeMode: ThemeMode.light,
+      fileName: 'issue-165-reports-light.png',
+      ensureVisibleFinder: find.text('Open artwork report'),
+    );
+    await captureArtifactForApp(
+      tester,
+      routeName: AppRoutes.collectionSettings,
+      dependencies: fixture.dependencies,
+      themeMode: ThemeMode.light,
+      fileName: 'issue-165-settings-light.png',
+      ensureVisibleFinder: find.text('Export from a saved report'),
+    );
+    await captureArtifactForApp(
+      tester,
+      routeName: AppRoutes.collection,
+      dependencies: fixture.dependencies,
+      themeMode: ThemeMode.dark,
+      fileName: 'issue-165-collection-dark.png',
+      ensureVisibleFinder: find.text('North Wall Landscape'),
+    );
+    await captureArtifactForApp(
+      tester,
+      routeName: AppRoutes.collectionIncomplete,
+      dependencies: fixture.dependencies,
+      themeMode: ThemeMode.dark,
+      fileName: 'issue-165-needs-review-dark.png',
+      ensureVisibleFinder: find.text('Studio Portrait needs review'),
+    );
+    await captureArtifactForApp(
+      tester,
+      routeName: AppRoutes.collectionReport,
+      dependencies: fixture.dependencies,
+      themeMode: ThemeMode.dark,
+      fileName: 'issue-165-reports-dark.png',
+      ensureVisibleFinder: find.text('Open artwork report'),
+    );
+    await captureArtifactForApp(
+      tester,
+      routeName: AppRoutes.collectionSettings,
+      dependencies: fixture.dependencies,
+      themeMode: ThemeMode.dark,
+      fileName: 'issue-165-settings-dark.png',
+      ensureVisibleFinder: find.text('Export from a saved report'),
+    );
   });
 
   testWidgets(
@@ -3371,7 +3468,7 @@ void main() {
         dependencies: fixture.dependencies,
         themeMode: ThemeMode.light,
         fileName: 'issue-131-settings-light.png',
-        ensureVisibleFinder: find.text('Archive export preview only'),
+        ensureVisibleFinder: find.text('Export from a saved report'),
       );
       await captureArtifactForApp(
         tester,
@@ -3395,7 +3492,7 @@ void main() {
         dependencies: fixture.dependencies,
         themeMode: ThemeMode.dark,
         fileName: 'issue-131-settings-dark.png',
-        ensureVisibleFinder: find.text('Archive export preview only'),
+        ensureVisibleFinder: find.text('Export from a saved report'),
       );
     },
   );

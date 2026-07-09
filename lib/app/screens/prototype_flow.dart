@@ -180,7 +180,7 @@ class _CollectionHomeContent extends StatelessWidget {
       children: [
         const _Heading(
           title: 'Collection',
-          subtitle: 'Private record overview',
+          subtitle: 'Your private artwork records',
         ),
         const SizedBox(height: 16),
         _LimitHint(
@@ -268,16 +268,16 @@ class _IncompleteQueueContent extends StatelessWidget {
       padding: const EdgeInsets.all(20),
       children: [
         const _Heading(
-          title: 'Incomplete',
-          subtitle: 'Records that need attention',
+          title: 'Needs review',
+          subtitle: 'Records worth another look',
         ),
         const SizedBox(height: 16),
         if (items.isEmpty)
           const _StatusPanel(
             icon: Icons.check_circle_outline,
-            title: 'No incomplete records',
+            title: 'Nothing needs review',
             body:
-                'Local records with confirmed fields and supporting attachments will stay out of this queue.',
+                'As you confirm details and add supporting records, finished records leave this list.',
           )
         else
           for (final item in items) ...[
@@ -349,22 +349,22 @@ class _ReportsHomeContent extends StatelessWidget {
       children: [
         const _Heading(
           title: 'Reports',
-          subtitle: 'Generate an insurance-ready PDF',
+          subtitle: 'Prepare a report when you need one',
         ),
         const SizedBox(height: 16),
         if (firstArtwork == null)
           const _StatusPanel(
             icon: Icons.inventory_2_outlined,
-            title: 'No local records available',
+            title: 'No records ready for a report',
             body:
-                'Add or import an artwork before generating report or archive previews.',
+                'Add or import an artwork to prepare a report or archive export.',
           )
         else ...[
           _ReportSummary(artwork: firstArtwork),
           const SizedBox(height: 16),
           PrimaryActionButton(
             icon: Icons.picture_as_pdf_outlined,
-            label: 'Artwork report',
+            label: 'Open artwork report',
             routeName: AppRoutes.artworkReportPreview(firstArtwork.id),
           ),
           const SizedBox(height: 12),
@@ -388,7 +388,10 @@ class SettingsHomeScreen extends StatelessWidget {
     return ListView(
       padding: const EdgeInsets.all(20),
       children: [
-        const _Heading(title: 'Settings', subtitle: 'Privacy and storage'),
+        const _Heading(
+          title: 'Settings',
+          subtitle: 'Privacy, backup, and exports',
+        ),
         const SizedBox(height: 16),
         if (dependencies != null) ...[
           FutureBuilder<EntitlementState>(
@@ -404,23 +407,23 @@ class SettingsHomeScreen extends StatelessWidget {
         ],
         const _StatusPanel(
           icon: Icons.lock_outline,
-          title: 'Private record',
+          title: 'Your records stay private',
           body:
-              'Back up your records in your Google account or keep local-only.',
+              'Keep your records on this device, or back them up in your Google account when you choose.',
         ),
         const SizedBox(height: 12),
         const _StatusPanel(
           icon: Icons.cloud_off_outlined,
-          title: 'Backup connection unavailable',
+          title: 'Backup not connected',
           body:
-              'Google Drive backup is not connected in this build; local records stay on this device.',
+              'Your collection stays on this device until you connect Google Drive backup.',
         ),
         const SizedBox(height: 12),
         const _StatusPanel(
           icon: Icons.ios_share_outlined,
-          title: 'Archive export preview only',
+          title: 'Export from a saved report',
           body:
-              'Open a saved artwork report to preview export contents. Full archive export is not enabled from settings yet.',
+              'Open an artwork report to preview what an archive export will include.',
         ),
       ],
     );
@@ -437,18 +440,18 @@ class _PlanStatusPanel extends StatelessWidget {
     final plan = entitlementState.plan;
     final billingCopy = switch (entitlementState.billingStatus) {
       EntitlementBillingStatus.available =>
-        'Play Billing is available for this build.',
+        'Plan changes are available on this device.',
       EntitlementBillingStatus.unavailable =>
-        'Play Billing is unavailable on this device or build.',
+        'Plan changes are not available on this device.',
       EntitlementBillingStatus.notConfigured =>
-        'Play Billing products are not connected in this build yet.',
+        'Plan changes are not available yet.',
     };
 
     return _StatusPanel(
       icon: Icons.workspace_premium_outlined,
       title: '${plan.name} plan',
       body:
-          '${plan.activeArtworkLimitLabel}, ${plan.aiCreditsLabel}. $billingCopy Existing records remain editable and exportable.',
+          '${_planArtworkLimitCopy(plan)}, ${_planResearchDraftCopy(plan)}. Existing records remain editable and exportable. $billingCopy',
     );
   }
 }
@@ -3601,16 +3604,16 @@ class _LimitHint extends StatelessWidget {
         ? '$currentActiveArtworkCount active records'
         : '$currentActiveArtworkCount of ${plan.activeArtworkLimit} active records';
     final remainingCopy = remaining == null
-        ? 'Your current plan has no active artwork cap.'
+        ? 'Your plan has room for your full collection.'
         : remaining == 0
-        ? 'Upgrade to add more active artworks; existing records remain editable and exportable.'
-        : '$remaining active artwork slot${remaining == 1 ? '' : 's'} left before upgrade.';
+        ? 'This plan is full. Existing records remain editable and exportable.'
+        : '$remaining artwork slot${remaining == 1 ? '' : 's'} open in this plan.';
 
     return _StatusPanel(
       icon: Icons.workspace_premium_outlined,
       title: '${plan.name} plan: $usage',
       body:
-          '$remainingCopy ${plan.aiCreditsLabel} are included for approved AI features.',
+          '$remainingCopy ${_planResearchDraftCopy(plan)} included each month.',
     );
   }
 }
@@ -3639,7 +3642,7 @@ class _EmptyCollectionPanel extends StatelessWidget {
           ),
           const SizedBox(height: 6),
           const Text(
-            'Start with one artwork photo, then keep evidence, source labels, documents, and report notes together.',
+            'Begin with one artwork photo, then keep notes, supporting records, and report-ready details together.',
           ),
           const SizedBox(height: 16),
           if (canAddArtwork) ...[
@@ -3690,9 +3693,9 @@ class _BillingGatePanel extends StatelessWidget {
         : nextPlans.first;
     return _StatusPanel(
       icon: Icons.workspace_premium_outlined,
-      title: '${plan.name} plan limit reached',
+      title: '${plan.name} plan is full',
       body:
-          'You have $currentActiveArtworkCount active artwork${currentActiveArtworkCount == 1 ? '' : 's'} and need room for another active artwork. Existing records stay viewable, editable, and exportable. Upgrade to ${suggestedPlan.name} (${suggestedPlan.priceLabel}) when Play Billing is connected.',
+          'You already have $currentActiveArtworkCount active artwork${currentActiveArtworkCount == 1 ? '' : 's'} in this plan. Existing records stay viewable, editable, and exportable. Choose ${suggestedPlan.name} (${suggestedPlan.priceLabel}) when you want room for another active artwork.',
     );
   }
 }
@@ -3748,28 +3751,28 @@ class _CollectionRecordPanel extends StatelessWidget {
           _StatusLine(
             icon: Icons.photo_library_outlined,
             text: record.primaryImageAttachmentId == null
-                ? 'Primary image is not attached yet.'
-                : 'Primary image saved in app-private storage.',
+                ? 'Add a primary image for this record.'
+                : 'Primary image saved on this device.',
           ),
           _StatusLine(
             icon: Icons.attach_file,
             text: supportingCount == 0
-                ? 'No supporting records attached yet.'
-                : '$supportingCount supporting record${supportingCount == 1 ? '' : 's'} attached.',
+                ? 'No supporting records added yet.'
+                : '$supportingCount supporting record${supportingCount == 1 ? '' : 's'} added.',
           ),
           _StatusLine(
             icon: incompleteCount == 0
                 ? Icons.check_circle_outline
                 : Icons.rule_folder_outlined,
             text: incompleteCount == 0
-                ? 'No incomplete queue items for this record.'
-                : '$incompleteCount incomplete queue item${incompleteCount == 1 ? '' : 's'} ${incompleteCount == 1 ? 'needs' : 'need'} attention.',
+                ? 'Nothing else needs review for this record.'
+                : '$incompleteCount detail${incompleteCount == 1 ? '' : 's'} still ${incompleteCount == 1 ? 'needs' : 'need'} review.',
           ),
           if (lifecycleStatus != ArtworkLifecycleStatus.active)
             _StatusLine(
               icon: Icons.inventory_2_outlined,
               text:
-                  'Marked ${lifecycleStatus.label.toLowerCase()}; retained in the local record.',
+                  'Marked ${lifecycleStatus.label.toLowerCase()}; kept in your record history.',
             ),
           const SizedBox(height: 12),
           PrimaryActionButton(
@@ -4376,7 +4379,7 @@ List<_IncompleteItem> _incompleteItems(
           title:
               '$title is marked ${record.lifecycleStatus.label.toLowerCase()}',
           body:
-              'This record is retained locally but is not treated as a current incomplete holding.',
+              'This record stays in your archive, but it is not treated as an active artwork that needs review.',
           actionLabel: 'Open record',
           routeName: AppRoutes.artworkDetails(record.id),
         ),
@@ -4398,8 +4401,8 @@ List<_IncompleteItem> _incompleteItems(
         icon: Icons.rate_review_outlined,
         title: '$title needs review',
         body: reviewCount == 0
-            ? 'Record state still needs review before export.'
-            : '$reviewCount field${reviewCount == 1 ? '' : 's'} still need user confirmation before export.',
+            ? 'Review this record before you rely on it in a report or export.'
+            : '$reviewCount field${reviewCount == 1 ? '' : 's'} still need your confirmation before this record is ready for a report or export.',
         actionLabel: 'Review draft',
         routeName: AppRoutes.artworkDraft(record.id),
       ),
@@ -4412,7 +4415,7 @@ List<_IncompleteItem> _incompleteItems(
         icon: Icons.edit_note_outlined,
         title: '$title has missing values',
         body:
-            '$missingCount core field${missingCount == 1 ? '' : 's'} need a value before this record is complete.',
+            '$missingCount core field${missingCount == 1 ? '' : 's'} still need a value before this record feels complete.',
         actionLabel: 'Open record',
         routeName: _reviewSafeRoute(record),
       ),
@@ -4427,7 +4430,7 @@ List<_IncompleteItem> _incompleteItems(
         title: '$title needs supporting records',
         body: supportingCount == 0
             ? 'Add a supporting photo, receipt, certificate, appraisal, auction record, or provenance note when available.'
-            : '$supportingCount supporting record${supportingCount == 1 ? '' : 's'} attached; review the supporting-record completeness state.',
+            : '$supportingCount supporting record${supportingCount == 1 ? '' : 's'} added; review whether this artwork still needs more context.',
         actionLabel: 'Attach supporting records',
         routeName: AppRoutes.artworkDocuments(record.id),
       ),
@@ -4471,6 +4474,17 @@ List<String> _missingCoreFields(ArtworkRecord record) {
             _isPlaceholderCoreFieldValue(key, value);
       })
       .toList(growable: false);
+}
+
+String _planArtworkLimitCopy(EntitlementPlan plan) {
+  final limit = plan.activeArtworkLimit;
+  return limit == null
+      ? 'Room for unlimited active artworks'
+      : 'Room for $limit active artworks';
+}
+
+String _planResearchDraftCopy(EntitlementPlan plan) {
+  return '${plan.monthlyAiCredits} Archivale research draft${plan.monthlyAiCredits == 1 ? '' : 's'}';
 }
 
 const _coreFieldKeys = [

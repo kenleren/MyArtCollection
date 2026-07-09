@@ -15,7 +15,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String get collectionTab => 'Collection';
 
   @override
-  String get incompleteTab => 'Incomplete';
+  String get incompleteTab => 'Needs review';
 
   @override
   String get reportsTab => 'Reports';
