@@ -8,15 +8,15 @@ import {
   type BrokerResponse,
   type ProviderClient,
 } from './contracts.js';
-import { PlaceholderCreditLedger } from './credit_ledger.js';
+import { PlaceholderCreditLedger, type BrokerCreditLedger } from './credit_ledger.js';
 import { FakeResearchProvider } from './fake_provider.js';
-import { InMemoryIdempotencyStore } from './idempotency.js';
+import { InMemoryIdempotencyStore, type BrokerIdempotencyStore } from './idempotency.js';
 import { authorizeProviderRequest } from './provider_authorization.js';
 
 export interface BrokerDependencies {
   provider: ProviderClient;
-  idempotency: InMemoryIdempotencyStore;
-  creditLedger: PlaceholderCreditLedger;
+  idempotency: BrokerIdempotencyStore;
+  creditLedger: BrokerCreditLedger;
   now: () => Date;
   orderTrace?: string[];
 }

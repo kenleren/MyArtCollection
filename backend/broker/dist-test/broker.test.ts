@@ -34,6 +34,16 @@ import {
   isResearchBrokerLiveEnabled,
   type MinimalResponse,
 } from '../src/live_broker.js';
+import {
+  ConfiguredDurableBrokerProtection,
+  DurableCreditLedger,
+  DurableIdempotencyStore,
+  FakeBrokerTokenVerifier,
+  FakeDurableBrokerStore,
+  FirebaseAdminBrokerTokenVerifier,
+  deriveQuotaSubject,
+  type DurableBrokerProtection,
+} from '../src/durable_protection.js';
 
 const baseContext = Object.freeze({
   app_check_verified: true,
@@ -151,6 +161,8 @@ function createHttpRequest(
   request.method = 'POST';
   request.headers = {
     'content-type': 'application/json',
+    authorization: 'Bearer owner-auth-token',
+    'x-firebase-appcheck': 'owner-app-check-token',
     'x-archivale-broker-app-check-verified': 'true',
     'x-archivale-broker-auth-verified': 'true',
     'x-archivale-broker-auth-uid': 'owner-uid',
@@ -195,6 +207,90 @@ function createHttpResponse(): TestHttpResponse & {
   return Object.assign(response, {
     responder,
   });
+}
+
+function durableEnv(overrides: Record<string, string | undefined> = {}): NodeJS.ProcessEnv {
+  return {
+    BROKER_HTTP_ENABLED: 'true',
+    BROKER_PROVIDER_MODE: 'openai',
+    BROKER_OPENAI_LIVE_TEST_ENABLED: 'true',
+    BROKER_OWNER_UID_ALLOWLIST: 'owner-uid',
+    BROKER_FIREBASE_PROJECT_ID: 'broker-project',
+    BROKER_FIREBASE_PROJECT_NUMBER: '123456789',
+    BROKER_APP_ID_ALLOWLIST: 'owner-test-app',
+    BROKER_DURABLE_STORE_CONFIGURED: 'true',
+    BROKER_QUOTA_HMAC_SECRET: 'test-only-quota-hmac-secret',
+    OPENAI_API_KEY: 'test-openai-key',
+    OPENAI_ALLOWED_DOMAINS: 'museum.example',
+    ...overrides,
+  };
+}
+
+function createFakeDurableProtection(
+  store = new FakeDurableBrokerStore({ entitledUids: ['owner-uid'] }),
+  tokenMap?: ReadonlyMap<
+    string,
+    { uid: string; appId: string; projectId?: string; signInProvider?: string }
+  >,
+): DurableBrokerProtection {
+  const config = {
+    projectId: 'broker-project',
+    projectNumber: '123456789',
+    allowedAppIds: new Set(['owner-test-app']),
+    quotaHmacSecret: 'test-only-quota-hmac-secret',
+  };
+  return new ConfiguredDurableBrokerProtection(
+    new FakeBrokerTokenVerifier(config, tokenMap),
+    store,
+    new DurableIdempotencyStore(store),
+    new DurableCreditLedger(store),
+    config,
+  );
+}
+
+function liveDependenciesFactory(options: {
+  protection?: DurableBrokerProtection;
+  store?: FakeDurableBrokerStore;
+  provider?: ProviderClient;
+  configLookup?: () => void;
+  env?: NodeJS.ProcessEnv;
+} = {}): ReturnType<typeof createConfiguredResearchBrokerDependencies> {
+  const store = options.store ?? new FakeDurableBrokerStore({ entitledUids: ['owner-uid'] });
+  const protection = options.protection ?? createFakeDurableProtection(store);
+  if (options.provider !== undefined) {
+    return {
+      kind: 'ready',
+      ownerUidAllowlist: new Set(['owner-uid']),
+      durableProtection: true,
+      protection,
+      createDependencies: () => {
+        options.configLookup?.();
+        return createFakeBrokerDependencies({
+          provider: options.provider,
+          idempotency: protection.createIdempotencyStore(),
+          creditLedger: protection.createCreditLedger(),
+        });
+      },
+    };
+  }
+  return createConfiguredResearchBrokerDependencies(
+    options.env ?? durableEnv(),
+    {},
+    () => {
+      options.configLookup?.();
+      return {
+        ok: true,
+        config: {
+          apiKey: 'test-openai-key',
+          allowedDomains: ['museum.example'],
+          fetchImpl: (async () => {
+            throw new Error('unexpected live OpenAI fetch');
+          }) as typeof fetch,
+        },
+      };
+    },
+    protection,
+  );
 }
 
 class StaticProvider implements ProviderClient {
@@ -1129,14 +1225,7 @@ test('disabled live gate returns a safe 503 before any OpenAI config lookup', as
 test('enabled live config fails closed before OpenAI config lookup without durable protection', async () => {
   let configLookupCount = 0;
   const configured = createConfiguredResearchBrokerDependencies(
-    {
-      BROKER_HTTP_ENABLED: 'true',
-      BROKER_PROVIDER_MODE: 'openai',
-      BROKER_OPENAI_LIVE_TEST_ENABLED: 'true',
-      BROKER_OWNER_UID_ALLOWLIST: 'owner-uid',
-      OPENAI_API_KEY: 'should-not-be-read',
-      OPENAI_ALLOWED_DOMAINS: 'museum.example',
-    },
+    durableEnv(),
     {},
     () => {
       configLookupCount += 1;
@@ -1155,32 +1244,133 @@ test('enabled live config fails closed before OpenAI config lookup without durab
   assert.equal(configLookupCount, 0);
 });
 
-test('live shell refuses provider calls when injected dependencies are not durable-protected', async () => {
-  const deps = createFakeBrokerDependencies();
-  const handler = createResearchBrokerHttpHandler({
-    env: {
-      BROKER_HTTP_ENABLED: 'true',
-      BROKER_PROVIDER_MODE: 'openai',
-      BROKER_OPENAI_LIVE_TEST_ENABLED: 'true',
-      BROKER_OWNER_UID_ALLOWLIST: 'owner-uid',
+test('enabled live config fails closed before OpenAI config lookup without durable env config', async () => {
+  let configLookupCount = 0;
+  const configured = createConfiguredResearchBrokerDependencies(
+    durableEnv({ BROKER_DURABLE_STORE_CONFIGURED: undefined }),
+    {},
+    () => {
+      configLookupCount += 1;
+      return {
+        ok: false,
+        code: 'missing_openai_api_key',
+        message: 'should not be reached',
+      };
     },
-    dependenciesFactory: () => ({
-      kind: 'ready',
-      dependencies: deps,
-      ownerUidAllowlist: new Set(['owner-uid']),
-    } as unknown as ReturnType<typeof createConfiguredResearchBrokerDependencies>),
+    createFakeDurableProtection(),
+  );
+
+  assert.deepEqual(configured, {
+    kind: 'misconfigured',
+    code: 'missing_durable_broker_config',
   });
-
-  const response = createHttpResponse();
-  await handler(createHttpRequest({ data: request() }), response.responder);
-
-  assert.equal(response.statusCode, 503);
-  assert.deepEqual(response.json, { ok: false, error: 'research_broker_disabled' });
-  assert.equal(deps.provider.callCount, 0);
-  assert.equal(deps.creditLedger.reserveCount, 0);
+  assert.equal(configLookupCount, 0);
 });
 
-test('live shell stays disabled until explicit gates and owner allowlist are present', async () => {
+test('enabled live config fails closed before OpenAI config lookup without quota secret', async () => {
+  let configLookupCount = 0;
+  const configured = createConfiguredResearchBrokerDependencies(
+    durableEnv({ BROKER_QUOTA_HMAC_SECRET: undefined }),
+    {},
+    () => {
+      configLookupCount += 1;
+      return {
+        ok: false,
+        code: 'missing_openai_api_key',
+        message: 'should not be reached',
+      };
+    },
+    createFakeDurableProtection(),
+  );
+
+  assert.deepEqual(configured, {
+    kind: 'misconfigured',
+    code: 'missing_quota_hmac_secret',
+  });
+  assert.equal(configLookupCount, 0);
+});
+
+test('firebase admin verifier abstraction requires revoked Auth check and matching App Check project', async () => {
+  let checkRevokedValue: boolean | undefined;
+  const verifier = new FirebaseAdminBrokerTokenVerifier({
+    auth: {
+      async verifyIdToken(token, checkRevoked) {
+        checkRevokedValue = checkRevoked;
+        assert.equal(token, 'owner-auth-token');
+        return {
+          uid: 'owner-uid',
+          aud: 'broker-project',
+          iss: 'https://securetoken.google.com/broker-project',
+          firebase: { sign_in_provider: 'anonymous' },
+        };
+      },
+    },
+    appCheck: {
+      async verifyToken(token) {
+        assert.equal(token, 'owner-app-check-token');
+        return {
+          appId: 'owner-test-app',
+          aud: ['123456789', 'broker-project'],
+          iss: 'https://firebaseappcheck.googleapis.com/123456789',
+        };
+      },
+    },
+    config: {
+      projectId: 'broker-project',
+      projectNumber: '123456789',
+      allowedAppIds: new Set(['owner-test-app']),
+    },
+  });
+
+  const verified = await verifier.verify({
+    authorizationHeader: 'Bearer owner-auth-token',
+    appCheckToken: 'owner-app-check-token',
+  });
+
+  assert.equal(verified.ok, true);
+  assert.equal(checkRevokedValue, true);
+  if (verified.ok) {
+    assert.equal(verified.auth.uid, 'owner-uid');
+    assert.equal(verified.auth.projectId, 'broker-project');
+    assert.equal(verified.app.appId, 'owner-test-app');
+  }
+
+  const wrongProjectVerifier = new FirebaseAdminBrokerTokenVerifier({
+    auth: {
+      async verifyIdToken() {
+        return {
+          uid: 'owner-uid',
+          aud: 'broker-project',
+          iss: 'https://securetoken.google.com/broker-project',
+          firebase: { sign_in_provider: 'anonymous' },
+        };
+      },
+    },
+    appCheck: {
+      async verifyToken() {
+        return {
+          appId: 'owner-test-app',
+          aud: ['999999999', 'wrong-project'],
+          iss: 'https://firebaseappcheck.googleapis.com/999999999',
+        };
+      },
+    },
+    config: {
+      projectId: 'broker-project',
+      projectNumber: '123456789',
+      allowedAppIds: new Set(['owner-test-app']),
+    },
+  });
+
+  const rejected = await wrongProjectVerifier.verify({
+    authorizationHeader: 'Bearer owner-auth-token',
+    appCheckToken: 'owner-app-check-token',
+  });
+
+  assert.deepEqual(rejected, { ok: false, code: 'invalid_app_check_token' });
+});
+
+test('live shell verifies tokens, derives quota subject, and ignores spoofed quota headers', async () => {
   assert.equal(isResearchBrokerLiveEnabled({}), false);
   assert.equal(
     isResearchBrokerLiveEnabled({
@@ -1191,120 +1381,264 @@ test('live shell stays disabled until explicit gates and owner allowlist are pre
     true,
   );
 
-  const deps = createFakeBrokerDependencies({
-    provider: createOpenAiProvider({
-      apiKey: 'test-openai-key',
-      allowedDomains: ['museum.example'],
-      fetchImpl: (async () => ({
-        ok: true,
-        status: 200,
-        json: async () => ({
-          output: [
-            {
-              type: 'web_search_call',
-              action: { sources: [{ url: 'https://museum.example/works/123' }] },
-            },
-            {
-              type: 'message',
-              content: [
-                {
-                  type: 'output_text',
-                  text: JSON.stringify({
-                    sources: [
-                      {
-                        source_id: 'src_1',
-                        source_name: 'Museum Example',
-                        source_type: 'museum',
-                        source_url: 'https://museum.example/works/123',
-                        title: 'Collection record',
-                        accessed_at: '2026-07-08T16:00:00.000Z',
-                        citation_excerpt: 'Collection record excerpt.',
-                        matched_fields: ['title'],
-                      },
-                    ],
-                    candidate_attributions: [],
-                    comparable_value_signals: [],
-                    warnings: [],
-                  }),
-                  annotations: [
-                    {
-                      type: 'url_citation',
-                      url_citation: { url: 'https://museum.example/works/123' },
-                    },
-                  ],
-                },
-              ],
-            },
-          ],
-        }),
-      }) as Response) as typeof fetch,
-    }),
+  const provider = new StaticProvider({
+    sources: [
+      {
+        source_id: 'src_live',
+        source_name: 'Museum Example',
+        source_type: 'museum',
+        source_url: 'https://museum.example/works/123',
+        title: 'Collection record',
+        accessed_at: '2026-07-08T16:00:00.000Z',
+        citation_excerpt: 'Collection record excerpt.',
+        matched_fields: ['title'],
+      },
+    ],
+    candidate_attributions: [],
+    comparable_value_signals: [],
+    warnings: [],
   });
+  const store = new FakeDurableBrokerStore({ entitledUids: ['owner-uid'] });
 
   const handler = createResearchBrokerHttpHandler({
-    env: {
-      BROKER_HTTP_ENABLED: 'true',
-      BROKER_PROVIDER_MODE: 'openai',
-      BROKER_OPENAI_LIVE_TEST_ENABLED: 'true',
-      BROKER_OWNER_UID_ALLOWLIST: 'owner-uid',
-    },
-    dependenciesFactory: () => ({
-      kind: 'ready',
-      dependencies: deps,
-      ownerUidAllowlist: new Set(['owner-uid']),
-      durableProtection: true,
-    }),
+    env: durableEnv(),
+    dependenciesFactory: () => liveDependenciesFactory({ store, provider }),
   });
 
   const deniedResponse = createHttpResponse();
   await handler(
-    createHttpRequest({ data: request() }, { 'x-archivale-broker-auth-uid': 'non-owner' }),
+    createHttpRequest({ data: request() }, { authorization: 'Bearer invalid-auth-token' }),
     deniedResponse.responder,
   );
-  assert.equal(deniedResponse.statusCode, 403);
-  assert.deepEqual(deniedResponse.json, { ok: false, error: 'forbidden' });
-  assert.equal(deps.provider.callCount, 0);
+  assert.equal(deniedResponse.statusCode, 401);
+  assert.deepEqual(deniedResponse.json, { ok: false, error: 'unauthorized' });
+  assert.equal(provider.callCount, 0);
+  assert.equal(store.reserveCount, 0);
 
   const allowedResponse = createHttpResponse();
   await handler(
-    createHttpRequest({
-      data: request({
-        image: {
-          mime_type: 'image/jpeg',
-          byte_size: 120_000,
-          long_edge_px: 1400,
-          content_base64: 'ZmFrZS1pbWFnZS1ieXRlcw==',
-        },
-      }),
-    }),
+    createHttpRequest(
+      { data: request() },
+      { 'x-archivale-broker-quota-subject': 'quota_subject_v1_client_spoofed' },
+    ),
     allowedResponse.responder,
   );
 
   assert.equal(allowedResponse.statusCode, 200);
   assert.equal(allowedResponse.json.status, 'completed');
-  assert.equal(allowedResponse.json.provider, 'openai');
-  assert.equal(deps.provider.callCount, 1);
+  assert.equal(provider.callCount, 1);
+  assert.equal(store.reserveCount, 1);
+  assert.equal(
+    store.ledgerRecords[0]?.quotaSubject,
+    deriveQuotaSubject({
+      uid: 'owner-uid',
+      appId: 'owner-test-app',
+      projectId: 'broker-project',
+      secret: 'test-only-quota-hmac-secret',
+    }),
+  );
+  assert.notEqual(store.ledgerRecords[0]?.quotaSubject, 'quota_subject_v1_client_spoofed');
+});
+
+test('live durable duplicate across dependency instances yields one provider execution and one debit', async () => {
+  const provider = new SlowProvider();
+  const store = new FakeDurableBrokerStore({ entitledUids: ['owner-uid'] });
+  const handlerA = createResearchBrokerHttpHandler({
+    env: durableEnv(),
+    dependenciesFactory: () => liveDependenciesFactory({ store, provider }),
+  });
+  const handlerB = createResearchBrokerHttpHandler({
+    env: durableEnv(),
+    dependenciesFactory: () => liveDependenciesFactory({ store, provider }),
+  });
+
+  const firstResponse = createHttpResponse();
+  const secondResponse = createHttpResponse();
+  const first = handlerA(createHttpRequest({ data: request() }), firstResponse.responder);
+  const second = handlerB(createHttpRequest({ data: request() }), secondResponse.responder);
+  provider.resolve();
+  await Promise.all([first, second]);
+
+  assert.equal(firstResponse.statusCode, 200);
+  assert.equal(secondResponse.statusCode, 200);
+  assert.equal(secondResponse.json.replayed, true);
+  assert.equal(provider.callCount, 1);
+  assert.equal(store.reserveCount, 1);
+  assert.equal(store.finalizeCount, 1);
+});
+
+test('live durable changed payload hash conflicts across instances without provider execution', async () => {
+  const provider = new StaticProvider({
+    sources: [
+      {
+        source_id: 'src_live_conflict',
+        source_name: 'Museum Example',
+        source_type: 'museum',
+        source_url: 'https://museum.example/works/conflict',
+        title: 'Collection record',
+        accessed_at: '2026-07-08T16:00:00.000Z',
+        citation_excerpt: 'Collection record excerpt.',
+        matched_fields: ['title'],
+      },
+    ],
+    candidate_attributions: [],
+    comparable_value_signals: [],
+    warnings: [],
+  });
+  const store = new FakeDurableBrokerStore({ entitledUids: ['owner-uid'] });
+  const handlerA = createResearchBrokerHttpHandler({
+    env: durableEnv(),
+    dependenciesFactory: () => liveDependenciesFactory({ store, provider }),
+  });
+  const handlerB = createResearchBrokerHttpHandler({
+    env: durableEnv(),
+    dependenciesFactory: () => liveDependenciesFactory({ store, provider }),
+  });
+
+  const firstResponse = createHttpResponse();
+  await handlerA(createHttpRequest({ data: request() }), firstResponse.responder);
+
+  const conflictResponse = createHttpResponse();
+  await handlerB(
+    createHttpRequest({ data: request({ payload_hash: 'b'.repeat(64) }) }),
+    conflictResponse.responder,
+  );
+
+  assert.equal(firstResponse.statusCode, 200);
+  assert.equal(conflictResponse.statusCode, 409);
+  assert.equal(conflictResponse.json.status, 'conflict');
+  assert.equal(
+    ((conflictResponse.json.error as Record<string, unknown>) ?? {}).code,
+    'idempotency_conflict',
+  );
+  assert.equal(provider.callCount, 1);
+  assert.equal(store.reserveCount, 1);
+  assert.equal(store.finalizeCount, 1);
+});
+
+test('live durable distinct in-flight request rejects before a second provider execution', async () => {
+  const provider = new SlowProvider();
+  const store = new FakeDurableBrokerStore({ entitledUids: ['owner-uid'] });
+  const handler = createResearchBrokerHttpHandler({
+    env: durableEnv(),
+    dependenciesFactory: () => liveDependenciesFactory({ store, provider }),
+  });
+
+  const firstResponse = createHttpResponse();
+  const secondResponse = createHttpResponse();
+  const first = handler(createHttpRequest({ data: request() }), firstResponse.responder);
+  await handler(
+    createHttpRequest({
+      data: request({
+        request_id: '22222222-2222-4222-8222-222222222222',
+        payload_hash: 'b'.repeat(64),
+      }),
+    }),
+    secondResponse.responder,
+  );
+  provider.resolve();
+  await first;
+
+  assert.equal(firstResponse.statusCode, 200);
+  assert.equal(secondResponse.statusCode, 429);
+  assert.equal(
+    ((secondResponse.json.error as Record<string, unknown>) ?? {}).code,
+    'quota_subject_in_flight',
+  );
+  assert.equal(provider.callCount, 1);
+  assert.equal(store.reserveCount, 1);
+  assert.equal(store.finalizeCount, 1);
+});
+
+test('live durable entitlement, credit, breaker, and token gates reject before provider config', async () => {
+  const cases: Array<{
+    name: string;
+    store?: FakeDurableBrokerStore;
+    headers?: Record<string, string | undefined>;
+    expectedStatus: number;
+    expectedError: string;
+  }> = [
+    {
+      name: 'entitlement denied',
+      store: new FakeDurableBrokerStore({ entitledUids: [] }),
+      expectedStatus: 403,
+      expectedError: 'entitlement_or_credit_denied',
+    },
+    {
+      name: 'credit exhausted',
+      store: new FakeDurableBrokerStore({ entitledUids: ['owner-uid'], perSubjectMonthlyCap: 0 }),
+      expectedStatus: 403,
+      expectedError: 'entitlement_or_credit_denied',
+    },
+    {
+      name: 'breaker open',
+      store: new FakeDurableBrokerStore({ entitledUids: ['owner-uid'], breakerOpen: true }),
+      expectedStatus: 503,
+      expectedError: 'broker_breaker_open',
+    },
+    {
+      name: 'missing auth',
+      headers: { authorization: undefined },
+      expectedStatus: 401,
+      expectedError: 'unauthorized',
+    },
+    {
+      name: 'invalid app check',
+      headers: { 'x-firebase-appcheck': 'invalid-app-check-token' },
+      expectedStatus: 401,
+      expectedError: 'unauthorized',
+    },
+  ];
+
+  for (const current of cases) {
+    let configLookupCount = 0;
+    const store = current.store ?? new FakeDurableBrokerStore({ entitledUids: ['owner-uid'] });
+    const handler = createResearchBrokerHttpHandler({
+      env: durableEnv(),
+      dependenciesFactory: () => liveDependenciesFactory({
+        store,
+        configLookup: () => {
+          configLookupCount += 1;
+        },
+      }),
+    });
+    const response = createHttpResponse();
+
+    await handler(createHttpRequest({ data: request() }, current.headers), response.responder);
+
+    assert.equal(response.statusCode, current.expectedStatus, current.name);
+    assert.deepEqual(response.json, { ok: false, error: current.expectedError }, current.name);
+    assert.equal(configLookupCount, 0, current.name);
+    assert.equal(store.reserveCount, 0, current.name);
+  }
 });
 
 test('warm live shell rechecks kill switch before cached provider/config work', async () => {
-  const env = {
-    BROKER_HTTP_ENABLED: 'true',
-    BROKER_PROVIDER_MODE: 'openai',
-    BROKER_OPENAI_LIVE_TEST_ENABLED: 'true',
-    BROKER_OWNER_UID_ALLOWLIST: 'owner-uid',
-  };
-  const deps = createFakeBrokerDependencies();
+  const env = durableEnv();
+  const provider = new StaticProvider({
+    sources: [
+      {
+        source_id: 'src_warm',
+        source_name: 'Museum Example',
+        source_type: 'museum',
+        source_url: 'https://museum.example/works/warm',
+        title: 'Collection record',
+        accessed_at: '2026-07-08T16:00:00.000Z',
+        citation_excerpt: 'Collection record excerpt.',
+        matched_fields: ['title'],
+      },
+    ],
+    candidate_attributions: [],
+    comparable_value_signals: [],
+    warnings: [],
+  });
+  const store = new FakeDurableBrokerStore({ entitledUids: ['owner-uid'] });
   let factoryCalls = 0;
   const handler = createResearchBrokerHttpHandler({
     env,
     dependenciesFactory: () => {
       factoryCalls += 1;
-      return {
-        kind: 'ready',
-        dependencies: deps,
-        ownerUidAllowlist: new Set(['owner-uid']),
-        durableProtection: true,
-      };
+      return liveDependenciesFactory({ store, provider });
     },
   });
 
@@ -1314,8 +1648,8 @@ test('warm live shell rechecks kill switch before cached provider/config work', 
   assert.equal(firstResponse.statusCode, 200);
   assert.equal(firstResponse.json.status, 'completed');
   assert.equal(factoryCalls, 1);
-  assert.equal(deps.provider.callCount, 1);
-  assert.equal(deps.creditLedger.reserveCount, 1);
+  assert.equal(provider.callCount, 1);
+  assert.equal(store.reserveCount, 1);
 
   env.BROKER_HTTP_ENABLED = 'false';
 
@@ -1333,8 +1667,8 @@ test('warm live shell rechecks kill switch before cached provider/config work', 
   assert.equal(secondResponse.statusCode, 503);
   assert.deepEqual(secondResponse.json, { ok: false, error: 'research_broker_disabled' });
   assert.equal(factoryCalls, 1);
-  assert.equal(deps.provider.callCount, 1);
-  assert.equal(deps.creditLedger.reserveCount, 1);
+  assert.equal(provider.callCount, 1);
+  assert.equal(store.reserveCount, 1);
 });
 
 test('broker scaffold keeps env lookup server-only and never references local secret files', async () => {

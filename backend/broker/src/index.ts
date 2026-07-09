@@ -37,3 +37,15 @@ export {
   type MinimalRequest,
   type MinimalResponse,
 } from './live_broker.js';
+export {
+  ConfiguredDurableBrokerProtection,
+  DurableCreditLedger,
+  DurableIdempotencyStore,
+  FakeBrokerTokenVerifier,
+  FakeDurableBrokerStore,
+  FirebaseAdminBrokerTokenVerifier,
+  deriveQuotaSubject,
+  type BrokerTokenVerifier,
+  type DurableBrokerProtection,
+  type DurableGateStore,
+} from './durable_protection.js';

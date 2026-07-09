@@ -6,7 +6,15 @@ export interface StoredRequest {
   inFlight?: Promise<BrokerResponse>;
 }
 
-export class InMemoryIdempotencyStore {
+export interface BrokerIdempotencyStore {
+  get(quotaSubject: string, requestId: string): StoredRequest | undefined;
+  begin(quotaSubject: string, requestId: string, payloadHash: string): StoredRequest;
+  setInFlight(entry: StoredRequest, inFlight: Promise<BrokerResponse>): void;
+  complete(entry: StoredRequest, response: BrokerResponse): void;
+  forget(quotaSubject: string, requestId: string): void;
+}
+
+export class InMemoryIdempotencyStore implements BrokerIdempotencyStore {
   private readonly requests = new Map<string, StoredRequest>();
 
   get(quotaSubject: string, requestId: string): StoredRequest | undefined {

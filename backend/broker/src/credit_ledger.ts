@@ -17,8 +17,24 @@ export interface ReserveCreditInput {
 export interface ReserveCreditResult {
   ok: boolean;
   record: LedgerRecord;
-  code?: 'quota_subject_monthly_cap_exceeded' | 'broker_monthly_cap_exceeded';
+  code?:
+    | 'quota_subject_monthly_cap_exceeded'
+    | 'broker_monthly_cap_exceeded'
+    | 'quota_subject_in_flight';
   message?: string;
+}
+
+export interface BrokerCreditLedger {
+  readonly records: LedgerRecord[];
+  readonly reserveCount: number;
+  readonly finalizeCount: number;
+  readonly refundCount: number;
+  readonly exposedCredits: number;
+  spentCreditsFor(quotaSubject: string): number;
+  exposedCreditsFor(quotaSubject: string): number;
+  reserve(input: ReserveCreditInput): ReserveCreditResult;
+  finalize(record: LedgerRecord): void;
+  refund(record: LedgerRecord, reason: string): void;
 }
 
 export interface PlaceholderCreditLedgerOptions {
@@ -26,7 +42,7 @@ export interface PlaceholderCreditLedgerOptions {
   brokerMonthlyCap?: number;
 }
 
-export class PlaceholderCreditLedger {
+export class PlaceholderCreditLedger implements BrokerCreditLedger {
   readonly records: LedgerRecord[] = [];
   readonly perSubjectMonthlyCap: number;
   readonly brokerMonthlyCap: number;
