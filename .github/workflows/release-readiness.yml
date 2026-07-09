@@ -137,8 +137,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          audit_cache="$RUNNER_TEMP/broker-audit-cache"
+          mkdir -p "$audit_cache"
           set +e
-          npm --prefix backend/broker audit --package-lock-only --json > "$RUNNER_TEMP/broker-audit.json"
+          npm --prefix backend/broker audit --package-lock-only --json \
+            --cache "$audit_cache" > "$RUNNER_TEMP/broker-audit.json"
           audit_status=$?
           set -e
           test "$audit_status" -eq 1 || { echo "npm audit did not report the expected policy input" >&2; exit 1; }

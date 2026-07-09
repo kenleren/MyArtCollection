@@ -10,7 +10,6 @@ const policy = {
     ['@google-cloud/firestore', ['google-gax']],
     ['@google-cloud/storage', ['retry-request', 'teeny-request']],
     ['firebase-admin', ['@google-cloud/firestore', '@google-cloud/storage']],
-    ['firebase-functions', ['firebase-admin']],
     ['gaxios', ['uuid']],
     ['google-gax', ['retry-request', 'uuid']],
     ['retry-request', ['teeny-request']],
@@ -18,7 +17,6 @@ const policy = {
     ['uuid', ['advisory:GHSA-w5hq-g745-h8pq:moderate']],
   ]),
   lockEdges: new Map([
-    ['firebase-functions', ['firebase-admin']],
     ['firebase-admin', ['@google-cloud/firestore', '@google-cloud/storage']],
     ['@google-cloud/firestore', ['google-gax']],
     ['@google-cloud/storage', ['gaxios', 'retry-request', 'teeny-request']],

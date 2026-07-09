@@ -1,6 +1,5 @@
 {
   "vulnerabilities": {
-    "firebase-functions": { "severity": "moderate", "via": ["firebase-admin"] },
     "firebase-admin": { "severity": "moderate", "via": ["@google-cloud/firestore", "@google-cloud/storage"] },
     "@google-cloud/firestore": { "severity": "moderate", "via": ["google-gax"] },
     "@google-cloud/storage": { "severity": "moderate", "via": ["gaxios", "retry-request"] },

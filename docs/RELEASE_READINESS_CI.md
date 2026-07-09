@@ -33,6 +33,8 @@ The only caches are dependency-download directories: `~/.pub-cache` and
 `~/.npm`, keyed by their lockfiles. The workflow never caches the repository,
 build outputs, Android Gradle workspace, `.env*`, Firebase configuration or
 tokens, service accounts, signing files, keystores, or provisioning material.
+The broker audit uses an isolated temporary npm cache so stale audit metadata
+cannot alter the exact graph input; that cache is not persisted.
 
 ## Debug package boundary
 
@@ -47,8 +49,7 @@ command, or provider call.
 `scripts/check_broker_audit.mjs` is fail-closed. Until **2026-08-31**, it
 accepts only moderate `GHSA-w5hq-g745-h8pq` in the current broker audit graph.
 The policy compares every audit `via` edge and every vulnerable lock edge. The
-upstream graph contains `firebase-functions > firebase-admin`; the complete
-approved paths from `firebase-admin` to the locked `uuid@9.0.1` are:
+complete approved paths from `firebase-admin` to the locked `uuid@9.0.1` are:
 
 1. `firebase-admin > @google-cloud/firestore > google-gax > uuid`
 2. `firebase-admin > @google-cloud/firestore > google-gax > retry-request > teeny-request > uuid`
