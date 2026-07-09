@@ -20,12 +20,17 @@ test('accepts the current expiry-dated uuid exception', async () => {
   assert.match(result.stdout, /5 exact uuid@9\.0\.1 paths/);
 });
 
+test('accepts only the exact known npm peer metavulnerability edge', async () => {
+  const result = await run('allowed-audit-with-peer-meta.json', 'allowed-lock.json');
+  assert.equal(result.code, 0, result.stderr);
+});
+
 for (const [name, audit, lock, message] of [
-  ['rejects a new advisory', 'new-advisory-audit.json', 'allowed-lock.json', /uuid audit edges changed/],
+  ['rejects a new advisory', 'new-advisory-audit.json', 'allowed-lock.json', /uuid full audit edges changed/],
   ['rejects high severity', 'high-severity-audit.json', 'allowed-lock.json', /uuid severity is not exactly moderate/],
-  ['rejects an extra audit path', 'extra-path-audit.json', 'allowed-lock.json', /firebase-admin audit edges changed/],
+  ['rejects an extra audit path', 'extra-path-audit.json', 'allowed-lock.json', /firebase-admin full audit edges changed/],
   ['rejects an extra locked path', 'allowed-audit.json', 'extra-path-lock.json', /firebase-admin locked vulnerable edges changed/],
-  ['rejects a rerouted audit graph', 'rerouted-audit.json', 'allowed-lock.json', /@google-cloud\/storage audit edges changed/],
+  ['rejects a rerouted audit graph', 'rerouted-audit.json', 'allowed-lock.json', /@google-cloud\/storage full audit edges changed/],
   ['rejects a rerouted lock graph', 'allowed-audit.json', 'rerouted-lock.json', /@google-cloud\/storage locked vulnerable edges changed/],
   ['rejects a changed uuid lock state', 'allowed-audit.json', 'changed-uuid-lock.json', /uuid@9\.0\.1/],
   ['rejects a missing allowed dependency path', 'allowed-audit.json', 'missing-path-lock.json', /@google-cloud\/storage locked vulnerable edges changed/],
@@ -46,8 +51,21 @@ test('rejects the exception deterministically after expiry', async () => {
   assert.match(result.stderr, /exception expired on 2026-08-31/);
 });
 
-async function run(audit, lock, { asOf } = {}) {
-  const args = [script, '--audit', fixture(audit), '--lock', fixture(lock)];
+test('rejects a rerouted peer-normalized audit graph', async () => {
+  const result = await run('allowed-audit.json', 'allowed-lock.json', {
+    coreAudit: 'rerouted-audit.json',
+  });
+  assert.notEqual(result.code, 0);
+  assert.match(result.stderr, /@google-cloud\/storage peer-normalized audit edges changed/);
+});
+
+async function run(audit, lock, { asOf, coreAudit = 'allowed-audit.json' } = {}) {
+  const args = [
+    script,
+    '--audit', fixture(audit),
+    '--core-audit', fixture(coreAudit),
+    '--lock', fixture(lock),
+  ];
   if (asOf) args.push('--as-of', asOf);
   try {
     const result = await execFileAsync('node', args);

@@ -16,6 +16,9 @@ const policy = {
     ['teeny-request', ['uuid']],
     ['uuid', ['advisory:GHSA-w5hq-g745-h8pq:moderate']],
   ]),
+  peerMetadataVia: new Map([
+    ['firebase-functions', ['firebase-admin']],
+  ]),
   lockEdges: new Map([
     ['firebase-admin', ['@google-cloud/firestore', '@google-cloud/storage']],
     ['@google-cloud/firestore', ['google-gax']],
@@ -38,12 +41,14 @@ const policy = {
 const args = parseArgs(process.argv.slice(2));
 
 try {
-  const [audit, lock] = await Promise.all([
+  const [audit, coreAudit, lock] = await Promise.all([
     readJson(args.audit, 'audit'),
+    readJson(args.coreAudit, 'core audit'),
     readJson(args.lock, 'lock'),
   ]);
   checkExpiry(args.asOf);
-  checkAudit(audit);
+  checkAudit(audit, { allowPeerMetadata: true, label: 'full audit' });
+  checkAudit(coreAudit, { label: 'peer-normalized audit' });
   checkLock(lock);
   console.log(
     `Broker audit policy passed: ${policy.advisory} is the only accepted advisory through ${policy.paths.length} exact uuid@${policy.uuidVersion} paths until ${policy.expiresOn}.`,
@@ -61,21 +66,22 @@ function parseArgs(args) {
   for (let index = 0; index < args.length; index += 2) {
     const name = args[index];
     const value = args[index + 1];
-    if (!['--audit', '--lock', '--as-of'].includes(name) || !value || values.has(name)) {
+    if (!['--audit', '--core-audit', '--lock', '--as-of'].includes(name) || !value || values.has(name)) {
       throw new Error(usage());
     }
     values.set(name, value);
   }
   const audit = values.get('--audit');
+  const coreAudit = values.get('--core-audit');
   const lock = values.get('--lock');
-  if (!audit || !lock) {
+  if (!audit || !coreAudit || !lock) {
     throw new Error(usage());
   }
-  return { audit, lock, asOf: values.get('--as-of') };
+  return { audit, coreAudit, lock, asOf: values.get('--as-of') };
 }
 
 function usage() {
-  return 'usage: check_broker_audit.mjs --audit <npm-audit.json> --lock <package-lock.json> [--as-of <YYYY-MM-DD>]';
+  return 'usage: check_broker_audit.mjs --audit <npm-audit.json> --core-audit <peer-normalized.json> --lock <package-lock.json> [--as-of <YYYY-MM-DD>]';
 }
 
 async function readJson(path, label) {
@@ -103,28 +109,39 @@ function checkExpiry(asOf) {
   }
 }
 
-function checkAudit(audit) {
+function checkAudit(audit, { allowPeerMetadata = false, label }) {
   if (!audit || typeof audit !== 'object' || !audit.vulnerabilities || typeof audit.vulnerabilities !== 'object') {
     throw new Error('audit JSON has no vulnerabilities object');
   }
-  const vulnerabilities = audit.vulnerabilities;
+  const vulnerabilities = { ...audit.vulnerabilities };
+  if (allowPeerMetadata) {
+    for (const [name, expectedVia] of policy.peerMetadataVia) {
+      if (vulnerabilities[name]) {
+        checkVulnerability(name, vulnerabilities[name], expectedVia, label);
+        delete vulnerabilities[name];
+      }
+    }
+  }
   compareExact(
     Object.keys(vulnerabilities),
     [...policy.auditVia.keys()],
-    'audit package set',
+    `${label} package set`,
   );
 
   for (const [name, expectedVia] of policy.auditVia) {
-    const vulnerability = vulnerabilities[name];
-    if (!vulnerability || vulnerability.severity !== policy.severity) {
-      throw new Error(`${name} severity is not exactly ${policy.severity}`);
-    }
-    if (!Array.isArray(vulnerability.via)) {
-      throw new Error(`${name} has no auditable dependency chain`);
-    }
-    const actualVia = vulnerability.via.map((via) => normalizeAuditVia(name, via));
-    compareExact(actualVia, expectedVia, `${name} audit edges`);
+    checkVulnerability(name, vulnerabilities[name], expectedVia, label);
   }
+}
+
+function checkVulnerability(name, vulnerability, expectedVia, label) {
+  if (!vulnerability || vulnerability.severity !== policy.severity) {
+    throw new Error(`${name} severity is not exactly ${policy.severity}`);
+  }
+  if (!Array.isArray(vulnerability.via)) {
+    throw new Error(`${name} has no auditable dependency chain`);
+  }
+  const actualVia = vulnerability.via.map((via) => normalizeAuditVia(name, via));
+  compareExact(actualVia, expectedVia, `${name} ${label} edges`);
 }
 
 function normalizeAuditVia(name, via) {
