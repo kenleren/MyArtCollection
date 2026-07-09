@@ -3521,6 +3521,25 @@ void main() {
     }
   });
 
+  testWidgets('settings home keeps trust hub heading copy', (
+    WidgetTester tester,
+  ) async {
+    await _configureMobileViewport(tester);
+    await tester.pumpWidget(
+      ArchivaleApp(initialRoute: AppRoutes.collectionSettings),
+    );
+    await pumpReady(tester);
+
+    expect(find.text('Settings'), findsWidgets);
+    expect(find.text('Privacy, storage, backup, and exports'), findsOneWidget);
+    expect(
+      find.text(
+        'Choose how your records stay private, where they are kept, and when to save a second copy.',
+      ),
+      findsOneWidget,
+    );
+  });
+
   testWidgets('settings trust routes keep collector-facing copy', (
     WidgetTester tester,
   ) async {
@@ -3870,7 +3889,6 @@ void main() {
       dependencies: fixture.dependencies,
       themeMode: ThemeMode.light,
       fileName: 'issue-172-settings-home-light.png',
-      ensureVisibleFinder: find.text('Review privacy'),
     );
     await captureArtifactForApp(
       tester,
@@ -3902,7 +3920,6 @@ void main() {
       dependencies: fixture.dependencies,
       themeMode: ThemeMode.dark,
       fileName: 'issue-172-settings-home-dark.png',
-      ensureVisibleFinder: find.text('Review privacy'),
     );
     await captureArtifactForApp(
       tester,

@@ -499,7 +499,7 @@ class SettingsHomeScreen extends StatelessWidget {
       children: [
         const _Heading(
           title: 'Settings',
-          subtitle: 'Privacy, backup, and exports',
+          subtitle: 'Privacy, storage, backup, and exports',
         ),
         const SizedBox(height: 16),
         if (dependencies != null) ...[
