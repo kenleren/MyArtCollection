@@ -1,0 +1,11 @@
+{
+  "packages": {
+    "node_modules/firebase-admin": { "version": "13.10.0", "optionalDependencies": { "@google-cloud/firestore": "^7.11.0", "@google-cloud/storage": "^7.19.0" } },
+    "node_modules/@google-cloud/firestore": { "dependencies": { "google-gax": "^4.3.3" } },
+    "node_modules/@google-cloud/storage": { "dependencies": { "gaxios": "^6.0.0", "teeny-request": "^9.0.0" } },
+    "node_modules/google-gax": { "dependencies": { "uuid": "^9.0.1" } },
+    "node_modules/gaxios": { "dependencies": { "uuid": "^9.0.1" } },
+    "node_modules/teeny-request": { "dependencies": { "uuid": "^9.0.0" } },
+    "node_modules/uuid": { "version": "9.0.1" }
+  }
+}

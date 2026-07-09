@@ -1,0 +1,5 @@
+{
+  "vulnerabilities": {
+    "uuid": { "severity": "high", "via": [{ "url": "https://github.com/advisories/GHSA-w5hq-g745-h8pq", "severity": "moderate" }] }
+  }
+}

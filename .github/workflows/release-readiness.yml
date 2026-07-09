@@ -1,0 +1,225 @@
+name: Release Readiness
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: 22.23.1
+  JAVA_VERSION: 17.0.19+10
+  FLUTTER_VERSION: 3.44.4
+  FLUTTER_LINUX_X64_SHA256: c853cda0312a162854c481fe6a1bc286d84fbb74bfab7037c39750061dc9b466
+
+jobs:
+  workflow-lint:
+    name: Workflow lint
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - name: Install checksum-verified actionlint
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive=actionlint_1.7.12_linux_amd64.tar.gz
+          curl -fsSLO "https://github.com/rhysd/actionlint/releases/download/v1.7.12/${archive}"
+          printf '%s  %s\n' \
+            '8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8' \
+            "$archive" | sha256sum -c -
+          tar -xzf "$archive" actionlint
+          ./actionlint -color
+
+  flutter-quality:
+    name: Flutter quality
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - name: Restore Dart dependency cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ~/.pub-cache
+          key: pub-${{ runner.os }}-${{ hashFiles('pubspec.lock') }}
+          restore-keys: pub-${{ runner.os }}-
+      - name: Install checksum-verified Flutter
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="flutter_linux_${FLUTTER_VERSION}-stable.tar.xz"
+          curl -fsSLO "https://storage.googleapis.com/flutter_infra_release/releases/stable/linux/${archive}"
+          printf '%s  %s\n' "$FLUTTER_LINUX_X64_SHA256" "$archive" | sha256sum -c -
+          tar -xJf "$archive" -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/flutter/bin" >> "$GITHUB_PATH"
+      - name: Fetch locked Flutter dependencies
+        run: flutter pub get --enforce-lockfile
+      - name: Check formatting, analysis, and tests
+        run: |
+          dart format --set-exit-if-changed lib test
+          flutter analyze
+          flutter test
+
+  android-debug-package:
+    name: Android debug package
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - name: Set up Temurin Java
+        uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9
+        with:
+          distribution: temurin
+          java-version: 17.0.19+10
+      - name: Restore Dart dependency cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ~/.pub-cache
+          key: pub-${{ runner.os }}-${{ hashFiles('pubspec.lock') }}
+          restore-keys: pub-${{ runner.os }}-
+      - name: Install checksum-verified Flutter
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="flutter_linux_${FLUTTER_VERSION}-stable.tar.xz"
+          curl -fsSLO "https://storage.googleapis.com/flutter_infra_release/releases/stable/linux/${archive}"
+          printf '%s  %s\n' "$FLUTTER_LINUX_X64_SHA256" "$archive" | sha256sum -c -
+          tar -xJf "$archive" -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/flutter/bin" >> "$GITHUB_PATH"
+      - name: Fetch locked Flutter dependencies
+        run: flutter pub get --enforce-lockfile
+      - name: Build a secret-free debug APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in GOOGLE_SERVICES_JSON FIREBASE_CONFIG FIREBASE_TOKEN FIREBASE_PROJECT \
+            CRASHLYTICS_API_TOKEN REMOTE_CONFIG_API_KEY OPENAI_API_KEY \
+            MY_ART_COLLECTION_ANDROID_RELEASE_STORE_FILE \
+            MY_ART_COLLECTION_ANDROID_RELEASE_STORE_PASSWORD \
+            MY_ART_COLLECTION_ANDROID_RELEASE_KEY_ALIAS \
+            MY_ART_COLLECTION_ANDROID_RELEASE_KEY_PASSWORD; do
+            test -z "${!name:-}" || { echo "Unexpected protected input: $name" >&2; exit 1; }
+          done
+          flutter build apk --debug --no-pub
+
+  backend-and-audit:
+    name: Backend and audit policy
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.23.1
+      - name: Restore npm dependency cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ~/.npm
+          key: npm-${{ runner.os }}-${{ hashFiles('backend/broker/package-lock.json', 'backend/forms/package-lock.json') }}
+          restore-keys: npm-${{ runner.os }}-
+      - name: Test broker and forms packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm --prefix backend/broker ci
+          npm --prefix backend/broker test
+          npm --prefix backend/forms ci
+          npm --prefix backend/forms test
+      - name: Enforce broker audit policy
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +e
+          npm --prefix backend/broker audit --package-lock-only --json > "$RUNNER_TEMP/broker-audit.json"
+          audit_status=$?
+          set -e
+          test "$audit_status" -eq 1 || { echo "npm audit did not report the expected policy input" >&2; exit 1; }
+          node scripts/check_broker_audit.mjs \
+            --audit "$RUNNER_TEMP/broker-audit.json" \
+            --lock backend/broker/package-lock.json
+      - name: Test broker audit parser fixtures
+        run: node --test test/broker_audit_policy_test.mjs
+
+  static-site:
+    name: Static site validation
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - name: Validate static site
+        run: python3 scripts/validate_static_site.py
+
+  mobile-broker-bypass-guard:
+    name: Mobile broker bypass guard
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.23.1
+      - name: Run guard and negative fixtures
+        run: |
+          node scripts/mobile_broker_bypass_guard.mjs
+          node --test test/mobile_broker_bypass_guard_fixture_test.mjs
+
+  secret-scan:
+    name: Secret scan
+    runs-on: ubuntu-24.04
+    env:
+      GITLEAKS_VERSION: 8.30.1
+      GITLEAKS_LINUX_X64_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+    steps:
+      - name: Check out full repository history
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          fetch-depth: 0
+      - name: Install checksum-verified Gitleaks
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl -fsSLO "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/${archive}"
+          printf '%s  %s\n' "$GITLEAKS_LINUX_X64_SHA256" "$archive" | sha256sum -c -
+          tar -xzf "$archive" gitleaks
+          sudo install -m 0755 gitleaks /usr/local/bin/gitleaks
+          gitleaks version
+      - name: Run redacted secret scan
+        run: scripts/secret_scan.sh
+
+  release-readiness:
+    name: Release readiness
+    runs-on: ubuntu-24.04
+    if: always()
+    needs:
+      - workflow-lint
+      - flutter-quality
+      - android-debug-package
+      - backend-and-audit
+      - static-site
+      - mobile-broker-bypass-guard
+      - secret-scan
+    steps:
+      - name: Require every release check to succeed
+        shell: bash
+        run: |
+          set -euo pipefail
+          results=(
+            "workflow-lint=${{ needs.workflow-lint.result }}"
+            "flutter-quality=${{ needs.flutter-quality.result }}"
+            "android-debug-package=${{ needs.android-debug-package.result }}"
+            "backend-and-audit=${{ needs.backend-and-audit.result }}"
+            "static-site=${{ needs.static-site.result }}"
+            "mobile-broker-bypass-guard=${{ needs.mobile-broker-bypass-guard.result }}"
+            "secret-scan=${{ needs.secret-scan.result }}"
+          )
+          printf '%s\n' "${results[@]}"
+          for result in "${results[@]}"; do
+            [[ "$result" == *=success ]] || exit 1
+          done
