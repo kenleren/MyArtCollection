@@ -13,6 +13,7 @@ import 'package:my_art_collection/app/app_dependencies.dart';
 import 'package:my_art_collection/app/app_routes.dart';
 import 'package:my_art_collection/app/billing/entitlement_plan.dart';
 import 'package:my_art_collection/app/config/app_feature_flags.dart';
+import 'package:my_art_collection/app/research/online_research_service.dart';
 import 'package:my_art_collection/app/import/csv_import_file_picker.dart';
 import 'package:my_art_collection/app/intake/artwork_image_picker.dart';
 import 'package:my_art_collection/app/startup_route.dart';
@@ -2826,6 +2827,70 @@ void main() {
     );
   });
 
+  testWidgets('online research failure branch uses Archivale-facing copy', (
+    WidgetTester tester,
+  ) async {
+    final testDependencies = await tester.runAsync(
+      () async => _LiveDependencyFixture.create(),
+    );
+    final fixture = testDependencies!;
+    addTearDown(() async {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.runAsync(fixture.dispose);
+    });
+
+    await tester.runAsync(() async {
+      await fixture.repository.upsert(
+        _artworkRecord(
+          id: 'research-failure-draft',
+          title: 'Interior Study',
+          state: ArtworkRecordState.needsReview,
+        ),
+      );
+    });
+
+    final boundaryKey = GlobalKey();
+    await tester.pumpWidget(
+      RepaintBoundary(
+        key: boundaryKey,
+        child: ArchivaleApp(
+          initialRoute: AppRoutes.artworkDraft('research-failure-draft'),
+          dependencies: fixture.dependenciesWithFlags(
+            featureFlags: const AppFeatureFlags(onlineResearchEnabled: true),
+            onlineResearchClient: _ThrowingResearchClient(
+              ResearchConsentRequiredException(ResearchConsentState.declined),
+            ),
+          ),
+        ),
+      ),
+    );
+    await pumpLiveData(tester);
+
+    expect(find.text('Research this draft'), findsOneWidget);
+
+    await tapVisible(tester, find.text('Research this draft'));
+    await tapVisible(tester, find.text('Start source-backed research'));
+    await pumpLiveData(tester);
+
+    expect(find.text('Research unavailable'), findsOneWidget);
+    expect(
+      find.textContaining(
+        'Research consent needs to be reviewed before Archivale can run source-backed research.',
+      ),
+      findsOneWidget,
+    );
+    expect(find.textContaining('Online research'), findsNothing);
+
+    await tester.ensureVisible(find.text('Research unavailable'));
+    await tester.pump();
+    await captureBoundaryToArtifacts(
+      tester,
+      boundaryKey,
+      'issue-168-ai-research-failure-mobile.png',
+      resetAfterCapture: false,
+    );
+  });
+
   testWidgets('online research displays no reliable comparable guardrail', (
     WidgetTester tester,
   ) async {
@@ -3788,6 +3853,7 @@ class _LiveDependencyFixture {
     CsvImportFilePicker csvImportFilePicker = const _NoCsvPicker(),
     AppFeatureFlags featureFlags = const AppFeatureFlags(),
     EntitlementService entitlementService = const FixedEntitlementService(),
+    OnlineResearchClient? onlineResearchClient,
   }) {
     return AppDependencies(
       artworkRepository: repository,
@@ -3797,6 +3863,7 @@ class _LiveDependencyFixture {
       featureFlags: featureFlags,
       entitlementService: entitlementService,
       onDeviceAiDraftProvider: onDeviceAiDraftProvider,
+      onlineResearchClient: onlineResearchClient,
     );
   }
 
@@ -3910,6 +3977,17 @@ class _NoCsvPicker implements CsvImportFilePicker {
 
   @override
   Future<CsvImportFileSelection?> pickCsvFile() async => null;
+}
+
+class _ThrowingResearchClient implements OnlineResearchClient {
+  _ThrowingResearchClient(this._error);
+
+  final Object _error;
+
+  @override
+  Future<ResearchJob> research(OnlineResearchRequest request) async {
+    throw _error;
+  }
 }
 
 class _SingleCsvPicker implements CsvImportFilePicker {

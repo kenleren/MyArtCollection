@@ -1080,7 +1080,7 @@ class DraftReviewScreen extends StatefulWidget {
 
 class _DraftReviewScreenState extends State<DraftReviewScreen> {
   ResearchJob? _researchJob;
-  Object? _researchError;
+  String? _researchError;
   bool _showResearchConsent = false;
   bool _isResearchBusy = false;
   final Set<String> _acceptedResearchFieldKeys = {};
@@ -1227,7 +1227,8 @@ class _DraftReviewScreenState extends State<DraftReviewScreen> {
         return;
       }
       setState(() {
-        _researchError = error;
+        _showResearchConsent = false;
+        _researchError = _researchFailureMessage(error);
         _isResearchBusy = false;
       });
     }
@@ -2288,7 +2289,7 @@ class _OnlineResearchPanel extends StatelessWidget {
   final ResearchJob? researchJob;
   final bool showConsent;
   final bool isBusy;
-  final Object? error;
+  final String? error;
   final bool isEnabled;
   final Set<String> acceptedFieldKeys;
   final Set<String> rejectedFieldKeys;
@@ -2340,14 +2341,14 @@ class _OnlineResearchPanel extends StatelessWidget {
     }
 
     if (error != null) {
+      final errorMessage = error!;
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           _StatusPanel(
             icon: Icons.error_outline,
             title: 'Research unavailable',
-            body:
-                'Archivale could not finish source-backed research right now. ${error.toString()}',
+            body: errorMessage,
           ),
           const SizedBox(height: 12),
           _ActionButton(
@@ -2395,6 +2396,19 @@ class _OnlineResearchPanel extends StatelessWidget {
       ),
     );
   }
+}
+
+String _researchFailureMessage(Object error) {
+  if (error is ResearchConsentRequiredException) {
+    return 'Research consent needs to be reviewed before Archivale can run source-backed research.';
+  }
+  if (error is InvalidResearchResponseException) {
+    return 'Archivale found a problem with the research result and could not display it safely. Continue reviewing your draft and try again later.';
+  }
+  if (error is DisallowedResearchSourceException) {
+    return 'Archivale could not verify this research response. Please try again later.';
+  }
+  return 'Archivale could not finish source-backed research right now. Please try again.';
 }
 
 class _ResearchConsentPanel extends StatelessWidget {

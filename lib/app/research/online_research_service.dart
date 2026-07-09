@@ -485,7 +485,7 @@ class InvalidResearchResponseException implements Exception {
   final String message;
 
   @override
-  String toString() => 'Invalid online research response: $message';
+  String toString() => 'Archivale research response was invalid: $message';
 }
 
 class ResearchConsentRequiredException implements Exception {
@@ -495,7 +495,7 @@ class ResearchConsentRequiredException implements Exception {
 
   @override
   String toString() =>
-      'Online research requires explicit approved consent: $consentState';
+      'Research consent is required before Archivale can run source-backed research.';
 }
 
 class _TrustedResearchResponse {
@@ -835,18 +835,18 @@ String _safeBrokerErrorMessage(String code) {
     'consent_required' ||
     'stale_consent' => 'Please review and confirm research consent again.',
     'broker_breaker_open' =>
-      'Online research is temporarily unavailable. Try again later.',
+      'Archivale research is temporarily unavailable. Try again later.',
     'quota_subject_monthly_cap_exceeded' || 'broker_monthly_cap_exceeded' =>
-      'Online research is temporarily unavailable. Try again later.',
+      'Archivale research is temporarily unavailable. Try again later.',
     'entitlement_or_credit_denied' =>
-      'Online research is not available right now.',
+      'Archivale research is not available right now.',
     'unauthorized' ||
     'missing_auth_subject' ||
     'invalid_quota_subject' ||
     'identity_project_mismatch' ||
     'unsupported_auth_provider' =>
-      'Online research is not available right now.',
-    _ => 'Online research could not complete. Try again later.',
+      'Archivale research is not available right now.',
+    _ => 'Archivale research could not complete. Try again later.',
   };
 }
 
