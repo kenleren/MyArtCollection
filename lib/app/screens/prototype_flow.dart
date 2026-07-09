@@ -1208,7 +1208,7 @@ class _DraftReviewScreenState extends State<DraftReviewScreen> {
         OnlineResearchRequest(
           artworkId: widget.artwork.id,
           consentSummary:
-              'User approved selected artwork image, current draft fields, and local notes for professional-source research.',
+              'User approved the selected artwork image, draft details, and notes for Archivale research help.',
           consentState: ResearchConsentState.approved,
           querySummary: _researchQuerySummary(widget.artwork),
           searchTerms: _researchSearchTerms(widget.artwork),
@@ -2315,9 +2315,9 @@ class _OnlineResearchPanel extends StatelessWidget {
 
       return const _StatusPanel(
         icon: Icons.travel_explore_outlined,
-        title: 'Online research unavailable',
+        title: 'Research unavailable',
         body:
-            'Online research is not available in this release. Keep the local draft and use documents or manual review.',
+            'Archivale research is not available right now. Keep reviewing the draft and use your notes or supporting documents for now.',
       );
     }
 
@@ -2347,7 +2347,7 @@ class _OnlineResearchPanel extends StatelessWidget {
             icon: Icons.error_outline,
             title: 'Research unavailable',
             body:
-                'Professional-source research could not run. ${error.toString()}',
+                'Archivale could not finish source-backed research right now. ${error.toString()}',
           ),
           const SizedBox(height: 12),
           _ActionButton(
@@ -2388,7 +2388,7 @@ class _OnlineResearchPanel extends StatelessWidget {
           const SizedBox(height: 12),
           _ActionButton(
             icon: Icons.travel_explore,
-            label: 'Research online',
+            label: 'Research this draft',
             onPressed: onStart,
           ),
         ],
@@ -2420,18 +2420,18 @@ class _ResearchConsentPanel extends StatelessWidget {
           ),
           const SizedBox(height: 8),
           const Text(
-            'If you continue, the research service may receive the selected artwork image or a derived thumbnail, current draft fields, user notes, and on-device summary/search terms. Your full collection is not sent.',
+            'If you continue, Archivale may use the selected artwork image or thumbnail, the draft details on this screen, your notes, and a short private summary to look for museum, archive, and auction references. Your full collection stays private.',
           ),
           const SizedBox(height: 12),
           const _Notice(
             icon: Icons.fact_check_outlined,
             text:
-                'Results are source-backed candidates. They are not authentication, attribution certainty, or an appraisal.',
+                'Results are source-backed suggestions. They do not confirm authenticity, attribution certainty, or value.',
           ),
           const SizedBox(height: 12),
           _ActionButton(
             icon: Icons.check_circle_outline,
-            label: isBusy ? 'Researching...' : 'Allow professional research',
+            label: isBusy ? 'Researching...' : 'Start source-backed research',
             onPressed: isBusy ? null : onConfirm,
           ),
           const SizedBox(height: 10),
@@ -2472,7 +2472,7 @@ class _ResearchResultsPanel extends StatelessWidget {
             icon: Icons.travel_explore,
             title: 'No source-backed match yet',
             body:
-                'No reliable professional-source candidate was found. Keep the local record and add documents or better photos later.',
+                'Archivale did not find a reliable source-backed match yet. Keep the draft, add documents, or return with clearer detail photos.',
           ),
           const SizedBox(height: 12),
           _ComparableSignalsPanel(

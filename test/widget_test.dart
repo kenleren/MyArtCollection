@@ -2697,10 +2697,10 @@ void main() {
     );
     await pumpLiveData(tester);
 
-    expect(find.text('Research online'), findsNothing);
+    expect(find.text('Research this draft'), findsNothing);
     expect(find.text('Research consent'), findsNothing);
     expect(find.text('Source-backed candidates'), findsNothing);
-    expect(find.text('Online research unavailable'), findsOneWidget);
+    expect(find.text('Research unavailable'), findsOneWidget);
   });
 
   testWidgets('online research requires consent and shows cited candidates', (
@@ -2725,37 +2725,60 @@ void main() {
       );
     });
 
+    final boundaryKey = GlobalKey();
     await tester.pumpWidget(
-      ArchivaleApp(
-        initialRoute: AppRoutes.artworkDraft('research-draft'),
-        dependencies: fixture.dependenciesWithFlags(
-          featureFlags: const AppFeatureFlags(onlineResearchEnabled: true),
+      RepaintBoundary(
+        key: boundaryKey,
+        child: ArchivaleApp(
+          initialRoute: AppRoutes.artworkDraft('research-draft'),
+          dependencies: fixture.dependenciesWithFlags(
+            featureFlags: const AppFeatureFlags(onlineResearchEnabled: true),
+          ),
         ),
       ),
     );
     await pumpLiveData(tester);
 
-    expect(find.text('Research online'), findsOneWidget);
+    expect(find.text('Research this draft'), findsOneWidget);
     expect(find.text('Source-backed candidates'), findsNothing);
 
-    await tapVisible(tester, find.text('Research online'));
+    await tapVisible(tester, find.text('Research this draft'));
 
     expect(find.text('Research consent'), findsOneWidget);
     expect(find.textContaining('what leaves this device'), findsNothing);
-    expect(find.textContaining('selected artwork image'), findsOneWidget);
     expect(
-      find.textContaining('Your full collection is not sent'),
+      find.textContaining('selected artwork image or thumbnail'),
       findsOneWidget,
+    );
+    expect(
+      find.textContaining('Your full collection stays private'),
+      findsOneWidget,
+    );
+    await tester.ensureVisible(find.text('Research consent'));
+    await tester.pump();
+    await captureBoundaryToArtifacts(
+      tester,
+      boundaryKey,
+      'issue-168-ai-research-consent-mobile.png',
+      resetAfterCapture: false,
     );
 
     await tapVisible(tester, find.text('Skip online research'));
 
-    expect(find.text('Research online'), findsOneWidget);
+    expect(find.text('Research this draft'), findsOneWidget);
     expect(find.text('Source-backed candidates'), findsNothing);
 
-    await tapVisible(tester, find.text('Research online'));
-    await tapVisible(tester, find.text('Allow professional research'));
+    await tapVisible(tester, find.text('Research this draft'));
+    await tapVisible(tester, find.text('Start source-backed research'));
     await pumpLiveData(tester);
+    await tester.ensureVisible(find.text('Source-backed candidates'));
+    await tester.pump();
+    await captureBoundaryToArtifacts(
+      tester,
+      boundaryKey,
+      'issue-168-ai-research-results-mobile.png',
+      resetAfterCapture: false,
+    );
 
     expect(find.text('Source-backed candidates'), findsOneWidget);
     expect(

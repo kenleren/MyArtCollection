@@ -194,7 +194,7 @@ class BrokerResearchClient implements OnlineResearchClient {
       return _failedJob(
         request: request,
         errorMessage:
-            'Online research is unavailable until broker payload review is ready.',
+            'Source-backed research is not ready for this draft yet. Keep reviewing your draft and try again later.',
       );
     }
 
@@ -301,7 +301,7 @@ class BrokerResearchClient implements OnlineResearchClient {
           confidence: _confidence(_stringValue(item['confidence'])),
           matchReason:
               _stringValue(item['match_reason']) ??
-              'Broker returned source-backed candidate.',
+              'Source record shares details worth reviewing.',
           fieldSources: _fieldSources(item['field_sources']),
         ),
       );
@@ -832,20 +832,20 @@ String _sha256Hex(String value) =>
 
 String _safeBrokerErrorMessage(String code) {
   return switch (code) {
-    'consent_required' || 'stale_consent' =>
-      'Research consent must be refreshed before online research.',
+    'consent_required' ||
+    'stale_consent' => 'Please review and confirm research consent again.',
     'broker_breaker_open' =>
       'Online research is temporarily unavailable. Try again later.',
     'quota_subject_monthly_cap_exceeded' || 'broker_monthly_cap_exceeded' =>
       'Online research is temporarily unavailable. Try again later.',
     'entitlement_or_credit_denied' =>
-      'Online research is unavailable for this account.',
+      'Online research is not available right now.',
     'unauthorized' ||
     'missing_auth_subject' ||
     'invalid_quota_subject' ||
     'identity_project_mismatch' ||
     'unsupported_auth_provider' =>
-      'Online research is unavailable in this build.',
+      'Online research is not available right now.',
     _ => 'Online research could not complete. Try again later.',
   };
 }
