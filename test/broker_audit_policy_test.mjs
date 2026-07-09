@@ -33,7 +33,7 @@ test('accepts only the exact known full-audit peer metadata edge', async () => {
   }
 });
 
-test('accepts only the known omitted-peer count in peer-normalized metadata', async () => {
+test('accepts only the known omitted-peer count in peer-omitted metadata', async () => {
   const temporaryDirectory = await mkdtemp(path.join(os.tmpdir(), 'broker-core-audit-'));
   try {
     const coreAudit = await readJsonFixture('allowed-audit.json');
@@ -41,6 +41,20 @@ test('accepts only the known omitted-peer count in peer-normalized metadata', as
     coreAudit.metadata.vulnerabilities.total = 9;
     const coreAuditPath = path.join(temporaryDirectory, 'core-audit.json');
     await writeFile(coreAuditPath, JSON.stringify(coreAudit));
+    const result = await run(fixture('allowed-audit.json'), fixture('allowed-lock.json'), {
+      coreAuditPath,
+    });
+    assert.equal(result.code, 0, result.stderr);
+  } finally {
+    await rm(temporaryDirectory, { recursive: true, force: true });
+  }
+});
+
+test('accepts only the exact peer node when npm retains it under omit=peer', async () => {
+  const temporaryDirectory = await mkdtemp(path.join(os.tmpdir(), 'broker-retained-peer-'));
+  try {
+    const coreAuditPath = path.join(temporaryDirectory, 'core-audit.json');
+    await writeFile(coreAuditPath, JSON.stringify(await createPeerAudit()));
     const result = await run(fixture('allowed-audit.json'), fixture('allowed-lock.json'), {
       coreAuditPath,
     });
@@ -100,12 +114,12 @@ test('rejects a standalone npm audit exit-1 error response', async () => {
   assert.match(result.stderr, /top-level npm error/);
 });
 
-test('rejects a peer-normalized npm audit exit-1 error response', async () => {
+test('rejects a peer-omitted npm audit exit-1 error response', async () => {
   const result = await run(fixture('allowed-audit.json'), fixture('allowed-lock.json'), {
     coreAuditPath: fixture('npm-error-audit.json'),
   });
   assert.notEqual(result.code, 0);
-  assert.match(result.stderr, /peer-normalized audit reported a top-level npm error/);
+  assert.match(result.stderr, /peer-omitted audit reported a top-level npm error/);
 });
 
 test('rejects malformed audit JSON', async () => {

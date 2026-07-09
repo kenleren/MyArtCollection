@@ -165,7 +165,7 @@ jobs:
           core_audit_status=$?
           set -e
           test "$full_audit_status" -eq 1 || { echo "full npm audit did not report the expected policy input" >&2; exit 1; }
-          test "$core_audit_status" -eq 1 || { echo "peer-normalized npm audit did not report the expected policy input" >&2; exit 1; }
+          test "$core_audit_status" -eq 1 || { echo "peer-omitted npm audit did not report the expected policy input" >&2; exit 1; }
           node scripts/check_broker_audit.mjs \
             --audit "$RUNNER_TEMP/broker-audit.json" \
             --core-audit "$RUNNER_TEMP/broker-core-audit.json" \

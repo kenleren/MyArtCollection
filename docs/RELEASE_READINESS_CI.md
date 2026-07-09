@@ -55,7 +55,7 @@ The only caches are dependency-download directories: `~/.pub-cache` and npm's
 repository, build outputs, Android Gradle workspace, `.env*`, Firebase
 configuration or tokens, service accounts, signing files, keystores, or
 provisioning material.
-The full and peer-normalized broker audits use separate isolated temporary npm
+The full and peer-omitted broker audits use separate isolated temporary npm
 caches so stale audit metadata cannot alter or couple their graph inputs; the
 forms audit also uses an isolated temporary cache. No audit cache is persisted.
 Every checkout uses
@@ -79,26 +79,28 @@ upload, Firebase CLI command, or provider call.
 accepts only moderate `GHSA-w5hq-g745-h8pq` in the current eight-node broker
 audit graph. The policy validates both npm's full report and a separately
 fetched `--omit=peer` report. Both must use audit report version 2 with no
-top-level error or unknown report fields. The peer-normalized report and all
+top-level error or unknown report fields. The peer-omitted report and all
 eight core entries in the full report must match exact vulnerability names,
 ranges, directness, `via`, `nodes`, `effects`, vulnerability counts, and the
 advisory's source, trusted GitHub origin/path, CWE, CVSS, and affected range.
 npm's aggregate dependency counters vary when peer dependencies are omitted;
 the checker requires their exact npm v2 field set and nonnegative integer types
 while deriving topology only from exact vulnerability objects and lock paths.
-The peer-normalized report may also retain exactly one omitted moderate peer in
+The peer-omitted report may also retain exactly one omitted moderate peer in
 its aggregate counters (8 or 9 moderate/total); every other severity and any
 larger count remains zero/fail-closed.
-The peer-normalized fix metadata is exact. npm may retarget remediation advice in
-the full peer-aware report only to the two locked direct Firebase packages, and
-that advice must retain the exact npm v2 field set and value types.
+When npm removes the peer entry, peer-omitted fix metadata is exact. npm may
+retarget remediation advice in the full peer-aware report only to the two
+locked direct Firebase packages, and that advice must retain the exact npm v2
+field set and value types.
 
 npm may add only its known derived `firebase-functions > firebase-admin`
 peer-metavulnerability entry to the full report. That entry must have the exact
 field set, direct state, `via`, empty effects, and top-level node; its range and
 fix recommendation must retain the npm v2 types. The full report must also add
-exactly the matching `firebase-admin` reverse effect for `firebase-functions`;
-the peer-normalized report must not contain that effect. The lock binds both
+exactly the matching `firebase-admin` reverse effect for `firebase-functions`.
+npm may retain the same exact node and reverse effect under `--omit=peer`; no
+other peer entry or effect is accepted. The lock binds both
 directions to exact top-level `firebase-functions@7.2.5` and
 `firebase-admin@13.10.0` installations. Any other peer package or peer graph
 change fails.

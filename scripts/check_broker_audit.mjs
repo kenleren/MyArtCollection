@@ -200,12 +200,16 @@ async function main() {
     const args = parseArgs(process.argv.slice(2));
     const [audit, coreAudit, lock] = await Promise.all([
       readJson(args.audit, 'audit'),
-      readJson(args.coreAudit, 'peer-normalized audit'),
+      readJson(args.coreAudit, 'peer-omitted audit'),
       readJson(args.lock, 'lock'),
     ]);
     checkExpiry();
     checkAudit(audit, { allowPeerMetadata: true, label: 'full audit' });
-    checkAudit(coreAudit, { allowOmittedPeerCount: true, label: 'peer-normalized audit' });
+    checkAudit(coreAudit, {
+      allowPeerMetadata: true,
+      allowOmittedPeerCount: true,
+      label: 'peer-omitted audit',
+    });
     checkLock(lock);
     console.log(
       `Broker audit policy passed: ${policy.advisoryId} is the only accepted advisory through ${policy.paths.length} exact uuid@${policy.uuidVersion} paths until ${policy.expiresOn}.`,
