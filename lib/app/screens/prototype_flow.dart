@@ -349,28 +349,29 @@ class _ReportsHomeContent extends StatelessWidget {
       children: [
         const _Heading(
           title: 'Reports',
-          subtitle: 'Prepare a report when you need one',
+          subtitle:
+              'Keep a clear record ready for insurance, estate, and personal files.',
         ),
         const SizedBox(height: 16),
         if (firstArtwork == null)
           const _StatusPanel(
             icon: Icons.inventory_2_outlined,
-            title: 'No records ready for a report',
+            title: 'No local records available',
             body:
-                'Add or import an artwork to prepare a report or archive export.',
+                'Add or import an artwork before preparing a report or record export.',
           )
         else ...[
           _ReportSummary(artwork: firstArtwork),
           const SizedBox(height: 16),
           PrimaryActionButton(
             icon: Icons.picture_as_pdf_outlined,
-            label: 'Open artwork report',
+            label: 'Preview artwork report',
             routeName: AppRoutes.artworkReportPreview(firstArtwork.id),
           ),
           const SizedBox(height: 12),
           SecondaryActionButton(
             icon: Icons.archive_outlined,
-            label: 'Export your archive',
+            label: 'Preview record export',
             routeName: AppRoutes.artworkExport(firstArtwork.id),
           ),
         ],
@@ -1861,7 +1862,8 @@ class ReportPreviewScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     return PrototypeScreenFrame(
       title: 'Report preview',
-      subtitle: 'Preview the collector report PDF',
+      subtitle:
+          'Ready a clear record for insurance conversations, estate organization, and personal files.',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -1871,21 +1873,21 @@ class ReportPreviewScreen extends StatelessWidget {
           const SizedBox(height: 16),
           const _StatusPanel(
             icon: Icons.fact_check_outlined,
-            title: 'Included',
+            title: 'What the report includes',
             body:
-                'Confirmed fields, attached document list, report date, and user-provided insurance value.',
+                'Confirmed details, supporting record list, report date, and any user-provided insurance value.',
           ),
           const SizedBox(height: 12),
           const _StatusPanel(
             icon: Icons.block_outlined,
-            title: 'Excluded',
+            title: 'What it does not do',
             body:
-                'No authenticity determination, appraisal certainty, or market-value claim.',
+                'No authenticity finding, appraisal, legal advice, or promise of insurance acceptance.',
           ),
           const SizedBox(height: 20),
           PrimaryActionButton(
             icon: Icons.ios_share_outlined,
-            label: 'Export archive preview',
+            label: 'Preview record export',
             routeName: AppRoutes.artworkExport(artwork.id),
           ),
         ],
@@ -1902,8 +1904,9 @@ class ExportPreviewScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return PrototypeScreenFrame(
-      title: 'Export record package',
-      subtitle: 'Export your archive',
+      title: 'Record export preview',
+      subtitle:
+          'Keep a portable record for family, estate, and personal files.',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -1916,15 +1919,16 @@ class ExportPreviewScreen extends StatelessWidget {
           const SizedBox(height: 16),
           const _StatusPanel(
             icon: Icons.archive_outlined,
-            title: 'ZIP archive preview',
+            title: 'What the export includes',
             body:
-                'Includes artwork fields, source labels, document metadata, and report date.',
+                'Artwork details, how each detail was recorded, supporting record details, and report date.',
           ),
           const SizedBox(height: 12),
           const _StatusPanel(
             icon: Icons.picture_as_pdf_outlined,
-            title: 'PDF preview',
-            body: 'User-provided insurance values only.',
+            title: 'Insurance value note',
+            body:
+                'Any insurance value stays labeled as user-provided in the PDF record.',
           ),
         ],
       ),
