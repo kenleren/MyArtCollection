@@ -205,7 +205,7 @@ async function main() {
     ]);
     checkExpiry();
     checkAudit(audit, { allowPeerMetadata: true, label: 'full audit' });
-    checkAudit(coreAudit, { label: 'peer-normalized audit' });
+    checkAudit(coreAudit, { allowOmittedPeerCount: true, label: 'peer-normalized audit' });
     checkLock(lock);
     console.log(
       `Broker audit policy passed: ${policy.advisoryId} is the only accepted advisory through ${policy.paths.length} exact uuid@${policy.uuidVersion} paths until ${policy.expiresOn}.`,
@@ -266,7 +266,7 @@ export function checkExpiryForTest(asOf) {
   checkExpiry(asOf);
 }
 
-function checkAudit(audit, { allowPeerMetadata = false, label }) {
+function checkAudit(audit, { allowPeerMetadata = false, allowOmittedPeerCount = false, label }) {
   if (!isPlainObject(audit)) throw new Error('audit JSON is not an object');
   if (Object.hasOwn(audit, 'error')) throw new Error(`${label} reported a top-level npm error`);
   compareExact(
@@ -285,6 +285,7 @@ function checkAudit(audit, { allowPeerMetadata = false, label }) {
       ? policy.auditVulnerabilityCountsWithPeer
       : policy.auditVulnerabilityCounts,
     `${label} metadata`,
+    allowOmittedPeerCount,
   );
   if (hasPeerMetadata) {
     checkPeerMetadataVulnerability(vulnerabilities['firebase-functions']);
@@ -297,10 +298,18 @@ function checkAudit(audit, { allowPeerMetadata = false, label }) {
   }
 }
 
-function checkAuditMetadata(metadata, expectedVulnerabilities, label) {
+function checkAuditMetadata(metadata, expectedVulnerabilities, label, allowOmittedPeerCount) {
   if (!isPlainObject(metadata)) throw new Error(`${label} is malformed`);
   compareExact(Object.keys(metadata), ['dependencies', 'vulnerabilities'], `${label} fields`);
-  compareJsonExact(metadata.vulnerabilities, expectedVulnerabilities, `${label} vulnerability counts`);
+  const allowedVulnerabilityCounts = [expectedVulnerabilities];
+  if (allowOmittedPeerCount) {
+    allowedVulnerabilityCounts.push(policy.auditVulnerabilityCountsWithPeer);
+  }
+  const actualCounts = JSON.stringify(canonicalize(metadata.vulnerabilities));
+  const countMatches = allowedVulnerabilityCounts.some(
+    (candidate) => JSON.stringify(canonicalize(candidate)) === actualCounts,
+  );
+  if (!countMatches) throw new Error(`${label} vulnerability counts changed from the bounded schema`);
   if (!isPlainObject(metadata.dependencies)) throw new Error(`${label} dependency counts are malformed`);
   const expectedFields = ['dev', 'optional', 'peer', 'peerOptional', 'prod', 'total'];
   compareExact(Object.keys(metadata.dependencies), expectedFields, `${label} dependency fields`);

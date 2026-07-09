@@ -33,6 +33,23 @@ test('accepts only the exact known full-audit peer metadata edge', async () => {
   }
 });
 
+test('accepts only the known omitted-peer count in peer-normalized metadata', async () => {
+  const temporaryDirectory = await mkdtemp(path.join(os.tmpdir(), 'broker-core-audit-'));
+  try {
+    const coreAudit = await readJsonFixture('allowed-audit.json');
+    coreAudit.metadata.vulnerabilities.moderate = 9;
+    coreAudit.metadata.vulnerabilities.total = 9;
+    const coreAuditPath = path.join(temporaryDirectory, 'core-audit.json');
+    await writeFile(coreAuditPath, JSON.stringify(coreAudit));
+    const result = await run(fixture('allowed-audit.json'), fixture('allowed-lock.json'), {
+      coreAuditPath,
+    });
+    assert.equal(result.code, 0, result.stderr);
+  } finally {
+    await rm(temporaryDirectory, { recursive: true, force: true });
+  }
+});
+
 test('accepts the exception deterministically on its last allowed date', () => {
   assert.doesNotThrow(() => checkExpiryForTest(policyDates.lastAllowedDate));
 });
@@ -49,6 +66,7 @@ const expectedFailures = new Map([
   ['rerouted-audit-edge', /@google-cloud\/storage full audit edges changed/],
   ['missing-audit-field', /uuid full audit vulnerability fields changed/],
   ['changed-audit-metadata', /full audit metadata vulnerability counts changed/],
+  ['unsupported-vulnerability-count', /bounded schema/],
   ['malformed-dependency-metadata', /dependency count total is not a nonnegative integer/],
   ['extra-dependency-metadata-field', /dependency fields changed/],
   ['extra-peer-node', /firebase-functions peer metadata nodes changed/],

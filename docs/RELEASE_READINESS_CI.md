@@ -86,6 +86,9 @@ advisory's source, trusted GitHub origin/path, CWE, CVSS, and affected range.
 npm's aggregate dependency counters vary when peer dependencies are omitted;
 the checker requires their exact npm v2 field set and nonnegative integer types
 while deriving topology only from exact vulnerability objects and lock paths.
+The peer-normalized report may also retain exactly one omitted moderate peer in
+its aggregate counters (8 or 9 moderate/total); every other severity and any
+larger count remains zero/fail-closed.
 The peer-normalized fix metadata is exact. npm may retarget remediation advice in
 the full peer-aware report only to the two locked direct Firebase packages, and
 that advice must retain the exact npm v2 field set and value types.

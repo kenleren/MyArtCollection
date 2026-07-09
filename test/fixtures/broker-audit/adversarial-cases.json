@@ -78,6 +78,14 @@
     ]
   },
   {
+    "id": "unsupported-vulnerability-count",
+    "description": "a vulnerability count beyond the one known omitted peer",
+    "mutations": [
+      { "target": "audit", "operation": "set", "path": ["metadata", "vulnerabilities", "moderate"], "value": 10 },
+      { "target": "audit", "operation": "set", "path": ["metadata", "vulnerabilities", "total"], "value": 10 }
+    ]
+  },
+  {
     "id": "malformed-dependency-metadata",
     "description": "a nonnumeric audit dependency count",
     "mutations": [
