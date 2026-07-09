@@ -29,6 +29,9 @@ import {
 } from '../src/openai_provider.js';
 import { authorizeProviderRequest } from '../src/provider_authorization.js';
 import {
+  createFirebaseResearchBrokerDependencies,
+} from '../src/firebase.js';
+import {
   createConfiguredResearchBrokerDependencies,
   createResearchBrokerHttpHandler,
   isResearchBrokerLiveEnabled,
@@ -41,8 +44,15 @@ import {
   FakeBrokerTokenVerifier,
   FakeDurableBrokerStore,
   FirebaseAdminBrokerTokenVerifier,
+  createFirebaseAdminDurableBrokerProtection,
   deriveQuotaSubject,
   type DurableBrokerProtection,
+  type DurableFirestoreDocumentRef,
+  type DurableFirestoreDocumentSnapshot,
+  type DurableFirestoreLike,
+  type DurableFirestoreTransaction,
+  type FirebaseAdminAppCheckLike,
+  type FirebaseAdminAuthLike,
 } from '../src/durable_protection.js';
 
 const baseContext = Object.freeze({
@@ -291,6 +301,182 @@ function liveDependenciesFactory(options: {
     },
     protection,
   );
+}
+
+function fakeFirebaseAuth(): FirebaseAdminAuthLike {
+  return {
+    async verifyIdToken(token, checkRevoked) {
+      assert.equal(checkRevoked, true);
+      if (token !== 'owner-auth-token') {
+        throw new Error('invalid auth token');
+      }
+      return {
+        uid: 'owner-uid',
+        aud: 'broker-project',
+        iss: 'https://securetoken.google.com/broker-project',
+        firebase: { sign_in_provider: 'anonymous' },
+      };
+    },
+  };
+}
+
+function fakeFirebaseAppCheck(
+  overrides: Record<string, unknown> = {},
+): FirebaseAdminAppCheckLike {
+  return {
+    async verifyToken(token) {
+      if (token !== 'owner-app-check-token') {
+        throw new Error('invalid app check token');
+      }
+      return {
+        appId: 'owner-test-app',
+        aud: ['123456789', 'broker-project'],
+        iss: 'https://firebaseappcheck.googleapis.com/123456789',
+        ...overrides,
+      };
+    },
+  };
+}
+
+class MemoryFirestoreSnapshot implements DurableFirestoreDocumentSnapshot {
+  constructor(private readonly currentData: Record<string, unknown> | undefined) {}
+
+  get exists(): boolean {
+    return this.currentData !== undefined;
+  }
+
+  data(): Record<string, unknown> | undefined {
+    return cloneRecord(this.currentData);
+  }
+}
+
+class MemoryFirestoreDocumentRef implements DurableFirestoreDocumentRef {
+  constructor(
+    private readonly firestore: MemoryFirestore,
+    readonly path: string,
+  ) {}
+
+  async get(): Promise<DurableFirestoreDocumentSnapshot> {
+    return new MemoryFirestoreSnapshot(this.firestore.read(this.path));
+  }
+
+  async set(data: Record<string, unknown>, options?: { merge?: boolean }): Promise<void> {
+    this.firestore.write(this.path, data, options?.merge === true);
+  }
+
+  async update(data: Record<string, unknown>): Promise<void> {
+    this.firestore.write(this.path, data, true);
+  }
+
+  async delete(): Promise<void> {
+    this.firestore.remove(this.path);
+  }
+}
+
+class MemoryFirestoreTransaction implements DurableFirestoreTransaction {
+  private readonly staged = new Map<string, Record<string, unknown> | undefined>();
+
+  constructor(private readonly firestore: MemoryFirestore) {}
+
+  async get(ref: DurableFirestoreDocumentRef): Promise<DurableFirestoreDocumentSnapshot> {
+    if (this.staged.has(ref.path)) {
+      return new MemoryFirestoreSnapshot(this.staged.get(ref.path));
+    }
+    return new MemoryFirestoreSnapshot(this.firestore.read(ref.path));
+  }
+
+  set(
+    ref: DurableFirestoreDocumentRef,
+    data: Record<string, unknown>,
+    options?: { merge?: boolean },
+  ): DurableFirestoreTransaction {
+    const previous = options?.merge === true
+      ? this.staged.get(ref.path) ?? this.firestore.read(ref.path) ?? {}
+      : {};
+    this.staged.set(ref.path, { ...previous, ...cloneRecord(data) });
+    return this;
+  }
+
+  update(
+    ref: DurableFirestoreDocumentRef,
+    data: Record<string, unknown>,
+  ): DurableFirestoreTransaction {
+    return this.set(ref, data, { merge: true });
+  }
+
+  delete(ref: DurableFirestoreDocumentRef): DurableFirestoreTransaction {
+    this.staged.set(ref.path, undefined);
+    return this;
+  }
+
+  commit(): void {
+    for (const [path, data] of this.staged) {
+      if (data === undefined) {
+        this.firestore.remove(path);
+      } else {
+        this.firestore.write(path, data, false);
+      }
+    }
+  }
+}
+
+class MemoryFirestore implements DurableFirestoreLike {
+  readonly documents = new Map<string, Record<string, unknown>>();
+
+  doc(path: string): DurableFirestoreDocumentRef {
+    return new MemoryFirestoreDocumentRef(this, path);
+  }
+
+  async runTransaction<T>(
+    updateFunction: (transaction: DurableFirestoreTransaction) => Promise<T>,
+  ): Promise<T> {
+    const transaction = new MemoryFirestoreTransaction(this);
+    const result = await updateFunction(transaction);
+    transaction.commit();
+    return result;
+  }
+
+  seed(path: string, data: Record<string, unknown>): void {
+    this.write(path, data, false);
+  }
+
+  read(path: string): Record<string, unknown> | undefined {
+    return cloneRecord(this.documents.get(path));
+  }
+
+  write(path: string, data: Record<string, unknown>, merge: boolean): void {
+    const previous = merge ? this.documents.get(path) ?? {} : {};
+    this.documents.set(path, { ...previous, ...cloneRecord(data) });
+  }
+
+  remove(path: string): void {
+    this.documents.delete(path);
+  }
+
+  findByPrefix(prefix: string): Array<Record<string, unknown>> {
+    return [...this.documents.entries()]
+      .filter(([path]) => path.startsWith(prefix))
+      .map(([, data]) => cloneRecord(data) ?? {});
+  }
+}
+
+function seededFirestore(): MemoryFirestore {
+  const firestore = new MemoryFirestore();
+  firestore.seed('brokerDurableControl/live', {
+    breakerOpen: false,
+    perSubjectMonthlyCap: 3,
+    brokerMonthlyCap: 100,
+    oneInFlightPerSubject: true,
+  });
+  firestore.seed('brokerDurableEntitlements/b3duZXItdWlk', { entitled: true });
+  return firestore;
+}
+
+function cloneRecord(value: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  return JSON.parse(JSON.stringify(value)) as Record<string, unknown>;
 }
 
 class StaticProvider implements ProviderClient {
@@ -1290,6 +1476,29 @@ test('enabled live config fails closed before OpenAI config lookup without quota
   assert.equal(configLookupCount, 0);
 });
 
+test('enabled live config fails closed before OpenAI config lookup without Firebase project number', async () => {
+  let configLookupCount = 0;
+  const configured = createConfiguredResearchBrokerDependencies(
+    durableEnv({ BROKER_FIREBASE_PROJECT_NUMBER: undefined }),
+    {},
+    () => {
+      configLookupCount += 1;
+      return {
+        ok: false,
+        code: 'missing_openai_api_key',
+        message: 'should not be reached',
+      };
+    },
+    createFakeDurableProtection(),
+  );
+
+  assert.deepEqual(configured, {
+    kind: 'misconfigured',
+    code: 'missing_durable_broker_config',
+  });
+  assert.equal(configLookupCount, 0);
+});
+
 test('firebase admin verifier abstraction requires revoked Auth check and matching App Check project', async () => {
   let checkRevokedValue: boolean | undefined;
   const verifier = new FirebaseAdminBrokerTokenVerifier({
@@ -1368,6 +1577,122 @@ test('firebase admin verifier abstraction requires revoked Auth check and matchi
   });
 
   assert.deepEqual(rejected, { ok: false, code: 'invalid_app_check_token' });
+
+  const wrongIssuerVerifier = new FirebaseAdminBrokerTokenVerifier({
+    auth: {
+      async verifyIdToken() {
+        return {
+          uid: 'owner-uid',
+          aud: 'broker-project',
+          iss: 'https://securetoken.google.com/broker-project',
+          firebase: { sign_in_provider: 'anonymous' },
+        };
+      },
+    },
+    appCheck: {
+      async verifyToken() {
+        return {
+          appId: 'owner-test-app',
+          aud: ['123456789', 'broker-project'],
+          iss: 'https://firebaseappcheck.googleapis.com/999999999',
+        };
+      },
+    },
+    config: {
+      projectId: 'broker-project',
+      projectNumber: '123456789',
+      allowedAppIds: new Set(['owner-test-app']),
+    },
+  });
+
+  assert.deepEqual(
+    await wrongIssuerVerifier.verify({
+      authorizationHeader: 'Bearer owner-auth-token',
+      appCheckToken: 'owner-app-check-token',
+    }),
+    { ok: false, code: 'invalid_app_check_token' },
+  );
+});
+
+test('wrong App Check issuer rejects before provider config lookup', async () => {
+  let configLookupCount = 0;
+  const protectionResult = createFirebaseAdminDurableBrokerProtection({
+    env: durableEnv(),
+    auth: fakeFirebaseAuth(),
+    appCheck: fakeFirebaseAppCheck({
+      iss: 'https://firebaseappcheck.googleapis.com/999999999',
+    }),
+    firestore: seededFirestore(),
+  });
+  assert.equal(protectionResult.ok, true);
+  if (!protectionResult.ok) {
+    return;
+  }
+
+  const handler = createResearchBrokerHttpHandler({
+    env: durableEnv(),
+    dependenciesFactory: () => liveDependenciesFactory({
+      protection: protectionResult.protection,
+      configLookup: () => {
+        configLookupCount += 1;
+      },
+    }),
+  });
+  const response = createHttpResponse();
+
+  await handler(createHttpRequest({ data: request() }), response.responder);
+
+  assert.equal(response.statusCode, 401);
+  assert.deepEqual(response.json, { ok: false, error: 'unauthorized' });
+  assert.equal(configLookupCount, 0);
+});
+
+test('firebase live dependency factory wires concrete durable Firestore protection when configured', async () => {
+  const configured = createFirebaseResearchBrokerDependencies(
+    durableEnv(),
+    {
+      auth: fakeFirebaseAuth(),
+      appCheck: fakeFirebaseAppCheck(),
+      firestore: seededFirestore(),
+    },
+  );
+
+  assert.equal(configured.kind, 'ready');
+  if (configured.kind !== 'ready') {
+    return;
+  }
+  assert.equal(configured.durableProtection, true);
+  assert.equal(
+    configured.protection.createIdempotencyStore().constructor.name,
+    'FirestoreDurableIdempotencyStore',
+  );
+  assert.equal(
+    configured.protection.createCreditLedger().constructor.name,
+    'FirestoreDurableCreditLedger',
+  );
+});
+
+test('firebase live dependency factory fails closed when project number is missing', async () => {
+  let authCalls = 0;
+  const configured = createFirebaseResearchBrokerDependencies(
+    durableEnv({ BROKER_FIREBASE_PROJECT_NUMBER: undefined }),
+    {
+      auth: {
+        async verifyIdToken() {
+          authCalls += 1;
+          throw new Error('should not verify tokens');
+        },
+      },
+      appCheck: fakeFirebaseAppCheck(),
+      firestore: seededFirestore(),
+    },
+  );
+
+  assert.deepEqual(configured, {
+    kind: 'misconfigured',
+    code: 'missing_durable_broker_config',
+  });
+  assert.equal(authCalls, 0);
 });
 
 test('live shell verifies tokens, derives quota subject, and ignores spoofed quota headers', async () => {
@@ -1465,6 +1790,68 @@ test('live durable duplicate across dependency instances yields one provider exe
   assert.equal(provider.callCount, 1);
   assert.equal(store.reserveCount, 1);
   assert.equal(store.finalizeCount, 1);
+});
+
+test('live durable duplicate across instances uses concrete Firestore adapter once', async () => {
+  const provider = new StaticProvider({
+    sources: [
+      {
+        source_id: 'src_live_firestore_duplicate',
+        source_name: 'Museum Example',
+        source_type: 'museum',
+        source_url: 'https://museum.example/works/firestore-duplicate',
+        title: 'Collection record',
+        accessed_at: '2026-07-08T16:00:00.000Z',
+        citation_excerpt: 'Collection record excerpt.',
+        matched_fields: ['title'],
+      },
+    ],
+    candidate_attributions: [],
+    comparable_value_signals: [],
+    warnings: [],
+  });
+  const firestore = seededFirestore();
+  const protectionResult = createFirebaseAdminDurableBrokerProtection({
+    env: durableEnv(),
+    auth: fakeFirebaseAuth(),
+    appCheck: fakeFirebaseAppCheck(),
+    firestore,
+  });
+  assert.equal(protectionResult.ok, true);
+  if (!protectionResult.ok) {
+    return;
+  }
+
+  const handlerA = createResearchBrokerHttpHandler({
+    env: durableEnv(),
+    dependenciesFactory: () => liveDependenciesFactory({
+      protection: protectionResult.protection,
+      provider,
+    }),
+  });
+  const handlerB = createResearchBrokerHttpHandler({
+    env: durableEnv(),
+    dependenciesFactory: () => liveDependenciesFactory({
+      protection: protectionResult.protection,
+      provider,
+    }),
+  });
+
+  const firstResponse = createHttpResponse();
+  await handlerA(createHttpRequest({ data: request() }), firstResponse.responder);
+
+  const replayResponse = createHttpResponse();
+  await handlerB(createHttpRequest({ data: request() }), replayResponse.responder);
+
+  assert.equal(firstResponse.statusCode, 200);
+  assert.equal(replayResponse.statusCode, 200);
+  assert.equal(replayResponse.json.replayed, true);
+  assert.equal(provider.callCount, 1);
+  assert.deepEqual(
+    firestore.findByPrefix('brokerDurableLedger/').map((record) => record.state),
+    ['finalized'],
+  );
+  assert.deepEqual(firestore.read('brokerDurableControl/globalUsage'), { exposedCredits: 1 });
 });
 
 test('live durable changed payload hash conflicts across instances without provider execution', async () => {

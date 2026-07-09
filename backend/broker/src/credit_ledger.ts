@@ -8,6 +8,8 @@ export interface LedgerRecord {
   reason?: string;
 }
 
+export type MaybePromise<T> = T | Promise<T>;
+
 export interface ReserveCreditInput {
   requestId: string;
   quotaSubject: string;
@@ -32,9 +34,9 @@ export interface BrokerCreditLedger {
   readonly exposedCredits: number;
   spentCreditsFor(quotaSubject: string): number;
   exposedCreditsFor(quotaSubject: string): number;
-  reserve(input: ReserveCreditInput): ReserveCreditResult;
-  finalize(record: LedgerRecord): void;
-  refund(record: LedgerRecord, reason: string): void;
+  reserve(input: ReserveCreditInput): MaybePromise<ReserveCreditResult>;
+  finalize(record: LedgerRecord): MaybePromise<void>;
+  refund(record: LedgerRecord, reason: string): MaybePromise<void>;
 }
 
 export interface PlaceholderCreditLedgerOptions {

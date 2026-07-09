@@ -14,7 +14,7 @@ supports:
 
 - Pure broker core: `src/broker.ts`
 - Generic server-side adapter: `src/adapter.ts`
-- Durable broker protection abstractions: `src/durable_protection.ts`
+- Durable broker protection and Firestore adapter: `src/durable_protection.ts`
 - Fake provider: `src/fake_provider.ts`
 - Disabled-by-default HTTP shell: `src/live_broker.ts`
 - Firebase Functions export: `src/firebase.ts`
@@ -55,17 +55,34 @@ Optional OpenAI env vars:
 
 The shell does not read `.env.local`, mobile config files, or service-account
 files. It reads provider credentials only from runtime env/secret injection.
-The default live configuration still returns `503 research_broker_disabled`
-before OpenAI config lookup unless a deployment-owned `DurableBrokerProtection`
-implementation is injected. The implementation must provide:
+The Firebase Functions export wires a concrete Firebase Admin/Firestore-backed
+`DurableBrokerProtection` by default when the durable env gate is complete. It
+still returns `503 research_broker_disabled` before OpenAI config lookup if
+required durable env, Firebase Admin, App Check, or Firestore dependencies are
+absent. The production wiring provides:
 
 - Firebase Admin-backed Auth ID token verification with revocation checking,
 - Firebase Admin-backed App Check token verification,
 - server-side `quota_subject_v1_...` derivation using
   `BROKER_QUOTA_HMAC_SECRET`,
-- durable entitlement, breaker, credit, one-in-flight, and idempotency storage,
+- Firestore-backed entitlement, breaker, credit, one-in-flight, and idempotency
+  storage,
 - and lazy OpenAI provider dependency creation only after those request gates
   pass.
+
+Firestore deployment-owned documents are intentionally abstract and contain no
+secret values:
+
+- `brokerDurableControl/live` for breaker and optional quota cap overrides.
+- `brokerDurableControl/globalUsage` for broker-wide exposed credit aggregate.
+- `brokerDurableEntitlements/<uid-key>` with `entitled=true` for approved owner
+  test users.
+- `brokerDurableQuotaSubjects/<quota-subject-key>` for per-subject exposed
+  credit and reserved in-flight aggregate.
+- `brokerDurableIdempotency/<request-key>` for request id, payload hash,
+  in-flight/completed state, and replay response.
+- `brokerDurableLedger/<request-key>` for reserved/finalized/refunded credit
+  records.
 
 ## Current live-test posture
 
@@ -114,14 +131,15 @@ git diff --check
 - No live OpenAI calls during implementation/tests.
 - No direct OpenAI provider constructor in the package public API.
 - No live provider fetch without broker-issued request authorization.
-- No live shell provider calls until an environment-specific Admin verifier,
-  durable store, secret injection, and breaker/entitlement configuration are
-  reviewed under #155.
+- No live shell provider calls until environment-specific Admin credentials,
+  Firestore documents/rules/index posture, secret injection, and
+  breaker/entitlement configuration are reviewed under #155.
 
 ## Remaining gates before any owner live test
 
-- environment-specific Firebase Admin Auth/App Check verifier wiring,
-- reviewed durable entitlement/credit/idempotency storage provisioning,
+- environment-specific Firebase Admin Auth/App Check credentials,
+- reviewed durable Firestore entitlement/credit/idempotency storage
+  provisioning,
 - App Check limited-use/replay behavior decision for the deployed HTTP path,
 - exact Secret Manager/runtime secret binding for `BROKER_QUOTA_HMAC_SECRET`
   and the OpenAI provider key,
