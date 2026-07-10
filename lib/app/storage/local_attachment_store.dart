@@ -1,6 +1,9 @@
 import 'dart:io';
+import 'dart:typed_data';
+import 'dart:ui' as ui;
 
 import 'package:crypto/crypto.dart';
+import 'package:dart_pdf_reader/dart_pdf_reader.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
@@ -44,6 +47,8 @@ class LocalAttachmentStore {
   static final RegExp _opaquePathComponent = RegExp(
     r'^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$',
   );
+  static const _maxImagePixels = 100 * 1000 * 1000;
+  static const _validationTimeout = Duration(seconds: 2);
 
   static Future<LocalAttachmentStore> open() async {
     final directory = await getApplicationDocumentsDirectory();
@@ -141,7 +146,7 @@ class LocalAttachmentStore {
         );
       }
       final bytes = await staging.readAsBytes();
-      _validateSignature(bytes, mimeType);
+      await _validatePayload(bytes, mimeType);
 
       await destination.parent.create(recursive: true);
       if (await destination.exists()) {
@@ -155,7 +160,7 @@ class LocalAttachmentStore {
       // Reopen after the final move so metadata is never returned for bytes
       // that cannot be read back from the app-private payload location.
       final reopenedBytes = await destination.readAsBytes();
-      _validateSignature(reopenedBytes, mimeType);
+      await _validatePayload(reopenedBytes, mimeType);
       final checksum = sha256.convert(reopenedBytes).toString();
 
       final record = AttachmentRecord(
@@ -306,9 +311,9 @@ class LocalAttachmentStore {
     };
   }
 
-  static void _validateSignature(List<int> bytes, String mimeType) {
+  static Future<void> _validatePayload(List<int> bytes, String mimeType) async {
     final isValid = switch (mimeType) {
-      'application/pdf' => _hasPdfStructure(bytes),
+      'application/pdf' => await _hasParseablePdf(bytes),
       'image/jpeg' => _hasJpegStructure(bytes),
       'image/png' => _hasPngStructure(bytes),
       'image/heic' || 'image/heif' => _hasIsoBaseMediaFileStructure(bytes),
@@ -319,6 +324,41 @@ class LocalAttachmentStore {
         AttachmentImportFailure.malformedFile,
         'The selected file is malformed or does not match its declared type.',
       );
+    }
+
+    if (mimeType.startsWith('image/')) {
+      try {
+        final codec = await ui
+            .instantiateImageCodec(Uint8List.fromList(bytes))
+            .timeout(_validationTimeout);
+        try {
+          final frame = await codec.getNextFrame().timeout(_validationTimeout);
+          frame.image.dispose();
+        } finally {
+          codec.dispose();
+        }
+      } catch (_) {
+        throw const AttachmentImportException(
+          AttachmentImportFailure.malformedFile,
+          'The selected file is malformed or does not match its declared type.',
+        );
+      }
+    }
+  }
+
+  static Future<bool> _hasParseablePdf(List<int> bytes) async {
+    if (bytes.length < 32 ||
+        !_startsWith(bytes, const [0x25, 0x50, 0x44, 0x46, 0x2d])) {
+      return false;
+    }
+    try {
+      final document = await PDFParser(
+        ByteStream(Uint8List.fromList(bytes)),
+      ).parse(cacheObjectsHint: false).timeout(_validationTimeout);
+      await document.catalog.timeout(_validationTimeout);
+      return true;
+    } catch (_) {
+      return false;
     }
   }
 
@@ -332,56 +372,6 @@ class LocalAttachmentStore {
       }
     }
     return true;
-  }
-
-  static bool _containsNearEnd(List<int> bytes, List<int> marker) {
-    final start = bytes.length > 1024 ? bytes.length - 1024 : 0;
-    for (var index = start; index <= bytes.length - marker.length; index++) {
-      var matched = true;
-      for (var markerIndex = 0; markerIndex < marker.length; markerIndex++) {
-        if (bytes[index + markerIndex] != marker[markerIndex]) {
-          matched = false;
-          break;
-        }
-      }
-      if (matched) {
-        return true;
-      }
-    }
-    return false;
-  }
-
-  static bool _hasPdfStructure(List<int> bytes) {
-    if (bytes.length < 32 ||
-        !_startsWith(bytes, const [0x25, 0x50, 0x44, 0x46, 0x2d]) ||
-        !_containsNearEnd(bytes, const [0x25, 0x25, 0x45, 0x4f, 0x46])) {
-      return false;
-    }
-    final startXref = _lastIndexOf(bytes, const [
-      0x73,
-      0x74,
-      0x61,
-      0x72,
-      0x74,
-      0x78,
-      0x72,
-      0x65,
-      0x66,
-    ]);
-    if (startXref < 0) {
-      return false;
-    }
-    var index = startXref + 9;
-    while (index < bytes.length && _isPdfWhitespace(bytes[index])) {
-      index += 1;
-    }
-    final numberStart = index;
-    while (index < bytes.length &&
-        bytes[index] >= 0x30 &&
-        bytes[index] <= 0x39) {
-      index += 1;
-    }
-    return index > numberStart;
   }
 
   static bool _hasJpegStructure(List<int> bytes) {
@@ -422,7 +412,18 @@ class LocalAttachmentStore {
       if (segmentLength < 2 || index + segmentLength > bytes.length) {
         return false;
       }
-      if (marker >= 0xc0 && marker <= 0xc3 && segmentLength >= 8) {
+      if (marker >= 0xc0 &&
+          marker <= 0xcf &&
+          marker != 0xc4 &&
+          marker != 0xc8 &&
+          marker != 0xcc) {
+        if (segmentLength < 8 ||
+            !_hasSafeImageDimensions(
+              (bytes[index + 3] << 8) | bytes[index + 4],
+              (bytes[index + 5] << 8) | bytes[index + 6],
+            )) {
+          return false;
+        }
         hasFrame = true;
       }
       if (marker == 0xda && segmentLength >= 8) {
@@ -463,8 +464,10 @@ class LocalAttachmentStore {
       if (firstChunk) {
         if (type != 'IHDR' ||
             length != 13 ||
-            _readUint32(bytes, dataStart) <= 0 ||
-            _readUint32(bytes, dataStart + 4) <= 0) {
+            !_hasSafeImageDimensions(
+              _readUint32(bytes, dataStart),
+              _readUint32(bytes, dataStart + 4),
+            )) {
           return false;
         }
         firstChunk = false;
@@ -505,6 +508,14 @@ class LocalAttachmentStore {
     return false;
   }
 
+  static bool _hasSafeImageDimensions(int width, int height) {
+    return width > 0 &&
+        height > 0 &&
+        width <= _maxImagePixels &&
+        height <= _maxImagePixels &&
+        width * height <= _maxImagePixels;
+  }
+
   static int _readUint32(List<int> bytes, int offset) {
     if (offset < 0 || offset + 4 > bytes.length) {
       return -1;
@@ -514,30 +525,6 @@ class LocalAttachmentStore {
         (bytes[offset + 2] << 8) |
         bytes[offset + 3];
   }
-
-  static int _lastIndexOf(List<int> bytes, List<int> marker) {
-    for (var index = bytes.length - marker.length; index >= 0; index -= 1) {
-      var matches = true;
-      for (var markerIndex = 0; markerIndex < marker.length; markerIndex += 1) {
-        if (bytes[index + markerIndex] != marker[markerIndex]) {
-          matches = false;
-          break;
-        }
-      }
-      if (matches) {
-        return index;
-      }
-    }
-    return -1;
-  }
-
-  static bool _isPdfWhitespace(int value) =>
-      value == 0x00 ||
-      value == 0x09 ||
-      value == 0x0a ||
-      value == 0x0c ||
-      value == 0x0d ||
-      value == 0x20;
 }
 
 enum AttachmentPayloadStatus { available, missing, checksumMismatch }

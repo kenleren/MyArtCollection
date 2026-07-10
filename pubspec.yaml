@@ -41,6 +41,7 @@ dependencies:
   path: ^1.9.1
   path_provider: ^2.1.6
   crypto: ^3.0.7
+  dart_pdf_reader: ^2.2.0
   file_selector: ^1.0.3
   image_picker: ^1.2.3
   image_picker_android: ^0.8.13+19
