@@ -708,7 +708,7 @@ May store only:
 - plan, product, base-plan, and absent-offer marker;
 - normalized state, Play expiry, and verification time;
 - `deliveryState`, `ackState`, `bindingState`, and fixed recovery reason;
-- staged delivery `attemptGeneration` and `attemptNonce` owner fields;
+- opaque staged-delivery `attemptGeneration` and `attemptNonce` CAS fields;
 - staged/final predecessor/successor fingerprints and superseded state; and
 - created, updated, state-change, acknowledgement-confirmed, and retention
   timestamps.
@@ -726,13 +726,13 @@ lease or a `brokerDurableEntitlements` payment grant.
 
 ### Operational Collections
 
-- `playBillingRequestReplays`: request/token fingerprints, server attempt
-  generation/nonce, phase, lease/cooldown, fixed outcome, timestamps, and
-  24-hour retention expiry only.
+- `playBillingRequestReplays`: request/token fingerprints, opaque server attempt
+  generation/nonce CAS fields, phase, lease/cooldown, fixed outcome,
+  timestamps, and 24-hour retention expiry only.
 - `playBillingTokenOperations`: token/request fingerprints, optional verified
   account subject only after exact Play binding, server attempt
-  generation/nonce, phase, lease/cooldown, acknowledgement-attempt counters,
-  fixed outcome, timestamps, and 24-hour TTL.
+  generation/nonce CAS fields, phase, lease/cooldown, acknowledgement-attempt
+  counters, fixed outcome, timestamps, and 24-hour TTL.
 - `playBillingRateLimits`: account subject, rolling-window start, fixed get
   count, timestamps, and 24-hour TTL.
 
@@ -749,12 +749,21 @@ review/deployment evidence:
 - raw `purchaseToken` or `linkedPurchaseToken`;
 - raw Auth or App Check token;
 - raw Firebase UID or captured client UID/generation;
-- server attempt generation/nonce or complete attempt owner;
 - derived `obfuscatedAccountId` or returned account identifiers;
 - any order ID, developer payload, Play response body, cancellation free text,
   or Subscribe with Google profile data; and
 - server fingerprint key, secret path, or real assertion/account/token/request
   fingerprint.
+
+`attemptGeneration` and `attemptNonce` are the sole exception: they are opaque
+server-owned CAS fields, not request-memory-only values. They may be persisted
+only in `playBillingPurchaseBindings`, `playBillingRequestReplays`, and
+`playBillingTokenOperations`, only in `archivale-play-billing`, and only for
+the exact owner-and-phase comparisons defined above. They must never be exposed
+to a client or copied to any other Firestore database, collection, storage
+system, log, telemetry product, fixture, screenshot, console capture, test
+name, issue/PR comment, or review/deployment evidence. A complete attempt
+owner remains forbidden outside those three server-only records.
 
 Clear request-memory references at completion. Logs/evidence may contain only
 fixed event/reason codes, contract/key/disclosure versions, coarse timing, and
@@ -825,7 +834,7 @@ Required acceptance evidence is serialized:
 | Dependency | Evidence before it advances |
 | --- | --- |
 | #190 | Exact eight-file diff, stale-topology/redaction/protocol scans, blocker matrix, independent focused task review, then focused payment redteam |
-| #191 | Fake/unit/emulator proof of named-database targeting and deny rules; database-IAM negative evidence plan; disclosure zero-Play gates; request/token concurrency and ceilings; same/cross-product canceled-pending recovery; exact API arguments; TTL/redaction; deterministic parallel/fault matrix for identical request IDs crossing delivery commit, crash immediately after delivery commit, duplicate arrival while acknowledgement is running, success racing 409/timeout, post-90-second generation-advancing reclaim, stale prior-owner finalization, cross-UUID token single-flight, one acknowledgement start, and proof finalized success never regresses to `ack_unknown` |
+| #191 | Fake/unit/emulator proof of named-database targeting and deny-all client rules, including opaque attempt generation/nonce persisted only in the three permitted server-only records and asserted without displaying owner material; database-IAM negative evidence plan; disclosure zero-Play gates; request/token concurrency and ceilings; same/cross-product canceled-pending recovery; exact API arguments; TTL/redaction; deterministic parallel/fault matrix for identical request IDs crossing delivery commit, crash immediately after delivery commit, duplicate arrival while acknowledgement is running, success racing 409/timeout, post-90-second generation-advancing reclaim, stale prior-owner CAS rejection, cross-UUID token single-flight, one acknowledgement start, finalized success never regresses to `ack_unknown`, and no owner material reaches telemetry |
 | #192 | Fake-driven proof of official disclosure flow, account derivation, duplicate coalescing, generation/request/UID fences, memory-only lease, foreground recovery, restart/account-change/failure Free behavior, and preserved existing-record access |
 | #193 | Mobile visual/interaction evidence for disclosure, purchase/restore, verification pending, rate/unavailable, pending/grace/canceled/hold/paused, Free/downgrade, and safe errors |
 | #194 | Payment redteam, privacy/Data Safety, deployment/rollback, RTDN/reconciliation, monitoring, durable identity/token custody, and explicit closed/public approval |

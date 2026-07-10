@@ -61,14 +61,20 @@ reviewer believes they are redacted. Request-memory raw values must be cleared
 at completion and never attached to an error object passed to telemetry.
 Client entitlement generations, captured UIDs, disclosure acceptance request
 IDs, server attempt generations/nonces, complete attempt owners, and
-token-operation owners are also forbidden. Fixed aggregate counts such as
+token-operation owners are also forbidden from telemetry, logs, fixtures,
+screenshots, and evidence. The opaque server-owned generation/nonce fields may
+exist only in the three billing Firestore records explicitly allowed by
+`PLAY_BILLING_GATE_SPEC.md`; that storage exception never permits display or
+observability export. Fixed aggregate counts such as
 `rate_limited`, `delivery_committed`, `ack_in_progress`, or `ack_unknown` may be
 emitted only without a subject, fingerprint, request ID, product, owner,
 generation, nonce, or expiry.
 
-#191 may inject deterministic owner material only in process memory for race
-tests. It must use opaque test helpers and must not serialize the fake nonce or
-generation into fixtures, snapshots, logs, screenshots, or review evidence.
+#191 may inject deterministic owner material for race tests and assert opaque
+owner-field persistence in emulator state without printing those values. It
+must use opaque test helpers and must not serialize or display the fake nonce
+or generation in fixtures, snapshots, logs, screenshots, telemetry, or review
+evidence.
 
 ## Default-Off Requirement
 
