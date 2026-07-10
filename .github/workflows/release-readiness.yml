@@ -147,7 +147,7 @@ jobs:
         uses: actions/setup-java@0f481fcb613427c0f801b606911222b5b6f3083a
         with:
           distribution: temurin
-          java-version: 21.0.8+9
+          java-version: '21'
       - name: Restore npm dependency cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
