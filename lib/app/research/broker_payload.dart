@@ -312,6 +312,11 @@ bool _validFrozenDraftHints(
   final title = hints['title_hint'];
   final artist = hints['artist_hint'];
   final searchTerms = hints['search_terms'];
+  if ((hints.containsKey('title_hint') && title == null) ||
+      (hints.containsKey('artist_hint') && artist == null) ||
+      (hints.containsKey('search_terms') && searchTerms == null)) {
+    return false;
+  }
   if ((title != null && !_isValidUnicodeString(title, maxLength: 160)) ||
       (artist != null && !_isValidUnicodeString(artist, maxLength: 160))) {
     return false;

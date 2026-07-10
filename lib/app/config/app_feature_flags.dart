@@ -15,6 +15,25 @@ const _brokerEndpointDefine = String.fromEnvironment(
   'MY_ART_COLLECTION_BROKER_ENDPOINT',
 );
 
+/// Closed endpoint set for #188. A live Function URL must be added here only
+/// after #155 approves the deployment target and release gate.
+enum ArchivaleBrokerEndpoint {
+  test('https://broker.example.test/research'),
+  artifactInspection('https://broker.example.invalid/research');
+
+  const ArchivaleBrokerEndpoint(this.wireValue);
+
+  final String wireValue;
+}
+
+final _approvedBrokerEndpoints = ArchivaleBrokerEndpoint.values
+    .map((endpoint) => endpoint.wireValue)
+    .toSet();
+
+bool isApprovedArchivaleBrokerEndpoint(Uri endpoint) {
+  return _approvedBrokerEndpoints.contains(endpoint.toString());
+}
+
 class AppFeatureFlags {
   const AppFeatureFlags({
     this.localResearchCapabilityEnabled = false,
@@ -58,17 +77,26 @@ class AppFeatureFlagService {
   final bool remoteConfigEnabled;
   final String brokerEndpoint;
 
-  bool get localResearchCapabilityEnabled {
+  Uri? get _configuredBrokerEndpoint {
+    if (!_approvedBrokerEndpoints.contains(brokerEndpoint)) {
+      return null;
+    }
     final endpoint = Uri.tryParse(brokerEndpoint);
+    if (endpoint == null || endpoint.toString() != brokerEndpoint) {
+      return null;
+    }
+    return endpoint;
+  }
+
+  bool get localResearchCapabilityEnabled {
+    final endpoint = _configuredBrokerEndpoint;
     final effectiveTargetPlatform = targetPlatform ?? defaultTargetPlatform;
     return isReleaseMode &&
         effectiveTargetPlatform == TargetPlatform.android &&
         brokerClientEnabled &&
         firebaseAndroid &&
         remoteConfigEnabled &&
-        endpoint != null &&
-        endpoint.scheme == 'https' &&
-        endpoint.host.isNotEmpty;
+        endpoint != null;
   }
 
   AppFeatureFlags localFlags() {
@@ -79,8 +107,8 @@ class AppFeatureFlagService {
 
   /// A broker client may only use the HTTPS endpoint compiled into its artifact.
   bool isConfiguredBrokerEndpoint(Uri endpoint) {
-    final configured = Uri.tryParse(brokerEndpoint);
-    return configured != null && configured == endpoint;
+    final configured = _configuredBrokerEndpoint;
+    return configured != null && endpoint.toString() == configured.toString();
   }
 
   /// Must only be called after confirmed typed research consent. This is the

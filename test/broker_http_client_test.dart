@@ -122,6 +122,38 @@ void main() {
   );
 
   test(
+    'rejects non-allowlisted HTTPS broker endpoint before Firebase or transport work',
+    () async {
+      final runtime = _RecordingRuntime();
+      final transport = _RecordingTransport();
+      final flags = AppFeatureFlagService(
+        runtime: runtime,
+        isReleaseMode: true,
+        targetPlatform: TargetPlatform.android,
+        brokerClientEnabled: true,
+        firebaseAndroid: true,
+        remoteConfigEnabled: true,
+        brokerEndpoint: 'https://attacker.example/research',
+      );
+      final client = BrokerHttpClient(
+        endpoint: Uri.parse('https://attacker.example/research'),
+        featureFlags: flags,
+        firebaseRuntime: runtime,
+        transport: transport,
+        connectivity: const _FixedConnectivity(true),
+        retryStore: _MemoryRetryStore(),
+      );
+
+      final result = await client.submit(_payload());
+
+      expect(flags.localResearchCapabilityEnabled, isFalse);
+      expect(result.failure!.code, 'endpoint_unavailable');
+      expect(runtime.calls, isEmpty);
+      expect(transport.requests, isEmpty);
+    },
+  );
+
+  test(
     'fails closed without transport when Remote Config, connectivity, or tokens fail',
     () async {
       final remoteConfigRuntime = _RecordingRuntime(throwOnRemoteConfig: true);
@@ -262,6 +294,57 @@ void main() {
         expect(result.failure!.code, 'retry_not_available');
         expect(runtime.calls, isEmpty);
         expect(transport.requests, isEmpty);
+      }
+    },
+  );
+
+  test(
+    'rejects present null frozen draft hint keys before Firebase or transport work',
+    () async {
+      final request = BrokerRequestPayload(
+        requestId: '11111111-1111-4111-8111-111111111111',
+        consent: const BrokerResearchConsent.approved(
+          scope: BrokerConsentScope.imagePlusDraftHints,
+          copyVersion: 'research-consent-v1',
+        ),
+        derivative: BrokerImageDerivative(
+          bytes: Uint8List.fromList(<int>[1, 2, 3]),
+          longEdgePx: 1600,
+        ),
+        draftHints: const BrokerDraftHints(
+          titleHint: 'Title',
+          artistHint: 'Artist',
+          searchTerms: <String>['term'],
+        ),
+      );
+      final original = request.toRequest();
+
+      for (final key in <String>['title_hint', 'artist_hint', 'search_terms']) {
+        final hints = Map<String, Object?>.from(
+          original['draft_hints']! as Map<String, Object?>,
+        )..[key] = null;
+        final mutated = <String, Object?>{...original, 'draft_hints': hints};
+        final store = _MemoryRetryStore();
+        await store.save(
+          FrozenBrokerRequest(
+            requestId: request.requestId,
+            payloadHash: original['payload_hash']! as String,
+            body: jsonEncode(<String, Object?>{'data': mutated}),
+            consent: request.consent,
+          ),
+        );
+        final runtime = _RecordingRuntime();
+        final transport = _RecordingTransport();
+
+        final result = await _client(
+          runtime: runtime,
+          transport: transport,
+          store: store,
+        ).retry(request.requestId, consent: request.consent);
+
+        expect(result.failure!.code, 'retry_not_available', reason: key);
+        expect(runtime.calls, isEmpty, reason: key);
+        expect(transport.requests, isEmpty, reason: key);
       }
     },
   );

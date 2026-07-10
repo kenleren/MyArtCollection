@@ -148,6 +148,45 @@ void main() {
       isFalse,
     );
   });
+
+  test('rejects present null frozen draft hint optionals', () {
+    final payload = BrokerRequestPayload(
+      requestId: '11111111-1111-4111-8111-111111111111',
+      consent: const BrokerResearchConsent.approved(
+        scope: BrokerConsentScope.imagePlusDraftHints,
+        copyVersion: 'research-consent-v1',
+      ),
+      derivative: BrokerImageDerivative(
+        bytes: Uint8List.fromList(<int>[1, 2, 3]),
+        longEdgePx: 1600,
+      ),
+      draftHints: const BrokerDraftHints(
+        titleHint: 'Title',
+        artistHint: 'Artist',
+        searchTerms: <String>['term'],
+      ),
+    );
+    final request = payload.toRequest();
+    final hash = request['payload_hash']! as String;
+
+    for (final key in <String>['title_hint', 'artist_hint', 'search_terms']) {
+      final hints = Map<String, Object?>.from(
+        request['draft_hints']! as Map<String, Object?>,
+      )..[key] = null;
+      final invalid = <String, Object?>{...request, 'draft_hints': hints};
+
+      expect(
+        isValidFrozenBrokerRequest(
+          body: jsonEncode(<String, Object?>{'data': invalid}),
+          requestId: payload.requestId,
+          payloadHash: hash,
+          consent: payload.consent,
+        ),
+        isFalse,
+        reason: key,
+      );
+    }
+  });
 }
 
 BrokerConsentScope _scope(String value) {

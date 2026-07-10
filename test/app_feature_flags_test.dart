@@ -46,6 +46,61 @@ void main() {
     },
   );
 
+  test(
+    'attacker HTTPS broker endpoint keeps Android local capability disabled',
+    () async {
+      final runtime = _RecordingRuntime(remoteConfigEnabled: true);
+      final service = AppFeatureFlagService(
+        runtime: runtime,
+        isReleaseMode: true,
+        targetPlatform: TargetPlatform.android,
+        brokerClientEnabled: true,
+        firebaseAndroid: true,
+        remoteConfigEnabled: true,
+        brokerEndpoint: 'https://attacker.example/research',
+      );
+
+      expect(service.localResearchCapabilityEnabled, isFalse);
+      expect(
+        service.isConfiguredBrokerEndpoint(
+          Uri.parse('https://attacker.example/research'),
+        ),
+        isFalse,
+      );
+
+      final flags = await service.loadAfterConsent();
+
+      expect(flags.localResearchCapabilityEnabled, isFalse);
+      expect(flags.onlineResearchEnabled, isFalse);
+      expect(runtime.calls, isEmpty);
+    },
+  );
+
+  test('broker endpoint allowlist requires an exact URI', () {
+    for (final endpoint in <String>[
+      'https://broker.example.test:443/research',
+      'https://broker.example.test/research/',
+      'https://broker.example.test/research?debug=true',
+    ]) {
+      final service = AppFeatureFlagService(
+        runtime: _RecordingRuntime(remoteConfigEnabled: true),
+        isReleaseMode: true,
+        targetPlatform: TargetPlatform.android,
+        brokerClientEnabled: true,
+        firebaseAndroid: true,
+        remoteConfigEnabled: true,
+        brokerEndpoint: endpoint,
+      );
+
+      expect(service.localResearchCapabilityEnabled, isFalse, reason: endpoint);
+      expect(
+        service.isConfiguredBrokerEndpoint(Uri.parse(endpoint)),
+        isFalse,
+        reason: endpoint,
+      );
+    }
+  });
+
   test('Remote Config errors fail closed after consent', () async {
     final runtime = _RecordingRuntime(throwOnRemoteConfig: true);
     final service = AppFeatureFlagService(
