@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:my_art_collection/app/research/broker_payload.dart';
 
@@ -167,19 +168,25 @@ void main() {
       ),
     );
     final request = payload.toRequest();
-    final hash = request['payload_hash']! as String;
 
     for (final key in <String>['title_hint', 'artist_hint', 'search_terms']) {
       final hints = Map<String, Object?>.from(
         request['draft_hints']! as Map<String, Object?>,
       )..[key] = null;
-      final invalid = <String, Object?>{...request, 'draft_hints': hints};
+      final invalidWithoutHash = <String, Object?>{
+        ...request,
+        'draft_hints': hints,
+      };
+      final invalid = <String, Object?>{
+        ...invalidWithoutHash,
+        'payload_hash': _canonicalPayloadHash(invalidWithoutHash),
+      };
 
       expect(
         isValidFrozenBrokerRequest(
           body: jsonEncode(<String, Object?>{'data': invalid}),
           requestId: payload.requestId,
-          payloadHash: hash,
+          payloadHash: invalid['payload_hash']! as String,
           consent: payload.consent,
         ),
         isFalse,
@@ -194,3 +201,11 @@ BrokerConsentScope _scope(String value) {
     (scope) => scope.wireValue == value,
   );
 }
+
+String _canonicalPayloadHash(Map<String, Object?> request) => sha256
+    .convert(
+      utf8.encode(
+        canonicalPayloadJson(canonicalBrokerPayloadDocument(request)),
+      ),
+    )
+    .toString();

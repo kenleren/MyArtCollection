@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:crypto/crypto.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:my_art_collection/app/config/app_feature_flags.dart';
@@ -323,12 +324,19 @@ void main() {
         final hints = Map<String, Object?>.from(
           original['draft_hints']! as Map<String, Object?>,
         )..[key] = null;
-        final mutated = <String, Object?>{...original, 'draft_hints': hints};
+        final mutatedWithoutHash = <String, Object?>{
+          ...original,
+          'draft_hints': hints,
+        };
+        final mutated = <String, Object?>{
+          ...mutatedWithoutHash,
+          'payload_hash': _canonicalPayloadHash(mutatedWithoutHash),
+        };
         final store = _MemoryRetryStore();
         await store.save(
           FrozenBrokerRequest(
             requestId: request.requestId,
-            payloadHash: original['payload_hash']! as String,
+            payloadHash: mutated['payload_hash']! as String,
             body: jsonEncode(<String, Object?>{'data': mutated}),
             consent: request.consent,
           ),
@@ -567,6 +575,14 @@ void main() {
     },
   );
 }
+
+String _canonicalPayloadHash(Map<String, Object?> request) => sha256
+    .convert(
+      utf8.encode(
+        canonicalPayloadJson(canonicalBrokerPayloadDocument(request)),
+      ),
+    )
+    .toString();
 
 BrokerHttpClient _client({
   required _RecordingRuntime runtime,
