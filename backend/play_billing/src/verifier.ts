@@ -271,14 +271,12 @@ export class PlayBillingService {
       }
       await this.dependencies.hooks?.afterDeliveryCommitted?.();
 
-      let commit: PaidCommit | undefined;
-      if (eligible.playAcknowledged) {
-        commit = await this.dependencies.repository.finalizePaid(
-          attempt,
-          this.dependencies.clock.now(),
-          'delivery_committed',
-        );
-      } else {
+      let commit = await this.dependencies.repository.finalizePaid(
+        attempt,
+        this.dependencies.clock.now(),
+        'delivery_committed',
+      );
+      if (commit === undefined) {
         const acknowledgementStarted = await this.dependencies.repository.beginAcknowledgement(
           attempt,
           this.dependencies.clock.now(),

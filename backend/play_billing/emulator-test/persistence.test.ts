@@ -84,7 +84,7 @@ describe('named billing database persistence', () => {
       COLLECTIONS.operations,
       attempt.tokenFingerprint,
     );
-    assert.equal(operation.acknowledgementStartCount, 1);
+    assert.equal((operation.acknowledgementStartedAt as unknown[]).length, 1);
     assert.equal(operation.phase, 'ack_in_progress');
   });
 

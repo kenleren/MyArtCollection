@@ -90,8 +90,7 @@ interface TokenOperationRecord extends BaseRecord, AttemptOwner {
   leaseExpiresAt?: Date;
   cooldownUntil?: Date;
   lastGetStartedAt: Date;
-  ackWindowStartedAt?: Date;
-  acknowledgementStartCount: number;
+  acknowledgementStartedAt: Date[];
 }
 
 interface PurchaseBindingRecord extends BaseRecord {
@@ -124,8 +123,7 @@ interface PurchaseBindingRecord extends BaseRecord {
 
 interface RateLimitRecord extends BaseRecord {
   accountSubject: string;
-  windowStartedAt: Date;
-  getStartCount: number;
+  getStartedAt: Date[];
 }
 
 export type AcquireResult =
@@ -297,10 +295,8 @@ export class BillingRepository {
       if (rate !== undefined && !validRateLimit(rate, accountSubject)) {
         return { kind: 'unsafe_record' };
       }
-      const currentWindow =
-        rate !== undefined && now.getTime() < rate.windowStartedAt.getTime() + RATE_WINDOW_MS;
-      const getStartCount = currentWindow ? rate!.getStartCount : 0;
-      if (getStartCount >= MAX_GETS_PER_SUBJECT_WINDOW) {
+      const getStartedAt = recentStarts(rate?.getStartedAt ?? [], now);
+      if (getStartedAt.length >= MAX_GETS_PER_SUBJECT_WINDOW) {
         return { kind: 'rate_limited' };
       }
 
@@ -320,9 +316,7 @@ export class BillingRepository {
       };
       const leaseExpiresAt = addMs(now, ATTEMPT_LEASE_MS);
       const retentionExpiresAt = addMs(now, OPERATION_RETENTION_MS);
-      const ackWindowIsCurrent =
-        operation?.ackWindowStartedAt !== undefined &&
-        now.getTime() < operation.ackWindowStartedAt.getTime() + RATE_WINDOW_MS;
+      const acknowledgementStartedAt = recentStarts(operation?.acknowledgementStartedAt ?? [], now);
 
       if (usesReplay) {
         tx.set<RequestReplayRecord>(COLLECTIONS.replays, requestFingerprint, {
@@ -347,10 +341,7 @@ export class BillingRepository {
         outcomeCode: 'in_flight',
         leaseExpiresAt,
         lastGetStartedAt: now,
-        ackWindowStartedAt: ackWindowIsCurrent ? operation!.ackWindowStartedAt : undefined,
-        acknowledgementStartCount: ackWindowIsCurrent
-          ? operation!.acknowledgementStartCount
-          : 0,
+        acknowledgementStartedAt,
         createdAt: operation?.createdAt ?? now,
         updatedAt: now,
         retentionExpiresAt,
@@ -359,8 +350,7 @@ export class BillingRepository {
         contractVersion: CONTRACT_VERSION,
         keyVersion: ACTIVE_KEY_VERSION,
         accountSubject,
-        windowStartedAt: currentWindow ? rate!.windowStartedAt : now,
-        getStartCount: getStartCount + 1,
+        getStartedAt: [...getStartedAt, now],
         createdAt: rate?.createdAt ?? now,
         updatedAt: now,
         retentionExpiresAt,
@@ -566,18 +556,14 @@ export class BillingRepository {
       ) {
         return false;
       }
-      const currentWindow =
-        operation.ackWindowStartedAt !== undefined &&
-        now.getTime() < operation.ackWindowStartedAt.getTime() + RATE_WINDOW_MS;
-      const currentCount = currentWindow ? operation.acknowledgementStartCount : 0;
-      if (currentCount >= MAX_ACKS_PER_TOKEN_WINDOW) {
+      const acknowledgementStartedAt = recentStarts(operation.acknowledgementStartedAt, now);
+      if (acknowledgementStartedAt.length >= MAX_ACKS_PER_TOKEN_WINDOW) {
         return false;
       }
       tx.set<TokenOperationRecord>(COLLECTIONS.operations, attempt.tokenFingerprint, {
         ...operation,
         phase: 'ack_in_progress',
-        ackWindowStartedAt: currentWindow ? operation.ackWindowStartedAt : now,
-        acknowledgementStartCount: currentCount + 1,
+        acknowledgementStartedAt: [...acknowledgementStartedAt, now],
         updatedAt: now,
       });
       if (replay !== undefined) {
@@ -844,8 +830,7 @@ function validOperation(record: TokenOperationRecord, tokenFingerprint: string):
       'leaseExpiresAt',
       'cooldownUntil',
       'lastGetStartedAt',
-      'ackWindowStartedAt',
-      'acknowledgementStartCount',
+      'acknowledgementStartedAt',
       'createdAt',
       'updatedAt',
       'retentionExpiresAt',
@@ -856,9 +841,7 @@ function validOperation(record: TokenOperationRecord, tokenFingerprint: string):
     isFingerprint(record.tokenFingerprint) &&
     (record.accountSubject === undefined || isFingerprint(record.accountSubject)) &&
     record.lastGetStartedAt instanceof Date &&
-    (record.ackWindowStartedAt === undefined || record.ackWindowStartedAt instanceof Date) &&
-    Number.isSafeInteger(record.acknowledgementStartCount) &&
-    record.acknowledgementStartCount >= 0 &&
+    validRollingStarts(record.acknowledgementStartedAt, MAX_ACKS_PER_TOKEN_WINDOW) &&
     isOperationPhase(record.phase) &&
     validPhaseOutcome(record.phase, record.outcomeCode) &&
     validLeaseAndCooldown(record.phase, record.leaseExpiresAt, record.cooldownUntil)
@@ -937,8 +920,7 @@ function validRateLimit(record: RateLimitRecord, accountSubject: string): boolea
       'contractVersion',
       'keyVersion',
       'accountSubject',
-      'windowStartedAt',
-      'getStartCount',
+      'getStartedAt',
       'createdAt',
       'updatedAt',
       'retentionExpiresAt',
@@ -946,9 +928,19 @@ function validRateLimit(record: RateLimitRecord, accountSubject: string): boolea
     validBase(record) &&
     record.accountSubject === accountSubject &&
     isFingerprint(record.accountSubject) &&
-    record.windowStartedAt instanceof Date &&
-    Number.isSafeInteger(record.getStartCount) &&
-    record.getStartCount >= 0
+    validRollingStarts(record.getStartedAt, MAX_GETS_PER_SUBJECT_WINDOW)
+  );
+}
+
+function recentStarts(starts: readonly Date[], now: Date): Date[] {
+  return starts.filter((startedAt) => now.getTime() < startedAt.getTime() + RATE_WINDOW_MS);
+}
+
+function validRollingStarts(value: unknown, maximum: number): value is Date[] {
+  return (
+    Array.isArray(value) &&
+    value.length <= maximum &&
+    value.every((startedAt) => startedAt instanceof Date)
   );
 }
 

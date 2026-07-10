@@ -8,6 +8,7 @@ import {
   DISCLOSURE_PURPOSE,
   DISCLOSURE_VERSION,
   PAID_LEASE_MS,
+  RATE_WINDOW_MS,
   type ProductId,
 } from '../src/constants.js';
 import {
@@ -204,7 +205,7 @@ describe('PlayBillingService verification contract', () => {
     assert.equal(harness.play.getCalls.length, 2);
   });
 
-  test('a finalized binding re-verifies without another acknowledgement call', async () => {
+  test('finalizes an acknowledged binding when refreshed Play state is pending without acknowledgement', async () => {
     const harness = createHarness();
     await acceptDisclosure(harness);
     const token = purchaseToken();
@@ -212,6 +213,10 @@ describe('PlayBillingService verification contract', () => {
     const first = await harness.service.verifySubscription(harness.identity, verifyRequest(token));
     assert.equal(first.state, 'active');
     harness.clock.advance(15_000);
+    harness.play.setPurchase(
+      token,
+      eligiblePurchase(harness, { acknowledgementState: 'ACKNOWLEDGEMENT_STATE_PENDING' }),
+    );
 
     const refreshed = await harness.service.verifySubscription(
       harness.identity,
@@ -343,6 +348,29 @@ describe('PlayBillingService verification contract', () => {
     assert.equal(harness.play.getCalls.length, 4);
   });
 
+  test('enforces acknowledgement starts across a rolling window boundary', async () => {
+    const harness = createHarness();
+    await acceptDisclosure(harness);
+    const token = purchaseToken();
+    harness.play.setPurchase(
+      token,
+      eligiblePurchase(harness, { acknowledgementState: 'ACKNOWLEDGEMENT_STATE_PENDING' }),
+    );
+    harness.play.acknowledgeError = new Error('fixed fake failure');
+    const request = verifyRequest(token);
+
+    for (const delayAfterAttempt of [14 * 60_000 + 30_000, 15_000, 15_000, 15_000]) {
+      const result = await harness.service.verifySubscription(harness.identity, request);
+      assert.equal('reason' in result && result.reason, 'verification_pending');
+      harness.clock.advance(delayAfterAttempt);
+    }
+
+    const limited = await harness.service.verifySubscription(harness.identity, request);
+    assert.equal('reason' in limited && limited.reason, 'verification_pending');
+    assert.equal(harness.play.getCalls.length, 5);
+    assert.equal(harness.play.acknowledgeCalls.length, 4);
+  });
+
   test('canceled-pending recovers same-product and cross-product predecessors read-only', async () => {
     const pairs: Array<[ProductId, ProductId]> = [
       ['archivale_starter_monthly', 'archivale_starter_monthly'],
@@ -443,6 +471,41 @@ describe('PlayBillingService verification contract', () => {
     );
     assert.equal('reason' in limited && limited.reason, 'rate_limited');
     assert.equal(harness.play.getCalls.length, 6);
+  });
+
+  test('enforces verification starts across a rolling window boundary', async () => {
+    const harness = createHarness();
+    await acceptDisclosure(harness);
+    const verifyPending = async (): Promise<void> => {
+      const token = purchaseToken();
+      harness.play.setPurchase(
+        token,
+        eligiblePurchase(harness, { state: 'SUBSCRIPTION_STATE_PENDING' }),
+      );
+      const result = await harness.service.verifySubscription(harness.identity, verifyRequest(token));
+      assert.equal(result.state, 'free');
+    };
+
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      await verifyPending();
+    }
+    harness.clock.advance(RATE_WINDOW_MS - 1_000);
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      await verifyPending();
+    }
+    harness.clock.advance(1_000);
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      await verifyPending();
+    }
+
+    const limitedToken = purchaseToken();
+    harness.play.setPurchase(limitedToken, eligiblePurchase(harness));
+    const limited = await harness.service.verifySubscription(
+      harness.identity,
+      verifyRequest(limitedToken),
+    );
+    assert.equal('reason' in limited && limited.reason, 'rate_limited');
+    assert.equal(harness.play.getCalls.length, 9);
   });
 
   test('no durable record grants broker or client entitlement before verification', async () => {

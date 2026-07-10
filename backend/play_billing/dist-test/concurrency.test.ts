@@ -91,7 +91,7 @@ describe('billing request and token concurrency', () => {
       string,
       unknown
     >;
-    assert.equal(operation.acknowledgementStartCount, 1);
+    assert.equal((operation.acknowledgementStartedAt as unknown[]).length, 1);
   });
 
   test('paid finalization wins a competing ambiguous callback and cannot regress', async () => {
