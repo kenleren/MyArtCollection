@@ -145,6 +145,9 @@ traffic, credentials, collector content, or account mutation.
   mutation, or account mutation.
 - No Play purchase verification, acknowledgement, purchase-token handling, or
   named billing-database access from this research package.
+- No billing request/attempt-owner reuse: the separate billing implementation
+  owns its server generation/nonce, leased phases, acknowledgement CAS, and
+  monotonic final state; broker request identity has no authority there.
 - AI and billing rollback remain independent inside `my-art-collections`;
   project-wide billing disablement is a human-owned cross-service last resort.
 - Independent task review and redteam/security review are required.

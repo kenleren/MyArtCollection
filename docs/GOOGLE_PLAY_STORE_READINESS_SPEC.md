@@ -333,6 +333,10 @@ capture at least:
 - the verified-delivery-before-acknowledgement sequence, recoverable
   acknowledgement-unknown state, and rule that no lease is returned until
   acknowledged final storage is committed;
+- the server-issued monotonic attempt generation/nonce distinct from request
+  identity, 90-second protection for in-flight/delivery/acknowledgement phases,
+  exact-owner-and-phase CAS for delivery through linked finalization, and the
+  rule that acknowledged final state cannot regress to acknowledgement-unknown;
 - the named `archivale-play-billing` database, database-conditioned runtime
   IAM, deny-all client Security Rules, five allowed collections, and proof that
   billing/broker/default-database identities cannot cross access;
@@ -345,8 +349,8 @@ capture at least:
 - a 15-minute maximum in-memory lease and fail-Free restart/refresh behavior;
 - the in-memory request/UID/generation fence that rejects delayed responses
   after account, sign-out, or newer-refresh changes;
-- per-subject/token call ceilings and single-flight processing as security and
-  service-operation data, never analytics; and
+- per-subject/token call ceilings and generation-owned single-flight processing
+  as security and service-operation data, never analytics; and
 - downgrade behavior that preserves existing-record view, edit, report, and
   export access.
 

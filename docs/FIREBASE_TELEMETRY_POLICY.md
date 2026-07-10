@@ -60,9 +60,15 @@ provider response fragments, and secret values/paths are forbidden even when a
 reviewer believes they are redacted. Request-memory raw values must be cleared
 at completion and never attached to an error object passed to telemetry.
 Client entitlement generations, captured UIDs, disclosure acceptance request
-IDs, and token-operation owners are also forbidden. Fixed aggregate counts such
-as `rate_limited`, `delivery_committed`, or `ack_unknown` may be emitted only
-without a subject, fingerprint, request ID, product, or expiry.
+IDs, server attempt generations/nonces, complete attempt owners, and
+token-operation owners are also forbidden. Fixed aggregate counts such as
+`rate_limited`, `delivery_committed`, `ack_in_progress`, or `ack_unknown` may be
+emitted only without a subject, fingerprint, request ID, product, owner,
+generation, nonce, or expiry.
+
+#191 may inject deterministic owner material only in process memory for race
+tests. It must use opaque test helpers and must not serialize the fake nonce or
+generation into fixtures, snapshots, logs, screenshots, or review evidence.
 
 ## Default-Off Requirement
 

@@ -167,6 +167,14 @@ verification/finalization of those records, unless an active security incident
 requires full denial and the unresolved/refund impact is explicitly accepted.
 Database deletion is never same-window rollback.
 
+Shutdown and recovery must not bypass billing attempt ownership. In-flight,
+delivery-committed, and acknowledgement-in-progress records stay protected
+until their 90-second owner lease expires; acknowledgement-unknown records stay
+closed until the 15-second cooldown expires. Recovery must atomically advance
+the server attempt generation/nonce and use exact-owner-and-phase CAS. It must
+never restart acknowledgement under a live owner or regress acknowledged final
+state to acknowledgement-unknown.
+
 ## Runbook
 
 ### Preconditions before any rollout

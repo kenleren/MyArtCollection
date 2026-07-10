@@ -195,11 +195,18 @@ new purchases with `purchases.subscriptions.acknowledge`. A lease is returned
 only after acknowledged delivery and final binding state are committed or
 safely recovered.
 
-Distinct request IDs for one token share a token single-flight owner; bounded
-per-subject/token ceilings limit Play calls and acknowledgement races. A crash
-before delivery makes no acknowledgement. A crash/timeout after delivery or
+Identical and distinct request IDs for one token share a token single-flight
+owner. The owner is a server-issued request fingerprint plus monotonic attempt
+generation and unguessable nonce, never the request fingerprint alone.
+In-flight lookup, delivery-committed, and acknowledgement-in-progress phases
+remain protected by one 90-second lease; reclaim atomically advances the owner.
+Every delivery, acknowledgement-result, finalization, and linked-predecessor
+transaction compares the exact owner and phase. Bounded per-subject/token
+ceilings further limit Play calls and acknowledgement races. A crash before
+delivery makes no acknowledgement. A crash/timeout after delivery or
 acknowledgement retains recoverable sanitized state; retry re-verifies current
-Play state and never acknowledges twice blindly.
+Play state and never acknowledges twice blindly. A finalized acknowledged
+delivery cannot regress to acknowledgement-unknown.
 
 The app holds only a lease capped at 15 minutes and Play expiry, in process
 memory. Only verified active, grace-period, or canceled-with-future-expiry

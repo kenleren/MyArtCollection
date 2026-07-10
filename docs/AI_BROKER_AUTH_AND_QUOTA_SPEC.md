@@ -81,10 +81,15 @@ named Firestore database, database-scoped IAM, deny-all client rules,
 collections, fingerprint domain, and rollback target in the same Firebase
 project. Its verified delivery is durably committed before Play
 acknowledgement, but no client lease exists until acknowledgement and final
-storage are recoverable. Token-scoped serialization and request ceilings are
-billing-only controls. A billing outage or kill switch must fail paid plan
-access to Free without enabling research or requiring the AI breaker to change.
-An AI breaker must stop research without altering valid Play purchase state.
+storage are recoverable. Token-scoped serialization uses a server-issued
+monotonic attempt generation and nonce distinct from request identity;
+delivery, acknowledgement, finalization, and linked-predecessor writes require
+the exact current owner and phase. Lease-protected duplicates make zero Play
+calls, and acknowledged final state cannot regress to acknowledgement-unknown.
+These owner/CAS rules and request ceilings are billing-only controls. A billing
+outage or kill switch must fail paid plan access to Free without enabling
+research or requiring the AI breaker to change. An AI breaker must stop
+research without altering valid Play purchase state.
 
 ## Gate Order
 

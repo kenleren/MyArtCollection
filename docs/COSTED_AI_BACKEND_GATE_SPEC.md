@@ -471,9 +471,11 @@ Before a paid beta is exposed to any tester, #49 must define and verify:
   database, then acknowledges Play, and returns a lease only after
   acknowledged final state is durable/recoverable. That delivery record is not
   an AI entitlement or offline/client-authoritative lease.
-- Token-fingerprint single-flight, per-subject call ceilings, and client
-  request/UID/generation fences are payment controls and must not be reused as
-  research quota or consent authority.
+- Token-fingerprint single-flight uses a server-issued attempt generation and
+  nonce distinct from request identity. Leased delivery/acknowledgement phases,
+  exact-owner-and-phase CAS, monotonic acknowledged finalization, per-subject
+  call ceilings, and client request/UID/generation fences are payment controls
+  and must not be reused as research quota or consent authority.
 - A failed/expired billing lease downgrades to Free while all existing artwork
   records remain viewable, editable, reportable, and exportable.
 

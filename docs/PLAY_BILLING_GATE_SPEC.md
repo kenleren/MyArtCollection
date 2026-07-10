@@ -247,23 +247,67 @@ permission to silently create a second identity for an existing token or UID.
 
 ### Request Replay
 
-After the disclosure gate and before the first Play call, atomically create the
-request-replay record with request fingerprint, token fingerprint,
-`outcomeCode=in_flight`, and timestamps. Reuse has these outcomes:
+After the disclosure gate and before the first Play call, one transaction
+atomically creates or reclaims both the request-replay record and token
+operation. It stores request/token fingerprints, `outcomeCode=in_flight`, a
+90-second lease, timestamps, and a server-issued attempt owner:
 
-- same request/token fingerprint while `in_flight` is younger than 90 seconds:
-  return Free with `in_flight` and make no Play or acknowledgement call;
+```text
+attemptOwner = (
+  requestFingerprint,
+  attemptGeneration,
+  attemptNonce
+)
+```
+
+`attemptGeneration` is a server-owned unsigned integer that starts at 1 and
+must increase by exactly 1 whenever that token operation is safely reclaimed.
+Acquisition uses the greatest retained generation across the token operation,
+request replay, and purchase binding as its high-water mark. TTL cleanup may
+remove that mark only after every callable attempt is incapable of executing;
+unknown, partial, decreasing, or conflicting generation state fails to Free.
+`attemptNonce` is a fresh, server-generated 128-bit CSPRNG value for that
+generation. It is compared as opaque bytes and is never accepted from the
+client. The request fingerprint is a replay/correlation key, not an attempt
+owner by itself. A deterministic fake nonce source is allowed only in #191
+tests.
+
+Ownership is conferred only on the invocation whose acquisition transaction
+creates or reclaims that generation and nonce. Reading an existing owner from
+Firestore never transfers ownership, and a later invocation must not hydrate
+stored owner fields into its callable-attempt context. It can only return the
+bounded non-owner result or win a permitted reclaim transaction that mints the
+next owner.
+
+`in_flight`, `delivery_committed`, and `ack_in_progress` are nonterminal and
+remain protected by the original 90-second ownership lease. `verified_owner`
+is represented as `in_flight` until delivery commits and has the same
+protection. Reuse has these outcomes:
+
+- same request/token fingerprint in any lease-protected nonterminal phase
+  before the exact lease boundary: return Free with `in_flight` and make zero
+  Play get or acknowledgement calls;
+- any request for the same token while another attempt owns a lease-protected
+  nonterminal phase before that boundary: return Free with `in_flight` and
+  make zero Play get or acknowledgement calls;
 - same request/token at or after the 90-second boundary, or after a terminal
-  outcome: atomically reclaim it and repeat current Play verification; the
+  outcome: transactionally reclaim both records, advance the token's attempt
+  generation, mint a new nonce, and repeat current Play verification; the
   prior result is not payment evidence;
+- `ack_unknown` before its exact 15-second cooldown boundary: return Free with
+  `verification_pending` and make zero Play get or acknowledgement calls; at
+  or after the boundary, reclaim by advancing the generation and nonce before
+  re-verification;
 - same request fingerprint with a different token fingerprint: return Free
   with `replay_conflict` and make no Play call; and
 - malformed, unknown-version, missing-field, or partial replay record: return
   Free with `unsafe_record` and do not overwrite it.
 
-Valid outcomes are `in_flight`, `delivery_committed`, `paid`, `free`, and
-`ack_unknown`. A crash may leave a recoverable nonterminal outcome. Replay
-records never cache a lease or replace current Play verification.
+Valid outcomes are `in_flight`, `delivery_committed`, `ack_in_progress`,
+`ack_unknown`, `paid`, and `free`. `ack_unknown` is a retired-owner,
+cooldown-protected nonterminal outcome; it is never an active acknowledgement
+owner. A crash may leave a recoverable nonterminal outcome. Replay records
+never cache a client paid lease or replace current Play verification.
 
 ### Subject Ceiling And Token Single-Flight
 
@@ -279,17 +323,23 @@ Before a Play call, a transaction in `archivale-play-billing` must enforce:
   automatic same-request retry after timeout, 409, 5xx, or another error.
 
 The pre-Play token operation is a 90-second `lookup_in_flight` single-flight
-lease keyed by token fingerprint and owned by request fingerprint. It contains
-no account ownership and grants no entitlement. Distinct request IDs for the
-same token observe `in_flight` and make zero Play calls. An expired owner may be
-replaced transactionally subject to the cooldown and subject ceiling.
+lease keyed by token fingerprint and owned by the exact server-issued attempt
+owner. It contains no account ownership and grants no entitlement. Distinct or
+identical request IDs for the same token observe `in_flight` and make zero Play
+or acknowledgement calls while the owner remains live. An expired owner may be
+replaced only by the atomic generation-advancing transaction above, subject to
+the cooldown and subject ceiling.
 
 Only after Play returns and the package, returned product, account binding,
-state/expiry, and token uniqueness are verified may the same transaction
-upgrade the operation to `verified_owner` and bind the account subject. A
-wrong-account, malformed, ineligible, or unverified token can never capture
-durable token ownership or a purchase binding. It may consume only the bounded
-preflight attempt. Unknown or partial operation/rate records fail to Free.
+state/expiry, and token uniqueness are verified may a transaction compare the
+exact current owner and `lookup_in_flight` phase, upgrade the operation to
+`verified_owner`, and bind the account subject. Every later owner-controlled
+transaction must compare the owner tuple in request replay and token operation,
+the expected source phase, and the delivery owner when one exists. A
+wrong-account, malformed, ineligible, stale-owner, or unverified token can
+never capture durable token ownership or a purchase binding. It may consume
+only the bounded preflight attempt. Unknown or partial operation/rate records
+fail to Free.
 
 For the canceled-pending predecessor branch, the successor operation is closed
 as `canceled_pending_read_only` before acquiring a separately serialized
@@ -329,9 +379,12 @@ For every purchase, restore, or refresh, #191 must perform these steps in order:
    and `ACTIVE`, `IN_GRACE_PERIOD`, or `CANCELED` eligibility.
 10. Upgrade the token operation to verified ownership and durably commit the
     verified entitlement delivery before acknowledgement.
-11. If Play reports acknowledgement pending, make the one allowed
-    `purchases.subscriptions.acknowledge` call. If already acknowledged, use
-    the no-call recovery path. Unknown acknowledgement fails to Free.
+11. If Play reports acknowledgement pending, atomically CAS
+    `delivery_committed` to `ack_in_progress` for the exact current attempt
+    owner and increment the acknowledgement-start counter. Only that successful
+    transaction permits the one allowed `purchases.subscriptions.acknowledge`
+    call. If already acknowledged, use the owner-CAS no-call recovery path.
+    Unknown acknowledgement fails to Free.
 12. In one final transaction, persist acknowledged delivery, finish request and
     token-operation state, and atomically supersede a linked predecessor when
     applicable.
@@ -360,8 +413,16 @@ binding with:
 - `ackState=pending` when Play reports pending, or `ackState=play_acknowledged`
   when Play already reports acknowledgement;
 - `bindingState=verified_delivery_committed`;
+- the exact current `attemptGeneration` and `attemptNonce` as the staged
+  delivery owner;
 - linked predecessor fingerprint as a staged candidate when present; and
 - request/operation state `delivery_committed`.
+
+The transaction must CAS the current owner and expected `verified_owner` phase
+in both replay and token-operation records. A duplicate or stale attempt cannot
+reuse the same request fingerprint to commit delivery. `delivery_committed`
+does not release or transfer ownership; it remains lease-protected through the
+acknowledgement decision.
 
 This is the durable grant/update of entitlement ownership required before
 Archivale tells Play that delivery occurred. It is recoverable server state,
@@ -369,6 +430,13 @@ but it is not sufficient by itself for a paid response, offline access, or an
 AI entitlement. Before this transaction commits, no acknowledgement call is
 allowed. A storage failure therefore leaves Play unacknowledged, returns Free,
 and preserves Play's refund safeguard; retry starts with current verification.
+
+An existing `ackState=acknowledged` binding is absorbing and must not be
+restaged as pending, `play_acknowledged`, or unknown. A fresh eligible Play read
+for that same finalized binding uses the current attempt owner to finish the
+request/token operation while preserving acknowledged delivery. A missing or
+only staged binding still follows delivery commit and no-call finalization when
+Play already reports acknowledged.
 
 For a linked successor, the durable commit may stage the successor binding and
 predecessor fingerprint, but it must not edit, tombstone, or supersede the
@@ -386,6 +454,14 @@ subscriptionId = the independently verified product ID
 token = the raw purchase token held in request memory
 body = {}
 ```
+
+Immediately before the call, one transaction must CAS the current attempt
+owner and `delivery_committed` phase in the replay, token-operation, and
+delivery-binding records, increment the token acknowledgement-start counter,
+and move all three to `ack_in_progress`. Failure to commit that transition
+makes zero acknowledgement calls. The owner cannot be inferred from request
+fingerprint equality, and no second invocation may share or resume an
+`ack_in_progress` owner.
 
 Account-binding equality is a precondition, not an acknowledgement argument.
 Do not send `externalAccountIds`, developer payload, UID, or another body field.
@@ -416,10 +492,35 @@ binding again and can return a new capped lease.
 Timeout, 409, 5xx, or another ambiguous acknowledgement result sets
 `ackState=unknown` and request outcome `ack_unknown` without changing the
 predecessor or returning a lease. It releases the operation into the 15-second
-cooldown. No same-request acknowledgement retry occurs. The next bounded
-request re-verifies Play: acknowledged state finalizes; pending state may make
-one new acknowledgement attempt if the token attempt ceiling allows it;
-ineligible state invalidates the staged binding and returns Free.
+cooldown. That transaction must CAS the exact current owner and
+`ack_in_progress` phase plus non-acknowledged binding state across replay, token
+operation, and delivery binding; on success it retires that owner. No
+same-request acknowledgement retry occurs.
+The next bounded request can reclaim only after the exact cooldown boundary,
+must advance the generation and nonce, and then re-verifies Play: acknowledged
+state finalizes without a call; pending state may make one new acknowledgement
+attempt if the token attempt ceiling allows it; ineligible state invalidates
+the staged binding and returns Free.
+
+Finalization after an acknowledgement call requires `ack_in_progress`; no-call
+finalization after a fresh Play read reports acknowledged requires
+`delivery_committed` for the current owner. The final transaction CASes that
+owner and source phase across replay, token operation, and delivery binding.
+For a linked successor it also CASes the unchanged staged predecessor relation
+and predecessor binding version before superseding the predecessor in the same
+transaction. The first successful `ackState=acknowledged`,
+`bindingState=acknowledged_delivery`, `outcomeCode=paid` commit is monotonic:
+no stale owner, timeout handler, recovery, or later eligibility invalidation
+may change acknowledgement state back to pending or unknown. Later current
+Play verification may still deny a client lease or update lifecycle
+eligibility, but it preserves the acknowledged-delivery fact.
+
+Competing finalization and `ack_unknown` transactions for one owner are
+mutually exclusive because each requires the same owner and
+`ack_in_progress` source phase. Whichever commits first changes the phase; the
+other transaction must re-read, fail its CAS, and make no write. A stale owner
+CAS failure always returns Free and must not call Play or edit a request,
+operation, delivery binding, successor, or predecessor.
 
 A definitive acknowledgement or later Play failure likewise returns Free while
 retaining enough sanitized delivery state to retry or invalidate safely. The
@@ -440,7 +541,9 @@ At every crash boundary:
 | Last durable point | Required retry behavior |
 | --- | --- |
 | Before verified delivery commit | No acknowledgement occurred; re-verify and restage |
-| Delivery committed, acknowledgement not started/unknown | Re-verify Play; acknowledge once only if still pending and allowed |
+| Delivery committed, acknowledgement not started | Same/other request makes zero calls until owner lease expires; reclaim advances generation, then re-verifies Play |
+| Acknowledgement call in progress | Same/other request makes zero calls until owner lease expires; stale result cannot pass owner-and-phase CAS |
+| Acknowledgement result unknown | Make zero calls during cooldown; reclaim advances generation, then re-verifies Play and acknowledges only if still pending |
 | Acknowledgement succeeded, final transaction missing | Re-verify; observe acknowledged; finalize without another acknowledgement call |
 | Final transaction committed, response lost | Re-verify current Play/binding state; return a newly bounded lease |
 | Any state becomes ineligible/mismatched | Invalidate staged state, preserve predecessor, return Free |
@@ -462,7 +565,9 @@ For an ordinary eligible successor with `linkedPurchaseToken`:
    predecessor reads and state remain unchanged.
 5. Acknowledge or recover already-acknowledged state as specified above.
 6. Only in the final acknowledged-delivery transaction, bind the successor and
-   mark/tombstone the predecessor as superseded.
+   mark/tombstone the predecessor as superseded. That transaction must CAS the
+   current successor attempt owner, delivery phase, staged predecessor
+   relation, and predecessor binding version.
 
 After that final transaction, the predecessor cannot issue another lease. Raw
 linked tokens are never persisted or followed as substitute entitlement. An
@@ -481,7 +586,8 @@ The procedure is:
 
 1. Require `linkedPurchaseToken`; otherwise return Free.
 2. Close the successor token operation as read-only. Never acknowledge, bind,
-   deliver, supersede, or tombstone the canceled successor.
+   deliver, supersede, or tombstone the canceled successor. The close
+   transaction must CAS the successor's exact current attempt owner and phase.
 3. Keep the raw linked token in request memory, derive its fingerprint, and
    acquire the independently serialized predecessor operation.
 4. Call `purchases.subscriptionsv2.get` with fixed package and the raw linked
@@ -494,7 +600,9 @@ The procedure is:
    both valid shapes.
 7. Apply exact predecessor account binding, token/same-subject uniqueness,
    auto-renewing monthly/absent-offer, future-expiry, eligible-state, and
-   acknowledgement/durable-delivery checks.
+   acknowledgement/durable-delivery checks. Every predecessor delivery,
+   acknowledgement-start, unknown-result, and finalization transaction must
+   CAS the independently acquired predecessor attempt owner and expected phase.
 8. Return only the predecessor `planId`, `productId`, normalized state,
    `playExpiresAt`, and capped lease after predecessor delivery and
    acknowledgement are safely finalized.
@@ -600,6 +708,7 @@ May store only:
 - plan, product, base-plan, and absent-offer marker;
 - normalized state, Play expiry, and verification time;
 - `deliveryState`, `ackState`, `bindingState`, and fixed recovery reason;
+- staged delivery `attemptGeneration` and `attemptNonce` owner fields;
 - staged/final predecessor/successor fingerprints and superseded state; and
 - created, updated, state-change, acknowledgement-confirmed, and retention
   timestamps.
@@ -617,11 +726,13 @@ lease or a `brokerDurableEntitlements` payment grant.
 
 ### Operational Collections
 
-- `playBillingRequestReplays`: request/token fingerprints, fixed outcome,
-  timestamps, and 24-hour retention expiry only.
+- `playBillingRequestReplays`: request/token fingerprints, server attempt
+  generation/nonce, phase, lease/cooldown, fixed outcome, timestamps, and
+  24-hour retention expiry only.
 - `playBillingTokenOperations`: token/request fingerprints, optional verified
-  account subject only after exact Play binding, phase, lease/cooldown,
-  acknowledgement-attempt counters, fixed outcome, timestamps, and 24-hour TTL.
+  account subject only after exact Play binding, server attempt
+  generation/nonce, phase, lease/cooldown, acknowledgement-attempt counters,
+  fixed outcome, timestamps, and 24-hour TTL.
 - `playBillingRateLimits`: account subject, rolling-window start, fixed get
   count, timestamps, and 24-hour TTL.
 
@@ -638,6 +749,7 @@ review/deployment evidence:
 - raw `purchaseToken` or `linkedPurchaseToken`;
 - raw Auth or App Check token;
 - raw Firebase UID or captured client UID/generation;
+- server attempt generation/nonce or complete attempt owner;
 - derived `obfuscatedAccountId` or returned account identifiers;
 - any order ID, developer payload, Play response body, cancellation free text,
   or Subscribe with Google profile data; and
@@ -713,10 +825,24 @@ Required acceptance evidence is serialized:
 | Dependency | Evidence before it advances |
 | --- | --- |
 | #190 | Exact eight-file diff, stale-topology/redaction/protocol scans, blocker matrix, independent focused task review, then focused payment redteam |
-| #191 | Fake/unit/emulator proof of named-database targeting and deny rules; database-IAM negative evidence plan; disclosure zero-Play gates; request/token concurrency and ceilings; same/cross-product canceled-pending recovery; crash faults before/after delivery, acknowledgement, and finalization; exact API arguments; TTL/redaction |
+| #191 | Fake/unit/emulator proof of named-database targeting and deny rules; database-IAM negative evidence plan; disclosure zero-Play gates; request/token concurrency and ceilings; same/cross-product canceled-pending recovery; exact API arguments; TTL/redaction; deterministic parallel/fault matrix for identical request IDs crossing delivery commit, crash immediately after delivery commit, duplicate arrival while acknowledgement is running, success racing 409/timeout, post-90-second generation-advancing reclaim, stale prior-owner finalization, cross-UUID token single-flight, one acknowledgement start, and proof finalized success never regresses to `ack_unknown` |
 | #192 | Fake-driven proof of official disclosure flow, account derivation, duplicate coalescing, generation/request/UID fences, memory-only lease, foreground recovery, restart/account-change/failure Free behavior, and preserved existing-record access |
 | #193 | Mobile visual/interaction evidence for disclosure, purchase/restore, verification pending, rate/unavailable, pending/grace/canceled/hold/paused, Free/downgrade, and safe errors |
 | #194 | Payment redteam, privacy/Data Safety, deployment/rollback, RTDN/reconciliation, monitoring, durable identity/token custody, and explicit closed/public approval |
+
+#191 must implement the acknowledgement-race cases with a fake clock,
+deterministic nonce source, transaction barriers, and counted fake Play calls:
+
+| Deterministic case | Required assertion |
+| --- | --- |
+| Identical request IDs cross the delivery commit | The duplicate returns `in_flight`; it starts zero Play get/acknowledgement calls and cannot adopt the first owner |
+| Crash immediately after delivery commit | Calls before 90 seconds are zero; reclaim at the exact boundary advances generation once, changes nonce, and re-verifies |
+| Duplicate arrives while acknowledgement runs | The duplicate returns `in_flight`, starts zero Play calls, and cannot transition `ack_in_progress` |
+| Success races timeout/409 handling | Exactly one owner-and-phase CAS commits; paid finalization rejects the unknown writer, or unknown state forces cooldown/re-verification |
+| Old owner completes after post-90-second reclaim | Every delivery, unknown-result, finalization, and linked-predecessor CAS from the old owner fails without a write or Play call |
+| Distinct request IDs race for one token | Exactly one owner wins; every loser makes zero Play get/acknowledgement calls |
+| Two workers reach acknowledgement start | Exactly one `delivery_committed` to `ack_in_progress` CAS and exactly one acknowledgement call occur |
+| Finalized success receives a stale timeout callback | `ackState=acknowledged`, acknowledged delivery, paid outcome, and predecessor/successor finalization remain unchanged |
 
 #191 and #192 remain held until focused independent task review and payment
 redteam accept #190. No implementation task may self-certify this contract
