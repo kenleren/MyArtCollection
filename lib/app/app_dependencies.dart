@@ -7,7 +7,9 @@ import 'config/app_feature_flags.dart';
 import 'import/csv_artwork_import_service.dart';
 import 'import/csv_import_file_picker.dart';
 import 'intake/artwork_image_picker.dart';
+import 'intake/attachment_viewer_gateway.dart';
 import 'intake/artwork_intake_service.dart';
+import 'intake/supporting_document_picker.dart';
 import 'intake/supporting_attachment_service.dart';
 import 'research/online_research_service.dart';
 import 'storage/local_artwork_repository.dart';
@@ -19,6 +21,8 @@ class AppDependencies {
     required this.artworkRepository,
     required this.attachmentStore,
     required this.imagePicker,
+    this.supportingDocumentPicker = const SystemSupportingDocumentPicker(),
+    this.attachmentViewer = const SystemAttachmentViewerGateway(),
     this.csvImportFilePicker = const SystemCsvImportFilePicker(),
     this.featureFlags = const AppFeatureFlags(),
     this.entitlementService = const StaticEntitlementService(),
@@ -30,6 +34,8 @@ class AppDependencies {
   final LocalArtworkRepository artworkRepository;
   final LocalAttachmentStore attachmentStore;
   final ArtworkImagePicker imagePicker;
+  final SupportingDocumentPicker supportingDocumentPicker;
+  final AttachmentViewerGateway attachmentViewer;
   final CsvImportFilePicker csvImportFilePicker;
   final AppFeatureFlags featureFlags;
   final EntitlementService entitlementService;
@@ -48,6 +54,8 @@ class AppDependencies {
   SupportingAttachmentService createSupportingAttachmentService() {
     return SupportingAttachmentService(
       picker: imagePicker,
+      documentPicker: supportingDocumentPicker,
+      viewer: attachmentViewer,
       repository: artworkRepository,
       attachmentStore: attachmentStore,
     );

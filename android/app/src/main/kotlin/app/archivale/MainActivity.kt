@@ -1,7 +1,10 @@
 package app.archivale
 
+import android.content.Intent
 import android.graphics.BitmapFactory
+import android.net.Uri
 import android.os.Build
+import androidx.core.content.FileProvider
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.plugin.common.MethodChannel
@@ -22,6 +25,7 @@ import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.File
 
 class MainActivity : FlutterActivity() {
     private val onDeviceAiScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -100,6 +104,22 @@ class MainActivity : FlutterActivity() {
                 else -> result.notImplemented()
             }
         }
+
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            "app.archivale/attachment_viewer",
+        ).setMethodCallHandler { call, result ->
+            if (call.method != "openSupportingAttachment") {
+                result.notImplemented()
+                return@setMethodCallHandler
+            }
+
+            val uri = call.argument<String>("uri")
+            val mimeType = call.argument<String>("mimeType")
+            result.success(
+                uri != null && mimeType != null && openSupportingAttachment(uri, mimeType),
+            )
+        }
     }
 
     override fun onDestroy() {
@@ -112,6 +132,40 @@ class MainActivity : FlutterActivity() {
         return onDeviceAiProvider ?: MlKitPromptOnDeviceAiProvider(onDeviceAiScope).also {
             onDeviceAiProvider = it
         }
+    }
+
+    private fun openSupportingAttachment(uriString: String, mimeType: String): Boolean {
+        val sourceUri = Uri.parse(uriString)
+        if (sourceUri.scheme != "file") {
+            return false
+        }
+        val sourceFile = try {
+            File(sourceUri.path ?: return false)
+        } catch (_: IllegalArgumentException) {
+            return false
+        }
+        if (!sourceFile.isFile) {
+            return false
+        }
+
+        val scopedUri = try {
+            FileProvider.getUriForFile(
+                this,
+                "${BuildConfig.APPLICATION_ID}.fileProvider",
+                sourceFile,
+            )
+        } catch (_: IllegalArgumentException) {
+            return false
+        }
+        val openIntent = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(scopedUri, mimeType)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        if (openIntent.resolveActivity(packageManager) == null) {
+            return false
+        }
+        startActivity(Intent.createChooser(openIntent, null))
+        return true
     }
 }
 

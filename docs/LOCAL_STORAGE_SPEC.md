@@ -66,6 +66,8 @@ Suggested fields:
 - local storage key or relative path
 - extracted text or extraction summary when present
 - warning flags for over-limit or generated content
+- attachment lifecycle: `active`, `unavailable`, `superseded`, or `removed`
+- optional lifecycle timestamp and `superseded_by_attachment_id`
 
 ### `ai_jobs`
 
@@ -166,6 +168,27 @@ Rules:
 - The attachment write path must reject derivative rows when the source
   attachment is missing or belongs to a different `artwork_id`.
 - A file that arrives with an unrecognized MIME type should be rejected for the prototype unless a later spec explicitly widens support.
+- The importer must check MIME, filename extension, and an allowed file
+  signature before committing bytes. PDFs require a `%PDF-` header and
+  `%%EOF` trailer; JPEG, PNG, HEIC, and HEIF require their documented binary
+  signatures.
+- Import writes stage-copy, validate, checksum, reopen, then returns metadata
+  for the database commit. Failed writes clean staging and uncommitted bytes.
+
+## Attachment Lifecycle
+
+Attachments default to `active`. A file that cannot be reopened or whose
+checksum no longer matches is `unavailable`; its metadata remains so the
+collector can replace it. Replacing an attachment makes the prior record
+`superseded`; removing one makes it `removed`. Both are soft-removal states in
+this prototype: metadata and app-private bytes remain until a future explicit
+purge/data-erasure task.
+
+Only `active` and `unavailable` rows appear in the active UI. `superseded` and
+`removed` rows are excluded from active UI, archive payloads, and future backup
+inputs. Archive handling follows
+[Supporting Record Attachment Export Contract v1](SUPPORTING_RECORD_ATTACHMENT_EXPORT_CONTRACT_V1.md)
+and must never use local paths or claim attachment completeness.
 
 Generated PDFs and ZIP exports are not user imports.
 
