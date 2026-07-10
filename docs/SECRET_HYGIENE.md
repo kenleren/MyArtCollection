@@ -59,9 +59,10 @@ running Gitleaks with `.gitleaks.toml` and full redaction enabled. If Gitleaks
 is not installed, the wrapper fails closed with install guidance instead of
 silently skipping the scan.
 
-The GitHub Actions `Secret Scan` workflow installs the pinned Gitleaks release,
-verifies the release archive checksum, and runs the same wrapper against full
-Git history.
+The `Release Readiness` workflow installs the pinned Gitleaks release, verifies
+the release archive checksum, and runs the same wrapper against full Git
+history. See [Release Readiness CI](RELEASE_READINESS_CI.md) for the aggregate
+check and its no-credential debug-package boundary.
 
 ## Rotation Gate
 

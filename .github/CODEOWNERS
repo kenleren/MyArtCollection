@@ -1,0 +1,16 @@
+# Release-readiness trust boundary. These paths require repository-owner review.
+/.github/workflows/ @kenleren
+/.github/CODEOWNERS @kenleren
+/.gitleaks.toml @kenleren
+/android/.gitignore @kenleren
+/android/gradle/wrapper/ @kenleren
+/scripts/check_android_ci_inputs.sh @kenleren
+/scripts/check_broker_audit.mjs @kenleren
+/scripts/mobile_broker_bypass_guard.mjs @kenleren
+/scripts/secret_scan.sh @kenleren
+/scripts/verify_gradle_wrapper.sh @kenleren
+/test/android_ci_input_guard_test.sh @kenleren
+/test/broker_audit_policy_test.mjs @kenleren
+/test/fixtures/broker-audit/ @kenleren
+/test/gradle_wrapper_validation_test.sh @kenleren
+/docs/RELEASE_READINESS_CI.md @kenleren

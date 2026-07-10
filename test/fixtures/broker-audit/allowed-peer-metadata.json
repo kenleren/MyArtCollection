@@ -1,0 +1,14 @@
+{
+  "name": "firebase-functions",
+  "severity": "moderate",
+  "isDirect": true,
+  "via": ["firebase-admin"],
+  "effects": [],
+  "range": "7.2.5",
+  "nodes": ["node_modules/firebase-functions"],
+  "fixAvailable": {
+    "name": "firebase-functions",
+    "version": "8.0.0",
+    "isSemVerMajor": true
+  }
+}
