@@ -31,5 +31,35 @@
       "lifecycle_status": "removed",
       "archive_status": "excluded_user_removed"
     }
+  ],
+  "malicious_payload_paths": [
+    "/attachments/attachment-active/payload.pdf",
+    "attachments/../attachment-active/payload.pdf",
+    "attachments/attachment-active//payload.pdf",
+    "attachments/attachment-active/./payload.pdf",
+    "attachments/attachment-active/payload%2F.pdf",
+    "attachments\\attachment-active\\payload.pdf",
+    "attachments/attachment-active/payload.pdf?source=local"
+  ],
+  "forbidden_field_entries": [
+    {
+      "attachment_id": "attachment-private-path",
+      "artwork_id": "artwork-opaque",
+      "attachment_type": "receipt",
+      "attachment_role": "supporting_document",
+      "lifecycle_status": "active",
+      "archive_status": "included",
+      "payload_path": "attachments/attachment-private-path/payload.pdf",
+      "relative_path": "artworks/artwork-opaque/attachments/attachment-private-path/payload.pdf"
+    },
+    {
+      "attachment_id": "attachment-excluded-note",
+      "artwork_id": "artwork-opaque",
+      "attachment_type": "certificate",
+      "attachment_role": "supporting_document",
+      "lifecycle_status": "unavailable",
+      "archive_status": "excluded_missing",
+      "notes": "A local note must not appear in an excluded archive entry."
+    }
   ]
 }

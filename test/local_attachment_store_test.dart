@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:crypto/crypto.dart';
@@ -347,6 +348,143 @@ void main() {
       isEmpty,
     );
   });
+
+  test(
+    'rejects unsafe opaque identifiers before creating staging or payload paths',
+    () async {
+      final source = File(p.join(tempDir.path, 'safe-source.pdf'));
+      await source.writeAsBytes(_pdfBytes);
+      const invalidComponents = [
+        '/absolute-path',
+        '../escape',
+        'part/child',
+        r'part\\child',
+        '.',
+        '..',
+        'encoded%2fseparator',
+        '.staging',
+        'attachment..partial',
+      ];
+
+      for (final invalidArtworkId in invalidComponents) {
+        await expectLater(
+          store.saveImportedAttachment(
+            artworkId: invalidArtworkId,
+            attachmentId: 'attachment-safe',
+            sourceFile: source,
+            originalFileName: 'safe-source.pdf',
+            mimeType: 'application/pdf',
+            type: AttachmentType.receipt,
+            source: ArtworkFieldSource.userConfirmed,
+            importedAt: DateTime.utc(2026, 7, 4, 12),
+          ),
+          throwsA(
+            isA<AttachmentImportException>().having(
+              (error) => error.failure,
+              'failure',
+              AttachmentImportFailure.invalidIdentifier,
+            ),
+          ),
+        );
+      }
+      for (final invalidAttachmentId in invalidComponents) {
+        await expectLater(
+          store.saveImportedAttachment(
+            artworkId: 'artwork-safe',
+            attachmentId: invalidAttachmentId,
+            sourceFile: source,
+            originalFileName: 'safe-source.pdf',
+            mimeType: 'application/pdf',
+            type: AttachmentType.receipt,
+            source: ArtworkFieldSource.userConfirmed,
+            importedAt: DateTime.utc(2026, 7, 4, 12),
+          ),
+          throwsA(
+            isA<AttachmentImportException>().having(
+              (error) => error.failure,
+              'failure',
+              AttachmentImportFailure.invalidIdentifier,
+            ),
+          ),
+        );
+      }
+
+      expect(
+        await Directory(p.join(store.storageRoot.path, '.staging')).exists(),
+        isFalse,
+      );
+      expect(
+        await Directory(p.join(store.storageRoot.path, 'artworks')).exists(),
+        isFalse,
+      );
+      expect(await File(p.join(tempDir.path, 'escape')).exists(), isFalse);
+    },
+  );
+
+  test('rejects header-only and truncated approved-format files', () async {
+    final malformedCases = <({String name, String mimeType, List<int> bytes})>[
+      (
+        name: 'header-only.pdf',
+        mimeType: 'application/pdf',
+        bytes: const [0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x34],
+      ),
+      (
+        name: 'truncated.png',
+        mimeType: 'image/png',
+        bytes: _pngBytes.sublist(0, 24),
+      ),
+      (
+        name: 'truncated.jpg',
+        mimeType: 'image/jpeg',
+        bytes: _jpegBytes.sublist(0, _jpegBytes.length - 2),
+      ),
+      (
+        name: 'header-only.heic',
+        mimeType: 'image/heic',
+        bytes: const [
+          0x00,
+          0x00,
+          0x00,
+          0x14,
+          0x66,
+          0x74,
+          0x79,
+          0x70,
+          0x68,
+          0x65,
+          0x69,
+          0x63,
+        ],
+      ),
+    ];
+
+    for (final malformed in malformedCases) {
+      final source = File(p.join(tempDir.path, malformed.name));
+      await source.writeAsBytes(malformed.bytes);
+      await expectLater(
+        store.saveImportedAttachment(
+          artworkId: 'artwork-001',
+          attachmentId:
+              'attachment-${p.basenameWithoutExtension(malformed.name)}',
+          sourceFile: source,
+          originalFileName: malformed.name,
+          mimeType: malformed.mimeType,
+          type: malformed.mimeType == 'application/pdf'
+              ? AttachmentType.receipt
+              : AttachmentType.photo,
+          source: ArtworkFieldSource.userConfirmed,
+          importedAt: DateTime.utc(2026, 7, 4, 12),
+        ),
+        throwsA(
+          isA<AttachmentImportException>().having(
+            (error) => error.failure,
+            'failure',
+            AttachmentImportFailure.malformedFile,
+          ),
+        ),
+      );
+    }
+  });
 }
 
 const _pdfBytes = <int>[
@@ -359,14 +497,95 @@ const _pdfBytes = <int>[
   0x2e,
   0x34,
   0x0a,
+  0x31,
+  0x20,
+  0x30,
+  0x20,
+  0x6f,
+  0x62,
+  0x6a,
+  0x0a,
+  0x3c,
+  0x3c,
+  0x3e,
+  0x3e,
+  0x0a,
+  0x65,
+  0x6e,
+  0x64,
+  0x6f,
+  0x62,
+  0x6a,
+  0x0a,
+  0x73,
+  0x74,
+  0x61,
+  0x72,
+  0x74,
+  0x78,
+  0x72,
+  0x65,
+  0x66,
+  0x0a,
+  0x30,
+  0x0a,
   0x25,
   0x25,
   0x45,
   0x4f,
   0x46,
 ];
-const _pngBytes = <int>[0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
-const _jpegBytes = <int>[0xff, 0xd8, 0xff, 0xe0, 0x00];
+final _pngBytes = base64Decode(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=',
+);
+const _jpegBytes = <int>[
+  0xff,
+  0xd8,
+  0xff,
+  0xe0,
+  0x00,
+  0x10,
+  0x4a,
+  0x46,
+  0x49,
+  0x46,
+  0x00,
+  0x01,
+  0x01,
+  0x00,
+  0x00,
+  0x01,
+  0x00,
+  0x01,
+  0x00,
+  0x00,
+  0xff,
+  0xc0,
+  0x00,
+  0x0b,
+  0x08,
+  0x00,
+  0x01,
+  0x00,
+  0x01,
+  0x01,
+  0x01,
+  0x11,
+  0x00,
+  0xff,
+  0xda,
+  0x00,
+  0x08,
+  0x01,
+  0x01,
+  0x00,
+  0x00,
+  0x3f,
+  0x00,
+  0x00,
+  0xff,
+  0xd9,
+];
 
 ArtworkRecord _record(String id, {String? primaryImageAttachmentId}) {
   final now = DateTime.utc(2026, 7, 4, 9);

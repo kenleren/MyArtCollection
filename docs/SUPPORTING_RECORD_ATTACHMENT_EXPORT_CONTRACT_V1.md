@@ -41,6 +41,43 @@ Every attachment index entry uses these fields:
 and opaque; it is not an app-private storage key. Never include device paths,
 picker URIs, FileProvider URIs, staging paths, or other local locations.
 
+## Canonical Paths And Metadata Allowlist
+
+Archive paths use canonical POSIX form regardless of the source platform. An
+included payload path is exactly:
+
+```
+attachments/<attachment_id>/payload.<approved-extension>
+```
+
+`<attachment_id>` is the entry's opaque attachment ID. The extension is one of
+`pdf`, `jpg`, `jpeg`, `png`, `heic`, or `heif` and must agree with `mime_type`.
+Paths use `/` only, have no leading slash, no repeated separator, no empty,
+`.` or `..` segment, and no percent-encoded separator. They must not contain
+backslash, NUL/control characters, `%`, `?`, `#`, or a drive prefix. The
+archive writer must reject, rather than normalize, a non-canonical path. Every
+included `payload_path` is unique and each attachment has at most one payload.
+
+Included entries have exactly these keys:
+
+```text
+attachment_id, artwork_id, attachment_type, attachment_role, file_name,
+mime_type, file_size_bytes, checksum_sha256, imported_at, lifecycle_status,
+archive_status, payload_path
+```
+
+Excluded entries have exactly these keys:
+
+```text
+attachment_id, artwork_id, attachment_type, attachment_role,
+lifecycle_status, archive_status
+```
+
+No entry may add `relative_path`, storage keys, source/picker/viewer URIs,
+notes, extraction data, timestamps not listed above, local filenames for an
+excluded entry, or any other implementation-specific field. The archive root
+owner must reject entries that violate these allowlists before creating a ZIP.
+
 `attachment_type` is one of `photo`, `receipt`, `certificate`, `appraisal`,
 `auction_record`, `provenance_note`, or `other_supporting_document`.
 `attachment_role` is one of `primary_artwork_photo`, `supporting_photo`, or

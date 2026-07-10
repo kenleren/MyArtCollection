@@ -31,14 +31,34 @@ import UIKit
   }
 
   private func previewSupportingAttachment(_ url: URL) -> Bool {
-    guard FileManager.default.fileExists(atPath: url.path),
+    let candidate = url.resolvingSymlinksInPath().standardizedFileURL
+    guard isSupportingAttachmentPayload(candidate),
           let presenter = activeViewController() else {
       return false
     }
-    let controller = UIDocumentInteractionController(url: url)
+    let controller = UIDocumentInteractionController(url: candidate)
     controller.delegate = self
     attachmentPreviewController = controller
     return controller.presentPreview(animated: true)
+  }
+
+  private func isSupportingAttachmentPayload(_ url: URL) -> Bool {
+    guard let documentsDirectory = FileManager.default.urls(
+      for: .documentDirectory,
+      in: .userDomainMask
+    ).first else {
+      return false
+    }
+    let attachmentRoot = documentsDirectory
+      .appendingPathComponent("attachments/artworks", isDirectory: true)
+      .resolvingSymlinksInPath()
+      .standardizedFileURL
+    let rootPath = attachmentRoot.path.hasSuffix("/")
+      ? attachmentRoot.path
+      : attachmentRoot.path + "/"
+    return url.isFileURL &&
+      url.path.hasPrefix(rootPath) &&
+      FileManager.default.fileExists(atPath: url.path)
   }
 
   func documentInteractionControllerViewControllerForPreview(

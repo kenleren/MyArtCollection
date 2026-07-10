@@ -138,6 +138,8 @@ class ArtworkIntakeService {
       );
     } on AttachmentImportException catch (error) {
       throw ArtworkIntakeException(switch (error.failure) {
+        AttachmentImportFailure.invalidIdentifier =>
+          ArtworkIntakeFailure.pickerUnavailable,
         AttachmentImportFailure.sourceMissing =>
           ArtworkIntakeFailure.sourceUnavailable,
         AttachmentImportFailure.unsupportedMimeType =>

@@ -278,6 +278,176 @@ void main() {
     },
   );
 
+  testWidgets(
+    'supporting document workflow attaches, opens, replaces, removes, and recovers',
+    (WidgetTester tester) async {
+      final fixture = await tester.runAsync(_LiveDependencyFixture.create);
+      final liveFixture = fixture!;
+      addTearDown(() async {
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.runAsync(liveFixture.dispose);
+      });
+
+      const artworkId = 'sample-001';
+      final originalSource = await tester.runAsync(
+        () => liveFixture.writePdfSource(
+          '2026-07-10-long-supporting-receipt-for-the-archivale-collection.pdf',
+        ),
+      );
+      final replacementSource = await tester.runAsync(
+        () => liveFixture.writePdfSource('corrected-receipt.pdf'),
+      );
+      final picker = _QueuedDocumentPicker([
+        originalSource!,
+        replacementSource!,
+      ]);
+      final viewer = _RecordingAttachmentViewer();
+      await tester.runAsync(() async {
+        await liveFixture.repository.upsert(
+          _artworkRecord(
+            id: artworkId,
+            title: 'Issue 179 Document Fixture',
+            state: ArtworkRecordState.verifiedByYou,
+            source: ArtworkFieldSource.userConfirmed,
+          ),
+        );
+      });
+
+      await _configureMobileViewport(tester);
+      final boundaryKey = GlobalKey();
+      await tester.pumpWidget(
+        RepaintBoundary(
+          key: boundaryKey,
+          child: ArchivaleApp(
+            initialRoute: AppRoutes.artworkDocuments(artworkId),
+            dependencies: liveFixture.dependenciesWithFlags(
+              supportingDocumentPicker: picker,
+              attachmentViewer: viewer,
+            ),
+          ),
+        ),
+      );
+      await pumpLiveData(tester);
+
+      await waitForFinder(tester, find.text('Attach supporting document'));
+      await pressAsyncButton(
+        tester,
+        find.widgetWithText(FilledButton, 'Attach supporting document'),
+      );
+      await waitForFinder(
+        tester,
+        find.text(
+          '2026-07-10-long-supporting-receipt-for-the-archivale-collection.pdf',
+        ),
+      );
+      expect(find.byTooltip('Open document'), findsOneWidget);
+      expect(find.byTooltip('Replace document'), findsOneWidget);
+      expect(find.byTooltip('Remove document'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+      await captureBoundaryToArtifacts(
+        tester,
+        boundaryKey,
+        'issue-179-attached-pdf-mobile.png',
+        resetAfterCapture: false,
+      );
+
+      await pressAsyncButton(
+        tester,
+        find.widgetWithIcon(IconButton, Icons.open_in_new),
+      );
+      expect(viewer.openedUris, hasLength(1));
+      expect(viewer.openedUris.single.isScheme('file'), isTrue);
+
+      await pressAsyncButton(
+        tester,
+        find.widgetWithIcon(IconButton, Icons.swap_horiz),
+      );
+      await waitForFinder(tester, find.text('corrected-receipt.pdf'));
+      expect(
+        find.text(
+          '2026-07-10-long-supporting-receipt-for-the-archivale-collection.pdf',
+        ),
+        findsNothing,
+      );
+
+      final replacement = await tester.runAsync(
+        () async =>
+            (await liveFixture.repository.attachmentsForArtwork(
+              artworkId,
+            )).singleWhere(
+              (attachment) =>
+                  attachment.lifecycleStatus ==
+                  AttachmentLifecycleStatus.active,
+            ),
+      );
+      await tester.runAsync(
+        () => liveFixture.attachmentStore.discardPayload(replacement!),
+      );
+      await pressAsyncButton(
+        tester,
+        find.widgetWithIcon(IconButton, Icons.open_in_new),
+      );
+      await waitForFinder(tester, find.text('Document needs attention'));
+      expect(
+        find.text('The saved document file is unavailable.'),
+        findsOneWidget,
+      );
+      expect(
+        find.text(
+          'Saved document unavailable. Replace it to restore this record.',
+        ),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+      await tester.pump(const Duration(milliseconds: 16));
+      await tester.pump();
+      await captureBoundaryToArtifacts(
+        tester,
+        boundaryKey,
+        'issue-179-unavailable-recovery-mobile.png',
+        resetAfterCapture: false,
+      );
+
+      await pressAsyncButton(
+        tester,
+        find.widgetWithIcon(IconButton, Icons.delete_outline),
+      );
+      await waitForFinder(tester, find.text('Remove supporting document?'));
+      expect(
+        find.text(
+          'This removes it from the active record and future archives. The prototype retains its private bytes until a separate data-erasure feature is available.',
+        ),
+        findsOneWidget,
+      );
+      await captureBoundaryToArtifacts(
+        tester,
+        boundaryKey,
+        'issue-179-remove-confirmation-mobile.png',
+        resetAfterCapture: false,
+      );
+      await pressAsyncButton(
+        tester,
+        find.widgetWithText(FilledButton, 'Remove'),
+      );
+      await waitForFinder(tester, find.text('No supporting documents yet'));
+
+      await pressAsyncButton(
+        tester,
+        find.widgetWithText(FilledButton, 'Attach supporting document'),
+      );
+      await waitForFinder(tester, find.text('Document needs attention'));
+      expect(
+        find.text('Supporting document import was cancelled.'),
+        findsOneWidget,
+      );
+      await captureBoundaryToArtifacts(
+        tester,
+        boundaryKey,
+        'issue-179-picker-error-mobile.png',
+      );
+    },
+  );
+
   testWidgets('visual evidence captures required csv import mobile states', (
     WidgetTester tester,
   ) async {
@@ -2341,8 +2511,8 @@ void main() {
       await tester.pumpWidget(const SizedBox.shrink());
       await tester.runAsync(fixture.dispose);
     });
-    const secretRelativePath =
-        'artworks/missing-image/attachments/private-secret-file.png';
+    const relativePath =
+        'artworks/missing-image/attachments/primary-missing-image/payload.png';
 
     await tester.runAsync(() async {
       await fixture.repository.upsert(
@@ -2356,7 +2526,8 @@ void main() {
         _primaryImageAttachmentRecord(
           id: 'primary-missing-image',
           artworkId: 'missing-image',
-          relativePath: secretRelativePath,
+          relativePath: relativePath,
+          fileName: 'private-secret-file.png',
         ),
       );
     });
@@ -5023,6 +5194,25 @@ class _SingleDocumentPicker implements SupportingDocumentPicker {
   }
 }
 
+class _QueuedDocumentPicker implements SupportingDocumentPicker {
+  _QueuedDocumentPicker(this._files);
+
+  final List<File> _files;
+
+  @override
+  Future<XFile?> pickDocument() async {
+    if (_files.isEmpty) {
+      return null;
+    }
+    final file = _files.removeAt(0);
+    return XFile(
+      file.path,
+      name: p.basename(file.path),
+      mimeType: 'application/pdf',
+    );
+  }
+}
+
 class _NoSupportingDocumentPicker implements SupportingDocumentPicker {
   const _NoSupportingDocumentPicker();
 
@@ -5055,6 +5245,38 @@ const _tinyPdfBytes = <int>[
   0x31,
   0x2e,
   0x34,
+  0x0a,
+  0x31,
+  0x20,
+  0x30,
+  0x20,
+  0x6f,
+  0x62,
+  0x6a,
+  0x0a,
+  0x3c,
+  0x3c,
+  0x3e,
+  0x3e,
+  0x0a,
+  0x65,
+  0x6e,
+  0x64,
+  0x6f,
+  0x62,
+  0x6a,
+  0x0a,
+  0x73,
+  0x74,
+  0x61,
+  0x72,
+  0x74,
+  0x78,
+  0x72,
+  0x65,
+  0x66,
+  0x0a,
+  0x30,
   0x0a,
   0x25,
   0x25,
@@ -5340,12 +5562,13 @@ AttachmentRecord _primaryImageAttachmentRecord({
   required String id,
   required String artworkId,
   required String relativePath,
+  String fileName = 'primary.png',
 }) {
   return AttachmentRecord(
     id: id,
     artworkId: artworkId,
     type: AttachmentType.photo,
-    fileName: 'primary.png',
+    fileName: fileName,
     mimeType: 'image/png',
     fileSizeBytes: 12,
     importedAt: DateTime.utc(2026, 7, 4, 12),
