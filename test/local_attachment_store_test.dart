@@ -485,107 +485,201 @@ void main() {
       );
     }
   });
+
+  test(
+    'rejects marker-shaped corrupt PDF PNG and JPEG payloads without commits',
+    () async {
+      final malformedCases =
+          <({String name, String mimeType, List<int> bytes})>[
+            (
+              name: 'marker-shaped.pdf',
+              mimeType: 'application/pdf',
+              bytes: latin1.encode(
+                '%PDF-1.4\n1 0 obj\n<<>>\nendobj\nstartxref\n0\n%%EOF\n',
+              ),
+            ),
+            (
+              name: 'marker-shaped.png',
+              mimeType: 'image/png',
+              bytes: const [
+                0x89,
+                0x50,
+                0x4e,
+                0x47,
+                0x0d,
+                0x0a,
+                0x1a,
+                0x0a,
+                0x00,
+                0x00,
+                0x00,
+                0x0d,
+                0x49,
+                0x48,
+                0x44,
+                0x52,
+                0x00,
+                0x00,
+                0x00,
+                0x01,
+                0x00,
+                0x00,
+                0x00,
+                0x01,
+                0x08,
+                0x02,
+                0x00,
+                0x00,
+                0x00,
+                0x00,
+                0x00,
+                0x00,
+                0x00,
+                0x00,
+                0x00,
+                0x00,
+                0x00,
+                0x49,
+                0x45,
+                0x4e,
+                0x44,
+                0x00,
+                0x00,
+                0x00,
+                0x00,
+              ],
+            ),
+            (
+              name: 'marker-shaped.jpg',
+              mimeType: 'image/jpeg',
+              bytes: const [
+                0xff,
+                0xd8,
+                0xff,
+                0xc0,
+                0x00,
+                0x0b,
+                0x08,
+                0x00,
+                0x01,
+                0x00,
+                0x01,
+                0x01,
+                0x01,
+                0x11,
+                0x00,
+                0xff,
+                0xda,
+                0x00,
+                0x08,
+                0x00,
+                0x00,
+                0x00,
+                0x3f,
+                0x00,
+                0x00,
+                0xff,
+                0xd9,
+              ],
+            ),
+          ];
+
+      for (final malformed in malformedCases) {
+        final source = File(p.join(tempDir.path, malformed.name));
+        await source.writeAsBytes(malformed.bytes);
+        await expectLater(
+          store.saveImportedAttachment(
+            artworkId: 'artwork-001',
+            attachmentId:
+                'attachment-${p.basenameWithoutExtension(malformed.name)}',
+            sourceFile: source,
+            originalFileName: malformed.name,
+            mimeType: malformed.mimeType,
+            type: malformed.mimeType == 'application/pdf'
+                ? AttachmentType.receipt
+                : AttachmentType.photo,
+            source: ArtworkFieldSource.userConfirmed,
+            importedAt: DateTime.utc(2026, 7, 4, 12),
+          ),
+          throwsA(
+            isA<AttachmentImportException>().having(
+              (error) => error.failure,
+              'failure',
+              AttachmentImportFailure.malformedFile,
+            ),
+          ),
+        );
+      }
+
+      expect(await repository.allAttachmentsForArtwork('artwork-001'), isEmpty);
+      expect(
+        await Directory(
+          p.join(store.storageRoot.path, '.staging'),
+        ).list().toList(),
+        isEmpty,
+      );
+    },
+  );
+
+  test('imports and reopens genuine PDF PNG and JPEG fixtures', () async {
+    final fixtures = <({String name, String mimeType, List<int> bytes})>[
+      (name: 'genuine.pdf', mimeType: 'application/pdf', bytes: _pdfBytes),
+      (name: 'genuine.png', mimeType: 'image/png', bytes: _pngBytes),
+      (name: 'genuine.jpg', mimeType: 'image/jpeg', bytes: _jpegBytes),
+    ];
+
+    for (var index = 0; index < fixtures.length; index += 1) {
+      final fixture = fixtures[index];
+      final source = File(p.join(tempDir.path, fixture.name));
+      await source.writeAsBytes(fixture.bytes);
+      final attachment = await store.saveImportedAttachment(
+        artworkId: 'artwork-001',
+        attachmentId: 'attachment-genuine-$index',
+        sourceFile: source,
+        originalFileName: fixture.name,
+        mimeType: fixture.mimeType,
+        type: fixture.mimeType == 'application/pdf'
+            ? AttachmentType.receipt
+            : AttachmentType.photo,
+        source: ArtworkFieldSource.userConfirmed,
+        importedAt: DateTime.utc(2026, 7, 4, 12),
+      );
+
+      expect(await store.fileFor(attachment).readAsBytes(), fixture.bytes);
+      expect(
+        await store.payloadStatus(attachment),
+        AttachmentPayloadStatus.available,
+      );
+    }
+  });
 }
 
-const _pdfBytes = <int>[
-  0x25,
-  0x50,
-  0x44,
-  0x46,
-  0x2d,
-  0x31,
-  0x2e,
-  0x34,
-  0x0a,
-  0x31,
-  0x20,
-  0x30,
-  0x20,
-  0x6f,
-  0x62,
-  0x6a,
-  0x0a,
-  0x3c,
-  0x3c,
-  0x3e,
-  0x3e,
-  0x0a,
-  0x65,
-  0x6e,
-  0x64,
-  0x6f,
-  0x62,
-  0x6a,
-  0x0a,
-  0x73,
-  0x74,
-  0x61,
-  0x72,
-  0x74,
-  0x78,
-  0x72,
-  0x65,
-  0x66,
-  0x0a,
-  0x30,
-  0x0a,
-  0x25,
-  0x25,
-  0x45,
-  0x4f,
-  0x46,
-];
+final _pdfBytes = _validPdfBytes();
 final _pngBytes = base64Decode(
-  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=',
+  'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAACXBIWXMAAAABAAAAAQBPJcTWAAAADklEQVR4nGNkAAMWCAUAADgABkRoBWYAAAAASUVORK5CYII=',
 );
-const _jpegBytes = <int>[
-  0xff,
-  0xd8,
-  0xff,
-  0xe0,
-  0x00,
-  0x10,
-  0x4a,
-  0x46,
-  0x49,
-  0x46,
-  0x00,
-  0x01,
-  0x01,
-  0x00,
-  0x00,
-  0x01,
-  0x00,
-  0x01,
-  0x00,
-  0x00,
-  0xff,
-  0xc0,
-  0x00,
-  0x0b,
-  0x08,
-  0x00,
-  0x01,
-  0x00,
-  0x01,
-  0x01,
-  0x01,
-  0x11,
-  0x00,
-  0xff,
-  0xda,
-  0x00,
-  0x08,
-  0x01,
-  0x01,
-  0x00,
-  0x00,
-  0x3f,
-  0x00,
-  0x00,
-  0xff,
-  0xd9,
-];
+final _jpegBytes = base64Decode(
+  '/9j/4AAQSkZJRgABAgAAAQABAAD//gAQTGF2YzYyLjI4LjEwMQD/2wBDAAgEBAQEBAUFBQUFBQYGBgYGBgYGBgYGBgYHBwcICAgHBwcGBgcHCAgICAkJCQgICAgJCQoKCgwMCwsODg4RERT/xABLAAEBAAAAAAAAAAAAAAAAAAAACAEBAAAAAAAAAAAAAAAAAAAAABABAAAAAAAAAAAAAAAAAAAAABEBAAAAAAAAAAAAAAAAAAAAAP/AABEIAAIAAgMBIgACEQADEQD/2gAMAwEAAhEDEQA/AJ/AB//Z',
+);
+
+List<int> _validPdfBytes() {
+  const header = '%PDF-1.4\n';
+  const catalog = '1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n';
+  const pages = '2 0 obj\n<< /Type /Pages /Count 0 /Kids [] >>\nendobj\n';
+  final catalogOffset = header.length;
+  final pagesOffset = catalogOffset + catalog.length;
+  final xrefOffset = pagesOffset + pages.length;
+  final source = StringBuffer(header)
+    ..write(catalog)
+    ..write(pages)
+    ..write('xref\n0 3\n')
+    ..write('0000000000 65535 f \n')
+    ..write('${catalogOffset.toString().padLeft(10, '0')} 00000 n \n')
+    ..write('${pagesOffset.toString().padLeft(10, '0')} 00000 n \n')
+    ..write('trailer\n<< /Size 3 /Root 1 0 R >>\n')
+    ..write('startxref\n$xrefOffset\n%%EOF\n');
+  return latin1.encode(source.toString());
+}
 
 ArtworkRecord _record(String id, {String? primaryImageAttachmentId}) {
   final now = DateTime.utc(2026, 7, 4, 9);

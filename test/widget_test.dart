@@ -333,6 +333,7 @@ void main() {
       final picker = _QueuedDocumentPicker([
         originalSource!,
         replacementSource!,
+        const SupportingDocumentPickerException(),
       ]);
       final viewer = _RecordingAttachmentViewer();
       await tester.runAsync(() async {
@@ -377,6 +378,8 @@ void main() {
       expect(find.byTooltip('Replace document'), findsOneWidget);
       expect(find.byTooltip('Remove document'), findsOneWidget);
       expect(tester.takeException(), isNull);
+      await tester.pumpAndSettle();
+      await warmBoundaryRaster(tester, boundaryKey);
       await captureBoundaryToArtifacts(
         tester,
         boundaryKey,
@@ -432,8 +435,7 @@ void main() {
         findsOneWidget,
       );
       expect(tester.takeException(), isNull);
-      await tester.pump(const Duration(milliseconds: 16));
-      await tester.pump();
+      await tester.pumpAndSettle();
       await captureBoundaryToArtifacts(
         tester,
         boundaryKey,
@@ -452,6 +454,7 @@ void main() {
         ),
         findsOneWidget,
       );
+      await tester.pumpAndSettle();
       await captureBoundaryToArtifacts(
         tester,
         boundaryKey,
@@ -470,9 +473,12 @@ void main() {
       );
       await waitForFinder(tester, find.text('Document needs attention'));
       expect(
-        find.text('Supporting document import was cancelled.'),
+        find.text(
+          'Could not open the system document picker. Try again later.',
+        ),
         findsOneWidget,
       );
+      await tester.pumpAndSettle();
       await captureBoundaryToArtifacts(
         tester,
         boundaryKey,
@@ -6152,6 +6158,18 @@ Future<void> captureRenderedBoundaryToArtifacts(
   screenshotFile.writeAsBytesSync(bytes!);
 }
 
+Future<void> warmBoundaryRaster(
+  WidgetTester tester,
+  GlobalKey boundaryKey,
+) async {
+  final boundary =
+      boundaryKey.currentContext!.findRenderObject()! as RenderRepaintBoundary;
+  await tester.runAsync(() async {
+    final image = await boundary.toImage(pixelRatio: 2);
+    image.dispose();
+  });
+}
+
 Future<void> _captureIssue136OnDeviceAiImportState(
   WidgetTester tester, {
   required OnDeviceAiDraftProvider provider,
@@ -6453,16 +6471,20 @@ class _SingleDocumentPicker implements SupportingDocumentPicker {
 }
 
 class _QueuedDocumentPicker implements SupportingDocumentPicker {
-  _QueuedDocumentPicker(this._files);
+  _QueuedDocumentPicker(this._responses);
 
-  final List<File> _files;
+  final List<Object> _responses;
 
   @override
   Future<XFile?> pickDocument() async {
-    if (_files.isEmpty) {
+    if (_responses.isEmpty) {
       return null;
     }
-    final file = _files.removeAt(0);
+    final response = _responses.removeAt(0);
+    if (response is Exception) {
+      throw response;
+    }
+    final file = response as File;
     return XFile(
       file.path,
       name: p.basename(file.path),
@@ -6494,54 +6516,26 @@ class _NoAttachmentViewer implements AttachmentViewerGateway {
   Future<void> open({required Uri scopedUri, required String mimeType}) async {}
 }
 
-const _tinyPdfBytes = <int>[
-  0x25,
-  0x50,
-  0x44,
-  0x46,
-  0x2d,
-  0x31,
-  0x2e,
-  0x34,
-  0x0a,
-  0x31,
-  0x20,
-  0x30,
-  0x20,
-  0x6f,
-  0x62,
-  0x6a,
-  0x0a,
-  0x3c,
-  0x3c,
-  0x3e,
-  0x3e,
-  0x0a,
-  0x65,
-  0x6e,
-  0x64,
-  0x6f,
-  0x62,
-  0x6a,
-  0x0a,
-  0x73,
-  0x74,
-  0x61,
-  0x72,
-  0x74,
-  0x78,
-  0x72,
-  0x65,
-  0x66,
-  0x0a,
-  0x30,
-  0x0a,
-  0x25,
-  0x25,
-  0x45,
-  0x4f,
-  0x46,
-];
+final _tinyPdfBytes = _validPdfBytes();
+
+List<int> _validPdfBytes() {
+  const header = '%PDF-1.4\n';
+  const catalog = '1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n';
+  const pages = '2 0 obj\n<< /Type /Pages /Count 0 /Kids [] >>\nendobj\n';
+  final catalogOffset = header.length;
+  final pagesOffset = catalogOffset + catalog.length;
+  final xrefOffset = pagesOffset + pages.length;
+  final source = StringBuffer(header)
+    ..write(catalog)
+    ..write(pages)
+    ..write('xref\n0 3\n')
+    ..write('0000000000 65535 f \n')
+    ..write('${catalogOffset.toString().padLeft(10, '0')} 00000 n \n')
+    ..write('${pagesOffset.toString().padLeft(10, '0')} 00000 n \n')
+    ..write('trailer\n<< /Size 3 /Root 1 0 R >>\n')
+    ..write('startxref\n$xrefOffset\n%%EOF\n');
+  return latin1.encode(source.toString());
+}
 
 class _ThrowingResearchClient implements OnlineResearchClient {
   _ThrowingResearchClient(this._error);
@@ -7019,5 +7013,5 @@ const _testFieldValues = {
 };
 
 final _tinyPngBytes = base64Decode(
-  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=',
+  'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAACXBIWXMAAAABAAAAAQBPJcTWAAAADklEQVR4nGNkAAMWCAUAADgABkRoBWYAAAAASUVORK5CYII=',
 );

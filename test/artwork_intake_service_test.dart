@@ -169,56 +169,11 @@ Future<File> _imageFile(Directory tempDir, String fileName) async {
 }
 
 final _pngBytes = base64Decode(
-  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=',
+  'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAACXBIWXMAAAABAAAAAQBPJcTWAAAADklEQVR4nGNkAAMWCAUAADgABkRoBWYAAAAASUVORK5CYII=',
 );
-const _jpegBytes = <int>[
-  0xff,
-  0xd8,
-  0xff,
-  0xe0,
-  0x00,
-  0x10,
-  0x4a,
-  0x46,
-  0x49,
-  0x46,
-  0x00,
-  0x01,
-  0x01,
-  0x00,
-  0x00,
-  0x01,
-  0x00,
-  0x01,
-  0x00,
-  0x00,
-  0xff,
-  0xc0,
-  0x00,
-  0x0b,
-  0x08,
-  0x00,
-  0x01,
-  0x00,
-  0x01,
-  0x01,
-  0x01,
-  0x11,
-  0x00,
-  0xff,
-  0xda,
-  0x00,
-  0x08,
-  0x01,
-  0x01,
-  0x00,
-  0x00,
-  0x3f,
-  0x00,
-  0x00,
-  0xff,
-  0xd9,
-];
+final _jpegBytes = base64Decode(
+  '/9j/4AAQSkZJRgABAgAAAQABAAD//gAQTGF2YzYyLjI4LjEwMQD/2wBDAAgEBAQEBAUFBQUFBQYGBgYGBgYGBgYGBgYHBwcICAgHBwcGBgcHCAgICAkJCQgICAgJCQoKCgwMCwsODg4RERT/xABLAAEBAAAAAAAAAAAAAAAAAAAACAEBAAAAAAAAAAAAAAAAAAAAABABAAAAAAAAAAAAAAAAAAAAABEBAAAAAAAAAAAAAAAAAAAAAP/AABEIAAIAAgMBIgACEQADEQD/2gAMAwEAAhEDEQA/AJ/AB//Z',
+);
 
 class _FakeArtworkImagePicker implements ArtworkImagePicker {
   final galleryResults = <XFile?>[];

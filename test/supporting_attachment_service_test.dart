@@ -185,6 +185,35 @@ void main() {
   });
 
   test(
+    'reports a system document picker failure without writing a document',
+    () async {
+      documentPicker.failure = const SupportingDocumentPickerException();
+
+      await expectLater(
+        service().importSupportingDocument(
+          artworkId: 'artwork-001',
+          type: AttachmentType.receipt,
+        ),
+        throwsA(
+          isA<ArtworkIntakeException>()
+              .having(
+                (error) => error.failure,
+                'failure',
+                ArtworkIntakeFailure.pickerUnavailable,
+              )
+              .having(
+                (error) => error.message,
+                'message',
+                'Could not open the system document picker. Try again later.',
+              ),
+        ),
+      );
+
+      expect(await repository.attachmentsForArtwork('artwork-001'), isEmpty);
+    },
+  );
+
+  test(
     'rejects malformed document bytes without committing metadata or staging',
     () async {
       final source = File(p.join(tempDir.path, 'malformed.pdf'));
@@ -372,104 +401,31 @@ Future<File> _imageFile(Directory tempDir, String fileName) async {
 }
 
 final _pngBytes = base64Decode(
-  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=',
+  'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAACXBIWXMAAAABAAAAAQBPJcTWAAAADklEQVR4nGNkAAMWCAUAADgABkRoBWYAAAAASUVORK5CYII=',
 );
-const _jpegBytes = <int>[
-  0xff,
-  0xd8,
-  0xff,
-  0xe0,
-  0x00,
-  0x10,
-  0x4a,
-  0x46,
-  0x49,
-  0x46,
-  0x00,
-  0x01,
-  0x01,
-  0x00,
-  0x00,
-  0x01,
-  0x00,
-  0x01,
-  0x00,
-  0x00,
-  0xff,
-  0xc0,
-  0x00,
-  0x0b,
-  0x08,
-  0x00,
-  0x01,
-  0x00,
-  0x01,
-  0x01,
-  0x01,
-  0x11,
-  0x00,
-  0xff,
-  0xda,
-  0x00,
-  0x08,
-  0x01,
-  0x01,
-  0x00,
-  0x00,
-  0x3f,
-  0x00,
-  0x00,
-  0xff,
-  0xd9,
-];
-const _pdfBytes = <int>[
-  0x25,
-  0x50,
-  0x44,
-  0x46,
-  0x2d,
-  0x31,
-  0x2e,
-  0x34,
-  0x0a,
-  0x31,
-  0x20,
-  0x30,
-  0x20,
-  0x6f,
-  0x62,
-  0x6a,
-  0x0a,
-  0x3c,
-  0x3c,
-  0x3e,
-  0x3e,
-  0x0a,
-  0x65,
-  0x6e,
-  0x64,
-  0x6f,
-  0x62,
-  0x6a,
-  0x0a,
-  0x73,
-  0x74,
-  0x61,
-  0x72,
-  0x74,
-  0x78,
-  0x72,
-  0x65,
-  0x66,
-  0x0a,
-  0x30,
-  0x0a,
-  0x25,
-  0x25,
-  0x45,
-  0x4f,
-  0x46,
-];
+final _jpegBytes = base64Decode(
+  '/9j/4AAQSkZJRgABAgAAAQABAAD//gAQTGF2YzYyLjI4LjEwMQD/2wBDAAgEBAQEBAUFBQUFBQYGBgYGBgYGBgYGBgYHBwcICAgHBwcGBgcHCAgICAkJCQgICAgJCQoKCgwMCwsODg4RERT/xABLAAEBAAAAAAAAAAAAAAAAAAAACAEBAAAAAAAAAAAAAAAAAAAAABABAAAAAAAAAAAAAAAAAAAAABEBAAAAAAAAAAAAAAAAAAAAAP/AABEIAAIAAgMBIgACEQADEQD/2gAMAwEAAhEDEQA/AJ/AB//Z',
+);
+final _pdfBytes = _validPdfBytes();
+
+List<int> _validPdfBytes() {
+  const header = '%PDF-1.4\n';
+  const catalog = '1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n';
+  const pages = '2 0 obj\n<< /Type /Pages /Count 0 /Kids [] >>\nendobj\n';
+  final catalogOffset = header.length;
+  final pagesOffset = catalogOffset + catalog.length;
+  final xrefOffset = pagesOffset + pages.length;
+  final source = StringBuffer(header)
+    ..write(catalog)
+    ..write(pages)
+    ..write('xref\n0 3\n')
+    ..write('0000000000 65535 f \n')
+    ..write('${catalogOffset.toString().padLeft(10, '0')} 00000 n \n')
+    ..write('${pagesOffset.toString().padLeft(10, '0')} 00000 n \n')
+    ..write('trailer\n<< /Size 3 /Root 1 0 R >>\n')
+    ..write('startxref\n$xrefOffset\n%%EOF\n');
+  return latin1.encode(source.toString());
+}
 
 Future<File> _pdfFile(Directory tempDir, String fileName) async {
   final file = File(p.join(tempDir.path, fileName));
@@ -479,9 +435,16 @@ Future<File> _pdfFile(Directory tempDir, String fileName) async {
 
 class _FakeSupportingDocumentPicker implements SupportingDocumentPicker {
   final results = <XFile?>[];
+  SupportingDocumentPickerException? failure;
 
   @override
-  Future<XFile?> pickDocument() async => results.removeAt(0);
+  Future<XFile?> pickDocument() async {
+    final failure = this.failure;
+    if (failure != null) {
+      throw failure;
+    }
+    return results.removeAt(0);
+  }
 }
 
 class _FakeAttachmentViewer implements AttachmentViewerGateway {

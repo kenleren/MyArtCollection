@@ -76,7 +76,7 @@ class SupportingAttachmentService {
     if (type == AttachmentType.photo) {
       throw ArgumentError.value(type, 'type', 'Use photo intake for photos.');
     }
-    final selected = await documentPicker.pickDocument();
+    final selected = await _pickDocument();
     if (selected == null) {
       throw ArtworkIntakeException(
         ArtworkIntakeFailure.cancelled,
@@ -106,7 +106,7 @@ class SupportingAttachmentService {
         'The supporting document could not be found.',
       );
     }
-    final selected = await documentPicker.pickDocument();
+    final selected = await _pickDocument();
     if (selected == null) {
       throw const ArtworkIntakeException(
         ArtworkIntakeFailure.cancelled,
@@ -231,6 +231,22 @@ class SupportingAttachmentService {
       throw ArtworkIntakeException(
         ArtworkIntakeFailure.pickerUnavailable,
         'Could not finish the supporting document intake.',
+      );
+    }
+  }
+
+  Future<XFile?> _pickDocument() async {
+    try {
+      return await documentPicker.pickDocument();
+    } on SupportingDocumentPickerException {
+      throw const ArtworkIntakeException(
+        ArtworkIntakeFailure.pickerUnavailable,
+        'Could not open the system document picker. Try again later.',
+      );
+    } catch (_) {
+      throw const ArtworkIntakeException(
+        ArtworkIntakeFailure.pickerUnavailable,
+        'Could not open the system document picker. Try again later.',
       );
     }
   }
