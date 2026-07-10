@@ -25,6 +25,26 @@
       "predeploy": [
         "npm --prefix \"$RESOURCE_DIR\" run build"
       ]
+    },
+    {
+      "source": "backend/play_billing",
+      "codebase": "play-billing",
+      "ignore": [
+        "node_modules",
+        ".git",
+        "firebase-debug.log",
+        "firebase-debug.*.log"
+      ],
+      "predeploy": [
+        "npm --prefix \"$RESOURCE_DIR\" run build"
+      ]
+    }
+  ],
+  "firestore": [
+    {
+      "database": "archivale-play-billing",
+      "rules": "firestore.play-billing.rules",
+      "indexes": "firestore.play-billing.indexes.json"
     }
   ],
   "hosting": {

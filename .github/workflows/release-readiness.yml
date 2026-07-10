@@ -147,7 +147,7 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: ~/.npm/_cacache
-          key: npm-${{ runner.os }}-${{ hashFiles('backend/broker/package-lock.json', 'backend/forms/package-lock.json') }}
+          key: npm-${{ runner.os }}-${{ hashFiles('backend/broker/package-lock.json', 'backend/forms/package-lock.json', 'backend/play_billing/package-lock.json') }}
           restore-keys: npm-${{ runner.os }}-
       - name: Enforce broker audit policy
         shell: bash
@@ -180,7 +180,9 @@ jobs:
           mkdir -p "$forms_audit_cache"
           npm --prefix backend/forms audit --package-lock-only --audit-level=info \
             --cache "$forms_audit_cache"
-      - name: Test broker and forms packages
+      - name: Reject high-severity Play Billing dependencies
+        run: npm --prefix backend/play_billing audit --package-lock-only --audit-level=high
+      - name: Test backend packages
         shell: bash
         run: |
           set -euo pipefail
@@ -188,6 +190,8 @@ jobs:
           npm --prefix backend/broker test
           npm --prefix backend/forms ci
           npm --prefix backend/forms test
+          npm --prefix backend/play_billing ci
+          npm --prefix backend/play_billing test
 
   static-site:
     name: Static site validation
