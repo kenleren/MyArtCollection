@@ -213,9 +213,56 @@ void main() {
         store: store,
       ).retry(request.requestId, consent: request.consent);
 
-      expect(result.failure!.code, 'consent_required');
+      expect(result.failure!.code, 'retry_not_available');
       expect(runtime.calls, isEmpty);
       expect(transport.requests, isEmpty);
+    },
+  );
+
+  test(
+    'strictly rejects tampered frozen requests before Firebase or transport work',
+    () async {
+      final request = _payload();
+      final original = request.toRequest();
+      final mutations = <Map<String, Object?>>[
+        <String, Object?>{...original, 'local_artwork_id': 'must-not-send'},
+        <String, Object?>{
+          ...original,
+          'image': <String, Object?>{
+            ...(original['image']! as Map<String, Object?>),
+            'content_base64': 'AQI=',
+          },
+        },
+        <String, Object?>{
+          ...original,
+          'payload_hash':
+              'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        },
+      ];
+
+      for (final mutated in mutations) {
+        final store = _MemoryRetryStore();
+        await store.save(
+          FrozenBrokerRequest(
+            requestId: request.requestId,
+            payloadHash: original['payload_hash']! as String,
+            body: jsonEncode(<String, Object?>{'data': mutated}),
+            consent: request.consent,
+          ),
+        );
+        final runtime = _RecordingRuntime();
+        final transport = _RecordingTransport();
+
+        final result = await _client(
+          runtime: runtime,
+          transport: transport,
+          store: store,
+        ).retry(request.requestId, consent: request.consent);
+
+        expect(result.failure!.code, 'retry_not_available');
+        expect(runtime.calls, isEmpty);
+        expect(transport.requests, isEmpty);
+      }
     },
   );
 
@@ -366,6 +413,45 @@ void main() {
         ),
       ).submit(_payload());
       expect(diagnostic.failure!.code, 'invalid_broker_response');
+
+      final validRateLimit = <String, Object?>{
+        'ok': false,
+        'error_contract_version': 'broker-error-v1',
+        'request_id': _payload().requestId,
+        'status': 'rejected',
+        'error': <String, Object?>{
+          'code': 'rate_limited',
+          'message': 'The research service is busy. Try again later.',
+          'retryable': true,
+          'retry_after_seconds': 30,
+        },
+      };
+      final crossProductBodies = <Map<String, Object?>>[
+        validRateLimit,
+        <String, Object?>{...validRateLimit, 'status': 'conflict'},
+        <String, Object?>{
+          ...validRateLimit,
+          'error': <String, Object?>{
+            ...(validRateLimit['error']! as Map<String, Object?>),
+            'retry_after_seconds': 5,
+          },
+        },
+      ];
+      final crossProductStatuses = <int>[503, 429, 429];
+      for (var index = 0; index < crossProductBodies.length; index += 1) {
+        final result = await _client(
+          runtime: _RecordingRuntime(),
+          transport: _RecordingTransport(
+            responses: <Object>[
+              BrokerTransportResponse(
+                statusCode: crossProductStatuses[index],
+                body: jsonEncode(crossProductBodies[index]),
+              ),
+            ],
+          ),
+        ).submit(_payload());
+        expect(result.failure!.code, 'invalid_broker_response');
+      }
     },
   );
 

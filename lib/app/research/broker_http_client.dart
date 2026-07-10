@@ -133,6 +133,9 @@ class FileBrokerRetryStore implements BrokerRetryStore {
     try {
       final decoded = jsonDecode(await file.readAsString());
       if (decoded is! Map<Object?, Object?> ||
+          decoded.keys.any(
+            (key) => key is! String || !_frozenStorageKeys.contains(key),
+          ) ||
           decoded['request_id'] != requestId ||
           decoded['payload_hash'] is! String ||
           decoded['body'] is! String ||
@@ -179,6 +182,14 @@ class FileBrokerRetryStore implements BrokerRetryStore {
     return File(path.join(_directory.path, '$requestId.json'));
   }
 }
+
+const _frozenStorageKeys = <String>{
+  'request_id',
+  'payload_hash',
+  'body',
+  'consent_scope',
+  'consent_copy_version',
+};
 
 class BrokerClientFailure {
   const BrokerClientFailure({
@@ -253,11 +264,19 @@ class BrokerHttpClient {
         ),
       );
     }
-    if (!frozen.matchesConsent(consent) || !_matchesFrozenRequest(frozen)) {
+    if (!frozen.matchesConsent(consent)) {
       return const BrokerClientResult.failure(
         BrokerClientFailure(
           code: 'consent_required',
           message: 'Research consent must be confirmed again.',
+        ),
+      );
+    }
+    if (!_matchesFrozenRequest(frozen)) {
+      return const BrokerClientResult.failure(
+        BrokerClientFailure(
+          code: 'retry_not_available',
+          message: 'No saved research request is available.',
         ),
       );
     }
@@ -435,7 +454,11 @@ class BrokerHttpClient {
       );
     }
     return BrokerClientResult.failure(
-      _safeBrokerFailure(body, frozen.requestId),
+      _safeBrokerFailure(
+        body,
+        requestId: frozen.requestId,
+        httpStatus: transportResponse.statusCode,
+      ),
       refreshedAfterUnauthorized: refreshedAfterUnauthorized,
     );
   }
@@ -470,10 +493,15 @@ Map<String, Object?>? _jsonObject(String input) {
 }
 
 BrokerClientFailure _safeBrokerFailure(
-  Map<String, Object?>? body,
-  String requestId,
-) {
-  if (!_isBrokerErrorEnvelope(body, requestId)) {
+  Map<String, Object?>? body, {
+  required String requestId,
+  required int httpStatus,
+}) {
+  if (!_isBrokerErrorEnvelope(
+    body,
+    requestId: requestId,
+    httpStatus: httpStatus,
+  )) {
     return const BrokerClientFailure(
       code: 'invalid_broker_response',
       message: 'Research is temporarily unavailable.',
@@ -491,70 +519,230 @@ BrokerClientFailure _safeBrokerFailure(
 }
 
 bool _matchesFrozenRequest(FrozenBrokerRequest frozen) {
-  final envelope = _jsonObject(frozen.body);
-  if (envelope == null || !_hasOnlyKeys(envelope, const {'data'})) {
-    return false;
-  }
-  final request = _stringMap(envelope['data']);
-  if (request == null ||
-      request['request_id'] != frozen.requestId ||
-      request['payload_hash'] != frozen.payloadHash ||
-      request['consent_status'] != 'approved' ||
-      request['consent_scope'] != frozen.consent.scope.wireValue ||
-      request['consent_copy_version'] != frozen.consent.copyVersion) {
-    return false;
-  }
-  return true;
+  return isValidFrozenBrokerRequest(
+    body: frozen.body,
+    requestId: frozen.requestId,
+    payloadHash: frozen.payloadHash,
+    consent: frozen.consent,
+  );
 }
 
-const _brokerErrorCodes = <String>{
-  'method_not_allowed',
-  'unsupported_media_type',
-  'payload_invalid',
-  'temporarily_unavailable',
-  'unauthorized',
-  'forbidden',
-  'consent_required',
-  'consent_stale',
-  'not_entitled',
-  'payload_too_large',
-  'idempotency_conflict',
-  'request_in_flight',
-  'credits_exhausted',
-  'request_expired',
-  'request_outcome_unknown',
-  'rate_limited',
-  'upstream_refusal',
-  'upstream_timeout',
-  'upstream_failure',
-  'upstream_invalid_output',
-};
+class _BrokerErrorTuple {
+  const _BrokerErrorTuple(
+    this.httpStatus,
+    this.status,
+    this.code,
+    this.message,
+    this.retryable, [
+    this.retryAfterSeconds,
+  ]);
 
-const _brokerErrorMessages = <String>{
-  'Only POST requests are accepted.',
-  'Content-Type must be application/json.',
-  'The request payload is invalid.',
-  'Research is temporarily unavailable.',
-  'Authentication could not be verified.',
-  'This request is not allowed.',
-  'Approved research consent is required.',
-  'Research consent must be refreshed.',
-  'Online research is not included for this account.',
-  'The image media type is not supported.',
-  'The image payload is too large.',
-  'The request ID was already used for a different payload.',
-  'A research request is already in progress.',
-  'No online research credits remain.',
-  'The prior request expired before provider dispatch.',
-  'The prior request outcome cannot be safely retried.',
-  'The research service is busy. Try again later.',
-  'The research provider declined this request.',
-  'The research provider did not finish in time.',
-  'The research provider could not complete the request.',
-  'The research result did not pass validation.',
-};
+  final int httpStatus;
+  final String status;
+  final String code;
+  final String message;
+  final bool retryable;
+  final int? retryAfterSeconds;
 
-bool _isBrokerErrorEnvelope(Map<String, Object?>? body, String requestId) {
+  bool matches({
+    required int responseHttpStatus,
+    required String responseStatus,
+    required String responseCode,
+    required String responseMessage,
+    required bool responseRetryable,
+    required int? responseRetryAfterSeconds,
+  }) =>
+      httpStatus == responseHttpStatus &&
+      status == responseStatus &&
+      code == responseCode &&
+      message == responseMessage &&
+      retryable == responseRetryable &&
+      retryAfterSeconds == responseRetryAfterSeconds;
+}
+
+// Derived from backend/broker/fixtures/broker-error-v1.json. This is a
+// closed protocol surface: a valid field from one fixture case cannot be
+// combined with fields from another case.
+const _brokerErrorTuples = <_BrokerErrorTuple>[
+  _BrokerErrorTuple(
+    400,
+    'rejected',
+    'payload_invalid',
+    'The request payload is invalid.',
+    false,
+  ),
+  _BrokerErrorTuple(
+    401,
+    'rejected',
+    'unauthorized',
+    'Authentication could not be verified.',
+    false,
+  ),
+  _BrokerErrorTuple(
+    401,
+    'rejected',
+    'unauthorized',
+    'Authentication could not be verified.',
+    true,
+  ),
+  _BrokerErrorTuple(
+    402,
+    'rejected',
+    'credits_exhausted',
+    'No online research credits remain.',
+    false,
+  ),
+  _BrokerErrorTuple(
+    403,
+    'rejected',
+    'consent_required',
+    'Approved research consent is required.',
+    false,
+  ),
+  _BrokerErrorTuple(
+    403,
+    'rejected',
+    'consent_stale',
+    'Research consent must be refreshed.',
+    false,
+  ),
+  _BrokerErrorTuple(
+    403,
+    'rejected',
+    'forbidden',
+    'This request is not allowed.',
+    false,
+  ),
+  _BrokerErrorTuple(
+    403,
+    'rejected',
+    'not_entitled',
+    'Online research is not included for this account.',
+    false,
+  ),
+  _BrokerErrorTuple(
+    405,
+    'rejected',
+    'method_not_allowed',
+    'Only POST requests are accepted.',
+    false,
+  ),
+  _BrokerErrorTuple(
+    409,
+    'conflict',
+    'idempotency_conflict',
+    'The request ID was already used for a different payload.',
+    false,
+  ),
+  _BrokerErrorTuple(
+    409,
+    'conflict',
+    'request_expired',
+    'The prior request expired before provider dispatch.',
+    false,
+  ),
+  _BrokerErrorTuple(
+    409,
+    'conflict',
+    'request_in_flight',
+    'A research request is already in progress.',
+    true,
+    5,
+  ),
+  _BrokerErrorTuple(
+    409,
+    'conflict',
+    'request_outcome_unknown',
+    'The prior request outcome cannot be safely retried.',
+    false,
+  ),
+  _BrokerErrorTuple(
+    413,
+    'rejected',
+    'payload_too_large',
+    'The image payload is too large.',
+    false,
+  ),
+  _BrokerErrorTuple(
+    415,
+    'rejected',
+    'unsupported_media_type',
+    'Content-Type must be application/json.',
+    false,
+  ),
+  _BrokerErrorTuple(
+    415,
+    'rejected',
+    'unsupported_media_type',
+    'The image media type is not supported.',
+    false,
+  ),
+  _BrokerErrorTuple(
+    429,
+    'rejected',
+    'rate_limited',
+    'The research service is busy. Try again later.',
+    true,
+    30,
+  ),
+  _BrokerErrorTuple(
+    502,
+    'rejected',
+    'upstream_failure',
+    'The research provider could not complete the request.',
+    false,
+  ),
+  _BrokerErrorTuple(
+    502,
+    'rejected',
+    'upstream_invalid_output',
+    'The research result did not pass validation.',
+    false,
+  ),
+  _BrokerErrorTuple(
+    502,
+    'rejected',
+    'upstream_refusal',
+    'The research provider declined this request.',
+    false,
+  ),
+  _BrokerErrorTuple(
+    503,
+    'rejected',
+    'temporarily_unavailable',
+    'Research is temporarily unavailable.',
+    false,
+  ),
+  _BrokerErrorTuple(
+    503,
+    'rejected',
+    'temporarily_unavailable',
+    'Research is temporarily unavailable.',
+    true,
+    5,
+  ),
+  _BrokerErrorTuple(
+    503,
+    'rejected',
+    'temporarily_unavailable',
+    'Research is temporarily unavailable.',
+    true,
+    30,
+  ),
+  _BrokerErrorTuple(
+    504,
+    'rejected',
+    'upstream_timeout',
+    'The research provider did not finish in time.',
+    false,
+  ),
+];
+
+bool _isBrokerErrorEnvelope(
+  Map<String, Object?>? body, {
+  required String requestId,
+  required int httpStatus,
+}) {
   if (body == null ||
       !_hasOnlyKeys(body, const {
         'ok',
@@ -579,15 +767,25 @@ bool _isBrokerErrorEnvelope(Map<String, Object?>? body, String requestId) {
         'retry_after_seconds',
       }) ||
       error['code'] is! String ||
-      !_brokerErrorCodes.contains(error['code']) ||
       error['message'] is! String ||
-      !_brokerErrorMessages.contains(error['message']) ||
       error['retryable'] is! bool) {
     return false;
   }
   final retryAfter = error['retry_after_seconds'];
-  return !error.containsKey('retry_after_seconds') ||
-      (retryAfter is int && retryAfter >= 5 && retryAfter <= 300);
+  if (retryAfter != null &&
+      (retryAfter is! int || retryAfter < 5 || retryAfter > 300)) {
+    return false;
+  }
+  return _brokerErrorTuples.any(
+    (tuple) => tuple.matches(
+      responseHttpStatus: httpStatus,
+      responseStatus: body['status']! as String,
+      responseCode: error['code']! as String,
+      responseMessage: error['message']! as String,
+      responseRetryable: error['retryable']! as bool,
+      responseRetryAfterSeconds: retryAfter as int?,
+    ),
+  );
 }
 
 BrokerConsentScope? _consentScopeFromWire(String value) {

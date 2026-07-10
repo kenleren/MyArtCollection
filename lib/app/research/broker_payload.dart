@@ -176,6 +176,190 @@ class BrokerRequestPayload {
   }
 }
 
+/// Validates a persisted callable envelope before any Firebase or network
+/// operation. Frozen data is untrusted local input, so it must satisfy the
+/// complete wire contract and reproduce its stored RFC 8785 digest.
+bool isValidFrozenBrokerRequest({
+  required String body,
+  required String requestId,
+  required String payloadHash,
+  required BrokerResearchConsent consent,
+}) {
+  if (!_isUuid(requestId) || !_isSha256(payloadHash)) {
+    return false;
+  }
+  try {
+    final envelope = _stringMap(jsonDecode(body));
+    if (envelope == null ||
+        !_hasOnlyKeys(envelope, const {'data'}) ||
+        envelope.length != 1) {
+      return false;
+    }
+    final request = _stringMap(envelope['data']);
+    if (request == null ||
+        !_hasOnlyKeys(request, _requestKeys) ||
+        !_hasRequiredKeys(request, _requiredRequestKeys) ||
+        request['request_id'] != requestId ||
+        request['payload_hash'] != payloadHash ||
+        request['consent_status'] != 'approved' ||
+        request['consent_scope'] != consent.scope.wireValue ||
+        request['consent_copy_version'] != consent.copyVersion ||
+        request['payload_contract_version'] != brokerPayloadContractVersion ||
+        request['approved_payload_class'] != brokerApprovedPayloadClass ||
+        !_isValidUnicodeString(
+          request['consent_copy_version'],
+          maxLength: 160,
+        )) {
+      return false;
+    }
+
+    final image = _stringMap(request['image']);
+    if (image == null ||
+        !_hasOnlyKeys(image, _imageKeys) ||
+        !_hasRequiredKeys(image, _imageKeys) ||
+        !_validFrozenImage(image)) {
+      return false;
+    }
+
+    if (!_validFrozenDraftHints(
+      request['draft_hints'],
+      hasDraftHints: request.containsKey('draft_hints'),
+      scope: consent.scope,
+    )) {
+      return false;
+    }
+    final recomputed = sha256
+        .convert(
+          utf8.encode(
+            canonicalPayloadJson(canonicalBrokerPayloadDocument(request)),
+          ),
+        )
+        .toString();
+    return recomputed == payloadHash;
+  } on Object {
+    return false;
+  }
+}
+
+const _requestKeys = <String>{
+  'request_id',
+  'consent_status',
+  'consent_scope',
+  'consent_copy_version',
+  'payload_contract_version',
+  'approved_payload_class',
+  'image',
+  'draft_hints',
+  'payload_hash',
+};
+const _requiredRequestKeys = <String>{
+  'request_id',
+  'consent_status',
+  'consent_scope',
+  'consent_copy_version',
+  'payload_contract_version',
+  'approved_payload_class',
+  'image',
+  'payload_hash',
+};
+const _imageKeys = <String>{
+  'mime_type',
+  'byte_size',
+  'long_edge_px',
+  'content_base64',
+};
+const _hintKeys = <String>{'title_hint', 'artist_hint', 'search_terms'};
+
+bool _validFrozenImage(Map<String, Object?> image) {
+  final mimeType = image['mime_type'];
+  final byteSize = image['byte_size'];
+  final longEdge = image['long_edge_px'];
+  final content = image['content_base64'];
+  if ((mimeType != 'image/jpeg' && mimeType != 'image/webp') ||
+      byteSize is! int ||
+      byteSize <= 0 ||
+      byteSize > 1500000 ||
+      longEdge is! int ||
+      longEdge <= 0 ||
+      longEdge > 1600 ||
+      content is! String ||
+      content.isEmpty ||
+      !_isCanonicalBase64(content)) {
+    return false;
+  }
+  try {
+    return base64Decode(content).lengthInBytes == byteSize;
+  } on FormatException {
+    return false;
+  }
+}
+
+bool _validFrozenDraftHints(
+  Object? value, {
+  required bool hasDraftHints,
+  required BrokerConsentScope scope,
+}) {
+  if (!hasDraftHints) {
+    return true;
+  }
+  if (value == null || scope == BrokerConsentScope.imageOnly) {
+    return false;
+  }
+  final hints = _stringMap(value);
+  if (hints == null || !_hasOnlyKeys(hints, _hintKeys) || hints.isEmpty) {
+    return false;
+  }
+  final title = hints['title_hint'];
+  final artist = hints['artist_hint'];
+  final searchTerms = hints['search_terms'];
+  if ((title != null && !_isValidUnicodeString(title, maxLength: 160)) ||
+      (artist != null && !_isValidUnicodeString(artist, maxLength: 160))) {
+    return false;
+  }
+  if (searchTerms == null) {
+    return true;
+  }
+  return searchTerms is List<Object?> &&
+      searchTerms.isNotEmpty &&
+      searchTerms.length <= 5 &&
+      searchTerms.every((term) => _isValidUnicodeString(term, maxLength: 160));
+}
+
+bool _isCanonicalBase64(String value) {
+  if (!RegExp(
+    r'^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$',
+  ).hasMatch(value)) {
+    return false;
+  }
+  try {
+    return base64Encode(base64Decode(value)) == value;
+  } on FormatException {
+    return false;
+  }
+}
+
+bool _isValidUnicodeString(Object? value, {required int maxLength}) =>
+    value is String &&
+    value.isNotEmpty &&
+    value.length <= maxLength &&
+    !_containsLoneSurrogate(value);
+
+Map<String, Object?>? _stringMap(Object? value) {
+  if (value is! Map<Object?, Object?> ||
+      value.keys.any((key) => key is! String)) {
+    return null;
+  }
+  return Map<String, Object?>.from(value);
+}
+
+bool _hasOnlyKeys(Map<String, Object?> value, Set<String> allowed) =>
+    value.keys.every(allowed.contains);
+
+bool _hasRequiredKeys(Map<String, Object?> value, Set<String> required) =>
+    required.every(value.containsKey);
+
+bool _isSha256(String value) => RegExp(r'^[a-f0-9]{64}$').hasMatch(value);
+
 /// Builds the #187 hash document. The transport request intentionally does not
 /// carry [brokerCanonicalPayloadVersion], but the broker includes it in the
 /// RFC 8785 hash domain.
