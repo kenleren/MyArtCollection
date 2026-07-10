@@ -11,7 +11,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "test": "npm run build && node --test build/dist-test/*.test.js",
-    "test:emulator": "npm run build && node --test build/emulator-test/*.test.js"
+    "test:emulator": "npm run build && node --test build/emulator-test/*.test.js",
+    "test:emulator:ci": "firebase emulators:exec --project demo-archivale-billing --only firestore \"npm run test:emulator\""
   },
   "dependencies": {
     "firebase-admin": "^13.10.0",
@@ -20,6 +21,7 @@
   "devDependencies": {
     "@types/node": "^22.15.3",
     "firebase": "^12.11.0",
+    "firebase-tools": "15.23.0",
     "typescript": "^5.8.3"
   }
 }

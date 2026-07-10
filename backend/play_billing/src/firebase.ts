@@ -7,7 +7,10 @@ import {
   type CallableRequest,
 } from 'firebase-functions/v2/https';
 
-import { BILLING_DATABASE_ID } from './constants.js';
+import {
+  BILLING_DATABASE_ID,
+  BILLING_VERIFIER_SERVICE_ACCOUNT,
+} from './constants.js';
 import type { BillingIdentity } from './contracts.js';
 import { createBillingIdentifiers, CryptoNonceSource } from './crypto.js';
 import { FirestoreBillingDatabase } from './firestore_store.js';
@@ -20,6 +23,7 @@ const callableOptions = {
   region: 'us-central1' as const,
   timeoutSeconds: 60,
   memory: '512MiB' as const,
+  serviceAccount: BILLING_VERIFIER_SERVICE_ACCOUNT,
   enforceAppCheck: true,
   consumeAppCheckToken: true,
   secrets: [fingerprintKey],

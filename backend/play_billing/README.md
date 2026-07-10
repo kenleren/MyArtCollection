@@ -18,13 +18,15 @@ npm --prefix backend/play_billing test
 npm --prefix backend/play_billing audit --package-lock-only --audit-level=high
 firebase emulators:exec --project demo-archivale-billing --only firestore \
   "npm --prefix backend/play_billing run test:emulator"
+# Requires Java 21. This uses the lockfile-pinned firebase-tools dependency.
+npm --prefix backend/play_billing run test:emulator:ci
 ```
 
 The deterministic suite covers disclosure ordering, product/account/state
 validation, delivery-before-acknowledgement, retry cooldowns, token
 single-flight, generation-advancing reclaim, stale-owner rejection,
 canceled-pending predecessor recovery, redaction, named-database targeting,
-and deny-all client rules.
+deny-all client rules, and Firestore-emulator persistence/CAS coverage.
 
 ## Deployment Gate
 

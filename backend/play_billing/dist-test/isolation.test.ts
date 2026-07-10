@@ -5,7 +5,11 @@ import { describe, test } from 'node:test';
 
 import type { Firestore } from 'firebase-admin/firestore';
 
-import { BILLING_DATABASE_ID, COLLECTIONS } from '../src/constants.js';
+import {
+  BILLING_DATABASE_ID,
+  BILLING_VERIFIER_SERVICE_ACCOUNT,
+  COLLECTIONS,
+} from '../src/constants.js';
 import { FirestoreBillingDatabase } from '../src/firestore_store.js';
 import {
   acceptDisclosure,
@@ -126,6 +130,11 @@ describe('billing isolation and redaction', () => {
     assert.equal(source.includes('consumeAppCheckToken: true'), true);
     assert.equal(source.includes("region: 'us-central1'"), true);
     assert.equal(source.includes('timeoutSeconds: 60'), true);
+    assert.equal(source.includes('serviceAccount: BILLING_VERIFIER_SERVICE_ACCOUNT'), true);
+    assert.equal(
+      BILLING_VERIFIER_SERVICE_ACCOUNT,
+      'archivale-play-billing-verifier@my-art-collections.iam.gserviceaccount.com',
+    );
     assert.equal(source.includes("verifyIdToken(authorization.slice('Bearer '.length), true)"), true);
     assert.equal(source.includes("sign_in_provider !== 'anonymous'"), true);
     assert.equal(source.includes('request.app.appId !== approvedAppId'), true);

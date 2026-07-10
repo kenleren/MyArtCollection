@@ -4,6 +4,8 @@ export const DISCLOSURE_ASSERTION_VERSION = 'billing-disclosure-assertion-v1';
 export const DISCLOSURE_PURPOSE = 'play_subscription_verification';
 export const PACKAGE_NAME = 'app.archivale';
 export const BILLING_DATABASE_ID = 'archivale-play-billing';
+export const BILLING_VERIFIER_SERVICE_ACCOUNT =
+  'archivale-play-billing-verifier@my-art-collections.iam.gserviceaccount.com';
 export const ACTIVE_KEY_VERSION = 'play-billing-fingerprint-v1';
 
 export const ATTEMPT_LEASE_MS = 90_000;
