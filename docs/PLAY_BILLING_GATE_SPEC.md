@@ -1,7 +1,6 @@
 # Play Billing Gate Spec
 
-Status: accepted documentation contract; implementation and deployment remain
-gated
+Status: review-ready documentation contract; implementation and deployment remain gated
 Issue: #190
 Date: 2026-07-10
 
@@ -13,71 +12,147 @@ subscription verification. It defines the boundary consumed by #191 (server),
 authorize implementation, Play or Firebase mutation, a purchase, credential
 access, deployment, or public paid rollout.
 
-Google Play is the payment-state authority. The server verifies Play state and
-returns a short result; the mobile app holds that result only as an in-memory
-lease. No client claim, local plan selection, Firebase document, AI broker
-entitlement, or cached purchase object can prove payment.
+Google Play is the payment-state authority. The server verifies current Play
+state, durably commits the verified entitlement delivery, acknowledges that
+delivery, and only then returns a short result. The mobile app holds that
+result only as an in-memory lease. No client claim, local plan selection,
+Firestore record by itself, AI broker entitlement, or cached purchase object
+can prove current payment.
 
 The initial contract is deliberately internal-track only. Issue #194 is a hard
 gate before any closed, open, or production paid rollout.
 
-## One-Project Isolation
+## One-Project, Separate-Database Isolation
 
 `my-art-collections` is the only approved Firebase/GCP project. Earlier
 proposals that require another Firebase project for paid AI or Play Billing are
-obsolete. Billing remains isolated inside the shared project by all of these
+obsolete. Billing is isolated inside the shared project by all of these
 boundaries:
 
 | Surface | Billing-owned contract |
 | --- | --- |
 | Source directory | `backend/play_billing` |
 | Functions codebase | `play-billing` |
-| Callable function | `verifyPlaySubscription` v1 |
-| Region/runtime | `us-central1`; Node.js 22 |
+| Callable functions | `acceptPlayBillingDisclosure`, `revokePlayBillingDisclosure`, and `verifyPlaySubscription`, v1 |
+| Region/runtime | `us-central1`; Node.js 22; 60-second function timeout |
 | Runtime identity | Dedicated billing-verifier service identity, distinct from the research broker identity |
-| Durable collections | `playBillingPurchaseBindings`, `playBillingRequestReplays` |
+| Firestore database | Named Standard/Native-mode database `archivale-play-billing` in `us-central1`, with delete protection enabled; never `(default)` |
+| Durable collections | `playBillingDisclosureAssertions`, `playBillingPurchaseBindings`, `playBillingRequestReplays`, `playBillingTokenOperations`, `playBillingRateLimits` |
 | Secret use | Server-only fingerprint key with an explicit version; never available to mobile or the research broker |
-| IAM | Only the verifier may call the required Android Publisher read/acknowledge methods and read/write the two billing collections |
-| Rollback target | Billing callable/codebase and its runtime identity, without disabling the AI broker |
+| IAM | Database-scoped verifier access plus Android Publisher read/acknowledge only |
+| Client access | Deny all reads and writes through Firestore Security Rules, including authenticated anonymous clients |
+| Rollback target | Billing callables/codebase, runtime IAM, and named-database rules/IAM; database deletion is not routine rollback |
 
-The deployment owner must record the exact runtime principal and least-privilege
-IAM bindings before deployment. The verifier must not read or write
-`brokerDurableEntitlements`, broker credits, broker requests, artwork records,
-or attachment records. Conversely, the research broker has no read or write
-authority over billing collections and no payment authority.
+The verifier receives `roles/datastore.user` only with an IAM condition whose
+resource expression is exactly:
+
+```text
+resource.name ==
+  "projects/my-art-collections/databases/archivale-play-billing"
+```
+
+The effective runtime policy must contain no unconditional, inherited, group,
+or service-agent grant that gives the verifier access to `(default)` or another
+database, and it must not receive `roles/datastore.owner`. The broker runtime
+must have no grant to
+`archivale-play-billing`; if it needs a project-level Firestore role, that role
+must exclude the billing database with a reviewed database condition. Human
+operator/deployment roles are separately governed and are not runtime
+authority.
+
+The billing database uses a database-targeted deny-all client ruleset:
+
+```text
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
+```
+
+Server/Admin libraries bypass Security Rules and are controlled by IAM, so
+both layers are mandatory. #191 must own the database ID constant, explicit
+client construction for that named database, rules target, indexes/TTL target,
+static/fake/emulator negative tests, and rollback fixtures. Deployment evidence
+must prove anonymous and authenticated clients cannot read/write billing data,
+the broker identity cannot access the billing database, and the verifier
+identity cannot access broker, artwork, attachment, or other default-database
+records.
+
+The verifier must never read or write `brokerDurableEntitlements`, broker
+credits, broker requests, artwork records, or attachment records. Conversely,
+the research broker has no read/write authority over the billing database and
+no payment authority.
 
 Because the project is shared, project-wide billing disablement is not an
 isolated billing or AI kill switch. It can disrupt Auth, App Check, App
 Distribution, telemetry, billing verification, and the research broker. Use
-function/codebase, runtime-IAM, and provider-specific controls first; any
-project-wide action remains an explicit human-owned last resort.
+function/codebase, database-scoped IAM, and provider-specific controls first;
+any project-wide action remains an explicit human-owned last resort.
 
-## Billing Identity Is Not AI Consent
+## Billing Disclosure Is A Separate Server Gate
 
-When a collector initiates purchase or restore, the app must first show a
-distinct billing-verification disclosure. Acceptance authorizes the app to
-create or reuse anonymous Firebase Auth for `my-art-collections` and obtain App
-Check only for subscription verification and entitlement refresh.
+When a collector initiates purchase or restore, the app must first show the
+source-controlled `billing-verification-disclosure-v1` copy. Acceptance
+authorizes the app to create or reuse anonymous Firebase Auth for
+`my-art-collections` and obtain App Check only for subscription verification
+and entitlement refresh.
 
 That disclosure:
 
 - does not create, imply, or satisfy AI research consent;
 - does not enable `online_research_enabled` or authorize a broker request;
-- does not authorize an artwork image, metadata, notes, documents, or research
+- does not authorize artwork images, metadata, notes, documents, or research
   hints to leave the device;
 - does not turn the anonymous UID into a Google Play or Archivale account; and
 - is required independently of whether the same anonymous identity is later
   reused after separate, current-version research consent.
 
-Research still requires its own disclosure, current consent-copy version, and
-all gates in `AI_BROKER_AUTH_AND_QUOTA_SPEC.md`. Possession of a billing lease
-does not bypass those gates. App Check attests the app instance; it is not user
-identity, payment evidence, or consent.
+Auth and App Check do not prove acceptance. After the collector affirmatively
+accepts the displayed copy, the official app calls
+`acceptPlayBillingDisclosure` with exactly:
 
-The billing callable requires a verified anonymous Auth context and a fresh
-limited-use App Check token from `my-art-collections`, consumed server-side.
-Missing, stale, replayed, revoked, wrong-project, or unapproved-app identity
-fails to Free before any Android Publisher request.
+```json
+{
+  "requestId": "canonical-lowercase-uuid",
+  "disclosureVersion": "billing-verification-disclosure-v1",
+  "purpose": "play_subscription_verification",
+  "accepted": true
+}
+```
+
+The callable accepts only literal `accepted=true`, verifies project-bound
+revoked Auth, consumes a fresh approved-app App Check token, derives the account
+subject, and creates the server-owned `billing-disclosure-assertion-v1` record.
+It makes no Android Publisher call and accepts no purchase token. Firestore
+clients cannot create this record.
+
+The assertion is keyed by account subject and contains only contract version,
+account subject, exact disclosure version, exact purpose, accepted/status
+timestamps, `status=accepted`, and
+`retentionExpiresAt=acceptedAt+365 days`. Use does not extend expiry. A new
+disclosure version requires a new affirmative acceptance. Revocation/account
+deletion changes status to `revoked` before deletion and sets cleanup no later
+than 30 days; a revoked record is never accepted. Broader durable-account
+deletion remains #194 work.
+
+`revokePlayBillingDisclosure` accepts only canonical `requestId`, current
+`disclosureVersion`, and exact purpose through verified Auth/consumed App Check.
+It atomically changes the current subject's assertion to `status=revoked` and
+sets cleanup no later than 30 days. It makes zero Play calls. A missing record
+is an idempotent no-op; an account/purpose/version mismatch fails closed.
+
+Every `verifyPlaySubscription` request declares
+`billing-verification-disclosure-v1`. Before any Android Publisher call, the
+server recomputes the account subject and requires the current, unexpired,
+accepted, purpose-matching assertion. Missing, stale, expired, revoked,
+research-only, wrong-purpose, malformed, or unknown-version assertions return
+Free with `disclosure_required` and zero Play calls. Acceptance is never
+inferred from UID existence, research consent, App Check, a purchase, a prior
+lease, or a request field alone.
 
 ## Fixed Product Contract
 
@@ -111,17 +186,19 @@ AI credits never gate manual cataloging or existing-record access.
 
 | Field | Rule |
 | --- | --- |
-| `requestId` | Required canonical lowercase UUID; used only for idempotency and safe correlation |
-| `productId` | Required string but untrusted; it must match the verified single Play line item and fixed allowlist |
+| `requestId` | Required canonical lowercase UUID; used for replay and client-generation fencing |
+| `billingDisclosureVersion` | Must equal `billing-verification-disclosure-v1`; the durable server assertion remains authoritative |
+| `productId` | Required string but untrusted; it must match the queried successor product, not necessarily a canceled-pending predecessor |
 | `purchaseToken` | Required non-empty Play purchase token; request-memory only |
 
 Firebase Auth and App Check arrive only through verified callable context. The
 body must not accept a UID, App Check token, Auth token, package override,
-account binding, plan, price, entitlement, expiry, acknowledgement state, or
-linked token. Unknown or malformed fields fail to Free before a Play call.
+account binding, plan, price, entitlement, expiry, acknowledgement state,
+linked token, account subject, token fingerprint, or client generation.
+Unknown or malformed fields fail to Free before a Play call.
 
-The app sends the same Auth-derived account binding to Google Play when it
-launches the billing flow:
+The app sends the Auth-derived account binding to Google Play when it launches
+the billing flow:
 
 ```text
 base64urlNoPad(
@@ -132,11 +209,11 @@ base64urlNoPad(
 The output is the 43-character, unpadded base64url SHA-256 digest. #192 passes
 that exact value through `setObfuscatedAccountId`. #191 recomputes it from the
 verified Auth UID and requires exact, case-sensitive equality with
-`externalAccountIdentifiers.obfuscatedExternalAccountId` from
-`purchases.subscriptionsv2.get`. Missing or unequal values fail to Free.
+`externalAccountIdentifiers.obfuscatedExternalAccountId` from the independently
+queried purchase. Missing or unequal values fail to Free.
 
-The server also derives three non-reversible storage identifiers with a
-server-only HMAC key:
+The server derives three non-reversible storage identifiers with a server-only
+HMAC key:
 
 ```text
 tokenFingerprint = hexLower(
@@ -155,159 +232,297 @@ requestFingerprint = hexLower(
 )
 ```
 
-Both collections store `contractVersion=play-billing-v1` and `keyVersion`. The
-purchase-token fingerprint is globally unique and may bind to only one account
-subject. A fingerprint already bound to another subject, product, or
-incompatible lifecycle fails to Free. The raw UID, `obfuscatedAccountId`, and
-raw purchase token are never storage keys.
+All billing records store `contractVersion=play-billing-v1` and `keyVersion`.
+The purchase-token fingerprint is globally unique and may bind to only one
+account subject. A fingerprint already bound to another subject, product, or
+incompatible lifecycle fails to Free. Raw UID, `obfuscatedAccountId`, and raw
+purchase token are never storage keys.
 
 The internal MVP permits exactly one active fingerprint key version. An
-unknown version or an attempted live key change fails to Free. Rotation needs a
+unknown version or attempted live key change fails to Free. Rotation needs a
 separately reviewed disable/migration/rollback procedure; `keyVersion` is not
 permission to silently create a second identity for an existing token or UID.
 
-### Request Replay And Concurrency
+## Replay, Token Serialization, And Call Bounds
 
-Before the first Play call, atomically create the request-replay record with
-the request fingerprint, token fingerprint, `outcomeCode=in_flight`, and
-timestamps. Reuse has these exact outcomes:
+### Request Replay
 
-- same request fingerprint and token fingerprint while `in_flight` is younger
-  than 60 seconds: return Free with fixed reason `in_flight` and make no Play
-  or acknowledgement call;
-- same request and token at or after the 60-second boundary, or after a fixed
-  terminal outcome: after the new request has independently passed Auth/App
-  Check, atomically reclaim it, then re-run `purchases.subscriptionsv2.get`,
-  every binding/state check, and any required acknowledgement; the prior
-  outcome is not entitlement evidence;
+After the disclosure gate and before the first Play call, atomically create the
+request-replay record with request fingerprint, token fingerprint,
+`outcomeCode=in_flight`, and timestamps. Reuse has these outcomes:
+
+- same request/token fingerprint while `in_flight` is younger than 90 seconds:
+  return Free with `in_flight` and make no Play or acknowledgement call;
+- same request/token at or after the 90-second boundary, or after a terminal
+  outcome: atomically reclaim it and repeat current Play verification; the
+  prior result is not payment evidence;
 - same request fingerprint with a different token fingerprint: return Free
-  with fixed reason `replay_conflict` and make no Play call; and
-- any malformed, unknown-version, missing-field, or partially written replay
-  record: return Free with fixed reason `unsafe_record` and do not overwrite it.
+  with `replay_conflict` and make no Play call; and
+- malformed, unknown-version, missing-field, or partial replay record: return
+  Free with `unsafe_record` and do not overwrite it.
 
-Completion replaces `in_flight` with exactly `paid`, `free`, or `ack_failed`
-and updates the timestamp. No other outcome code is valid. A crash may leave
-`in_flight`; the boundary above permits safe, idempotent recovery. Concurrent
-attempts cannot both own the record. Replay records never cache a paid response
-or skip current Play verification.
+Valid outcomes are `in_flight`, `delivery_committed`, `paid`, `free`, and
+`ack_unknown`. A crash may leave a recoverable nonterminal outcome. Replay
+records never cache a lease or replace current Play verification.
 
-## Verification Order
+### Subject Ceiling And Token Single-Flight
 
-For an ordinary purchase or refresh, #191 must perform these steps in order:
+Before a Play call, a transaction in `archivale-play-billing` must enforce:
 
-1. Validate callable shape, method, size, and canonical `requestId`.
+- no more than 6 `purchases.subscriptionsv2.get` starts per account subject in
+  a rolling 15-minute window;
+- no more than one in-flight verification per token fingerprint;
+- at least 15 seconds between Play `get` starts for the same token fingerprint;
+- no more than 3 acknowledgement starts per token fingerprint in a rolling
+  15-minute window; and
+- at most one acknowledgement call in a single callable attempt, with no
+  automatic same-request retry after timeout, 409, 5xx, or another error.
+
+The pre-Play token operation is a 90-second `lookup_in_flight` single-flight
+lease keyed by token fingerprint and owned by request fingerprint. It contains
+no account ownership and grants no entitlement. Distinct request IDs for the
+same token observe `in_flight` and make zero Play calls. An expired owner may be
+replaced transactionally subject to the cooldown and subject ceiling.
+
+Only after Play returns and the package, returned product, account binding,
+state/expiry, and token uniqueness are verified may the same transaction
+upgrade the operation to `verified_owner` and bind the account subject. A
+wrong-account, malformed, ineligible, or unverified token can never capture
+durable token ownership or a purchase binding. It may consume only the bounded
+preflight attempt. Unknown or partial operation/rate records fail to Free.
+
+For the canceled-pending predecessor branch, the successor operation is closed
+as `canceled_pending_read_only` before acquiring a separately serialized
+predecessor operation. Both Play lookups count against the same subject ceiling.
+This avoids holding two token locks and the canceled successor never becomes a
+verified owner.
+
+Each Android Publisher call has a 10-second absolute deadline and the complete
+Play-call portion of one callable has a 45-second absolute deadline. No library
+or transport layer may add implicit retries. The 90-second token lease outlives
+the 60-second function timeout, so a replacement owner cannot overlap a still-
+running original function.
+
+## Canonical Verification Order
+
+For every purchase, restore, or refresh, #191 must perform these steps in order:
+
+1. Validate callable shape, size, fixed disclosure version, and `requestId`.
 2. Verify revoked/project-bound anonymous Auth.
-3. Verify and consume a fresh, approved-app, project-bound App Check token.
-4. Recompute the account binding, account subject, token fingerprint, and
-   request fingerprint in memory, then acquire the replay record as specified
-   above.
-5. Reject a replay conflict, unsafe/superseded binding, or a token binding owned
-   by another account.
+3. Verify and consume a fresh approved-app, project-bound App Check token.
+4. Recompute account subject and require the accepted current-purpose billing-
+   disclosure assertion. Rejection makes zero Play calls.
+5. Enforce the per-subject ceiling; derive account binding, token fingerprint,
+   and request fingerprint; acquire request replay and token single-flight.
 6. Call `purchases.subscriptionsv2.get` with fixed
    `packageName=app.archivale` and the raw request purchase token.
-7. Require exactly one line item and exact agreement among the requested
-   `productId`, returned `lineItems[0].productId`, and the allowlist.
-8. Require an auto-renewing item with `offerDetails.basePlanId=monthly`, absent
-   `offerDetails.offerId`, a parseable future `expiryTime`, exact account
-   binding, unique token binding, and an eligible state.
-9. Resolve `linkedPurchaseToken` according to the atomic rules below.
-10. If acknowledgement is pending, call
-    `purchases.subscriptions.acknowledge`; if already acknowledged, perform the
-    defined no-op. Any unspecified acknowledgement state fails to Free.
-11. Only after successful/already-complete acknowledgement, atomically persist
-    the binding and any linked-token supersession.
-12. Return a bounded lease response. Any failure before step 12 returns Free.
+7. Require exactly one returned line item, an allowlisted returned product, and
+   exact equality between request `productId` and that returned successor
+   product.
+8. If the returned state is
+   `SUBSCRIPTION_STATE_PENDING_PURCHASE_CANCELED`, branch immediately to the
+   canceled-pending procedure. Do not run ordinary successor eligibility,
+   expiry, account-binding, delivery, binding, or acknowledgement steps.
+9. For every other state, require auto-renewing
+   `offerDetails.basePlanId=monthly`, absent `offerDetails.offerId`, exact
+   account binding, unique/same-subject token binding, parseable future expiry,
+   and `ACTIVE`, `IN_GRACE_PERIOD`, or `CANCELED` eligibility.
+10. Upgrade the token operation to verified ownership and durably commit the
+    verified entitlement delivery before acknowledgement.
+11. If Play reports acknowledgement pending, make the one allowed
+    `purchases.subscriptions.acknowledge` call. If already acknowledged, use
+    the no-call recovery path. Unknown acknowledgement fails to Free.
+12. In one final transaction, persist acknowledged delivery, finish request and
+    token-operation state, and atomically supersede a linked predecessor when
+    applicable.
+13. Re-read/confirm the committed final state in the transaction result and
+    return the bounded lease. Any missing commit or failure returns Free.
 
 `purchases.subscriptionsv2.get` is the source of truth on every verification or
-refresh. A client `Purchase`, prior server response, replay record, or stored
-binding never replaces that call in this internal MVP.
+refresh. A client `Purchase`, prior server response, replay record, token
+operation, or stored binding never replaces that call.
 
-## Acknowledgement Contract
+## Crash-Safe Delivery And Acknowledgement
 
-Exact account-binding equality and all package/product/base-plan/offer,
-token-uniqueness, state, and expiry checks are acknowledgement preconditions.
-For an eligible purchase whose Play response is
+Google's order is verify, grant/update entitlement storage, then acknowledge
+delivery. Archivale implements that order without exposing an unacknowledged
+client lease.
+
+### Durable Delivery Commit
+
+After every ordinary eligibility check succeeds and while the request owns the
+verified token operation, one transaction must create or update the purchase
+binding with:
+
+- exact token fingerprint, account subject, plan/product/base-plan/offer,
+  normalized state, Play expiry, and verification time;
+- `deliveryState=committed`;
+- `ackState=pending` when Play reports pending, or `ackState=play_acknowledged`
+  when Play already reports acknowledgement;
+- `bindingState=verified_delivery_committed`;
+- linked predecessor fingerprint as a staged candidate when present; and
+- request/operation state `delivery_committed`.
+
+This is the durable grant/update of entitlement ownership required before
+Archivale tells Play that delivery occurred. It is recoverable server state,
+but it is not sufficient by itself for a paid response, offline access, or an
+AI entitlement. Before this transaction commits, no acknowledgement call is
+allowed. A storage failure therefore leaves Play unacknowledged, returns Free,
+and preserves Play's refund safeguard; retry starts with current verification.
+
+For a linked successor, the durable commit may stage the successor binding and
+predecessor fingerprint, but it must not edit, tombstone, or supersede the
+predecessor yet.
+
+### Exact Acknowledgement Call
+
+For a delivery-committed eligible purchase with
 `ACKNOWLEDGEMENT_STATE_PENDING`, call
 `purchases.subscriptions.acknowledge` with exactly:
 
 ```text
 packageName = app.archivale
-subscriptionId = the verified product ID
+subscriptionId = the independently verified product ID
 token = the raw purchase token held in request memory
 body = {}
 ```
 
-Do not send an account identifier, `externalAccountIds`, developer payload,
-UID, or any additional body field. `ACKNOWLEDGEMENT_STATE_ACKNOWLEDGED` is a
-successful no-op. The verifier never acknowledges a pending, unknown,
-ineligible, mismatched, expired, revoked, or voided purchase.
+Account-binding equality is a precondition, not an acknowledgement argument.
+Do not send `externalAccountIds`, developer payload, UID, or another body field.
+`ACKNOWLEDGEMENT_STATE_ACKNOWLEDGED` is a successful no-call recovery path. The
+verifier never acknowledges pending, unknown, ineligible, mismatched, expired,
+revoked, or voided state.
 
-All successor and predecessor changes are staged in request memory only before
-acknowledgement. An acknowledgement error or timeout returns Free, discards the
-staged changes, does not create a purchase binding, and does not change a
-predecessor. Only the sanitized 24-hour replay outcome `ack_failed` may persist.
-A retry re-runs `purchases.subscriptionsv2.get`, every check, and acknowledgement
-idempotently. If acknowledgement succeeded but the server failed before its
-transaction, the retry observes already acknowledged and completes the same
-atomic binding transaction without another acknowledgement call.
+### Finalization And Recovery
 
-## Linked Purchase Tokens
+After acknowledgement succeeds, or current Play state says it was already
+complete, one transaction must require the same verified token-operation owner
+and delivery-committed binding, then set:
 
-For an eligible successor with `linkedPurchaseToken`:
+- `ackState=acknowledged` and acknowledgement-confirmed timestamp;
+- `bindingState=acknowledged_delivery`;
+- request outcome `paid` and token operation terminal/cooldown state; and
+- for a linked successor only, successor/predecessor pointers plus predecessor
+  `bindingState=superseded` atomically.
 
-1. Keep the raw linked token in request memory and derive its token fingerprint.
-2. Fully verify the successor first, including account binding, token
-   uniqueness, package, product, base plan, absent offer, eligible state, and
-   future expiry.
-3. Treat predecessor reads as read-only before acknowledgement. Any existing
-   predecessor binding must belong to the same account subject and must not
-   already be superseded by another successor.
-4. Acknowledge the successor as specified above, or accept the already-
-   acknowledged no-op.
-5. Only then, in one transaction, bind/update the successor, store its
-   predecessor fingerprint, and mark/tombstone the predecessor as superseded
-   with the successor fingerprint.
+Only the successful result of this final transaction can produce a lease. If
+acknowledgement succeeds but final storage or response delivery fails, the
+durable delivery-committed binding remains. A retry re-runs
+`purchases.subscriptionsv2.get`; when Play reports acknowledged, it completes
+the final transaction without another acknowledgement call. If the final
+transaction committed but the response was lost, retry verifies Play and the
+binding again and can return a new capped lease.
 
-After that transaction, the predecessor cannot issue another lease. Raw linked
-tokens are never persisted or followed as substitute durable entitlements. An
-acknowledgement or transaction failure must not supersede, tombstone, or alter
-predecessor access; it returns Free and the retry begins from Play verification.
+Timeout, 409, 5xx, or another ambiguous acknowledgement result sets
+`ackState=unknown` and request outcome `ack_unknown` without changing the
+predecessor or returning a lease. It releases the operation into the 15-second
+cooldown. No same-request acknowledgement retry occurs. The next bounded
+request re-verifies Play: acknowledged state finalizes; pending state may make
+one new acknowledgement attempt if the token attempt ceiling allows it;
+ineligible state invalidates the staged binding and returns Free.
 
-### Canceled Pending Replacement
+A definitive acknowledgement or later Play failure likewise returns Free while
+retaining enough sanitized delivery state to retry or invalidate safely. The
+client presents verification-pending state and retries on the next purchase
+event, foreground, restore, or gated action, subject to ceilings. No raw token
+is retained for unattended repair; if the collector never returns, Play's
+unacknowledged-purchase safeguard remains. RTDN/background reconciliation is
+still deferred to #194.
+
+While verification is pending, #192/#193 must not prompt a duplicate purchase
+for that product or claim payment failed. They expose bounded retry/restore and
+obtain the current token again from Play's purchase query/stream, never from
+app-owned persistence. Existing-record view/edit/report/export stays available
+throughout recovery.
+
+At every crash boundary:
+
+| Last durable point | Required retry behavior |
+| --- | --- |
+| Before verified delivery commit | No acknowledgement occurred; re-verify and restage |
+| Delivery committed, acknowledgement not started/unknown | Re-verify Play; acknowledge once only if still pending and allowed |
+| Acknowledgement succeeded, final transaction missing | Re-verify; observe acknowledged; finalize without another acknowledgement call |
+| Final transaction committed, response lost | Re-verify current Play/binding state; return a newly bounded lease |
+| Any state becomes ineligible/mismatched | Invalidate staged state, preserve predecessor, return Free |
+
+No path acknowledges an unverified or uncommitted delivery, returns a lease
+from an unacknowledged/unknown record, or requires deleting a valid predecessor
+to recover.
+
+## Linked Successor Contract
+
+For an ordinary eligible successor with `linkedPurchaseToken`:
+
+1. Keep the raw linked token in request memory and derive its fingerprint.
+2. Fully verify the successor, including request/returned product equality,
+   base plan/offer, account binding, token uniqueness, state, and expiry.
+3. Require any existing predecessor binding to belong to the same account and
+   not already be superseded by a different successor.
+4. Durably commit the successor delivery and staged predecessor fingerprint;
+   predecessor reads and state remain unchanged.
+5. Acknowledge or recover already-acknowledged state as specified above.
+6. Only in the final acknowledged-delivery transaction, bind the successor and
+   mark/tombstone the predecessor as superseded.
+
+After that final transaction, the predecessor cannot issue another lease. Raw
+linked tokens are never persisted or followed as substitute entitlement. An
+acknowledgement/storage failure returns Free for the successor, preserves its
+recoverable delivery stage when committed, and leaves predecessor access and
+records unchanged.
+
+## Canceled-Pending Predecessor Contract
 
 `SUBSCRIPTION_STATE_PENDING_PURCHASE_CANCELED` never grants access from the
-canceled pending token itself.
+canceled pending successor itself. The branch occurs immediately after the
+successor request/returned-product check and before ordinary successor
+eligibility, expiry, account binding, delivery, binding, or acknowledgement.
 
-When it includes `linkedPurchaseToken`, re-query that raw predecessor in the
-same request with `purchases.subscriptionsv2.get`. Apply the identical fixed
-package, one-line-item product/base-plan/absent-offer, exact account binding,
-token/account binding, future-expiry, eligible-state, and acknowledgement
-checks. Return only the predecessor's capped lease when it is verified as
-`ACTIVE`, `IN_GRACE_PERIOD`, or `CANCELED` with future expiry and its
-acknowledgement succeeds or was already complete.
+The procedure is:
 
-The verifier may bind or refresh the valid predecessor after its own successful
-acknowledgement, but it must not acknowledge, bind, supersede, or tombstone the
-canceled pending successor. A missing linked token or any predecessor failure
-returns Free and leaves an existing predecessor binding unchanged.
+1. Require `linkedPurchaseToken`; otherwise return Free.
+2. Close the successor token operation as read-only. Never acknowledge, bind,
+   deliver, supersede, or tombstone the canceled successor.
+3. Keep the raw linked token in request memory, derive its fingerprint, and
+   acquire the independently serialized predecessor operation.
+4. Call `purchases.subscriptionsv2.get` with fixed package and the raw linked
+   predecessor token.
+5. Require exactly one predecessor line item. Validate its returned product
+   independently against the full fixed allowlist and derive predecessor
+   `planId`, product, base plan, offer, and expiry from that line item.
+6. Do not require predecessor product equality with the canceled successor
+   request product. Same-product and cross-product replacement failures are
+   both valid shapes.
+7. Apply exact predecessor account binding, token/same-subject uniqueness,
+   auto-renewing monthly/absent-offer, future-expiry, eligible-state, and
+   acknowledgement/durable-delivery checks.
+8. Return only the predecessor `planId`, `productId`, normalized state,
+   `playExpiresAt`, and capped lease after predecessor delivery and
+   acknowledgement are safely finalized.
+
+Any missing link, malformed/multiple line item, unknown predecessor product,
+base-plan/offer mismatch, account/token mismatch, ineligible state, API,
+storage, rate, or acknowledgement failure returns Free and leaves an existing
+predecessor binding/access record unchanged. The canceled successor remains
+unacknowledged, unbound, and absent from purchase bindings in every outcome.
 
 ## State, Lease, And Downgrade Mapping
 
-Every row also requires the identity, allowlist, account, token, line-item,
-expiry, and acknowledgement checks above. A fail-Free result carries no paid
-lease.
+Every paid row also requires current disclosure, identity, allowlist, account,
+token, durable delivery, and final acknowledgement checks. A fail-Free result
+carries no paid lease.
 
-| Play or local input | Normalized result | Access |
+| Play/local/durable input | Normalized result | Access |
 | --- | --- | --- |
-| `SUBSCRIPTION_STATE_ACTIVE` with future expiry | `active` | Paid lease |
-| `SUBSCRIPTION_STATE_IN_GRACE_PERIOD` with future expiry | `grace` | Paid lease |
-| `SUBSCRIPTION_STATE_CANCELED` with future expiry | `canceled` | Paid lease only through Play expiry |
-| `SUBSCRIPTION_STATE_PENDING_PURCHASE_CANCELED` with a valid linked predecessor | predecessor's normalized state | Predecessor lease only, as specified above |
+| `SUBSCRIPTION_STATE_ACTIVE`, future expiry, acknowledged delivery | `active` | Paid lease |
+| `SUBSCRIPTION_STATE_IN_GRACE_PERIOD`, future expiry, acknowledged delivery | `grace` | Paid lease |
+| `SUBSCRIPTION_STATE_CANCELED`, future expiry, acknowledged delivery | `canceled` | Paid lease only through Play expiry |
+| `SUBSCRIPTION_STATE_PENDING_PURCHASE_CANCELED` with independently valid predecessor | predecessor state/plan/product/expiry | Predecessor lease only |
+| Verified delivery committed with acknowledgement pending/unknown | `free` / `verification_pending` | Free until recovered |
 | `SUBSCRIPTION_STATE_UNSPECIFIED`, `PENDING`, `PAUSED`, `ON_HOLD`, or `EXPIRED` | `free` | Free |
-| Revoked/voided, past or missing expiry, malformed/multiple line items, prepaid/add-on, unknown state, or unspecified acknowledgement | `free` | Free |
-| Package, product, base-plan, offer, account, token, subject, or replay mismatch | `free` | Free |
-| Auth/App Check, Play API, acknowledgement, persistence, or verifier failure | `free` | Free |
-| Lease expiry, process restart, account change, unavailable verifier, or failed refresh | `free` | Free |
+| Revoked/voided, past/missing expiry, malformed/multiple line items, prepaid/add-on, unknown acknowledgement | `free` | Free |
+| Disclosure, package, product, base-plan, offer, account, token, subject, replay, generation, or database mismatch | `free` | Free |
+| Rate limit, Auth/App Check, Play API, acknowledgement, persistence, or verifier failure | `free` | Free |
+| Lease expiry, process restart, account change/sign-out, unavailable verifier, or failed/newer refresh | `free` | Free |
 
 For a paid result:
 
@@ -317,54 +532,103 @@ leaseExpiresAt = min(verifiedAt + 15 minutes, playExpiresAt)
 
 The paid response contains only `version=play-billing-v1`, `requestId`,
 `planId`, `productId`, normalized `state`, `verifiedAt`, `playExpiresAt`, and
-`leaseExpiresAt`. Timestamps are UTC RFC 3339 values.
+`leaseExpiresAt`. For canceled-pending recovery, those values are the
+predecessor's values.
 
 A Free response contains only `version=play-billing-v1`, a validated
 `requestId` when available, `state=free`, and one fixed reason:
-`invalid_request`, `identity_rejected`, `replay_conflict`, `in_flight`,
-`unsafe_record`, `not_verified`, `ack_failed`, or
-`temporarily_unavailable`. No reason distinguishes package, product, account,
-token, state, expiry, or acknowledgement details publicly. Neither response
-echoes any purchase or linked token, Auth/App Check token, UID, account
-binding, token/account fingerprint, order data, provider response, or developer
-payload.
+`invalid_request`, `identity_rejected`, `disclosure_required`,
+`replay_conflict`, `in_flight`, `rate_limited`, `unsafe_record`,
+`not_verified`, `verification_pending`, or `temporarily_unavailable`. No reason
+reveals package, product, account, token, Play state, expiry, or acknowledgement
+details. Neither response echoes purchase/linked/Auth/App Check tokens, UID,
+account binding, subject/fingerprint, order data, Play response, or payload.
 
-#192 keeps the response in process memory only. It must not persist a paid
-plan, lease, expiry, or server response to a database, preferences, secure
-storage, backup, analytics, or crash state. App start/process restart and lease
-expiry begin at Free. A foreground refresh may replace Free only after a fresh
-successful verification. Account change clears the lease before refresh.
+## Client Generation And Account Fences
+
+#192 must keep an in-memory monotonic `entitlementGeneration`, current anonymous
+Auth UID, current request ID, and optional in-flight operation. None is
+persisted or logged.
+
+Rules:
+
+1. App/process start begins at generation 0 and Free.
+2. Starting a new authoritative purchase, restore, foreground refresh, or
+   gated-action refresh increments the generation, clears any current lease,
+   creates a new request ID, and captures the current Auth UID plus generation.
+3. Duplicate purchase-stream events for the same token coalesce into the
+   current in-flight operation. If a new operation is intentionally started, it
+   receives a new generation and invalidates the old one.
+4. Account change, sign-out, anonymous-user replacement, disclosure revocation,
+   failed refresh, and explicit Free transition increment the generation,
+   clear the lease, and invalidate/cancel every older operation best-effort.
+5. A response may install only when its `requestId`, captured Auth UID, and
+   captured generation exactly equal the coordinator's current request, UID,
+   and generation at installation time.
+6. A stale response is discarded without changing current Free/paid state. A
+   delayed paid response cannot overwrite a newer Free result, and a delayed
+   Free result cannot overwrite a newer paid result.
+7. The server does not accept or trust client generation; the fence is local
+   race control layered on server Auth/account/token verification.
+
+Deterministic deferred-response tests must cover UID A to UID B switch,
+sign-out, failed refresh, paid-then-Free and Free-then-paid out-of-order
+completion, duplicate purchase-stream events, and a new refresh overtaking an
+older request.
 
 When Free caps block a new active artwork or AI request, existing records remain
 viewable, editable, reportable, and exportable. Downgrade must never delete,
-hide, lock, or corrupt existing records or their supporting documents.
+hide, lock, or corrupt existing records or supporting documents.
 
 ## Persistence, TTL, And Redaction
 
-`playBillingPurchaseBindings` may store only:
+All records below exist only in `archivale-play-billing`.
+
+### `playBillingDisclosureAssertions`
+
+May store only account subject, contract/disclosure versions, exact purpose,
+accepted/status timestamps, status, and retention expiry. TTL is 365 days from
+acceptance, or no later than 30 days after revocation/account deletion. It is a
+purpose gate, not payment evidence.
+
+### `playBillingPurchaseBindings`
+
+May store only:
 
 - token fingerprint and account subject;
-- contract and key versions;
+- contract/key versions;
 - plan, product, base-plan, and absent-offer marker;
-- normalized state and Play expiry;
-- acknowledgement state;
-- predecessor/successor fingerprints and superseded/tombstone state;
-- created, last-verified, last-state-change, and retention-expiry timestamps;
-- a fixed allowlisted reason code when applicable.
+- normalized state, Play expiry, and verification time;
+- `deliveryState`, `ackState`, `bindingState`, and fixed recovery reason;
+- staged/final predecessor/successor fingerprints and superseded state; and
+- created, updated, state-change, acknowledgement-confirmed, and retention
+  timestamps.
 
-Its TTL is `max(playExpiresAt, lastVerifiedAt) + 30 days`. TTL is cleanup, not
-payment authority. Expired, missing, malformed, unknown-version, or partially
-written records fail to Free; they are never interpreted as a paid plan.
+TTL is `max(playExpiresAt, lastVerifiedAt) + 30 days`. TTL is cleanup, not
+payment authority. An expired, malformed, unknown-version, partial, or binding-
+mismatched record fails to Free. A correctly bound token that refreshes to an
+ineligible state is atomically invalidated without altering another valid
+predecessor.
 
-When a correctly bound token refreshes to an ineligible Play state, the
-verifier may atomically replace its prior normalized state/expiry with the
-verified Free state and fixed reason, but it returns no lease. It does not
-create a new binding for an unverified or mismatched token.
+The binding is durable server entitlement-delivery/recovery state required by
+the Play acknowledgement order. It is never sufficient without current Play
+verification and acknowledged final state, and it is never an offline/client
+lease or a `brokerDurableEntitlements` payment grant.
 
-`playBillingRequestReplays` may store only a one-way request fingerprint, token
-fingerprint, fixed outcome code, created/updated timestamp, and
-`retentionExpiresAt=createdAt+24 hours`. A replay record prevents conflicting
-reuse but never grants access or replaces Play verification.
+### Operational Collections
+
+- `playBillingRequestReplays`: request/token fingerprints, fixed outcome,
+  timestamps, and 24-hour retention expiry only.
+- `playBillingTokenOperations`: token/request fingerprints, optional verified
+  account subject only after exact Play binding, phase, lease/cooldown,
+  acknowledgement-attempt counters, fixed outcome, timestamps, and 24-hour TTL.
+- `playBillingRateLimits`: account subject, rolling-window start, fixed get
+  count, timestamps, and 24-hour TTL.
+
+Operational records bound calls and recover concurrency; they never grant a
+lease. Malformed records fail to Free rather than being treated as absent.
+
+### Absolute Redaction
 
 The following are request-memory only and must never enter Firestore or other
 storage, logs, telemetry, Crashlytics, Analytics, Performance Monitoring,
@@ -373,17 +637,18 @@ review/deployment evidence:
 
 - raw `purchaseToken` or `linkedPurchaseToken`;
 - raw Auth or App Check token;
-- raw Firebase UID;
+- raw Firebase UID or captured client UID/generation;
 - derived `obfuscatedAccountId` or returned account identifiers;
-- any order ID, developer payload, Play response body, free-form cancellation
-  response, or Subscribe with Google profile data; and
-- the server-only fingerprint key or secret path.
+- any order ID, developer payload, Play response body, cancellation free text,
+  or Subscribe with Google profile data; and
+- server fingerprint key, secret path, or real assertion/account/token/request
+  fingerprint.
 
-Clear request-memory references at completion. Logs and evidence may contain
-only fixed event/reason codes, contract/key versions, coarse timing, aggregate
-counts, and synthetic placeholders that cannot be mistaken for real values.
-There is no persisted lease or durable payment entitlement, and there are no
-writes to `brokerDurableEntitlements`.
+Clear request-memory references at completion. Logs/evidence may contain only
+fixed event/reason codes, contract/key/disclosure versions, coarse timing, and
+aggregate counts. There is no persisted mobile lease. The only durable payment
+state is the narrowly scoped, non-client-readable delivery/recovery binding in
+the named billing database.
 
 ## Internal-MVP Limitations And #194 Gate
 
@@ -392,10 +657,10 @@ and a 15-minute in-memory lease. It intentionally has no:
 
 - Real-time Developer Notifications (RTDN);
 - scheduled Play reconciliation or voided-purchase processing;
-- encrypted raw-token custody for background verification;
+- encrypted raw-token custody for unattended acknowledgement recovery;
 - durable account recovery, anonymous-identity migration, reinstall recovery,
   or reliable multi-device entitlement;
-- offline paid lease, persisted paid state, or background renewal;
+- offline paid lease, persisted client paid state, or background renewal;
 - public payment monitoring, support, incident, refund, or reconciliation
   operation; or
 - closed/open/production Data Safety and privacy approval for the future
@@ -404,59 +669,65 @@ and a 15-minute in-memory lease. It intentionally has no:
 These limitations are acceptable only for the controlled internal test. #194
 must design, implement, test, and review RTDN, scheduled reconciliation, voided
 purchases, encrypted token custody, durable account/reinstall/multi-device and
-offline/signed-lease behavior, KMS/JWS decisions, monitoring and support,
+offline/signed-lease behavior, KMS/JWS decisions, monitoring/support,
 migration/rollback, exact-build Data Safety/privacy declarations, and explicit
 owner approval before paid rollout beyond internal testing.
 
 ## Human Inputs And Evidence Gates
 
-Before #191 implementation, the code owner must preserve this exact package,
-product/base-plan/offer table, function/schema versions, collection names,
-derivations, API methods, state mapping, and rollback behavior in tests. A
-contract change returns to review rather than becoming runtime configuration.
+Before #191 implementation, the code owner must preserve this exact database,
+rules/IAM, disclosure, package/product/base-plan/offer, function/schema,
+derivation, call-bound, delivery/acknowledgement, state, and rollback contract
+in tests. A contract change returns to review rather than becoming runtime
+configuration.
 
 Before any internal purchase or deployment, humans must provide and approve:
 
 - exact Play app/package ownership and matching subscription/base-plan setup;
-- final localized prices, tax/merchant/country settings, and internal license
-  testers;
-- the exact dedicated runtime principal and least-privilege Android Publisher
-  and Firestore IAM bindings;
+- final localized prices, tax/merchant/country settings, and internal testers;
+- creation/location and enabled delete protection for
+  `archivale-play-billing`, its database-targeted rules, indexes, TTLs, backup,
+  and rollback owner;
+- exact dedicated runtime principal, database-conditioned IAM, proof of no
+  conflicting inherited/unconditional roles, and Android Publisher permissions;
 - explicit approval of `us-central1`, Node.js 22, Blaze/billing attachment,
-  budget/alert posture, and named deployment/rollback/payment owners;
+  budget/alert posture, and deployment/rollback/payment owners;
 - App Check provider/app IDs and anonymous Auth configuration for
   `my-art-collections`;
 - fingerprint key custody, active `keyVersion`, rotation/rollback procedure,
-  TTL policy setup, and sanitized observability;
-- the separate billing disclosure and separate AI research consent copy;
-- explicit acceptance of the internal-only restart, reinstall, multi-device,
-  offline, and unattended-lifecycle limitations;
-- the internal-test build/version and evidence window; and
+  and sanitized observability;
+- exact `billing-verification-disclosure-v1` copy, acceptance/revocation flow,
+  and separate AI research-consent copy;
+- explicit acceptance of internal restart, reinstall, multi-device, offline,
+  foreground-retry, and unattended-lifecycle limitations;
+- internal-test build/version and evidence window; and
 - a Data Safety/privacy worksheet based on the exact artifact.
 
 Names of owners and sanitized configuration identifiers may be recorded.
-Credentials, tokens, UIDs, order data, tester identities, account bindings,
-provider responses, and secret values/paths must not appear in evidence.
+Credentials, tokens, UIDs, tester identities, account bindings/subjects,
+fingerprints, order data, Play responses, and secret values/paths must not
+appear in evidence.
 
 Required acceptance evidence is serialized:
 
 | Dependency | Evidence before it advances |
 | --- | --- |
-| #190 | Documentation diff/name checks, stale-topology and redaction scans, independent task review, then payment redteam review |
-| #191 | Unit/fake/emulator proof of exact gate order, API arguments, bindings, linked-token rollback, idempotency, persistence/TTL, state table, and redaction |
-| #192 | Fake-driven Flutter proof of disclosure separation, account derivation, request schema, memory-only lease, refresh/restart/account-change fail-Free behavior, and downgrade access |
-| #193 | Mobile visual/interaction evidence for purchase, restore, pending, grace, canceled, hold/paused, Free/downgrade, unavailable, and safe-error states |
-| #194 | Payment redteam, privacy/Data Safety, deployment/rollback, reconciliation, monitoring, durable identity/token custody, and explicit closed/public rollout approval |
+| #190 | Exact eight-file diff, stale-topology/redaction/protocol scans, blocker matrix, independent focused task review, then focused payment redteam |
+| #191 | Fake/unit/emulator proof of named-database targeting and deny rules; database-IAM negative evidence plan; disclosure zero-Play gates; request/token concurrency and ceilings; same/cross-product canceled-pending recovery; crash faults before/after delivery, acknowledgement, and finalization; exact API arguments; TTL/redaction |
+| #192 | Fake-driven proof of official disclosure flow, account derivation, duplicate coalescing, generation/request/UID fences, memory-only lease, foreground recovery, restart/account-change/failure Free behavior, and preserved existing-record access |
+| #193 | Mobile visual/interaction evidence for disclosure, purchase/restore, verification pending, rate/unavailable, pending/grace/canceled/hold/paused, Free/downgrade, and safe errors |
+| #194 | Payment redteam, privacy/Data Safety, deployment/rollback, RTDN/reconciliation, monitoring, durable identity/token custody, and explicit closed/public approval |
 
-#191 and #192 remain held until independent task review and payment redteam
-accept #190. No implementation task may self-certify this contract complete.
+#191 and #192 remain held until focused independent task review and payment
+redteam accept #190. No implementation task may self-certify this contract
+complete.
 
 ## Non-Goals
 
-- No source, configuration, dependency, Firebase, Play Console, account, or
-  billing mutation in #190.
-- No API call, purchase, deployment, credential access, or console evidence in
-  #190.
+- No source, configuration, dependency, Firebase, Firestore, Play Console,
+  account, or billing mutation in #190.
+- No Play/Firebase/provider API call, purchase, deployment, credential access,
+  or console evidence in #190.
 - No direct OpenAI or paid-provider call from mobile.
 - No public-price promise until the human Play setup is approved.
 - No credit packs, prepaid products, offers, add-ons, family sharing, promo-code
@@ -469,8 +740,11 @@ accept #190. No implementation task may self-certify this contract complete.
 
 Current Google guidance was rechecked for #190 on 2026-07-10:
 
+- [Integrate the Google Play Billing Library](https://developer.android.com/google/play/billing/integrate)
 - [Fight fraud and abuse](https://developer.android.com/google/play/billing/security)
 - [Subscription lifecycle](https://developer.android.com/google/play/billing/lifecycle/subscriptions)
 - [`purchases.subscriptionsv2` resource](https://developers.google.com/android-publisher/api-ref/rest/v3/purchases.subscriptionsv2)
 - [`purchases.subscriptionsv2.get`](https://developers.google.com/android-publisher/api-ref/rest/v3/purchases.subscriptionsv2/get)
 - [`purchases.subscriptions.acknowledge`](https://developers.google.com/android-publisher/api-ref/rest/v3/purchases.subscriptions/acknowledge)
+- [Manage multiple Firestore databases and database IAM](https://firebase.google.com/docs/firestore/manage-databases)
+- [Firestore Security Rules and server IAM boundary](https://firebase.google.com/docs/firestore/security/rules-conditions)

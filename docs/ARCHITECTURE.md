@@ -15,7 +15,8 @@ Recommended stack:
 - Export: explicit user-triggered ZIP and PDF export through system share/document pickers
 - AI: opt-in server-mediated multimodal extraction, never direct vendor calls from the app
 - Cloud identity: anonymous Firebase Auth plus App Check only after a
-  purpose-specific billing disclosure or AI research consent
+  purpose-specific billing disclosure or AI research consent; billing also
+  requires its own current purpose-bound server assertion
 - Android paid access: Google Play state verified server-side under
   [Play Billing Gate Spec](PLAY_BILLING_GATE_SPEC.md)
 
@@ -160,19 +161,25 @@ rollback target rather than by another Firebase project:
 | Surface | Research AI | Play Billing |
 | --- | --- | --- |
 | Codebase/function | `broker` / `artResearchBroker` | `play-billing` / `verifyPlaySubscription` |
-| Runtime authority | Provider call plus broker-owned records | Android Publisher verify/acknowledge plus billing-owned records |
-| Durable records | Versioned broker control, entitlement, credit, request, and ledger records | `playBillingPurchaseBindings`, `playBillingRequestReplays` |
-| User authority | Current explicit AI research consent plus broker gates | Distinct billing-verification disclosure plus verified Play state |
-| Rollback | AI breaker, route/runtime IAM, provider credential | Billing callable/codebase/runtime IAM |
+| Runtime authority | Provider call plus broker-owned/default-database records | Android Publisher verify/acknowledge plus named-billing-database records |
+| Firestore boundary | Broker/default database; no billing-database IAM | Named `archivale-play-billing`; database-conditioned IAM; deny-all client rules |
+| Durable records | Versioned broker control, entitlement, credit, request, and ledger records | Disclosure assertions, purchase delivery/bindings, replay, token-operation, and rate-limit records |
+| User authority | Current explicit AI research consent plus broker gates | Current purpose-bound billing-disclosure assertion plus verified Play state |
+| Rollback | AI breaker, route/runtime IAM, provider credential | Billing callables/codebase/runtime IAM/rules; never routine database deletion |
 
 Anonymous Auth is shared identity infrastructure, not shared authority. Billing
 identity may be created or reused only after the collector initiates purchase
 or restore and accepts the billing disclosure. That action does not create AI
 consent, enable research, or authorize collector content to leave the device.
-AI research consent does not prove payment. App Check attests an app instance;
-it proves neither identity, consent, nor payment.
+The official acceptance flow writes a versioned, purpose-bound server assertion
+before verification; UID existence, AI research consent, and App Check do not
+substitute for it. AI research consent does not prove payment. App Check
+attests an app instance; it proves neither identity, consent, nor payment.
 
-The AI broker cannot call Android Publisher APIs or read billing collections.
+The AI broker cannot call Android Publisher APIs or access
+`archivale-play-billing`; the billing verifier cannot access broker/artwork
+records in another database. Runtime IAM is conditioned per database and all
+mobile/web client access to the billing database is denied by Security Rules.
 `brokerDurableEntitlements` has no payment authority. Billing verification
 cannot bypass AI owner allowlist, research consent, broker entitlement,
 breaker, credit, payload, or provider gates.
@@ -182,22 +189,47 @@ breaker, credit, payload, or provider gates.
 Google Play is the payment-state authority. The server verifies the fixed
 `app.archivale` subscription allowlist with
 `purchases.subscriptionsv2.get`, checks the exact Auth-derived account binding,
-handles linked tokens, and acknowledges eligible new purchases with
-`purchases.subscriptions.acknowledge` before returning access.
+and serializes work by purchase-token fingerprint. It durably commits verified
+entitlement delivery in `archivale-play-billing` before acknowledging eligible
+new purchases with `purchases.subscriptions.acknowledge`. A lease is returned
+only after acknowledged delivery and final binding state are committed or
+safely recovered.
+
+Distinct request IDs for one token share a token single-flight owner; bounded
+per-subject/token ceilings limit Play calls and acknowledgement races. A crash
+before delivery makes no acknowledgement. A crash/timeout after delivery or
+acknowledgement retains recoverable sanitized state; retry re-verifies current
+Play state and never acknowledges twice blindly.
 
 The app holds only a lease capped at 15 minutes and Play expiry, in process
 memory. Only verified active, grace-period, or canceled-with-future-expiry
 states receive paid access. Unknown, pending, paused, on-hold, expired,
 mismatched, unavailable, failed-acknowledgement, expired-lease, and restart
 states fail to Free. A canceled pending replacement may preserve only a
-separately re-verified valid predecessor.
+separately re-verified valid predecessor. That branch occurs before successor
+eligibility; it validates the predecessor's own product/base plan/offer and
+returns predecessor plan/product/expiry, including cross-product replacement
+failures.
 
-No paid lease or payment entitlement is persisted. Downgrade limits new paid
-actions but keeps every existing artwork and supporting record viewable,
-editable, reportable, and exportable. #194 is mandatory before any paid build
-moves beyond internal testing because the MVP lacks RTDN, reconciliation,
-voided-purchase processing, encrypted token custody, durable account recovery,
-and reliable reinstall/multi-device/offline entitlement.
+No mobile paid lease or client/offline-authoritative entitlement is persisted.
+Downgrade limits new paid actions but keeps every existing artwork and
+supporting record viewable, editable, reportable, and exportable. #194 is
+mandatory before any paid build moves beyond internal testing because the MVP
+lacks RTDN, reconciliation, voided-purchase processing, encrypted token
+custody, durable account recovery, and reliable reinstall/multi-device/offline
+entitlement.
+
+The durable purchase binding is server-only delivery/recovery state, not a
+persisted mobile/offline lease and not payment authority by itself. Current Play
+verification plus acknowledged final state are required for every returned
+lease.
+
+The mobile coordinator keeps a monotonic in-memory entitlement generation.
+Each new authoritative refresh captures its request ID, current anonymous UID,
+and generation; account change, sign-out, failure, or a newer refresh clears
+the lease and invalidates older work. A response installs only when all three
+still match, preventing delayed paid/Free results from crossing account or
+refresh boundaries.
 
 ## AI Response Requirements
 
@@ -241,6 +273,10 @@ Required:
   evidence; only the billing spec's one-way binding records may persist
 - Independent AI and billing runtime/IAM/rollback boundaries inside
   `my-art-collections`
+- Named billing database with database-conditioned runtime IAM, deny-all client
+  rules, and negative cross-database/client tests
+- Purpose-bound billing-disclosure assertion before any Play call
+- Token single-flight/call ceilings and client request/UID/generation fences
 
 ## App Store Implications
 
@@ -296,9 +332,15 @@ Before public beta:
 - Verify store privacy declarations match actual SDK behavior.
 - Verify billing and AI disclosures remain separate even when they reuse one
   anonymous UID.
+- Verify missing/stale/research-only billing assertions cause zero Play calls.
+- Verify client/broker/verifier identities cannot cross the named database
+  boundary and that server clients are governed by IAM, not client rules.
 - Verify payment state comes only from the canonical server contract, raw
   billing identifiers never enter evidence, and downgrade preserves existing
   record access.
+- Verify delivery-before-ack crash recovery, canceled-pending cross-product
+  predecessor recovery, token serialization/call ceilings, and delayed-response
+  generation fences.
 - Require independent task review and payment redteam for billing contracts;
   require #194 privacy/deployment/payment acceptance before paid rollout beyond
   internal testing.

@@ -289,7 +289,7 @@ assumption hidden inside these rows:
 | Artifact | Actual or planned SDK/runtime surface | Required treatment |
 | --- | --- | --- |
 | Current repo artifact at #190 | `firebase_core`, `firebase_crashlytics`, and `firebase_remote_config`; no Play Billing, Firebase Auth, or Firebase App Check dependency | Use current gated Firebase behavior only; do not declare planned billing identity or purchase verification as shipped |
-| Planned internal billing artifact after #191/#192 | Play Billing Library, anonymous Firebase Auth, Firebase App Check/Play Integrity, Firebase core/Installations, and server `verifyPlaySubscription` verification | Internal-only Data Safety form exemption may apply, but billing disclosure, privacy record, exact-build SDK/permission audit, retention/redaction review, and payment redteam are still required |
+| Planned internal billing artifact after #191/#192 | Play Billing Library, anonymous Firebase Auth, Firebase App Check/Play Integrity, Firebase core/Installations, billing disclosure accept/revoke, and server `verifyPlaySubscription` verification backed by named database `archivale-play-billing` | Internal-only Data Safety form exemption may apply, but billing disclosure assertion, privacy record, exact-build SDK/permission audit, database retention/access/redaction review, and payment redteam are still required |
 | Any closed/open/production paid artifact | The exact dependency/manifest/runtime set in the release AAB plus the deployed verifier and retention behavior | Blocked by #194 until the full Data Safety worksheet, privacy policy, RTDN/reconciliation/token-custody design, testing, payment redteam, deployment review, and owner approval are accepted |
 
 #### Repo-grounded worksheet notes
@@ -320,6 +320,9 @@ capture at least:
   allowlist from `PLAY_BILLING_GATE_SPEC.md`;
 - the distinct billing-verification disclosure and the fact that it may create
   or reuse anonymous Firebase Auth;
+- the current `billing-verification-disclosure-v1` acceptance, purpose-bound
+  server assertion, 365-day maximum acceptance retention, revocation cleanup,
+  and the fact that Auth/App Check/research consent alone do not satisfy it;
 - the separate AI research-consent gate, which billing identity does not
   satisfy;
 - Play Integrity/App Check attestation and Firebase Installations behavior;
@@ -327,13 +330,23 @@ capture at least:
   one-way `obfuscatedAccountId` to Google Play;
 - server verification through `purchases.subscriptionsv2.get` and server
   acknowledgement through `purchases.subscriptions.acknowledge`;
+- the verified-delivery-before-acknowledgement sequence, recoverable
+  acknowledgement-unknown state, and rule that no lease is returned until
+  acknowledged final storage is committed;
+- the named `archivale-play-billing` database, database-conditioned runtime
+  IAM, deny-all client Security Rules, five allowed collections, and proof that
+  billing/broker/default-database identities cannot cross access;
 - one-way token/account binding records retained until
   `max(Play expiry, last verification) + 30 days`, replay metadata retained 24
-  hours, and no persisted paid lease;
+  hours, token/rate operation metadata retained 24 hours, and no persisted
+  mobile paid lease;
 - the absolute ban on raw tokens, raw UID, account binding, order IDs, Play
   response bodies, and those values in telemetry, screenshots, or evidence;
 - a 15-minute maximum in-memory lease and fail-Free restart/refresh behavior;
-  and
+- the in-memory request/UID/generation fence that rejects delayed responses
+  after account, sign-out, or newer-refresh changes;
+- per-subject/token call ceilings and single-flight processing as security and
+  service-operation data, never analytics; and
 - downgrade behavior that preserves existing-record view, edit, report, and
   export access.
 
@@ -594,6 +607,9 @@ Humans must approve before any publication or upload:
 10. the billing disclosure, Auth/App Check setup, runtime IAM/secret custody,
     and sanitized payment evidence plan,
 11. #194 acceptance before moving any paid artifact beyond internal testing.
+12. the named billing database, client-deny rules, conditioned IAM, TTL/index
+    ownership, delete-protection/rollback posture, and cross-database negative
+    evidence.
 
 ## Open decisions for humans
 
@@ -610,6 +626,9 @@ Humans must approve before any publication or upload:
    identity/IAM, fingerprint-key custody, and payment incident response?
 7. Which exact build first contains Play Billing, anonymous Auth, and App Check,
    and is it constrained to internal testing until #194 is accepted?
+8. Who approves the billing disclosure version/retention and owns revocation,
+   the named database, database-scoped IAM/rules, and acknowledged-delivery
+   recovery backlog?
 
 ## Recommended next step
 

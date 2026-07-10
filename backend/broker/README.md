@@ -6,8 +6,10 @@ not deploy or live-provider approval.
 
 `my-art-collections` is also the sole project approved for the planned Play
 Billing verifier, but billing is not part of this package. The verifier must use
-the separate `play-billing` codebase, `verifyPlaySubscription` callable,
-runtime identity, Android Publisher IAM, collections, and rollback target in
+the separate `play-billing` codebase, billing disclosure accept/revoke and
+`verifyPlaySubscription` callables, runtime identity, Android Publisher IAM,
+named `archivale-play-billing` Firestore database, database-conditioned IAM,
+deny-all client rules, collections, and rollback target in
 `docs/PLAY_BILLING_GATE_SPEC.md`.
 
 ## Modules
@@ -97,12 +99,19 @@ records are #155 deployment-owner work.
 
 Anonymous Auth is shared identity infrastructure, not shared consent or
 authority. A UID created after the billing-verification disclosure does not
-create AI research consent. This broker must still enforce the owner allowlist,
-current research consent, broker entitlement, breaker, credits, and payload
-gates. It must not call Android Publisher APIs, read or write
-`playBillingPurchaseBindings` or `playBillingRequestReplays`, or treat
-`brokerDurableEntitlements` as payment authority. A Play plan lease cannot be
-minted, cached, restored, or extended by broker code.
+create AI research consent, and research consent cannot create the required
+purpose-bound billing-disclosure assertion. This broker must still enforce the
+owner allowlist, current research consent, broker entitlement, breaker,
+credits, and payload gates.
+
+The broker runtime must have no access to `archivale-play-billing` or any of its
+disclosure, binding, replay, token-operation, or rate-limit collections. The
+billing verifier must have no access to this broker's/default-database records.
+Firestore client rules deny all billing-database access, while database-scoped
+IAM enforces the server boundary. This package must not call Android Publisher
+APIs or treat `brokerDurableEntitlements` as payment authority. A Play delivery
+record or plan lease cannot be minted, cached, restored, or extended by broker
+code.
 
 ## Local Checks
 
@@ -135,7 +144,7 @@ traffic, credentials, collector content, or account mutation.
 - No deploy, API enablement, billing mutation, project selection, secret
   mutation, or account mutation.
 - No Play purchase verification, acknowledgement, purchase-token handling, or
-  billing-collection access from this research package.
+  named billing-database access from this research package.
 - AI and billing rollback remain independent inside `my-art-collections`;
   project-wide billing disablement is a human-owned cross-service last resort.
 - Independent task review and redteam/security review are required.

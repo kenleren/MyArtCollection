@@ -48,6 +48,13 @@ separate:
   version research consent.
 - Billing identity may be created or reused only after the distinct billing-
   verification disclosure when the collector initiates purchase or restore.
+- The displayed `billing-verification-disclosure-v1` acceptance must be
+  recorded through the billing-owned `acceptPlayBillingDisclosure` callable as
+  a current, purpose-bound server assertion before verification. Auth, App
+  Check, a request field, UID existence, or this broker's research-consent
+  record cannot substitute for that assertion.
+- Billing-owned `revokePlayBillingDisclosure` revokes that assertion without
+  altering research consent or calling Play.
 - Accepting the billing disclosure never records or implies AI research
   consent, never enables `online_research_enabled`, and never authorizes
   collector content or a research request to leave the device.
@@ -56,18 +63,28 @@ separate:
 - Reuse of one anonymous UID does not merge these authorities. Each route must
   enforce its own disclosure/consent and purpose-specific gates.
 
-The research broker has no Android Publisher permission and must not read the
-Play Billing collections. `brokerDurableEntitlements` is a versioned research-
-broker control only: it cannot represent, mint, cache, extend, restore, or
-override a Play payment entitlement or the mobile 15-minute billing lease. A
-paid billing result also does not bypass broker owner allowlist, research
-consent, entitlement, breaker, credit, payload, or provider gates.
+The research broker has no Android Publisher permission and no access to the
+named `archivale-play-billing` Firestore database. The billing verifier's
+database-conditioned IAM excludes the broker/default databases, while the
+broker runtime is excluded from the billing database. Billing database
+Security Rules deny every mobile/web client read and write; server IAM, not
+rules, controls runtime access.
 
-Billing uses a distinct `play-billing` codebase, callable, runtime identity,
+`brokerDurableEntitlements` is a versioned research-broker control only: it
+cannot represent, mint, cache, extend, restore, or override a Play payment
+entitlement, durable billing delivery record, or mobile 15-minute lease. A paid
+billing result also does not bypass broker owner allowlist, research consent,
+entitlement, breaker, credit, payload, or provider gates.
+
+Billing uses a distinct `play-billing` codebase, callables, runtime identity,
+named Firestore database, database-scoped IAM, deny-all client rules,
 collections, fingerprint domain, and rollback target in the same Firebase
-project. A billing outage or kill switch must fail paid plan access to Free
-without enabling research or requiring the AI breaker to change. An AI breaker
-must stop research without altering valid Play purchase state.
+project. Its verified delivery is durably committed before Play
+acknowledgement, but no client lease exists until acknowledgement and final
+storage are recoverable. Token-scoped serialization and request ceilings are
+billing-only controls. A billing outage or kill switch must fail paid plan
+access to Free without enabling research or requiring the AI breaker to change.
+An AI breaker must stop research without altering valid Play purchase state.
 
 ## Gate Order
 

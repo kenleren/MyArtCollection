@@ -43,12 +43,15 @@ When in doubt, do not send it.
 ### Play Billing Data
 
 The billing verifier may persist only the one-way fields and fixed metadata
-listed in `PLAY_BILLING_GATE_SPEC.md`, and only in
-`playBillingPurchaseBindings` or `playBillingRequestReplays`. Those Firestore
-records are payment-control state, not telemetry. No billing collection field
-may be copied into Crashlytics, Analytics, Performance Monitoring, Remote
-Config, application logs, logcat, console output, dashboards, screenshots,
-fixtures, release notes, or issue/PR/deployment evidence.
+listed in `PLAY_BILLING_GATE_SPEC.md`, and only in the named
+`archivale-play-billing` database collections
+`playBillingDisclosureAssertions`, `playBillingPurchaseBindings`,
+`playBillingRequestReplays`, `playBillingTokenOperations`, or
+`playBillingRateLimits`. Those Firestore records are disclosure/payment-control
+state, not telemetry. No billing database field may be copied into Crashlytics,
+Analytics, Performance Monitoring, Remote Config, application logs, logcat,
+console output, dashboards, screenshots, fixtures, release notes, or
+issue/PR/deployment evidence.
 
 Billing logs and evidence may contain only fixed event/reason codes,
 contract/key versions, coarse timing, and aggregate counts. Real or
@@ -56,6 +59,10 @@ synthetic-looking tokens, UIDs, account bindings, fingerprints, order IDs,
 provider response fragments, and secret values/paths are forbidden even when a
 reviewer believes they are redacted. Request-memory raw values must be cleared
 at completion and never attached to an error object passed to telemetry.
+Client entitlement generations, captured UIDs, disclosure acceptance request
+IDs, and token-operation owners are also forbidden. Fixed aggregate counts such
+as `rate_limited`, `delivery_committed`, or `ack_unknown` may be emitted only
+without a subject, fingerprint, request ID, product, or expiry.
 
 ## Default-Off Requirement
 
@@ -237,7 +244,8 @@ Before store or broad beta release, confirm:
   Crashlytics, and Remote Config behavior is represented truthfully; planned
   SDKs or disabled products are not reported as current behavior.
 - No billing token, UID, account binding/fingerprint, order data, Play response,
-  or billing collection field appears in telemetry or review evidence.
+  disclosure assertion owner, client generation, token-operation owner, or
+  billing database field appears in telemetry or review evidence.
 
 ## Review Gate
 

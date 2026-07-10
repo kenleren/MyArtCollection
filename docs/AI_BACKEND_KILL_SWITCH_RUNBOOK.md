@@ -140,10 +140,13 @@ runtime authority or routine rollback:
   research runtime identity, provider credential, broker breaker, and broker
   records only.
 - Play Billing uses codebase `play-billing`, callable
+  `acceptPlayBillingDisclosure`/`revokePlayBillingDisclosure`/
   `verifyPlaySubscription`, a distinct runtime identity, Android Publisher IAM,
-  and the two billing collections defined in `PLAY_BILLING_GATE_SPEC.md`.
+  and named Firestore database
+  `archivale-play-billing` with database-conditioned IAM and deny-all client
+  rules, as defined in `PLAY_BILLING_GATE_SPEC.md`.
 - AI responders must not disable the billing callable, alter billing
-  collections, revoke Android Publisher access, or use
+  database/rules/IAM, revoke Android Publisher access, or use
   `brokerDurableEntitlements` as payment authority.
 - Billing failure or rollback fails plan access to Free but does not grant or
   revoke AI research consent and does not change the AI breaker.
@@ -155,6 +158,14 @@ Project-wide billing disablement is the only layer here that couples the blast
 radius. It may stop the AI broker, Play verification, Auth/App Check,
 telemetry, and App Distribution together; it therefore requires explicit owner
 approval, a service inventory, and a cross-service recovery plan.
+
+AI rollback must not delete the billing database or remove its TTL/index/rules
+target. Billing can contain verified delivery committed before acknowledgement
+or acknowledgement-unknown recovery state. A billing-specific shutdown must
+stop new purchase starts while preserving a reviewed path for bounded
+verification/finalization of those records, unless an active security incident
+requires full denial and the unresolved/refund impact is explicitly accepted.
+Database deletion is never same-window rollback.
 
 ## Runbook
 
@@ -385,6 +396,9 @@ Verification:
 - Play verification and every other expected affected service are included in
   incident and recovery evidence; no one interprets their outage as payment or
   research state.
+- Any `delivery_committed` or `ack_unknown` billing recovery backlog in the
+  named database is recorded without token/account identifiers and assigned a
+  payment owner before access is removed.
 
 Recovery note:
 

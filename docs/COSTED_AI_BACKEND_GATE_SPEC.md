@@ -267,13 +267,17 @@ Decision:
   control/entitlement/credit records, owner/app allowlists, a broker breaker,
   hard provider and credit caps, and broker-only telemetry boundaries.
 - Play Billing uses its own `play-billing` codebase, callable, runtime identity,
-  collections, Android Publisher IAM, fingerprint domain, and rollback target
-  in that same project, as defined by `PLAY_BILLING_GATE_SPEC.md`. The research
-  broker must not call Android Publisher APIs or read billing collections, and
+  named `archivale-play-billing` Firestore database, database-conditioned IAM,
+  deny-all client rules, collections, Android Publisher IAM, fingerprint
+  domain, and rollback target in that same project, as defined by
+  `PLAY_BILLING_GATE_SPEC.md`. The research broker must not call Android
+  Publisher APIs or access the billing database, and
   `brokerDurableEntitlements` has no payment authority.
 - Anonymous Auth is shared identity infrastructure, not shared authority. The
-  billing disclosure authorizes only purchase verification/refresh; it does
-  not create research consent. Research consent does not prove purchase.
+  billing disclosure authorizes only purchase verification/refresh and must be
+  represented by a current purpose-bound server assertion before a Play call;
+  it does not create research consent. Research consent does not prove purchase
+  or create the billing assertion.
 - Blaze enablement, billing attachment, provider credentials, Functions deploy,
   and production rollout each require explicit owner action and
   deployment-manager review under #155. The one-project decision does not
@@ -463,6 +467,13 @@ Before a paid beta is exposed to any tester, #49 must define and verify:
   15-minute, memory-only lease in `PLAY_BILLING_GATE_SPEC.md`. The AI broker
   cannot mint, persist, restore, or extend that lease, and a paid plan cannot
   bypass research consent, broker breaker, credits, or provider controls.
+- Billing first commits verified entitlement-delivery state in its named
+  database, then acknowledges Play, and returns a lease only after
+  acknowledged final state is durable/recoverable. That delivery record is not
+  an AI entitlement or offline/client-authoritative lease.
+- Token-fingerprint single-flight, per-subject call ceilings, and client
+  request/UID/generation fences are payment controls and must not be reused as
+  research quota or consent authority.
 - A failed/expired billing lease downgrades to Free while all existing artwork
   records remain viewable, editable, reportable, and exportable.
 
@@ -514,6 +525,7 @@ Inference from those sources:
 | Surprise spend | Budgets are alerts, spend caps are experimental, and processing latency can overrun limits | Isolated broker codebase and service quotas inside the approved project, low policy ceiling, Prepay/Postpay decision, project spend cap, server breaker, manual kill switch, optional last-resort billing disable |
 | Billing-account cross-talk | Shared billing accounts can blur ownership and blast radius | Prefer dedicated billing account; if shared, configure both project-level and billing-account controls and record the weaker isolation |
 | Shared-project shutdown blast radius | Project-wide billing disablement can stop AI, Play verification, Auth/App Check, telemetry, and distribution surfaces together | Use codebase, runtime-IAM, route, and provider controls first; reserve project-wide billing action for explicit owner-approved last resort |
+| Database authority cross-talk | Project-level Firestore roles would let billing and broker runtimes cross data boundaries despite different collection names | Put billing state in `archivale-play-billing`, condition runtime IAM per database, deny clients with database rules, and test both directions negatively |
 | Privacy drift in logs | AI queries and citations are sensitive | Keep broker telemetry content-free and align with `FIREBASE_TELEMETRY_POLICY.md` |
 | Provider data retention drift | External providers may retain or inspect data under terms/settings | Require #52 provider data-handling/ZDR decision before real content leaves device |
 | App Check misunderstanding | App Check is attestation, not identity or revocation | Require #50 auth topology, tester/user identity, replay controls, and negative tests |
