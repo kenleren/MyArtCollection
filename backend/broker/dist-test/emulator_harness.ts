@@ -12,17 +12,15 @@ import type { FirebaseAdminAppCheckLike } from '../src/durable_protection.js';
 const projectId = 'demo-art-research-broker';
 const projectNumber = '123456789';
 const appId = '1:123456789:android:demoartresearchbroker';
-const ownerUid = 'emulator-owner';
-
 async function main(): Promise<void> {
   requireEmulator('FIREBASE_AUTH_EMULATOR_HOST');
   requireEmulator('FIRESTORE_EMULATOR_HOST');
 
   const app = initializeApp({ projectId }, 'issue-188-emulator-harness');
   try {
-    const idToken = await createAnonymousEmulatorToken();
+    const identityToken = await createAnonymousEmulatorToken();
     const appCheck = new EmulatorAppCheckVerifier();
-    const dependencies = createFirebaseResearchBrokerDependencies(emulatorEnv(), {
+    const dependencies = createFirebaseResearchBrokerDependencies(emulatorEnv(identityToken.uid), {
       app,
       appCheck,
     });
@@ -32,10 +30,10 @@ async function main(): Promise<void> {
     }
 
     const identity = await dependencies.protection.verifyIdentity({
-      authorizationHeader: `Bearer ${idToken}`,
+      authorizationHeader: `Bearer ${identityToken.token}`,
       appCheckToken: 'emulator-app-check-token',
     });
-    assert.equal(identity.ok, true);
+    assert.equal(identity.ok, true, JSON.stringify(identity));
     assert.equal(appCheck.calls, 1);
 
     const marker = getFirestore(app).collection('issue188Harness').doc('marker');
@@ -55,7 +53,7 @@ async function main(): Promise<void> {
   }
 }
 
-function emulatorEnv(): NodeJS.ProcessEnv {
+function emulatorEnv(ownerUid: string): NodeJS.ProcessEnv {
   return {
     ...process.env,
     BROKER_HTTP_ENABLED: 'true',
@@ -80,7 +78,7 @@ class EmulatorAppCheckVerifier implements FirebaseAdminAppCheckLike {
     return {
       appId,
       token: {
-        aud: [projectNumber],
+        aud: [projectId, projectNumber],
         iss: `https://firebaseappcheck.googleapis.com/${projectNumber}`,
         sub: appId,
         app_id: appId,
@@ -89,22 +87,23 @@ class EmulatorAppCheckVerifier implements FirebaseAdminAppCheckLike {
   }
 }
 
-async function createAnonymousEmulatorToken(): Promise<string> {
+async function createAnonymousEmulatorToken(): Promise<{ token: string; uid: string }> {
   const authHost = process.env.FIREBASE_AUTH_EMULATOR_HOST!;
   const response = await fetch(
     `http://${authHost}/identitytoolkit.googleapis.com/v1/accounts:signUp?key=emulator-only`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ localId: ownerUid, returnSecureToken: true }),
+      body: JSON.stringify({ returnSecureToken: true }),
     },
   );
-  assert.equal(response.ok, true, await response.text());
-  const body = await response.json() as { idToken?: unknown };
-  if (typeof body.idToken !== 'string') {
+  const rawBody = await response.text();
+  assert.equal(response.ok, true, rawBody);
+  const body = JSON.parse(rawBody) as { idToken?: unknown; localId?: unknown };
+  if (typeof body.idToken !== 'string' || typeof body.localId !== 'string') {
     assert.fail('Auth emulator did not return an ID token.');
   }
-  return body.idToken;
+  return { token: body.idToken, uid: body.localId };
 }
 
 async function assertProductionFunctionStaysNonInjectable(): Promise<void> {
