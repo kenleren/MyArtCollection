@@ -71,7 +71,7 @@ describe('named billing database persistence', () => {
 
   test('uses Firestore transactions as a single acknowledgement CAS boundary', async () => {
     const harness = createFirestoreHarness();
-    const attempt = await stageAcknowledgement(harness);
+    const attempt = await stageDelivery(harness);
 
     const results = await Promise.all([
       harness.repository.beginAcknowledgement(attempt, harness.clock.now()),
@@ -162,6 +162,14 @@ function createFirestoreHarness(): {
 async function stageAcknowledgement(
   harness: ReturnType<typeof createFirestoreHarness>,
 ): Promise<AttemptHandle> {
+  const attempt = await stageDelivery(harness);
+  assert.equal(await harness.repository.beginAcknowledgement(attempt, harness.clock.now()), true);
+  return attempt;
+}
+
+async function stageDelivery(
+  harness: ReturnType<typeof createFirestoreHarness>,
+): Promise<AttemptHandle> {
   const attempt = await acquire(
     harness,
     opaque(`account-${randomUUID()}`),
@@ -177,7 +185,6 @@ async function stageAcknowledgement(
     true,
   );
   assert.equal(await commitDelivery(harness, attempt), true);
-  assert.equal(await harness.repository.beginAcknowledgement(attempt, harness.clock.now()), true);
   return attempt;
 }
 
