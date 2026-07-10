@@ -1,6 +1,8 @@
 # Archivale
 
-Archivale is a planned iPhone and Android app for serious hobby collectors who want a private, polished record of their art collection without building a spreadsheet or hiring a registrar.
+Archivale is a local-first iPhone and Android app for serious hobby collectors
+who want a private, polished record of their art collection without building a
+spreadsheet or hiring a registrar.
 
 The core promise:
 

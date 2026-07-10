@@ -74,7 +74,16 @@ The MVP is successful when a new user can:
 
 ## Phase
 
-Current phase: Prototype to MVP planning.
+Current phase: MVP commercial-launch readiness.
 
-The repository is currently greenfield. No implementation should start before the initial product, architecture, privacy, and task breakdown documents are accepted.
+The repository contains the Flutter app shell and the server-side Play billing
+verifier. Active work is tracked under the commercial-launch epic (#175) and
+must continue through the remaining implementation, evidence, and review gates
+before any commercial release decision.
 
+Remaining human gates include acceptance of the supporting-document and
+report/export evidence (#179, #178), the Android broker and billing client
+evidence (#188, #192), and the owner-controlled research broker path (#115,
+#155), together with the release, privacy, billing, and store approvals
+described in the readiness specifications. These gates do not change the
+product principles or safety boundaries above.
