@@ -27,6 +27,8 @@ Use these phrases or close equivalents:
 - Export your archive
 - Preview the collector report PDF
 - Private record
+- This document supports the record, but does not prove authenticity
+- This saved document is unavailable. You can replace it when ready.
 
 ## Disallowed Language
 
@@ -44,6 +46,8 @@ Do not use these phrases or anything that means the same thing:
 - Verified artist attribution
 - Insurance-approved valuation
 - Official appraisal
+- All original documents are included
+- This archive is complete
 
 ## Surface Examples
 
@@ -105,6 +109,11 @@ Avoid:
 - "This document proves authenticity"
 - "Certified provenance"
 - "Appraisal verified by this file"
+
+When a saved document cannot be reopened, say that it is unavailable and offer
+replacement. Do not show device paths, picker URIs, or technical storage
+details. Archive wording must identify excluded attachment statuses without
+claiming completeness.
 
 ### Empty States
 

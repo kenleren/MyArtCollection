@@ -42,7 +42,7 @@ void main() {
     'saves app-private file and persists linked attachment metadata',
     () async {
       final source = File(p.join(tempDir.path, 'receipt.pdf'));
-      final bytes = [1, 2, 3, 4];
+      final bytes = _pdfBytes;
       await source.writeAsBytes(bytes);
 
       final attachment = await store.saveImportedAttachment(
@@ -78,7 +78,7 @@ void main() {
 
   test('reports missing app-private file without deleting metadata', () async {
     final source = File(p.join(tempDir.path, 'image.png'));
-    await source.writeAsBytes([9, 9, 9]);
+    await source.writeAsBytes(_pngBytes);
 
     final attachment = await store.saveImportedAttachment(
       artworkId: 'artwork-001',
@@ -106,7 +106,7 @@ void main() {
       );
 
       final primarySource = File(p.join(tempDir.path, 'primary.jpg'));
-      await primarySource.writeAsBytes([1, 1, 1]);
+      await primarySource.writeAsBytes(_jpegBytes);
       final primary = await store.saveImportedAttachment(
         artworkId: 'artwork-001',
         attachmentId: 'attachment-primary',
@@ -120,7 +120,7 @@ void main() {
       await repository.addAttachment(primary);
 
       final supportingSource = File(p.join(tempDir.path, 'detail.png'));
-      await supportingSource.writeAsBytes([2, 2, 2]);
+      await supportingSource.writeAsBytes(_pngBytes);
       final supporting = await store.saveImportedAttachment(
         artworkId: 'artwork-001',
         attachmentId: 'attachment-supporting',
@@ -160,7 +160,7 @@ void main() {
     'stores edited photo derivatives as new attachments with explicit lineage',
     () async {
       final primarySource = File(p.join(tempDir.path, 'primary-capture.jpg'));
-      await primarySource.writeAsBytes([3, 3, 3]);
+      await primarySource.writeAsBytes(_jpegBytes);
       final primary = await store.saveImportedAttachment(
         artworkId: 'artwork-001',
         attachmentId: 'attachment-primary',
@@ -174,7 +174,7 @@ void main() {
       await repository.addAttachment(primary);
 
       final derivativeSource = File(p.join(tempDir.path, 'primary-edit.jpg'));
-      final derivativeBytes = [4, 4, 4];
+      final derivativeBytes = _jpegBytes;
       await derivativeSource.writeAsBytes(derivativeBytes);
       final derivative = await store.saveImportedAttachment(
         artworkId: 'artwork-001',
@@ -203,7 +203,7 @@ void main() {
       expect(derivative.isOriginalCapture, isFalse);
 
       final originalBytes = await store.fileFor(primary).readAsBytes();
-      expect(originalBytes, [3, 3, 3]);
+      expect(originalBytes, _jpegBytes);
       final derivativeStoredBytes = await store
           .fileFor(derivative)
           .readAsBytes();
@@ -295,7 +295,78 @@ void main() {
       ),
     );
   });
+
+  test('rejects mismatched extensions and malformed signatures', () async {
+    final pdfNamedImage = File(p.join(tempDir.path, 'mismatch.pdf'));
+    await pdfNamedImage.writeAsBytes(_pngBytes);
+    await expectLater(
+      store.saveImportedAttachment(
+        artworkId: 'artwork-001',
+        attachmentId: 'attachment-mismatch',
+        sourceFile: pdfNamedImage,
+        originalFileName: 'mismatch.pdf',
+        mimeType: 'image/png',
+        type: AttachmentType.receipt,
+        source: ArtworkFieldSource.userConfirmed,
+        importedAt: DateTime.utc(2026, 7, 4, 12),
+      ),
+      throwsA(
+        isA<AttachmentImportException>().having(
+          (error) => error.failure,
+          'failure',
+          AttachmentImportFailure.mimeTypeMismatch,
+        ),
+      ),
+    );
+
+    final malformed = File(p.join(tempDir.path, 'malformed.png'));
+    await malformed.writeAsBytes(const [1, 2, 3]);
+    await expectLater(
+      store.saveImportedAttachment(
+        artworkId: 'artwork-001',
+        attachmentId: 'attachment-malformed',
+        sourceFile: malformed,
+        originalFileName: 'malformed.png',
+        mimeType: 'image/png',
+        type: AttachmentType.photo,
+        source: ArtworkFieldSource.userConfirmed,
+        importedAt: DateTime.utc(2026, 7, 4, 12),
+      ),
+      throwsA(
+        isA<AttachmentImportException>().having(
+          (error) => error.failure,
+          'failure',
+          AttachmentImportFailure.malformedFile,
+        ),
+      ),
+    );
+    expect(
+      await Directory(
+        p.join(store.storageRoot.path, '.staging'),
+      ).list().toList(),
+      isEmpty,
+    );
+  });
 }
+
+const _pdfBytes = <int>[
+  0x25,
+  0x50,
+  0x44,
+  0x46,
+  0x2d,
+  0x31,
+  0x2e,
+  0x34,
+  0x0a,
+  0x25,
+  0x25,
+  0x45,
+  0x4f,
+  0x46,
+];
+const _pngBytes = <int>[0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+const _jpegBytes = <int>[0xff, 0xd8, 0xff, 0xe0, 0x00];
 
 ArtworkRecord _record(String id, {String? primaryImageAttachmentId}) {
   final now = DateTime.utc(2026, 7, 4, 9);

@@ -55,6 +55,27 @@ enum AttachmentRole {
   }
 }
 
+/// The retention state of an attachment record. This is separate from the
+/// artwork lifecycle: supporting files can become unavailable or be replaced
+/// while the artwork record remains active.
+enum AttachmentLifecycleStatus {
+  active('active'),
+  unavailable('unavailable'),
+  superseded('superseded'),
+  removed('removed');
+
+  const AttachmentLifecycleStatus(this.storageValue);
+
+  final String storageValue;
+
+  static AttachmentLifecycleStatus fromStorage(String? value) {
+    return AttachmentLifecycleStatus.values.firstWhere(
+      (status) => status.storageValue == value,
+      orElse: () => AttachmentLifecycleStatus.active,
+    );
+  }
+}
+
 class AttachmentRecord {
   AttachmentRecord({
     required this.id,
@@ -68,6 +89,9 @@ class AttachmentRecord {
     required this.source,
     required this.relativePath,
     required this.checksum,
+    this.lifecycleStatus = AttachmentLifecycleStatus.active,
+    this.lifecycleUpdatedAt,
+    this.supersededByAttachmentId,
     this.capturedAt,
     this.derivedFromAttachmentId,
     this.transformSummary,
@@ -89,6 +113,9 @@ class AttachmentRecord {
   final ArtworkFieldSource source;
   final String relativePath;
   final String checksum;
+  final AttachmentLifecycleStatus lifecycleStatus;
+  final DateTime? lifecycleUpdatedAt;
+  final String? supersededByAttachmentId;
   final String? extractionSummary;
   final String? notes;
 
@@ -104,4 +131,37 @@ class AttachmentRecord {
   bool get isDerivative => derivedFromAttachmentId != null;
 
   bool get isOriginalCapture => derivedFromAttachmentId == null;
+
+  bool get isVisibleInActiveUi =>
+      lifecycleStatus == AttachmentLifecycleStatus.active ||
+      lifecycleStatus == AttachmentLifecycleStatus.unavailable;
+
+  AttachmentRecord copyWith({
+    AttachmentLifecycleStatus? lifecycleStatus,
+    DateTime? lifecycleUpdatedAt,
+    String? supersededByAttachmentId,
+  }) {
+    return AttachmentRecord(
+      id: id,
+      artworkId: artworkId,
+      type: type,
+      role: role,
+      fileName: fileName,
+      mimeType: mimeType,
+      fileSizeBytes: fileSizeBytes,
+      importedAt: importedAt,
+      capturedAt: capturedAt,
+      derivedFromAttachmentId: derivedFromAttachmentId,
+      transformSummary: transformSummary,
+      source: source,
+      relativePath: relativePath,
+      checksum: checksum,
+      lifecycleStatus: lifecycleStatus ?? this.lifecycleStatus,
+      lifecycleUpdatedAt: lifecycleUpdatedAt ?? this.lifecycleUpdatedAt,
+      supersededByAttachmentId:
+          supersededByAttachmentId ?? this.supersededByAttachmentId,
+      extractionSummary: extractionSummary,
+      notes: notes,
+    );
+  }
 }

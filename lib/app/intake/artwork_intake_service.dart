@@ -142,8 +142,15 @@ class ArtworkIntakeService {
           ArtworkIntakeFailure.sourceUnavailable,
         AttachmentImportFailure.unsupportedMimeType =>
           ArtworkIntakeFailure.unsupportedFile,
+        AttachmentImportFailure.mimeTypeMismatch ||
+        AttachmentImportFailure.malformedFile =>
+          ArtworkIntakeFailure.unsupportedFile,
+        AttachmentImportFailure.unreadableSource =>
+          ArtworkIntakeFailure.sourceUnavailable,
         AttachmentImportFailure.fileTooLarge =>
           ArtworkIntakeFailure.fileTooLarge,
+        AttachmentImportFailure.storageFailure =>
+          ArtworkIntakeFailure.pickerUnavailable,
       }, error.message);
     } on Exception catch (error) {
       throw ArtworkIntakeException(

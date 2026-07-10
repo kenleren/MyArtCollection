@@ -759,6 +759,60 @@ void main() {
     },
   );
 
+  test('upgrades v7 attachment rows with active lifecycle defaults', () async {
+    await repository.close();
+    await databaseFactoryFfi.deleteDatabase(databasePath);
+
+    final legacyDatabase = await databaseFactoryFfi.openDatabase(
+      databasePath,
+      options: OpenDatabaseOptions(version: 7, onCreate: _createV7Schema),
+    );
+    await legacyDatabase.insert('artworks', {
+      'artwork_id': 'legacy-v7-artwork',
+      'record_state': 'verifiedByYou',
+      'lifecycle_status': 'active',
+      'primary_image_attachment_id': null,
+      'created_at': DateTime.utc(2026, 7, 4, 8).toIso8601String(),
+      'updated_at': DateTime.utc(2026, 7, 4, 8, 5).toIso8601String(),
+    });
+    await legacyDatabase.insert(
+      'attachments',
+      _legacyAttachmentRow(
+        id: 'legacy-v7-receipt',
+        artworkId: 'legacy-v7-artwork',
+        type: 'receipt',
+        fileName: 'receipt.pdf',
+        mimeType: 'application/pdf',
+        importedAt: DateTime.utc(2026, 7, 4, 8),
+        attachmentRole: 'supporting_document',
+      ),
+    );
+    await legacyDatabase.close();
+
+    repository = LocalArtworkRepository.forDatabase(
+      await LocalArtworkRepository.openAt(databasePath),
+    );
+
+    final attachment = await repository.getAttachment('legacy-v7-receipt');
+    expect(attachment!.lifecycleStatus, AttachmentLifecycleStatus.active);
+    expect(attachment.lifecycleUpdatedAt, isNull);
+    expect(attachment.supersededByAttachmentId, isNull);
+
+    final rawDatabase = await databaseFactoryFfi.openDatabase(databasePath);
+    addTearDown(rawDatabase.close);
+    final columnInfo = await rawDatabase.rawQuery(
+      'PRAGMA table_info(attachments)',
+    );
+    expect(
+      columnInfo.map((column) => column['name']),
+      containsAll([
+        'lifecycle_status',
+        'lifecycle_updated_at',
+        'superseded_by_attachment_id',
+      ]),
+    );
+  });
+
   test('rejects derivative attachments with missing sources', () async {
     final derivative = _attachment(
       id: 'attachment-derivative',
@@ -1049,6 +1103,14 @@ Future<void> _createV6Schema(Database db, int version) async {
   await db.execute(
     "ALTER TABLE attachments ADD COLUMN attachment_role TEXT NOT NULL DEFAULT 'supporting_document'",
   );
+}
+
+Future<void> _createV7Schema(Database db, int version) async {
+  await _createV6Schema(db, version);
+  await db.execute(
+    'ALTER TABLE attachments ADD COLUMN derived_from_attachment_id TEXT',
+  );
+  await db.execute('ALTER TABLE attachments ADD COLUMN transform_summary TEXT');
 }
 
 Map<String, Object?> _legacyAttachmentRow({

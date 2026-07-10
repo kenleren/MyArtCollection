@@ -107,8 +107,11 @@ Attachment metadata:
 - `document_source_state`
 - `extracted_text_available`
 - `extraction_summary`
-- `source_uri_or_local_path`
+- `opaque_storage_key` for the app-private payload only
 - `checksum`
+- `attachment_lifecycle_status`
+- `attachment_lifecycle_updated_at`
+- `superseded_by_attachment_id` when a replacement succeeds
 - `notes`
 
 Attachment source states:
@@ -139,6 +142,15 @@ Attachment rules:
   photos, and non-photo rows are supporting documents.
 - The attachment label must not claim proof of authenticity.
 - The app may extract text from a document, but extracted text is still reviewable and may be wrong.
+- Picker URIs and absolute local paths are never retained in attachment
+  metadata, archives, or user-facing copy.
+- Attachment lifecycle is independent from artwork lifecycle. Attachment rows
+  use `active`, `unavailable`, `superseded`, or `removed`. Replacement and
+  removal are soft-removal operations: prior metadata and app-private bytes
+  remain for the prototype, but superseded and removed rows are not active UI,
+  archive payload, or future backup inputs.
+- Attachment export serialization and excluded-entry minimization are defined
+  by [Supporting Record Attachment Export Contract v1](SUPPORTING_RECORD_ATTACHMENT_EXPORT_CONTRACT_V1.md).
 
 ## Completeness And Record States
 
@@ -288,7 +300,7 @@ Export and report outputs must be derived from confirmed, reviewable record data
 ### Included In Full Archive Export
 
 - All artwork fields
-- All attachment metadata
+- Attachment metadata permitted by the attachment export contract
 - All source states and source notes
 - All user-confirmed values
 - All document-extracted values
@@ -301,6 +313,9 @@ Export and report outputs must be derived from confirmed, reviewable record data
 - No export should present insurance value as an app-certified appraisal.
 - No export should rename user-provided values as verified market value.
 - Any AI-suggested field should be labeled as suggested unless the user has confirmed it.
+- Superseded and user-removed attachment payloads are excluded. Missing and
+  checksum-mismatched current payloads are exclusion statuses, not claims that
+  the archive is complete.
 
 ### Mapping Notes
 

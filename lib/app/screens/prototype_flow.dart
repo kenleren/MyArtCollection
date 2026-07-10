@@ -2017,8 +2017,285 @@ class _ArtworkEditScreenState extends State<ArtworkEditScreen> {
   }
 }
 
-class DocumentsScreen extends StatelessWidget {
+class DocumentsScreen extends StatefulWidget {
   const DocumentsScreen({super.key, required this.artwork});
+
+  final PrototypeArtwork artwork;
+
+  @override
+  State<DocumentsScreen> createState() => _DocumentsScreenState();
+}
+
+class _DocumentsScreenState extends State<DocumentsScreen> {
+  Future<List<AttachmentRecord>>? _attachmentsFuture;
+  AttachmentType _selectedType = AttachmentType.receipt;
+  String? _message;
+  bool _isBusy = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final dependencies = _maybeDependencies(context);
+    _attachmentsFuture ??= dependencies == null
+        ? Future<List<AttachmentRecord>>.value(const [])
+        : dependencies.artworkRepository.attachmentsForArtwork(
+            widget.artwork.id,
+          );
+  }
+
+  void _reload() {
+    final dependencies = _maybeDependencies(context);
+    if (dependencies == null) {
+      return;
+    }
+    setState(() {
+      _attachmentsFuture = dependencies.artworkRepository.attachmentsForArtwork(
+        widget.artwork.id,
+      );
+    });
+  }
+
+  Future<void> _attachDocument() async {
+    setState(() {
+      _isBusy = true;
+      _message = null;
+    });
+    try {
+      await AppDependencyScope.of(
+        context,
+      ).createSupportingAttachmentService().importSupportingDocument(
+        artworkId: widget.artwork.id,
+        type: _selectedType,
+      );
+      _reload();
+    } on ArtworkIntakeException catch (error) {
+      if (mounted) {
+        setState(() => _message = error.message);
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isBusy = false);
+      }
+    }
+  }
+
+  Future<void> _openDocument(AttachmentRecord attachment) async {
+    setState(() {
+      _isBusy = true;
+      _message = null;
+    });
+    try {
+      await AppDependencyScope.of(context)
+          .createSupportingAttachmentService()
+          .openSupportingDocument(attachment.id);
+    } on ArtworkIntakeException catch (error) {
+      if (mounted) {
+        setState(() => _message = error.message);
+        _reload();
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isBusy = false);
+      }
+    }
+  }
+
+  Future<void> _replaceDocument(AttachmentRecord attachment) async {
+    setState(() {
+      _isBusy = true;
+      _message = null;
+    });
+    try {
+      await AppDependencyScope.of(
+        context,
+      ).createSupportingAttachmentService().replaceSupportingDocument(
+        attachmentId: attachment.id,
+        type: attachment.type,
+      );
+      _reload();
+    } on ArtworkIntakeException catch (error) {
+      if (mounted) {
+        setState(() => _message = error.message);
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isBusy = false);
+      }
+    }
+  }
+
+  Future<void> _removeDocument(AttachmentRecord attachment) async {
+    final shouldRemove = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Remove supporting document?'),
+        content: const Text(
+          'This removes it from the active record and future archives. The prototype retains its private bytes until a separate data-erasure feature is available.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Remove'),
+          ),
+        ],
+      ),
+    );
+    if (shouldRemove != true || !mounted) {
+      return;
+    }
+    setState(() {
+      _isBusy = true;
+      _message = null;
+    });
+    try {
+      await AppDependencyScope.of(context)
+          .createSupportingAttachmentService()
+          .removeSupportingDocument(attachment.id);
+      _reload();
+    } on ArtworkIntakeException catch (error) {
+      if (mounted) {
+        setState(() => _message = error.message);
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isBusy = false);
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_maybeDependencies(context) == null) {
+      return _StaticDocumentsScreen(artwork: widget.artwork);
+    }
+
+    return PrototypeScreenFrame(
+      title: 'Documents',
+      subtitle: 'Supporting records',
+      child: FutureBuilder<List<AttachmentRecord>>(
+        future: _attachmentsFuture,
+        builder: (context, snapshot) {
+          if (snapshot.connectionState != ConnectionState.done) {
+            return const Center(child: CircularProgressIndicator());
+          }
+          final attachments =
+              snapshot.data?.toList(growable: false) ??
+              const <AttachmentRecord>[];
+          final documents = attachments
+              .where((attachment) => attachment.isSupportingDocument)
+              .toList(growable: false);
+          final supportingPhotos = attachments
+              .where((attachment) => attachment.isSupportingPhoto)
+              .toList(growable: false);
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const _ProgressStrip(activeIndex: 2),
+              const SizedBox(height: 16),
+              const _Notice(
+                icon: Icons.info_outline,
+                text:
+                    'Supporting records help preserve context for this artwork. They do not prove authenticity.',
+              ),
+              if (_message != null) ...[
+                const SizedBox(height: 12),
+                _StatusPanel(
+                  icon: Icons.warning_amber_outlined,
+                  title: 'Document needs attention',
+                  body: _message!,
+                ),
+              ],
+              const SizedBox(height: 16),
+              if (documents.isEmpty && supportingPhotos.isEmpty)
+                const _StatusPanel(
+                  icon: Icons.folder_copy_outlined,
+                  title: 'No supporting documents yet',
+                  body:
+                      'Attach an original PDF or image when it adds context to this record.',
+                )
+              else
+                for (final attachment in documents) ...[
+                  _LiveSupportingDocumentTile(
+                    attachment: attachment,
+                    isBusy: _isBusy,
+                    onOpen: () => _openDocument(attachment),
+                    onReplace: () => _replaceDocument(attachment),
+                    onRemove: () => _removeDocument(attachment),
+                  ),
+                  const SizedBox(height: 10),
+                ],
+              for (final attachment in supportingPhotos) ...[
+                _LiveSupportingPhotoTile(attachment: attachment),
+                const SizedBox(height: 10),
+              ],
+              const SizedBox(height: 16),
+              DropdownButtonFormField<AttachmentType>(
+                initialValue: _selectedType,
+                decoration: const InputDecoration(labelText: 'Document type'),
+                items: const [
+                  DropdownMenuItem(
+                    value: AttachmentType.receipt,
+                    child: Text('Receipt'),
+                  ),
+                  DropdownMenuItem(
+                    value: AttachmentType.certificate,
+                    child: Text('Certificate'),
+                  ),
+                  DropdownMenuItem(
+                    value: AttachmentType.appraisal,
+                    child: Text('Appraisal'),
+                  ),
+                  DropdownMenuItem(
+                    value: AttachmentType.auctionRecord,
+                    child: Text('Auction record'),
+                  ),
+                  DropdownMenuItem(
+                    value: AttachmentType.provenanceNote,
+                    child: Text('Provenance note'),
+                  ),
+                  DropdownMenuItem(
+                    value: AttachmentType.otherSupportingDocument,
+                    child: Text('Other supporting document'),
+                  ),
+                ],
+                onChanged: _isBusy
+                    ? null
+                    : (value) => setState(() => _selectedType = value!),
+              ),
+              const SizedBox(height: 12),
+              _ActionButton(
+                icon: Icons.attach_file,
+                label: _isBusy ? 'Working...' : 'Attach supporting document',
+                onPressed: _isBusy ? null : _attachDocument,
+              ),
+              const SizedBox(height: 12),
+              SecondaryActionButton(
+                icon: Icons.photo_library_outlined,
+                label: 'Import supporting photo',
+                routeName: AppRoutes.artworkSupportingPhotoImport(
+                  widget.artwork.id,
+                ),
+              ),
+              const SizedBox(height: 20),
+              PrimaryActionButton(
+                icon: Icons.verified_user_outlined,
+                label: 'View verified record',
+                routeName: AppRoutes.artworkDetails(widget.artwork.id),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _StaticDocumentsScreen extends StatelessWidget {
+  const _StaticDocumentsScreen({required this.artwork});
 
   final PrototypeArtwork artwork;
 
@@ -2038,43 +2315,15 @@ class DocumentsScreen extends StatelessWidget {
                 'Supporting records help preserve context for this artwork. They do not prove authenticity.',
           ),
           const SizedBox(height: 16),
-          if (artwork.documents.isEmpty)
-            const _StatusPanel(
-              icon: Icons.folder_copy_outlined,
-              title: 'No supporting records yet',
-              body:
-                  'Add photos of labels, signatures, backs, frames, receipts, condition details, or provenance notes when they help tell the record clearly.',
-            )
-          else
-            for (final document in artwork.documents) ...[
-              DocumentTile(document: document),
-              const SizedBox(height: 10),
-            ],
-          const SizedBox(height: 12),
-          PrimaryActionButton(
-            icon: Icons.photo_camera_outlined,
-            label: 'Take supporting photo',
-            routeName: AppRoutes.artworkSupportingPhotoCapture(artwork.id),
-          ),
-          const SizedBox(height: 12),
-          SecondaryActionButton(
-            icon: Icons.photo_library_outlined,
-            label: 'Import supporting photo',
-            routeName: AppRoutes.artworkSupportingPhotoImport(artwork.id),
-          ),
-          const SizedBox(height: 12),
+          for (final document in artwork.documents) ...[
+            DocumentTile(document: document),
+            const SizedBox(height: 10),
+          ],
           const _StatusPanel(
-            icon: Icons.block_outlined,
-            title: 'Add paper records as photos for now',
+            icon: Icons.attach_file,
+            title: 'Original document attachments',
             body:
-                'For now, photograph receipts, certificates, auction records, gallery notes, or estate papers and keep them with this artwork.',
-          ),
-          const SizedBox(height: 12),
-          const _StatusPanel(
-            icon: Icons.warning_amber_outlined,
-            title: 'Attachment needs attention',
-            body:
-                'If one of these private files goes missing later, the record details stay here and you can add the photo again.',
+                'Attach receipts, certificates, appraisals, auction records, or provenance notes in your saved record.',
           ),
           const SizedBox(height: 20),
           PrimaryActionButton(
@@ -2087,6 +2336,102 @@ class DocumentsScreen extends StatelessWidget {
             icon: Icons.picture_as_pdf_outlined,
             label: 'Report preview',
             routeName: AppRoutes.artworkReportPreview(artwork.id),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _LiveSupportingDocumentTile extends StatelessWidget {
+  const _LiveSupportingDocumentTile({
+    required this.attachment,
+    required this.isBusy,
+    required this.onOpen,
+    required this.onReplace,
+    required this.onRemove,
+  });
+
+  final AttachmentRecord attachment;
+  final bool isBusy;
+  final VoidCallback onOpen;
+  final VoidCallback onReplace;
+  final VoidCallback onRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    final unavailable =
+        attachment.lifecycleStatus == AttachmentLifecycleStatus.unavailable;
+    return _Panel(
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(
+            unavailable
+                ? Icons.warning_amber_outlined
+                : Icons.description_outlined,
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  attachment.fileName,
+                  style: Theme.of(context).textTheme.titleSmall,
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  unavailable
+                      ? 'Saved document unavailable. Replace it to restore this record.'
+                      : _attachmentTypeLabel(attachment.type),
+                ),
+              ],
+            ),
+          ),
+          IconButton(
+            tooltip: 'Open document',
+            onPressed: isBusy || unavailable ? null : onOpen,
+            icon: const Icon(Icons.open_in_new),
+          ),
+          IconButton(
+            tooltip: 'Replace document',
+            onPressed: isBusy ? null : onReplace,
+            icon: const Icon(Icons.swap_horiz),
+          ),
+          IconButton(
+            tooltip: 'Remove document',
+            onPressed: isBusy ? null : onRemove,
+            icon: const Icon(Icons.delete_outline),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _LiveSupportingPhotoTile extends StatelessWidget {
+  const _LiveSupportingPhotoTile({required this.attachment});
+
+  final AttachmentRecord attachment;
+
+  @override
+  Widget build(BuildContext context) {
+    return _Panel(
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Icon(Icons.photo_library_outlined),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('Supporting photo'),
+                const SizedBox(height: 4),
+                Text(attachment.fileName),
+              ],
+            ),
           ),
         ],
       ),

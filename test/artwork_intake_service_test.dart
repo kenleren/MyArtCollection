@@ -161,9 +161,14 @@ void main() {
 
 Future<File> _imageFile(Directory tempDir, String fileName) async {
   final file = File(p.join(tempDir.path, fileName));
-  await file.writeAsBytes([1, 2, 3, 4]);
+  await file.writeAsBytes(
+    fileName.toLowerCase().endsWith('.png') ? _pngBytes : _jpegBytes,
+  );
   return file;
 }
+
+const _pngBytes = <int>[0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+const _jpegBytes = <int>[0xff, 0xd8, 0xff, 0xe0, 0x00];
 
 class _FakeArtworkImagePicker implements ArtworkImagePicker {
   final galleryResults = <XFile?>[];
