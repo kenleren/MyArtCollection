@@ -10,7 +10,8 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "npm run build && node --test build/dist-test/*.test.js"
+    "test": "npm run build && node --test build/dist-test/*.test.js",
+    "test:emulator": "firebase emulators:exec --project demo-art-research-broker --only auth,functions,firestore --config firebase.emulator.json \"npm run build && node build/dist-test/emulator_harness.js\""
   },
   "dependencies": {
     "firebase-admin": "^13.10.0",

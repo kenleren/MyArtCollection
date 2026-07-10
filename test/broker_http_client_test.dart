@@ -155,7 +155,72 @@ void main() {
   );
 
   test(
-    'keeps a frozen body for an explicit retry and clears it on completion',
+    'requires matching current typed consent before retry Firebase or network work',
+    () async {
+      final request = _payload();
+      final store = _MemoryRetryStore();
+      await store.save(
+        FrozenBrokerRequest(
+          requestId: request.requestId,
+          payloadHash: request.toRequest()['payload_hash']! as String,
+          body: jsonEncode(<String, Object?>{'data': request.toRequest()}),
+          consent: request.consent,
+        ),
+      );
+      final runtime = _RecordingRuntime();
+      final transport = _RecordingTransport();
+
+      final result =
+          await _client(
+            runtime: runtime,
+            transport: transport,
+            store: store,
+          ).retry(
+            request.requestId,
+            consent: const BrokerResearchConsent.approved(
+              scope: BrokerConsentScope.imagePlusDraftHints,
+              copyVersion: 'research-consent-v1',
+            ),
+          );
+
+      expect(result.failure!.code, 'consent_required');
+      expect(runtime.calls, isEmpty);
+      expect(transport.requests, isEmpty);
+    },
+  );
+
+  test(
+    'rejects a frozen retry whose embedded consent differs before Firebase work',
+    () async {
+      final request = _payload();
+      final requestBody = request.toRequest()
+        ..['consent_scope'] = BrokerConsentScope.imagePlusDraftHints.wireValue;
+      final store = _MemoryRetryStore();
+      await store.save(
+        FrozenBrokerRequest(
+          requestId: request.requestId,
+          payloadHash: request.toRequest()['payload_hash']! as String,
+          body: jsonEncode(<String, Object?>{'data': requestBody}),
+          consent: request.consent,
+        ),
+      );
+      final runtime = _RecordingRuntime();
+      final transport = _RecordingTransport();
+
+      final result = await _client(
+        runtime: runtime,
+        transport: transport,
+        store: store,
+      ).retry(request.requestId, consent: request.consent);
+
+      expect(result.failure!.code, 'consent_required');
+      expect(runtime.calls, isEmpty);
+      expect(transport.requests, isEmpty);
+    },
+  );
+
+  test(
+    'keeps a frozen body for a consent-matched explicit retry and clears it on completion',
     () async {
       final firstRuntime = _RecordingRuntime();
       final store = _MemoryRetryStore();
@@ -185,7 +250,7 @@ void main() {
         runtime: _RecordingRuntime(),
         transport: secondTransport,
         store: store,
-      ).retry(request.requestId);
+      ).retry(request.requestId, consent: request.consent);
 
       expect(retryResult.isSuccess, isTrue);
       expect(secondTransport.requests.single.body, frozen!.body);
@@ -194,44 +259,113 @@ void main() {
   );
 
   test(
-    'maps only schema-valid broker responses and never returns backend messages',
+    'maps typed allowlisted success responses and never returns raw backend data',
     () async {
-      final response = <String, Object?>{
-        'error_contract_version': 'broker-error-v1',
-        'error': <String, Object?>{
-          'code': 'rate_limited',
-          'message': 'provider diagnostic must not reach the collector',
-          'retry_after_seconds': 30,
-        },
-      };
       final result = await _client(
         runtime: _RecordingRuntime(),
         transport: _RecordingTransport(
           responses: <Object>[
             BrokerTransportResponse(
-              statusCode: 429,
-              body: jsonEncode(response),
+              statusCode: 200,
+              body: jsonEncode(_validResponseFixture()['success']),
             ),
           ],
         ),
       ).submit(_payload());
 
-      expect(result.failure!.code, 'rate_limited');
-      expect(result.failure!.message, 'Research is temporarily unavailable.');
-      expect(result.failure!.retryAfterSeconds, 30);
+      expect(result.isSuccess, isTrue);
+      expect(result.response, isA<BrokerSuccessResponse>());
+      expect(result.response!.sources.single.sourceUrl, startsWith('https://'));
+      expect(result.response!.candidateAttributions.single.sourceRefs, <String>[
+        'src_fixture',
+      ]);
 
-      final malformed = await _client(
+      final replayed = Map<String, Object?>.from(
+        _validResponseFixture()['success']! as Map,
+      )..['replayed'] = true;
+      final replayedResult = await _client(
         runtime: _RecordingRuntime(),
         transport: _RecordingTransport(
-          responses: const <Object>[
+          responses: <Object>[
             BrokerTransportResponse(
               statusCode: 200,
-              body: '{"status":"completed"}',
+              body: jsonEncode(replayed),
             ),
           ],
         ),
       ).submit(_payload());
-      expect(malformed.failure!.code, 'invalid_broker_response');
+      expect(replayedResult.response!.replayed, isTrue);
+    },
+  );
+
+  test(
+    'rejects negative response fixtures and maps only authoritative broker-error-v1 envelopes',
+    () async {
+      final fixture = _validResponseFixture();
+      for (final invalid in fixture['invalid']! as List<Object?>) {
+        final malformed = await _client(
+          runtime: _RecordingRuntime(),
+          transport: _RecordingTransport(
+            responses: <Object>[
+              BrokerTransportResponse(
+                statusCode: 200,
+                body: jsonEncode(invalid),
+              ),
+            ],
+          ),
+        ).submit(_payload());
+        expect(malformed.failure!.code, 'invalid_broker_response');
+      }
+
+      final errorFixture =
+          jsonDecode(
+                await File(
+                  'backend/broker/fixtures/broker-error-v1.json',
+                ).readAsString(),
+              )
+              as Map<String, Object?>;
+      for (final errorCase in errorFixture['cases']! as List<Object?>) {
+        final current = Map<String, Object?>.from(errorCase! as Map);
+        final code = current['code']! as String;
+        final error = <String, Object?>{
+          'code': code,
+          'message': current['message'],
+          'retryable': current['retryable'],
+          if (current.containsKey('retry_after_seconds'))
+            'retry_after_seconds': current['retry_after_seconds'],
+        };
+        final result = await _client(
+          runtime: _RecordingRuntime(),
+          transport: _RecordingTransport(
+            responses: _errorResponses(current, error, code),
+          ),
+        ).submit(_payload());
+        expect(result.failure!.code, code);
+        expect(result.failure!.message, 'Research is temporarily unavailable.');
+      }
+
+      final diagnostic = await _client(
+        runtime: _RecordingRuntime(),
+        transport: _RecordingTransport(
+          responses: <Object>[
+            BrokerTransportResponse(
+              statusCode: 429,
+              body: jsonEncode(<String, Object?>{
+                'ok': false,
+                'error_contract_version': 'broker-error-v1',
+                'status': 'rejected',
+                'error': <String, Object?>{
+                  'code': 'rate_limited',
+                  'message': 'provider diagnostic must not reach the collector',
+                  'retryable': true,
+                  'retry_after_seconds': 30,
+                },
+              }),
+            ),
+          ],
+        ),
+      ).submit(_payload());
+      expect(diagnostic.failure!.code, 'invalid_broker_response');
     },
   );
 
@@ -248,6 +382,10 @@ void main() {
           payloadHash:
               'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
           body: '{"data":{}}',
+          consent: BrokerResearchConsent.approved(
+            scope: BrokerConsentScope.imageOnly,
+            copyVersion: 'research-consent-v1',
+          ),
         ),
       );
 
@@ -255,6 +393,7 @@ void main() {
       final restored = await second.read(requestId);
       expect(restored!.payloadHash, hasLength(64));
       expect(restored.body, '{"data":{}}');
+      expect(restored.consent.scope, BrokerConsentScope.imageOnly);
       expect(() => second.read('not-a-uuid'), throwsArgumentError);
     },
   );
@@ -313,6 +452,36 @@ Map<String, Object?> _successBody(String requestId) => <String, Object?>{
   'comparable_value_signals': const <Object?>[],
   'warnings': const <Object?>[],
 };
+
+Map<String, Object?> _validResponseFixture() =>
+    jsonDecode(File('test/fixtures/broker-response-v1.json').readAsStringSync())
+        as Map<String, Object?>;
+
+bool _isConflictCode(String code) =>
+    code == 'idempotency_conflict' ||
+    code == 'request_in_flight' ||
+    code == 'request_expired' ||
+    code == 'request_outcome_unknown';
+
+List<Object> _errorResponses(
+  Map<String, Object?> errorCase,
+  Map<String, Object?> error,
+  String code,
+) {
+  final response = BrokerTransportResponse(
+    statusCode: errorCase['http_status']! as int,
+    body: jsonEncode(<String, Object?>{
+      'ok': false,
+      'error_contract_version': 'broker-error-v1',
+      'request_id': _payload().requestId,
+      'status': _isConflictCode(code) ? 'conflict' : 'rejected',
+      'error': error,
+    }),
+  );
+  return response.statusCode == 401
+      ? <Object>[response, response]
+      : <Object>[response];
+}
 
 class _RecordingRuntime implements FirebaseResearchRuntime {
   _RecordingRuntime({

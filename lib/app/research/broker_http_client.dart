@@ -70,11 +70,18 @@ class FrozenBrokerRequest {
     required this.requestId,
     required this.payloadHash,
     required this.body,
+    required this.consent,
   });
 
   final String requestId;
   final String payloadHash;
   final String body;
+  final BrokerResearchConsent consent;
+
+  bool matchesConsent(BrokerResearchConsent currentConsent) {
+    return consent.scope == currentConsent.scope &&
+        consent.copyVersion == currentConsent.copyVersion;
+  }
 }
 
 abstract interface class BrokerRetryStore {
@@ -109,6 +116,8 @@ class FileBrokerRetryStore implements BrokerRetryStore {
         'request_id': request.requestId,
         'payload_hash': request.payloadHash,
         'body': request.body,
+        'consent_scope': request.consent.scope.wireValue,
+        'consent_copy_version': request.consent.copyVersion,
       }),
       flush: true,
     );
@@ -126,13 +135,23 @@ class FileBrokerRetryStore implements BrokerRetryStore {
       if (decoded is! Map<Object?, Object?> ||
           decoded['request_id'] != requestId ||
           decoded['payload_hash'] is! String ||
-          decoded['body'] is! String) {
+          decoded['body'] is! String ||
+          decoded['consent_scope'] is! String ||
+          decoded['consent_copy_version'] is! String) {
+        return null;
+      }
+      final scope = _consentScopeFromWire(decoded['consent_scope']! as String);
+      if (scope == null) {
         return null;
       }
       return FrozenBrokerRequest(
         requestId: requestId,
         payloadHash: decoded['payload_hash']! as String,
         body: decoded['body']! as String,
+        consent: BrokerResearchConsent.approved(
+          scope: scope,
+          copyVersion: decoded['consent_copy_version']! as String,
+        ),
       );
     } on Object {
       return null;
@@ -184,7 +203,7 @@ class BrokerClientResult {
     this.refreshedAfterUnauthorized = false,
   }) : response = null;
 
-  final Map<String, Object?>? response;
+  final BrokerSuccessResponse? response;
   final BrokerClientFailure? failure;
   final bool refreshedAfterUnauthorized;
 
@@ -216,17 +235,29 @@ class BrokerHttpClient {
       requestId: payload.requestId,
       payloadHash: request['payload_hash']! as String,
       body: jsonEncode(<String, Object?>{'data': request}),
+      consent: payload.consent,
     );
     return _submitFrozen(frozen, saveBeforeSend: true);
   }
 
-  Future<BrokerClientResult> retry(String requestId) async {
+  Future<BrokerClientResult> retry(
+    String requestId, {
+    required BrokerResearchConsent consent,
+  }) async {
     final frozen = await retryStore.read(requestId);
     if (frozen == null) {
       return const BrokerClientResult.failure(
         BrokerClientFailure(
           code: 'retry_not_available',
           message: 'No saved research request is available.',
+        ),
+      );
+    }
+    if (!frozen.matchesConsent(consent) || !_matchesFrozenRequest(frozen)) {
+      return const BrokerClientResult.failure(
+        BrokerClientFailure(
+          code: 'consent_required',
+          message: 'Research consent must be confirmed again.',
         ),
       );
     }
@@ -247,6 +278,14 @@ class BrokerHttpClient {
     FrozenBrokerRequest frozen, {
     required bool saveBeforeSend,
   }) async {
+    if (!_matchesFrozenRequest(frozen)) {
+      return const BrokerClientResult.failure(
+        BrokerClientFailure(
+          code: 'retry_not_available',
+          message: 'No saved research request is available.',
+        ),
+      );
+    }
     if (!featureFlags.isConfiguredBrokerEndpoint(endpoint)) {
       return const BrokerClientResult.failure(
         BrokerClientFailure(
@@ -386,16 +425,17 @@ class BrokerHttpClient {
   }) async {
     await retryStore.clear(frozen.requestId);
     final body = _jsonObject(transportResponse.body);
-    if (transportResponse.statusCode == 200 &&
-        body != null &&
-        _isValidSuccessResponse(body, frozen.requestId)) {
+    final success = body == null
+        ? null
+        : BrokerSuccessResponse.tryParse(body, frozen.requestId);
+    if (transportResponse.statusCode == 200 && success != null) {
       return BrokerClientResult.success(
-        body,
+        success,
         refreshedAfterUnauthorized: refreshedAfterUnauthorized,
       );
     }
     return BrokerClientResult.failure(
-      _safeBrokerFailure(body),
+      _safeBrokerFailure(body, frozen.requestId),
       refreshedAfterUnauthorized: refreshedAfterUnauthorized,
     );
   }
@@ -429,22 +469,17 @@ Map<String, Object?>? _jsonObject(String input) {
   return null;
 }
 
-BrokerClientFailure _safeBrokerFailure(Map<String, Object?>? body) {
-  if (body == null || body['error_contract_version'] != 'broker-error-v1') {
+BrokerClientFailure _safeBrokerFailure(
+  Map<String, Object?>? body,
+  String requestId,
+) {
+  if (!_isBrokerErrorEnvelope(body, requestId)) {
     return const BrokerClientFailure(
       code: 'invalid_broker_response',
       message: 'Research is temporarily unavailable.',
     );
   }
-  final error = body['error'];
-  if (error is! Map<Object?, Object?> ||
-      error['code'] is! String ||
-      !_brokerErrorCodes.contains(error['code'])) {
-    return const BrokerClientFailure(
-      code: 'invalid_broker_response',
-      message: 'Research is temporarily unavailable.',
-    );
-  }
+  final error = Map<String, Object?>.from(body!['error']! as Map);
   final retryAfter = error['retry_after_seconds'];
   return BrokerClientFailure(
     code: error['code']! as String,
@@ -455,20 +490,21 @@ BrokerClientFailure _safeBrokerFailure(Map<String, Object?>? body) {
   );
 }
 
-bool _isValidSuccessResponse(Map<String, Object?> body, String requestId) {
-  if (body['request_id'] != requestId ||
-      body['status'] != 'completed' ||
-      body['provider'] is! String ||
-      body['model'] is! String ||
-      body['reasoning_effort'] is! String ||
-      body['completed_at'] is! String ||
-      body['sources'] is! List ||
-      body['candidate_attributions'] is! List ||
-      body['comparable_value_signals'] is! List ||
-      body['warnings'] is! List) {
+bool _matchesFrozenRequest(FrozenBrokerRequest frozen) {
+  final envelope = _jsonObject(frozen.body);
+  if (envelope == null || !_hasOnlyKeys(envelope, const {'data'})) {
     return false;
   }
-  return DateTime.tryParse(body['completed_at']! as String) != null;
+  final request = _stringMap(envelope['data']);
+  if (request == null ||
+      request['request_id'] != frozen.requestId ||
+      request['payload_hash'] != frozen.payloadHash ||
+      request['consent_status'] != 'approved' ||
+      request['consent_scope'] != frozen.consent.scope.wireValue ||
+      request['consent_copy_version'] != frozen.consent.copyVersion) {
+    return false;
+  }
+  return true;
 }
 
 const _brokerErrorCodes = <String>{
@@ -493,3 +529,382 @@ const _brokerErrorCodes = <String>{
   'upstream_failure',
   'upstream_invalid_output',
 };
+
+const _brokerErrorMessages = <String>{
+  'Only POST requests are accepted.',
+  'Content-Type must be application/json.',
+  'The request payload is invalid.',
+  'Research is temporarily unavailable.',
+  'Authentication could not be verified.',
+  'This request is not allowed.',
+  'Approved research consent is required.',
+  'Research consent must be refreshed.',
+  'Online research is not included for this account.',
+  'The image media type is not supported.',
+  'The image payload is too large.',
+  'The request ID was already used for a different payload.',
+  'A research request is already in progress.',
+  'No online research credits remain.',
+  'The prior request expired before provider dispatch.',
+  'The prior request outcome cannot be safely retried.',
+  'The research service is busy. Try again later.',
+  'The research provider declined this request.',
+  'The research provider did not finish in time.',
+  'The research provider could not complete the request.',
+  'The research result did not pass validation.',
+};
+
+bool _isBrokerErrorEnvelope(Map<String, Object?>? body, String requestId) {
+  if (body == null ||
+      !_hasOnlyKeys(body, const {
+        'ok',
+        'error_contract_version',
+        'request_id',
+        'status',
+        'error',
+      }) ||
+      body['ok'] != false ||
+      body['error_contract_version'] != 'broker-error-v1' ||
+      (body.containsKey('request_id') && body['request_id'] != requestId) ||
+      (body.containsKey('request_id') && !_isUuid(body['request_id'])) ||
+      (body['status'] != 'rejected' && body['status'] != 'conflict')) {
+    return false;
+  }
+  final error = _stringMap(body['error']);
+  if (error == null ||
+      !_hasOnlyKeys(error, const {
+        'code',
+        'message',
+        'retryable',
+        'retry_after_seconds',
+      }) ||
+      error['code'] is! String ||
+      !_brokerErrorCodes.contains(error['code']) ||
+      error['message'] is! String ||
+      !_brokerErrorMessages.contains(error['message']) ||
+      error['retryable'] is! bool) {
+    return false;
+  }
+  final retryAfter = error['retry_after_seconds'];
+  return !error.containsKey('retry_after_seconds') ||
+      (retryAfter is int && retryAfter >= 5 && retryAfter <= 300);
+}
+
+BrokerConsentScope? _consentScopeFromWire(String value) {
+  for (final scope in BrokerConsentScope.values) {
+    if (scope.wireValue == value) {
+      return scope;
+    }
+  }
+  return null;
+}
+
+bool _isUuid(Object? value) =>
+    value is String &&
+    RegExp(
+      r'^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$',
+    ).hasMatch(value);
+
+Map<String, Object?>? _stringMap(Object? value) {
+  if (value is! Map<Object?, Object?> ||
+      value.keys.any((key) => key is! String)) {
+    return null;
+  }
+  return Map<String, Object?>.from(value);
+}
+
+bool _hasOnlyKeys(Map<String, Object?> value, Set<String> allowed) =>
+    value.keys.every(allowed.contains);
+
+class BrokerSuccessResponse {
+  const BrokerSuccessResponse._({
+    required this.requestId,
+    required this.provider,
+    required this.model,
+    required this.reasoningEffort,
+    required this.completedAt,
+    required this.replayed,
+    required this.sources,
+    required this.candidateAttributions,
+    required this.comparableValueSignals,
+    required this.warnings,
+  });
+
+  final String requestId;
+  final String provider;
+  final String model;
+  final String reasoningEffort;
+  final DateTime completedAt;
+  final bool replayed;
+  final List<BrokerResearchSource> sources;
+  final List<BrokerResearchCandidate> candidateAttributions;
+  final List<BrokerComparableValueSignal> comparableValueSignals;
+  final List<String> warnings;
+
+  static BrokerSuccessResponse? tryParse(
+    Map<String, Object?> value,
+    String expectedRequestId,
+  ) {
+    if (!_hasOnlyKeys(value, const {
+          'request_id',
+          'status',
+          'provider',
+          'model',
+          'reasoning_effort',
+          'completed_at',
+          'replayed',
+          'sources',
+          'candidate_attributions',
+          'comparable_value_signals',
+          'warnings',
+        }) ||
+        value['request_id'] != expectedRequestId ||
+        value['status'] != 'completed' ||
+        (value['provider'] != 'fake-provider' &&
+            value['provider'] != 'openai') ||
+        value['model'] is! String ||
+        (value['model']! as String).isEmpty ||
+        (value['reasoning_effort'] != 'none' &&
+            value['reasoning_effort'] != 'medium' &&
+            value['reasoning_effort'] != 'high' &&
+            value['reasoning_effort'] != 'xhigh') ||
+        value['completed_at'] is! String ||
+        (value.containsKey('replayed') && value['replayed'] != true) ||
+        value['sources'] is! List ||
+        value['candidate_attributions'] is! List ||
+        value['comparable_value_signals'] is! List ||
+        value['warnings'] is! List) {
+      return null;
+    }
+    final completedAt = DateTime.tryParse(value['completed_at']! as String);
+    if (completedAt == null) {
+      return null;
+    }
+    final sources = (value['sources']! as List)
+        .map(BrokerResearchSource.tryParse)
+        .toList(growable: false);
+    if (sources.any((source) => source == null)) {
+      return null;
+    }
+    final sourceIds = sources.map((source) => source!.sourceId).toSet();
+    final candidates = (value['candidate_attributions']! as List)
+        .map((entry) => BrokerResearchCandidate.tryParse(entry, sourceIds))
+        .toList(growable: false);
+    final signals = (value['comparable_value_signals']! as List)
+        .map((entry) => BrokerComparableValueSignal.tryParse(entry, sourceIds))
+        .toList(growable: false);
+    final warnings = value['warnings']! as List;
+    if (candidates.any((candidate) => candidate == null) ||
+        signals.any((signal) => signal == null) ||
+        warnings.any((warning) => warning is! String)) {
+      return null;
+    }
+    return BrokerSuccessResponse._(
+      requestId: expectedRequestId,
+      provider: value['provider']! as String,
+      model: value['model']! as String,
+      reasoningEffort: value['reasoning_effort']! as String,
+      completedAt: completedAt,
+      replayed: value['replayed'] == true,
+      sources: List.unmodifiable(sources.cast<BrokerResearchSource>()),
+      candidateAttributions: List.unmodifiable(
+        candidates.cast<BrokerResearchCandidate>(),
+      ),
+      comparableValueSignals: List.unmodifiable(
+        signals.cast<BrokerComparableValueSignal>(),
+      ),
+      warnings: List.unmodifiable(warnings.cast<String>()),
+    );
+  }
+}
+
+class BrokerResearchSource {
+  const BrokerResearchSource._({
+    required this.sourceId,
+    required this.sourceName,
+    required this.sourceType,
+    required this.sourceUrl,
+    required this.title,
+    required this.accessedAt,
+    required this.citationExcerpt,
+    required this.matchedFields,
+  });
+
+  final String sourceId;
+  final String sourceName;
+  final String sourceType;
+  final String sourceUrl;
+  final String title;
+  final String accessedAt;
+  final String citationExcerpt;
+  final List<String> matchedFields;
+
+  static BrokerResearchSource? tryParse(Object? value) {
+    final source = _stringMap(value);
+    if (source == null ||
+        !_hasOnlyKeys(source, const {
+          'source_id',
+          'source_name',
+          'source_type',
+          'source_url',
+          'title',
+          'accessed_at',
+          'citation_excerpt',
+          'matched_fields',
+        }) ||
+        source['source_id'] is! String ||
+        source['source_name'] is! String ||
+        (source['source_type'] != 'museum' &&
+            source['source_type'] != 'auction_house') ||
+        source['source_url'] is! String ||
+        !(source['source_url']! as String).startsWith('https://') ||
+        source['title'] is! String ||
+        source['accessed_at'] is! String ||
+        source['citation_excerpt'] is! String ||
+        source['matched_fields'] is! List) {
+      return null;
+    }
+    final matchedFields = source['matched_fields']! as List;
+    if (matchedFields.any((field) => field is! String)) {
+      return null;
+    }
+    return BrokerResearchSource._(
+      sourceId: source['source_id']! as String,
+      sourceName: source['source_name']! as String,
+      sourceType: source['source_type']! as String,
+      sourceUrl: source['source_url']! as String,
+      title: source['title']! as String,
+      accessedAt: source['accessed_at']! as String,
+      citationExcerpt: source['citation_excerpt']! as String,
+      matchedFields: List.unmodifiable(matchedFields.cast<String>()),
+    );
+  }
+}
+
+class BrokerResearchCandidate {
+  const BrokerResearchCandidate._({
+    required this.candidateId,
+    required this.confidence,
+    required this.matchReason,
+    required this.title,
+    required this.artist,
+    required this.year,
+    required this.medium,
+    required this.fieldSources,
+    required this.sourceRefs,
+  });
+
+  final String candidateId;
+  final String confidence;
+  final String matchReason;
+  final String? title;
+  final String? artist;
+  final String? year;
+  final String? medium;
+  final Map<String, String> fieldSources;
+  final List<String> sourceRefs;
+
+  static BrokerResearchCandidate? tryParse(
+    Object? value,
+    Set<String> sourceIds,
+  ) {
+    final candidate = _stringMap(value);
+    if (candidate == null ||
+        !_hasOnlyKeys(candidate, const {
+          'candidate_id',
+          'confidence',
+          'match_reason',
+          'title',
+          'artist',
+          'year',
+          'medium',
+          'field_sources',
+          'source_refs',
+        }) ||
+        candidate['candidate_id'] is! String ||
+        (candidate['confidence'] != 'possible' &&
+            candidate['confidence'] != 'likely' &&
+            candidate['confidence'] != 'insufficient_evidence') ||
+        candidate['match_reason'] is! String ||
+        !_isOptionalString(candidate, 'title') ||
+        !_isOptionalString(candidate, 'artist') ||
+        !_isOptionalString(candidate, 'year') ||
+        !_isOptionalString(candidate, 'medium') ||
+        candidate['source_refs'] is! List) {
+      return null;
+    }
+    final fieldSources = _stringMap(candidate['field_sources']);
+    final sourceRefs = candidate['source_refs']! as List;
+    if (fieldSources == null ||
+        fieldSources.values.any((source) => source != 'ai_suggested') ||
+        sourceRefs.isEmpty ||
+        sourceRefs.any(
+          (source) => source is! String || !sourceIds.contains(source),
+        )) {
+      return null;
+    }
+    return BrokerResearchCandidate._(
+      candidateId: candidate['candidate_id']! as String,
+      confidence: candidate['confidence']! as String,
+      matchReason: candidate['match_reason']! as String,
+      title: candidate['title'] as String?,
+      artist: candidate['artist'] as String?,
+      year: candidate['year'] as String?,
+      medium: candidate['medium'] as String?,
+      fieldSources: Map.unmodifiable(fieldSources.cast<String, String>()),
+      sourceRefs: List.unmodifiable(sourceRefs.cast<String>()),
+    );
+  }
+}
+
+class BrokerComparableValueSignal {
+  const BrokerComparableValueSignal._({
+    required this.kind,
+    required this.label,
+    required this.sourceRefs,
+    required this.caveat,
+  });
+
+  final String kind;
+  final String label;
+  final List<String> sourceRefs;
+  final String caveat;
+
+  static BrokerComparableValueSignal? tryParse(
+    Object? value,
+    Set<String> sourceIds,
+  ) {
+    final signal = _stringMap(value);
+    if (signal == null ||
+        !_hasOnlyKeys(signal, const {
+          'kind',
+          'label',
+          'source_refs',
+          'caveat',
+        }) ||
+        (signal['kind'] != 'public_estimate' &&
+            signal['kind'] != 'comparable_sale_signal' &&
+            signal['kind'] != 'no_reliable_comparable') ||
+        signal['label'] is! String ||
+        signal['source_refs'] is! List ||
+        signal['caveat'] is! String) {
+      return null;
+    }
+    final sourceRefs = signal['source_refs']! as List;
+    if (sourceRefs.any(
+          (source) => source is! String || !sourceIds.contains(source),
+        ) ||
+        (signal['kind'] != 'no_reliable_comparable' && sourceRefs.isEmpty)) {
+      return null;
+    }
+    return BrokerComparableValueSignal._(
+      kind: signal['kind']! as String,
+      label: signal['label']! as String,
+      sourceRefs: List.unmodifiable(sourceRefs.cast<String>()),
+      caveat: signal['caveat']! as String,
+    );
+  }
+}
+
+bool _isOptionalString(Map<String, Object?> value, String key) =>
+    !value.containsKey(key) || value[key] is String;
