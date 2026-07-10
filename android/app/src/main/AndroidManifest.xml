@@ -7,6 +7,13 @@
         android:label="Archivale: Art Records"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
+        <!-- Firebase must be initialized only by the post-consent Dart runtime. -->
+        <provider
+            android:name="com.google.firebase.provider.FirebaseInitProvider"
+            tools:node="remove" />
+        <provider
+            android:name="com.google.firebase.crashlytics.CrashlyticsInitProvider"
+            tools:node="remove" />
         <activity
             android:name=".MainActivity"
             android:exported="true"

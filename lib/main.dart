@@ -30,7 +30,9 @@ Future<void> main() async {
     SystemArtworkImagePicker.configurePlatformPicker();
 
     final artworkRepository = await LocalArtworkRepository.open();
-    final featureFlags = await const AppFeatureFlagService().load();
+    // Firebase-backed feature evaluation is intentionally not part of startup.
+    // Consent-gated research initializes it only after confirmed consent.
+    final featureFlags = const AppFeatureFlagService().localFlags();
     final dependencies = AppDependencies(
       artworkRepository: artworkRepository,
       attachmentStore: await LocalAttachmentStore.open(),
