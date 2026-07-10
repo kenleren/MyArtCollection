@@ -1,14 +1,19 @@
 # MVP Task Breakdown
 
-This is the initial task map for Archivale. The GitHub Project is verified at:
+This is the original task map and sequencing reference for Archivale. The sole
+live task source is GitHub Project #1:
 
 https://github.com/users/kenleren/projects/1
 
-Current status: the Project exists and is named `Archivale`, but it has no items yet.
+Current work status, ownership, evidence, dependencies, and review state live
+in Project #1 and its linked issues. The active commercial-launch work is
+organized under epic #175; this document preserves the product and sequencing
+decisions below without acting as a second backlog.
 
 ## Recommended Sequencing
 
-Do not start by building screens. Start by locking the trust, data, and product rules that all screens must obey.
+The original sequencing below remains a reference: trust, data, and product
+rules must continue to constrain every screen and implementation surface.
 
 ## Phase 0: Project Setup
 
@@ -303,4 +308,3 @@ Run serially:
 - Crypto envelope before Drive backup implementation
 - AI broker contract before AI review UI implementation
 - Billing after pricing and entitlement decisions
-

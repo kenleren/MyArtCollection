@@ -35,6 +35,7 @@ migrate_working_dir/
 /android/build/
 **/node_modules/
 /backend/broker/build/
+/backend/play_billing/build/
 
 # Symbolication related
 app.*.symbols

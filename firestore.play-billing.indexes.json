@@ -1,0 +1,35 @@
+{
+  "indexes": [],
+  "fieldOverrides": [
+    {
+      "collectionGroup": "playBillingDisclosureAssertions",
+      "fieldPath": "retentionExpiresAt",
+      "ttl": true,
+      "indexes": []
+    },
+    {
+      "collectionGroup": "playBillingPurchaseBindings",
+      "fieldPath": "retentionExpiresAt",
+      "ttl": true,
+      "indexes": []
+    },
+    {
+      "collectionGroup": "playBillingRequestReplays",
+      "fieldPath": "retentionExpiresAt",
+      "ttl": true,
+      "indexes": []
+    },
+    {
+      "collectionGroup": "playBillingTokenOperations",
+      "fieldPath": "retentionExpiresAt",
+      "ttl": true,
+      "indexes": []
+    },
+    {
+      "collectionGroup": "playBillingRateLimits",
+      "fieldPath": "retentionExpiresAt",
+      "ttl": true,
+      "indexes": []
+    }
+  ]
+}

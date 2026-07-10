@@ -1,0 +1,22 @@
+{
+  "version": "play-billing-v1",
+  "codebase": "play-billing",
+  "callables": [
+    "acceptPlayBillingDisclosure",
+    "revokePlayBillingDisclosure",
+    "verifyPlaySubscription"
+  ],
+  "database": "archivale-play-billing",
+  "rules": "firestore.play-billing.rules",
+  "rollbackActions": [
+    "disable_billing_callables",
+    "remove_billing_runtime_authority",
+    "restore_reviewed_billing_rules"
+  ],
+  "forbiddenRollbackTargets": [
+    "delete_billing_database",
+    "write_default_database",
+    "write_broker_entitlements",
+    "project_wide_billing_disable"
+  ]
+}
