@@ -8,6 +8,7 @@ import 'attachment_record.dart';
 import 'artwork_record.dart';
 
 enum AttachmentImportFailure {
+  invalidIdentifier,
   sourceMissing,
   unsupportedMimeType,
   mimeTypeMismatch,
@@ -40,6 +41,10 @@ class LocalAttachmentStore {
     'application/pdf': 50 * 1024 * 1024,
   };
 
+  static final RegExp _opaquePathComponent = RegExp(
+    r'^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$',
+  );
+
   static Future<LocalAttachmentStore> open() async {
     final directory = await getApplicationDocumentsDirectory();
     return openAt(Directory(p.join(directory.path, 'attachments')));
@@ -66,6 +71,9 @@ class LocalAttachmentStore {
     String? extractionSummary,
     String? notes,
   }) async {
+    _validateOpaquePathComponent(artworkId, 'artwork');
+    _validateOpaquePathComponent(attachmentId, 'attachment');
+
     if (!sourceFile.existsSync()) {
       throw const AttachmentImportException(
         AttachmentImportFailure.sourceMissing,
@@ -108,12 +116,11 @@ class LocalAttachmentStore {
       );
     }
 
-    final relativePath = p.join(
-      'artworks',
-      artworkId,
-      'attachments',
-      attachmentId,
-      'payload${_safeExtension(originalFileName, mimeType)}',
+    final relativePath = _relativePayloadPath(
+      artworkId: artworkId,
+      attachmentId: attachmentId,
+      fileName: originalFileName,
+      mimeType: mimeType,
     );
     final destination = File(p.join(storageRoot.path, relativePath));
     final staging = File(
@@ -221,6 +228,20 @@ class LocalAttachmentStore {
   }
 
   File fileFor(AttachmentRecord attachment) {
+    _validateOpaquePathComponent(attachment.artworkId, 'artwork');
+    _validateOpaquePathComponent(attachment.id, 'attachment');
+    final expectedRelativePath = _relativePayloadPath(
+      artworkId: attachment.artworkId,
+      attachmentId: attachment.id,
+      fileName: attachment.fileName,
+      mimeType: attachment.mimeType,
+    );
+    if (!p.equals(attachment.relativePath, expectedRelativePath)) {
+      throw const AttachmentImportException(
+        AttachmentImportFailure.storageFailure,
+        'The saved attachment location is unavailable.',
+      );
+    }
     final normalizedRoot = p.normalize(storageRoot.path);
     final normalizedPath = p.normalize(
       p.join(normalizedRoot, attachment.relativePath),
@@ -232,6 +253,30 @@ class LocalAttachmentStore {
       );
     }
     return File(normalizedPath);
+  }
+
+  static String _relativePayloadPath({
+    required String artworkId,
+    required String attachmentId,
+    required String fileName,
+    required String mimeType,
+  }) {
+    return p.join(
+      'artworks',
+      artworkId,
+      'attachments',
+      attachmentId,
+      'payload${_safeExtension(fileName, mimeType)}',
+    );
+  }
+
+  static void _validateOpaquePathComponent(String value, String label) {
+    if (!_opaquePathComponent.hasMatch(value)) {
+      throw AttachmentImportException(
+        AttachmentImportFailure.invalidIdentifier,
+        'The $label identifier is invalid.',
+      );
+    }
   }
 
   static String _safeExtension(String fileName, String mimeType) {
@@ -263,25 +308,10 @@ class LocalAttachmentStore {
 
   static void _validateSignature(List<int> bytes, String mimeType) {
     final isValid = switch (mimeType) {
-      'application/pdf' =>
-        bytes.length >= 8 &&
-            _startsWith(bytes, const [0x25, 0x50, 0x44, 0x46, 0x2d]) &&
-            _containsNearEnd(bytes, const [0x25, 0x25, 0x45, 0x4f, 0x46]),
-      'image/jpeg' =>
-        bytes.length >= 4 && _startsWith(bytes, const [0xff, 0xd8, 0xff]),
-      'image/png' =>
-        bytes.length >= 8 &&
-            _startsWith(bytes, const [
-              0x89,
-              0x50,
-              0x4e,
-              0x47,
-              0x0d,
-              0x0a,
-              0x1a,
-              0x0a,
-            ]),
-      'image/heic' || 'image/heif' => _hasIsoBaseMediaFileType(bytes),
+      'application/pdf' => _hasPdfStructure(bytes),
+      'image/jpeg' => _hasJpegStructure(bytes),
+      'image/png' => _hasPngStructure(bytes),
+      'image/heic' || 'image/heif' => _hasIsoBaseMediaFileStructure(bytes),
       _ => false,
     };
     if (!isValid) {
@@ -321,12 +351,138 @@ class LocalAttachmentStore {
     return false;
   }
 
-  static bool _hasIsoBaseMediaFileType(List<int> bytes) {
-    if (bytes.length < 16 ||
-        bytes[4] != 0x66 ||
-        bytes[5] != 0x74 ||
-        bytes[6] != 0x79 ||
-        bytes[7] != 0x70) {
+  static bool _hasPdfStructure(List<int> bytes) {
+    if (bytes.length < 32 ||
+        !_startsWith(bytes, const [0x25, 0x50, 0x44, 0x46, 0x2d]) ||
+        !_containsNearEnd(bytes, const [0x25, 0x25, 0x45, 0x4f, 0x46])) {
+      return false;
+    }
+    final startXref = _lastIndexOf(bytes, const [
+      0x73,
+      0x74,
+      0x61,
+      0x72,
+      0x74,
+      0x78,
+      0x72,
+      0x65,
+      0x66,
+    ]);
+    if (startXref < 0) {
+      return false;
+    }
+    var index = startXref + 9;
+    while (index < bytes.length && _isPdfWhitespace(bytes[index])) {
+      index += 1;
+    }
+    final numberStart = index;
+    while (index < bytes.length &&
+        bytes[index] >= 0x30 &&
+        bytes[index] <= 0x39) {
+      index += 1;
+    }
+    return index > numberStart;
+  }
+
+  static bool _hasJpegStructure(List<int> bytes) {
+    if (bytes.length < 24 || !_startsWith(bytes, const [0xff, 0xd8])) {
+      return false;
+    }
+    var index = 2;
+    var hasFrame = false;
+    var hasScan = false;
+    while (index + 1 < bytes.length) {
+      if (bytes[index] != 0xff) {
+        if (hasScan) {
+          index += 1;
+          continue;
+        }
+        return false;
+      }
+      while (index < bytes.length && bytes[index] == 0xff) {
+        index += 1;
+      }
+      if (index >= bytes.length) {
+        return false;
+      }
+      final marker = bytes[index++];
+      if (marker == 0xd9) {
+        return hasFrame && hasScan && index == bytes.length;
+      }
+      if (marker == 0x00 ||
+          marker == 0xd8 ||
+          marker == 0x01 ||
+          (marker >= 0xd0 && marker <= 0xd7)) {
+        continue;
+      }
+      if (index + 1 >= bytes.length) {
+        return false;
+      }
+      final segmentLength = (bytes[index] << 8) | bytes[index + 1];
+      if (segmentLength < 2 || index + segmentLength > bytes.length) {
+        return false;
+      }
+      if (marker >= 0xc0 && marker <= 0xc3 && segmentLength >= 8) {
+        hasFrame = true;
+      }
+      if (marker == 0xda && segmentLength >= 8) {
+        hasScan = true;
+      }
+      index += segmentLength;
+    }
+    return false;
+  }
+
+  static bool _hasPngStructure(List<int> bytes) {
+    if (bytes.length < 45 ||
+        !_startsWith(bytes, const [
+          0x89,
+          0x50,
+          0x4e,
+          0x47,
+          0x0d,
+          0x0a,
+          0x1a,
+          0x0a,
+        ])) {
+      return false;
+    }
+    var index = 8;
+    var firstChunk = true;
+    var hasIend = false;
+    while (index + 12 <= bytes.length) {
+      final length = _readUint32(bytes, index);
+      if (length < 0 || length > bytes.length - index - 12) {
+        return false;
+      }
+      final typeStart = index + 4;
+      final type = String.fromCharCodes(
+        bytes.sublist(typeStart, typeStart + 4),
+      );
+      final dataStart = index + 8;
+      if (firstChunk) {
+        if (type != 'IHDR' ||
+            length != 13 ||
+            _readUint32(bytes, dataStart) <= 0 ||
+            _readUint32(bytes, dataStart + 4) <= 0) {
+          return false;
+        }
+        firstChunk = false;
+      }
+      index += 12 + length;
+      if (type == 'IEND') {
+        hasIend = length == 0 && index == bytes.length;
+        break;
+      }
+    }
+    return !firstChunk && hasIend;
+  }
+
+  static bool _hasIsoBaseMediaFileStructure(List<int> bytes) {
+    if (bytes.length < 20 ||
+        _readUint32(bytes, 0) < 16 ||
+        _readUint32(bytes, 0) > bytes.length ||
+        String.fromCharCodes(bytes.sublist(4, 8)) != 'ftyp') {
       return false;
     }
     const brands = {
@@ -339,8 +495,8 @@ class LocalAttachmentStore {
       'mif1',
       'msf1',
     };
-    final limit = bytes.length < 64 ? bytes.length : 64;
-    for (var index = 8; index + 3 < limit; index += 4) {
+    final ftypSize = _readUint32(bytes, 0);
+    for (var index = 8; index + 3 < ftypSize; index += 4) {
       final brand = String.fromCharCodes(bytes.sublist(index, index + 4));
       if (brands.contains(brand)) {
         return true;
@@ -348,6 +504,40 @@ class LocalAttachmentStore {
     }
     return false;
   }
+
+  static int _readUint32(List<int> bytes, int offset) {
+    if (offset < 0 || offset + 4 > bytes.length) {
+      return -1;
+    }
+    return (bytes[offset] << 24) |
+        (bytes[offset + 1] << 16) |
+        (bytes[offset + 2] << 8) |
+        bytes[offset + 3];
+  }
+
+  static int _lastIndexOf(List<int> bytes, List<int> marker) {
+    for (var index = bytes.length - marker.length; index >= 0; index -= 1) {
+      var matches = true;
+      for (var markerIndex = 0; markerIndex < marker.length; markerIndex += 1) {
+        if (bytes[index + markerIndex] != marker[markerIndex]) {
+          matches = false;
+          break;
+        }
+      }
+      if (matches) {
+        return index;
+      }
+    }
+    return -1;
+  }
+
+  static bool _isPdfWhitespace(int value) =>
+      value == 0x00 ||
+      value == 0x09 ||
+      value == 0x0a ||
+      value == 0x0c ||
+      value == 0x0d ||
+      value == 0x20;
 }
 
 enum AttachmentPayloadStatus { available, missing, checksumMismatch }

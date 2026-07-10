@@ -144,7 +144,7 @@ class MainActivity : FlutterActivity() {
         } catch (_: IllegalArgumentException) {
             return false
         }
-        if (!sourceFile.isFile) {
+        if (!isSupportingAttachmentPayload(sourceFile)) {
             return false
         }
 
@@ -166,6 +166,17 @@ class MainActivity : FlutterActivity() {
         }
         startActivity(Intent.createChooser(openIntent, null))
         return true
+    }
+
+    private fun isSupportingAttachmentPayload(sourceFile: File): Boolean {
+        return try {
+            val attachmentRoot = File(filesDir, "attachments/artworks").canonicalFile
+            val candidate = sourceFile.canonicalFile
+            candidate.isFile &&
+                candidate.path.startsWith(attachmentRoot.path + File.separator)
+        } catch (_: Exception) {
+            false
+        }
     }
 }
 

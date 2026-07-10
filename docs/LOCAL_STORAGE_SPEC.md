@@ -169,9 +169,11 @@ Rules:
   attachment is missing or belongs to a different `artwork_id`.
 - A file that arrives with an unrecognized MIME type should be rejected for the prototype unless a later spec explicitly widens support.
 - The importer must check MIME, filename extension, and an allowed file
-  signature before committing bytes. PDFs require a `%PDF-` header and
-  `%%EOF` trailer; JPEG, PNG, HEIC, and HEIF require their documented binary
-  signatures.
+  signature plus bounded structural checks before committing bytes. PDFs require
+  a `%PDF-` header, a valid `startxref` value, and a `%%EOF` trailer; JPEG and
+  PNG require bounded complete marker/chunk structure; HEIC and HEIF require a
+  complete ISO base-media `ftyp` box with an approved brand. Header-only,
+  truncated, malformed, and MIME-mismatched files are rejected.
 - Import writes stage-copy, validate, checksum, reopen, then returns metadata
   for the database commit. Failed writes clean staging and uncommitted bytes.
 

@@ -326,6 +326,8 @@ class SupportingAttachmentService {
     AttachmentImportException error,
   ) {
     return ArtworkIntakeException(switch (error.failure) {
+      AttachmentImportFailure.invalidIdentifier =>
+        ArtworkIntakeFailure.pickerUnavailable,
       AttachmentImportFailure.sourceMissing ||
       AttachmentImportFailure.unreadableSource =>
         ArtworkIntakeFailure.sourceUnavailable,
