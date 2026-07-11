@@ -16,6 +16,7 @@ import '../research/broker_online_research_client.dart';
 import '../research/broker_payload.dart' as broker;
 import '../storage/ai_research_record.dart';
 import '../storage/attachment_record.dart';
+import '../storage/artwork_collection_query.dart';
 import '../storage/artwork_record.dart';
 import '../storage/local_attachment_store.dart';
 
@@ -233,6 +234,15 @@ class CollectionHomeScreen extends StatefulWidget {
 
 class _CollectionHomeScreenState extends State<CollectionHomeScreen> {
   Future<_CollectionHomeData>? _data;
+  final TextEditingController _searchController = TextEditingController();
+  ArtworkCollectionQuery _query = const ArtworkCollectionQuery();
+  bool _filtersExpanded = false;
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
 
   @override
   void didChangeDependencies() {
@@ -240,7 +250,22 @@ class _CollectionHomeScreenState extends State<CollectionHomeScreen> {
     final dependencies = _maybeDependencies(context);
     _data ??= dependencies == null
         ? null
-        : _loadCollectionHomeData(dependencies);
+        : _loadCollectionHomeData(dependencies, _query);
+  }
+
+  void _updateQuery(ArtworkCollectionQuery query) {
+    final dependencies = _maybeDependencies(context);
+    setState(() {
+      _query = query;
+      _data = dependencies == null
+          ? null
+          : _loadCollectionHomeData(dependencies, query);
+    });
+  }
+
+  void _clearAll() {
+    _searchController.clear();
+    _updateQuery(const ArtworkCollectionQuery());
   }
 
   @override
@@ -255,6 +280,16 @@ class _CollectionHomeScreenState extends State<CollectionHomeScreen> {
             records: data.records,
             currentActiveArtworkCount: data.currentActiveArtworkCount,
             entitlementState: data.entitlementState,
+            totalRecordCount: data.totalRecordCount,
+            availableLocations: data.availableLocations,
+            query: _query,
+            searchController: _searchController,
+            filtersExpanded: _filtersExpanded,
+            onFiltersExpandedChanged: (value) {
+              setState(() => _filtersExpanded = value);
+            },
+            onQueryChanged: _updateQuery,
+            onClearAll: _clearAll,
           );
         },
       );
@@ -264,6 +299,9 @@ class _CollectionHomeScreenState extends State<CollectionHomeScreen> {
       records: [],
       currentActiveArtworkCount: 0,
       entitlementState: EntitlementState(plan: EntitlementPlans.free),
+      totalRecordCount: 0,
+      availableLocations: [],
+      query: ArtworkCollectionQuery(),
     );
   }
 }
@@ -273,11 +311,27 @@ class _CollectionHomeContent extends StatelessWidget {
     required this.records,
     required this.currentActiveArtworkCount,
     required this.entitlementState,
+    required this.totalRecordCount,
+    required this.availableLocations,
+    required this.query,
+    this.searchController,
+    this.filtersExpanded = false,
+    this.onFiltersExpandedChanged,
+    this.onQueryChanged,
+    this.onClearAll,
   });
 
   final List<_LocalArtworkSummary> records;
   final int currentActiveArtworkCount;
   final EntitlementState entitlementState;
+  final int totalRecordCount;
+  final List<String> availableLocations;
+  final ArtworkCollectionQuery query;
+  final TextEditingController? searchController;
+  final bool filtersExpanded;
+  final ValueChanged<bool>? onFiltersExpandedChanged;
+  final ValueChanged<ArtworkCollectionQuery>? onQueryChanged;
+  final VoidCallback? onClearAll;
 
   @override
   Widget build(BuildContext context) {
@@ -294,13 +348,27 @@ class _CollectionHomeContent extends StatelessWidget {
           subtitle: 'Your private artwork records',
         ),
         const SizedBox(height: 16),
+        if (totalRecordCount > 0) ...[
+          _CollectionQueryControls(
+            query: query,
+            availableLocations: availableLocations,
+            searchController: searchController,
+            filtersExpanded: filtersExpanded,
+            onFiltersExpandedChanged: onFiltersExpandedChanged,
+            onQueryChanged: onQueryChanged,
+            onClearAll: onClearAll,
+          ),
+          const SizedBox(height: 12),
+        ],
         _LimitHint(
           currentActiveArtworkCount: currentActiveArtworkCount,
           entitlementState: entitlementState,
         ),
         const SizedBox(height: 16),
-        if (records.isEmpty)
+        if (totalRecordCount == 0)
           _EmptyCollectionPanel(entitlementState: entitlementState)
+        else if (records.isEmpty)
+          _NoCollectionResultsPanel(onClearAll: onClearAll)
         else ...[
           for (final summary in records) ...[
             _CollectionRecordPanel(summary: summary),
@@ -329,6 +397,223 @@ class _CollectionHomeContent extends StatelessWidget {
       ],
     );
   }
+}
+
+class _CollectionQueryControls extends StatelessWidget {
+  const _CollectionQueryControls({
+    required this.query,
+    required this.availableLocations,
+    required this.searchController,
+    required this.filtersExpanded,
+    required this.onFiltersExpandedChanged,
+    required this.onQueryChanged,
+    required this.onClearAll,
+  });
+
+  final ArtworkCollectionQuery query;
+  final List<String> availableLocations;
+  final TextEditingController? searchController;
+  final bool filtersExpanded;
+  final ValueChanged<bool>? onFiltersExpandedChanged;
+  final ValueChanged<ArtworkCollectionQuery>? onQueryChanged;
+  final VoidCallback? onClearAll;
+
+  @override
+  Widget build(BuildContext context) {
+    final filterCount = query.selectedFilterCount;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        TextField(
+          key: const ValueKey('collection-search-field'),
+          controller: searchController,
+          onChanged: (value) =>
+              onQueryChanged?.call(query.copyWith(searchTerm: value)),
+          textInputAction: TextInputAction.search,
+          decoration: InputDecoration(
+            isDense: true,
+            labelText: 'Search collection',
+            hintText: 'Title, artist, or notes',
+            prefixIcon: const Icon(Icons.search),
+            suffixIcon: query.searchTerm.trim().isEmpty
+                ? null
+                : IconButton(
+                    tooltip: 'Clear search',
+                    onPressed: () {
+                      searchController?.clear();
+                      onQueryChanged?.call(query.copyWith(searchTerm: ''));
+                    },
+                    icon: const Icon(Icons.close),
+                  ),
+            border: const OutlineInputBorder(),
+          ),
+        ),
+        const SizedBox(height: 10),
+        Row(
+          children: [
+            Expanded(
+              child: DropdownButtonFormField<ArtworkCollectionSort>(
+                key: const ValueKey('collection-sort-control'),
+                initialValue: query.sort,
+                isExpanded: true,
+                decoration: const InputDecoration(
+                  isDense: true,
+                  labelText: 'Sort by',
+                  prefixIcon: Icon(Icons.sort),
+                  border: OutlineInputBorder(),
+                ),
+                items: [
+                  for (final sort in ArtworkCollectionSort.values)
+                    DropdownMenuItem(value: sort, child: Text(sort.label)),
+                ],
+                onChanged: (sort) {
+                  if (sort != null) {
+                    onQueryChanged?.call(query.copyWith(sort: sort));
+                  }
+                },
+              ),
+            ),
+            const SizedBox(width: 10),
+            Semantics(
+              label: filterCount == 0
+                  ? 'Collection filters, none selected'
+                  : 'Collection filters, $filterCount selected',
+              button: true,
+              child: SizedBox(
+                width: 122,
+                child: OutlinedButton.icon(
+                  key: const ValueKey('collection-filter-toggle'),
+                  onPressed: () =>
+                      onFiltersExpandedChanged?.call(!filtersExpanded),
+                  icon: Icon(filtersExpanded ? Icons.expand_less : Icons.tune),
+                  label: Text(
+                    filterCount == 0 ? 'Filters' : 'Filters $filterCount',
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+        if (filtersExpanded) ...[
+          const SizedBox(height: 12),
+          _CollectionFilterChoices(
+            query: query,
+            availableLocations: availableLocations,
+            onQueryChanged: onQueryChanged,
+          ),
+        ],
+        if (query.hasConstraints) ...[
+          Align(
+            alignment: Alignment.centerRight,
+            child: TextButton.icon(
+              key: const ValueKey('collection-clear-all'),
+              onPressed: onClearAll,
+              icon: const Icon(Icons.filter_alt_off_outlined),
+              label: const Text('Clear all'),
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+class _CollectionFilterChoices extends StatelessWidget {
+  const _CollectionFilterChoices({
+    required this.query,
+    required this.availableLocations,
+    required this.onQueryChanged,
+  });
+
+  final ArtworkCollectionQuery query;
+  final List<String> availableLocations;
+  final ValueChanged<ArtworkCollectionQuery>? onQueryChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (availableLocations.isNotEmpty) ...[
+          Text('Location', style: Theme.of(context).textTheme.labelLarge),
+          const SizedBox(height: 4),
+          Wrap(
+            spacing: 6,
+            runSpacing: 4,
+            children: [
+              for (final location in availableLocations)
+                FilterChip(
+                  label: Text(location),
+                  selected: query.locations.contains(location),
+                  onSelected: (_) => onQueryChanged?.call(
+                    query.copyWith(
+                      locations: _toggledSelection(query.locations, location),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 8),
+        ],
+        Text('Record state', style: Theme.of(context).textTheme.labelLarge),
+        const SizedBox(height: 4),
+        Wrap(
+          spacing: 6,
+          runSpacing: 4,
+          children: [
+            for (final state in ArtworkRecordState.values)
+              FilterChip(
+                label: Text(state.label),
+                selected: query.recordStates.contains(state),
+                onSelected: (_) => onQueryChanged?.call(
+                  query.copyWith(
+                    recordStates: _toggledSelection(query.recordStates, state),
+                  ),
+                ),
+              ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        Text('Lifecycle', style: Theme.of(context).textTheme.labelLarge),
+        const SizedBox(height: 4),
+        Wrap(
+          spacing: 6,
+          runSpacing: 4,
+          children: [
+            for (final status in ArtworkLifecycleStatus.values)
+              FilterChip(
+                label: Text(status.label),
+                selected: query.lifecycleStatuses.contains(status),
+                onSelected: (_) => onQueryChanged?.call(
+                  query.copyWith(
+                    lifecycleStatuses: _toggledSelection(
+                      query.lifecycleStatuses,
+                      status,
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        FilterChip(
+          key: const ValueKey('missing-supporting-filter'),
+          avatar: const Icon(Icons.attach_file, size: 18),
+          label: const Text('Missing supporting records'),
+          selected: query.missingSupportingRecords,
+          onSelected: (selected) => onQueryChanged?.call(
+            query.copyWith(missingSupportingRecords: selected),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+Set<T> _toggledSelection<T>(Set<T> current, T value) {
+  final next = Set<T>.of(current);
+  next.contains(value) ? next.remove(value) : next.add(value);
+  return Set.unmodifiable(next);
 }
 
 class IncompleteQueueScreen extends StatefulWidget {
@@ -4218,6 +4503,40 @@ class _EmptyCollectionPanel extends StatelessWidget {
   }
 }
 
+class _NoCollectionResultsPanel extends StatelessWidget {
+  const _NoCollectionResultsPanel({required this.onClearAll});
+
+  final VoidCallback? onClearAll;
+
+  @override
+  Widget build(BuildContext context) {
+    return _Panel(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const _IconMedallion(icon: Icons.search_off_outlined),
+          const SizedBox(height: 12),
+          Text(
+            'No matching artworks',
+            style: Theme.of(context).textTheme.titleLarge,
+          ),
+          const SizedBox(height: 6),
+          const Text(
+            'Try another search or clear the selected collection filters.',
+          ),
+          const SizedBox(height: 12),
+          OutlinedButton.icon(
+            key: const ValueKey('collection-no-results-clear'),
+            onPressed: onClearAll,
+            icon: const Icon(Icons.filter_alt_off_outlined),
+            label: const Text('Clear search and filters'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _BillingGatePanel extends StatelessWidget {
   const _BillingGatePanel({
     required this.currentActiveArtworkCount,
@@ -4802,27 +5121,27 @@ AppDependencies? _maybeDependencies(BuildContext context) {
 Future<List<_LocalArtworkSummary>> _loadLocalArtwork(
   AppDependencies dependencies,
 ) async {
-  final records = await dependencies.artworkRepository.list();
-  final summaries = <_LocalArtworkSummary>[];
+  final snapshot = await dependencies.artworkRepository.queryCollection();
+  return snapshot.entries
+      .map((entry) => _summaryFromCollectionEntry(dependencies, entry))
+      .toList(growable: false);
+}
 
-  for (final record in records) {
-    final attachments = await dependencies.artworkRepository
-        .attachmentsForArtwork(record.id);
-    summaries.add(
-      _LocalArtworkSummary(
-        record: record,
-        attachments: attachments,
-        incompleteItems: _incompleteItems(record, attachments),
-        primaryImageFile: _primaryImageFileFromAttachments(
-          dependencies,
-          record,
-          attachments,
-        ),
-      ),
-    );
-  }
-
-  return summaries;
+_LocalArtworkSummary _summaryFromCollectionEntry(
+  AppDependencies dependencies,
+  ArtworkCollectionEntry entry,
+) {
+  final attachments = entry.acceptedAttachments;
+  return _LocalArtworkSummary(
+    record: entry.record,
+    attachments: attachments,
+    incompleteItems: _incompleteItems(entry.record, attachments),
+    primaryImageFile: _primaryImageFileFromAttachments(
+      dependencies,
+      entry.record,
+      attachments,
+    ),
+  );
 }
 
 class _CollectionHomeData {
@@ -4830,17 +5149,23 @@ class _CollectionHomeData {
     required this.records,
     required this.currentActiveArtworkCount,
     required this.entitlementState,
+    required this.totalRecordCount,
+    required this.availableLocations,
   });
 
   static const empty = _CollectionHomeData(
     records: [],
     currentActiveArtworkCount: 0,
     entitlementState: EntitlementState(plan: EntitlementPlans.free),
+    totalRecordCount: 0,
+    availableLocations: [],
   );
 
   final List<_LocalArtworkSummary> records;
   final int currentActiveArtworkCount;
   final EntitlementState entitlementState;
+  final int totalRecordCount;
+  final List<String> availableLocations;
 }
 
 class _CreationGate {
@@ -4864,19 +5189,21 @@ class _CreationGate {
 
 Future<_CollectionHomeData> _loadCollectionHomeData(
   AppDependencies dependencies,
+  ArtworkCollectionQuery query,
 ) async {
-  final records = await _loadLocalArtwork(dependencies);
-  final activeArtworkCount = records
-      .where(
-        (summary) =>
-            summary.record.lifecycleStatus == ArtworkLifecycleStatus.active,
-      )
-      .length;
+  final snapshot = await dependencies.artworkRepository.queryCollection(
+    query: query,
+  );
+  final records = snapshot.entries
+      .map((entry) => _summaryFromCollectionEntry(dependencies, entry))
+      .toList(growable: false);
   final entitlementState = await dependencies.entitlementService.currentState();
   return _CollectionHomeData(
     records: records,
-    currentActiveArtworkCount: activeArtworkCount,
+    currentActiveArtworkCount: snapshot.activeRecordCount,
     entitlementState: entitlementState,
+    totalRecordCount: snapshot.totalRecordCount,
+    availableLocations: snapshot.availableLocations,
   );
 }
 
@@ -5001,15 +5328,16 @@ List<_IncompleteItem> _incompleteItems(
     );
   }
 
-  if (record.recordState == ArtworkRecordState.missingDocuments ||
-      supportingCount == 0) {
+  if (hasMissingSupportingRecords(
+    record,
+    supportingAttachmentCount: supportingCount,
+  )) {
     items.add(
       _IncompleteItem(
         icon: Icons.attach_file,
         title: '$title needs supporting records',
-        body: supportingCount == 0
-            ? 'Add a supporting photo, receipt, certificate, appraisal, auction record, or provenance note when available.'
-            : '$supportingCount supporting record${supportingCount == 1 ? '' : 's'} added; review whether this artwork still needs more context.',
+        body:
+            'Add a supporting photo, receipt, certificate, appraisal, auction record, or provenance note when available.',
         actionLabel: 'Attach supporting records',
         routeName: AppRoutes.artworkDocuments(record.id),
       ),

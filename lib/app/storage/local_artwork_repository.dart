@@ -6,6 +6,7 @@ import 'package:sqflite/sqflite.dart';
 
 import 'ai_research_record.dart';
 import 'attachment_record.dart';
+import 'artwork_collection_query.dart';
 import 'artwork_record.dart';
 
 class LocalArtworkInsertConflictException implements Exception {
@@ -34,10 +35,14 @@ class AttachmentLineageException implements Exception {
 }
 
 class LocalArtworkRepository {
-  LocalArtworkRepository._(this._database);
-  LocalArtworkRepository.forDatabase(this._database);
+  LocalArtworkRepository._(this._database) : collectionSnapshotObserver = null;
+  LocalArtworkRepository.forDatabase(
+    this._database, {
+    this.collectionSnapshotObserver,
+  });
 
   final Database _database;
+  final ArtworkCollectionSnapshotObserver? collectionSnapshotObserver;
 
   static const _databaseName = 'my_art_collection.db';
   static const _schemaVersion = 7;
@@ -391,15 +396,101 @@ class LocalArtworkRepository {
   }
 
   Future<List<ArtworkRecord>> list() async {
-    final rows = await _database.query('artworks', orderBy: 'updated_at DESC');
-    final records = <ArtworkRecord>[];
+    final snapshot = await queryCollection();
+    return snapshot.entries
+        .map((entry) => entry.record)
+        .toList(growable: false);
+  }
 
-    for (final row in rows) {
-      final id = row['artwork_id'] as String;
-      records.add(_recordFromRows(row, await _fieldsForArtwork(id)));
+  Future<ArtworkCollectionSnapshot> queryCollection({
+    ArtworkCollectionQuery query = const ArtworkCollectionQuery(),
+  }) async {
+    collectionSnapshotObserver?.onRead(ArtworkCollectionSnapshotRead.artworks);
+    final artworkRows = await _database.query('artworks');
+    if (artworkRows.isEmpty) {
+      return const ArtworkCollectionSnapshot(
+        entries: [],
+        totalRecordCount: 0,
+        activeRecordCount: 0,
+        availableLocations: [],
+      );
     }
 
-    return records;
+    final artworkIds = artworkRows
+        .map((row) => row['artwork_id'] as String)
+        .toList(growable: false);
+    final placeholders = List.filled(artworkIds.length, '?').join(',');
+    collectionSnapshotObserver?.onRead(ArtworkCollectionSnapshotRead.fields);
+    final fieldRows = await _database.query(
+      'artwork_fields',
+      where: 'artwork_id IN ($placeholders)',
+      whereArgs: artworkIds,
+      orderBy: 'artwork_id ASC, field_key ASC',
+    );
+    collectionSnapshotObserver?.onRead(
+      ArtworkCollectionSnapshotRead.acceptedAttachmentRoles,
+    );
+    final attachmentRows = await _database.query(
+      'attachments',
+      where: 'artwork_id IN ($placeholders) AND attachment_role IN (?, ?, ?)',
+      whereArgs: [
+        ...artworkIds,
+        AttachmentRole.primaryArtworkPhoto.storageValue,
+        AttachmentRole.supportingPhoto.storageValue,
+        AttachmentRole.supportingDocument.storageValue,
+      ],
+      orderBy: 'artwork_id ASC, imported_at DESC',
+    );
+
+    final fieldsByArtwork = <String, Map<String, ArtworkFieldValue>>{};
+    for (final row in fieldRows) {
+      final artworkId = row['artwork_id'] as String;
+      fieldsByArtwork.putIfAbsent(artworkId, () => {})[row['field_key']
+          as String] = _fieldFromRow(
+        row,
+      );
+    }
+    final attachmentsByArtwork = <String, List<AttachmentRecord>>{};
+    for (final row in attachmentRows) {
+      final artworkId = row['artwork_id'] as String;
+      attachmentsByArtwork
+          .putIfAbsent(artworkId, () => [])
+          .add(_attachmentFromRow(row));
+    }
+
+    final allEntries = artworkRows
+        .map((row) {
+          final artworkId = row['artwork_id'] as String;
+          return ArtworkCollectionEntry(
+            record: _recordFromRows(
+              row,
+              fieldsByArtwork[artworkId] ?? const {},
+            ),
+            acceptedAttachments: List.unmodifiable(
+              attachmentsByArtwork[artworkId] ?? const [],
+            ),
+          );
+        })
+        .toList(growable: false);
+    final availableLocations = _availableCollectionLocations(allEntries);
+    final entries = allEntries
+        .where((entry) => _matchesCollectionQuery(entry, query))
+        .toList();
+    entries.sort(
+      (left, right) => _compareCollectionEntries(left, right, query.sort),
+    );
+
+    return ArtworkCollectionSnapshot(
+      entries: List.unmodifiable(entries),
+      totalRecordCount: allEntries.length,
+      activeRecordCount: allEntries
+          .where(
+            (entry) =>
+                entry.record.lifecycleStatus == ArtworkLifecycleStatus.active,
+          )
+          .length,
+      availableLocations: availableLocations,
+    );
   }
 
   Future<void> delete(String id) async {
@@ -771,16 +862,19 @@ class LocalArtworkRepository {
     );
 
     return {
-      for (final row in rows)
-        row['field_key'] as String: ArtworkFieldValue(
-          value: row['value'] as String,
-          source: ArtworkFieldSource.fromStorage(row['source_state'] as String),
-          note: row['source_note'] as String,
-          lastConfirmedAt: _parseDate(row['last_confirmed_at'] as String?),
-          moneyAmount: row['money_amount'] as String?,
-          moneyCurrencyCode: row['money_currency_code'] as String?,
-        ),
+      for (final row in rows) row['field_key'] as String: _fieldFromRow(row),
     };
+  }
+
+  ArtworkFieldValue _fieldFromRow(Map<String, Object?> row) {
+    return ArtworkFieldValue(
+      value: row['value'] as String,
+      source: ArtworkFieldSource.fromStorage(row['source_state'] as String),
+      note: row['source_note'] as String,
+      lastConfirmedAt: _parseDate(row['last_confirmed_at'] as String?),
+      moneyAmount: row['money_amount'] as String?,
+      moneyCurrencyCode: row['money_currency_code'] as String?,
+    );
   }
 
   ArtworkRecord _recordFromRows(
@@ -986,5 +1080,205 @@ class LocalArtworkRepository {
         if (entry.value is String)
           entry.key: ArtworkFieldSource.fromStorage(entry.value as String),
     };
+  }
+}
+
+List<String> _availableCollectionLocations(
+  List<ArtworkCollectionEntry> entries,
+) {
+  final valuesByNormalizedLocation = <String, String>{};
+  for (final entry in entries) {
+    final value = entry.record
+        .field(ArtworkFieldKeys.currentLocation)
+        ?.value
+        .trim();
+    if (value == null || value.isEmpty) {
+      continue;
+    }
+    valuesByNormalizedLocation.putIfAbsent(
+      normalizedCollectionText(value),
+      () => value,
+    );
+  }
+  final values = valuesByNormalizedLocation.values.toList();
+  values.sort((left, right) {
+    final normalized = normalizedCollectionText(
+      left,
+    ).compareTo(normalizedCollectionText(right));
+    return normalized != 0 ? normalized : left.compareTo(right);
+  });
+  return List.unmodifiable(values);
+}
+
+bool _matchesCollectionQuery(
+  ArtworkCollectionEntry entry,
+  ArtworkCollectionQuery query,
+) {
+  final record = entry.record;
+  final search = normalizedCollectionText(query.searchTerm);
+  if (search.isNotEmpty) {
+    const searchKeys = [
+      ArtworkFieldKeys.title,
+      ArtworkFieldKeys.artist,
+      ArtworkFieldKeys.notes,
+    ];
+    final matchesSearch = searchKeys.any(
+      (key) =>
+          normalizedCollectionText(record.field(key)?.value).contains(search),
+    );
+    if (!matchesSearch) {
+      return false;
+    }
+  }
+
+  if (query.locations.isNotEmpty) {
+    final selectedLocations = query.locations
+        .map(normalizedCollectionText)
+        .toSet();
+    final location = normalizedCollectionText(
+      record.field(ArtworkFieldKeys.currentLocation)?.value,
+    );
+    if (!selectedLocations.contains(location)) {
+      return false;
+    }
+  }
+  if (query.recordStates.isNotEmpty &&
+      !query.recordStates.contains(record.recordState)) {
+    return false;
+  }
+  if (query.lifecycleStatuses.isNotEmpty &&
+      !query.lifecycleStatuses.contains(record.lifecycleStatus)) {
+    return false;
+  }
+  if (query.missingSupportingRecords && !entry.isMissingSupportingRecords) {
+    return false;
+  }
+  return true;
+}
+
+int _compareCollectionEntries(
+  ArtworkCollectionEntry left,
+  ArtworkCollectionEntry right,
+  ArtworkCollectionSort sort,
+) {
+  final leftRecord = left.record;
+  final rightRecord = right.record;
+  final titleComparison = _compareDisplayValues(
+    leftRecord.field(ArtworkFieldKeys.title)?.value,
+    rightRecord.field(ArtworkFieldKeys.title)?.value,
+  );
+
+  int primaryComparison;
+  int alternateComparison = 0;
+  switch (sort) {
+    case ArtworkCollectionSort.recentlyUpdated:
+      primaryComparison = rightRecord.updatedAt.compareTo(leftRecord.updatedAt);
+      break;
+    case ArtworkCollectionSort.title:
+      primaryComparison = titleComparison;
+      alternateComparison = _compareDisplayValues(
+        leftRecord.field(ArtworkFieldKeys.artist)?.value,
+        rightRecord.field(ArtworkFieldKeys.artist)?.value,
+      );
+      break;
+    case ArtworkCollectionSort.artist:
+      primaryComparison = _compareDisplayValues(
+        leftRecord.field(ArtworkFieldKeys.artist)?.value,
+        rightRecord.field(ArtworkFieldKeys.artist)?.value,
+      );
+      alternateComparison = titleComparison;
+      break;
+    case ArtworkCollectionSort.acquisitionDate:
+      final leftDate = _AcquisitionDate.tryParse(
+        leftRecord.field(ArtworkFieldKeys.purchaseDate)?.value,
+      );
+      final rightDate = _AcquisitionDate.tryParse(
+        rightRecord.field(ArtworkFieldKeys.purchaseDate)?.value,
+      );
+      primaryComparison = _compareAcquisitionDates(leftDate, rightDate);
+      break;
+  }
+
+  if (primaryComparison != 0) {
+    return primaryComparison;
+  }
+  if (sort == ArtworkCollectionSort.recentlyUpdated ||
+      sort == ArtworkCollectionSort.acquisitionDate) {
+    if (titleComparison != 0) {
+      return titleComparison;
+    }
+  } else if (alternateComparison != 0) {
+    return alternateComparison;
+  }
+  return leftRecord.id.compareTo(rightRecord.id);
+}
+
+int _compareDisplayValues(String? left, String? right) {
+  final normalizedLeft = normalizedCollectionText(left);
+  final normalizedRight = normalizedCollectionText(right);
+  if (normalizedLeft.isEmpty != normalizedRight.isEmpty) {
+    return normalizedLeft.isEmpty ? 1 : -1;
+  }
+  return normalizedLeft.compareTo(normalizedRight);
+}
+
+int _compareAcquisitionDates(_AcquisitionDate? left, _AcquisitionDate? right) {
+  if (left == null || right == null) {
+    if (left == null && right == null) {
+      return 0;
+    }
+    return left == null ? 1 : -1;
+  }
+  final year = right.year.compareTo(left.year);
+  if (year != 0) {
+    return year;
+  }
+  final month = right.month.compareTo(left.month);
+  if (month != 0) {
+    return month;
+  }
+  return right.day.compareTo(left.day);
+}
+
+class _AcquisitionDate {
+  const _AcquisitionDate(this.year, this.month, this.day);
+
+  final int year;
+  final int month;
+  final int day;
+
+  static _AcquisitionDate? tryParse(String? rawValue) {
+    final value = rawValue?.trim() ?? '';
+    final match = RegExp(
+      r'^(\d{4})(?:-(\d{2})(?:-(\d{2}))?)?$',
+    ).firstMatch(value);
+    if (match == null) {
+      return null;
+    }
+    final year = int.parse(match.group(1)!);
+    final monthText = match.group(2);
+    final dayText = match.group(3);
+    if (year == 0) {
+      return null;
+    }
+    if (monthText == null) {
+      return _AcquisitionDate(year, 0, 0);
+    }
+    final month = int.parse(monthText);
+    if (month < 1 || month > 12) {
+      return null;
+    }
+    if (dayText == null) {
+      return _AcquisitionDate(year, month, 0);
+    }
+    final day = int.parse(dayText);
+    if (day < 1 || day > 31) {
+      return null;
+    }
+    final parsed = DateTime.utc(year, month, day);
+    if (parsed.year != year || parsed.month != month || parsed.day != day) {
+      return null;
+    }
+    return _AcquisitionDate(year, month, day);
   }
 }
