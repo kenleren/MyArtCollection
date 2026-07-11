@@ -17,6 +17,9 @@ abstract interface class FirebaseResearchRuntime {
 
   Future<void> signInAnonymously();
 
+  /// Returns the current anonymous Firebase identity without exposing a token.
+  String? currentUserId();
+
   Future<String?> authToken({required bool forceRefresh});
 
   Future<String?> limitedUseAppCheckToken({required bool forceRefresh});
@@ -90,6 +93,9 @@ class FlutterFirebaseResearchRuntime implements FirebaseResearchRuntime {
     }
     await _auth.signInAnonymously();
   }
+
+  @override
+  String? currentUserId() => _auth.currentUser?.uid;
 
   @override
   Future<String?> authToken({required bool forceRefresh}) async {

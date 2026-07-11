@@ -102,8 +102,9 @@ abstract class EntitlementService {
   Future<EntitlementState> currentState();
 }
 
-class FixedEntitlementService implements EntitlementService {
-  const FixedEntitlementService({
+/// Deterministic entitlement fixture for tests and previews.
+class StaticEntitlementService implements EntitlementService {
+  const StaticEntitlementService({
     this.state = const EntitlementState(plan: EntitlementPlans.free),
   });
 

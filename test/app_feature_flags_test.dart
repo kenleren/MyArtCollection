@@ -154,6 +154,9 @@ class _RecordingRuntime implements FirebaseResearchRuntime {
   final calls = <String>[];
 
   @override
+  String? currentUserId() => 'test-user';
+
+  @override
   Future<String?> authToken({required bool forceRefresh}) async => 'auth-token';
 
   @override

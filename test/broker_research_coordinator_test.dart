@@ -121,6 +121,9 @@ class _NoopRuntime implements FirebaseResearchRuntime {
   const _NoopRuntime();
 
   @override
+  String? currentUserId() => null;
+
+  @override
   Future<String?> authToken({required bool forceRefresh}) async => null;
 
   @override

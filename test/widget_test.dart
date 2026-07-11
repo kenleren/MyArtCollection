@@ -1389,7 +1389,7 @@ void main() {
           child: ArchivaleApp(
             initialRoute: AppRoutes.collectionSettings,
             dependencies: testFixture.dependenciesWithFlags(
-              entitlementService: FixedEntitlementService(
+              entitlementService: StaticEntitlementService(
                 state: EntitlementState(
                   plan: EntitlementPlans.starter,
                   billingStatus: billingStatus,
@@ -4779,7 +4779,7 @@ class _LiveDependencyFixture {
     ArtworkImagePicker? imagePicker,
     CsvImportFilePicker csvImportFilePicker = const _NoCsvPicker(),
     AppFeatureFlags featureFlags = const AppFeatureFlags(),
-    EntitlementService entitlementService = const FixedEntitlementService(),
+    EntitlementService entitlementService = const StaticEntitlementService(),
     OnlineResearchClient? onlineResearchClient,
   }) {
     return AppDependencies(
