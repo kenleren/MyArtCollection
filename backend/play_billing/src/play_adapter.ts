@@ -56,7 +56,7 @@ const systemDeadlineScheduler: DeadlineScheduler = {
 /**
  * Android Publisher REST transport using application-default credentials. It
  * never retries. The caller supplies the exact absolute deadline for each
- * request and receives only parsed response data or a sanitized failure.
+ * request and receives parsed subscription data or acknowledgement success.
  */
 export class GoogleAndroidPublisherTransport implements AndroidPublisherTransport {
   private readonly auth: GoogleAuthProvider;
@@ -74,6 +74,7 @@ export class GoogleAndroidPublisherTransport implements AndroidPublisherTranspor
         `/purchases/subscriptionsv2/tokens/${encodeURIComponent(args.token)}`,
       undefined,
       args.timeoutMs,
+      true,
     );
   }
 
@@ -83,8 +84,9 @@ export class GoogleAndroidPublisherTransport implements AndroidPublisherTranspor
       `${ANDROID_PUBLISHER_ROOT}/applications/${encodeURIComponent(args.packageName)}` +
         `/purchases/subscriptions/${encodeURIComponent(args.subscriptionId)}` +
         `/tokens/${encodeURIComponent(args.token)}:acknowledge`,
-      '{}',
+      '',
       args.timeoutMs,
+      false,
     );
   }
 
@@ -93,6 +95,7 @@ export class GoogleAndroidPublisherTransport implements AndroidPublisherTranspor
     url: string,
     body: string | undefined,
     timeoutMs: number,
+    parseResponse: boolean,
   ): Promise<unknown> {
     const deadline = Date.now() + timeoutMs;
     try {
@@ -123,7 +126,7 @@ export class GoogleAndroidPublisherTransport implements AndroidPublisherTranspor
         if (!response.ok) {
           throw new Error('publisher rejected request');
         }
-        return await response.json();
+        return parseResponse ? await response.json() : undefined;
       } finally {
         cancel();
       }

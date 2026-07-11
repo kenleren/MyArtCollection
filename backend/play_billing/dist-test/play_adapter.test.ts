@@ -135,9 +135,17 @@ describe('Android Publisher PlaySubscriptionsAdapter', () => {
   });
 
   test('enforces its absolute request deadline without exposing the input', async () => {
+    let getAttempts = 0;
+    let acknowledgementAttempts = 0;
     const transport: AndroidPublisherTransport = {
-      getSubscription: async () => new Promise<unknown>(() => undefined),
-      acknowledgeSubscription: async () => new Promise<unknown>(() => undefined),
+      getSubscription: async () => {
+        getAttempts += 1;
+        return new Promise<unknown>(() => undefined);
+      },
+      acknowledgeSubscription: async () => {
+        acknowledgementAttempts += 1;
+        return new Promise<unknown>(() => undefined);
+      },
     };
     const adapter = new AndroidPublisherSubscriptionsAdapter(transport, immediateDeadline);
 
@@ -146,6 +154,13 @@ describe('Android Publisher PlaySubscriptionsAdapter', () => {
       assert.doesNotMatch(error.message, /opaque-test-value/);
       return true;
     });
+    await assert.rejects(adapter.acknowledgeSubscription(acknowledgeArguments), (error: Error) => {
+      assert.equal(error.message, 'Android Publisher is temporarily unavailable');
+      assert.doesNotMatch(error.message, /opaque-test-value/);
+      return true;
+    });
+    assert.equal(getAttempts, 1);
+    assert.equal(acknowledgementAttempts, 1);
   });
 
   test('uses the Android Publisher REST methods through an injected ADC transport', async () => {
@@ -172,12 +187,21 @@ describe('Android Publisher PlaySubscriptionsAdapter', () => {
               : { contentType: init.headers['content-type'] }
           ),
         });
-        return {
-          ok: true,
-          async json() {
-            return normalizedPurchase;
-          },
-        };
+        return url.endsWith(':acknowledge')
+          ? {
+              ok: true,
+              status: 200,
+              async json() {
+                assert.fail('acknowledgement response must not be parsed');
+              },
+            }
+          : {
+              ok: true,
+              status: 200,
+              async json() {
+                return normalizedPurchase;
+              },
+            };
       },
     });
 
@@ -189,13 +213,63 @@ describe('Android Publisher PlaySubscriptionsAdapter', () => {
       {
         method: 'POST',
         acknowledges: true,
-        body: '{}',
+        body: '',
         contentType: 'application/json',
       },
     ]);
   });
 
-  test('makes one Publisher transport attempt on an HTTP failure', async () => {
+  test('accepts an HTTP 200 acknowledgement with an empty response without parsing or retrying', async () => {
+    let attempts = 0;
+    const transport = new GoogleAndroidPublisherTransport({
+      auth: {
+        async getClient() {
+          return { async getRequestHeaders() { return {}; } };
+        },
+      },
+      fetch: async (_url, init) => {
+        attempts += 1;
+        assert.equal(init.body, '');
+        return {
+          ok: true,
+          status: 200,
+          async json() {
+            assert.fail('empty acknowledgement response must not be parsed');
+          },
+        };
+      },
+    });
+
+    await transport.acknowledgeSubscription(acknowledgeArguments);
+    assert.equal(attempts, 1);
+  });
+
+  test('accepts an HTTP 204 acknowledgement with an empty response without parsing or retrying', async () => {
+    let attempts = 0;
+    const transport = new GoogleAndroidPublisherTransport({
+      auth: {
+        async getClient() {
+          return { async getRequestHeaders() { return {}; } };
+        },
+      },
+      fetch: async (_url, init) => {
+        attempts += 1;
+        assert.equal(init.body, '');
+        return {
+          ok: true,
+          status: 204,
+          async json() {
+            assert.fail('empty acknowledgement response must not be parsed');
+          },
+        };
+      },
+    });
+
+    await transport.acknowledgeSubscription(acknowledgeArguments);
+    assert.equal(attempts, 1);
+  });
+
+  test('fails closed after one acknowledgement attempt on an HTTP failure', async () => {
     let attempts = 0;
     const transport = new GoogleAndroidPublisherTransport({
       auth: {
@@ -207,6 +281,7 @@ describe('Android Publisher PlaySubscriptionsAdapter', () => {
         attempts += 1;
         return {
           ok: false,
+          status: 500,
           async json() {
             return {};
           },
@@ -214,7 +289,7 @@ describe('Android Publisher PlaySubscriptionsAdapter', () => {
       },
     });
 
-    await assert.rejects(transport.getSubscription(getArguments), (error: Error) => {
+    await assert.rejects(transport.acknowledgeSubscription(acknowledgeArguments), (error: Error) => {
       assert.equal(error.message, 'Android Publisher is temporarily unavailable');
       return true;
     });
