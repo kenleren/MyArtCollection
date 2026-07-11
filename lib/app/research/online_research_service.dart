@@ -6,6 +6,7 @@ import 'package:crypto/crypto.dart';
 import '../storage/ai_research_record.dart';
 import '../storage/artwork_record.dart';
 import '../storage/local_artwork_repository.dart';
+import 'broker_payload.dart' as broker;
 
 class OnlineResearchRequest {
   const OnlineResearchRequest({
@@ -15,6 +16,8 @@ class OnlineResearchRequest {
     this.consentState = ResearchConsentState.missing,
     this.searchTerms = const [],
     this.brokerPayload,
+    this.brokerConsent,
+    this.brokerDraftHints,
   });
 
   final String artworkId;
@@ -23,12 +26,21 @@ class OnlineResearchRequest {
   final ResearchConsentState consentState;
   final List<String> searchTerms;
   final BrokerResearchPayload? brokerPayload;
+  final broker.BrokerResearchConsent? brokerConsent;
+  final broker.BrokerDraftHints? brokerDraftHints;
 }
 
 enum ResearchConsentState { missing, declined, approved }
 
 abstract class OnlineResearchClient {
   Future<ResearchJob> research(OnlineResearchRequest request);
+}
+
+abstract interface class RetryableOnlineResearchClient
+    implements OnlineResearchClient {
+  Future<ResearchJob> retry(OnlineResearchRequest request, String requestId);
+
+  Future<void> cancel(String requestId);
 }
 
 const brokerConsentCopyVersion = 'research-consent-v1';
@@ -395,6 +407,31 @@ class OnlineResearchService {
     ).sanitize();
     await _repository.upsertResearchJob(job);
     return job;
+  }
+
+  Future<ResearchJob> retryResearch(
+    OnlineResearchRequest request,
+    String requestId,
+  ) async {
+    _requireApprovedResearchConsent(request);
+    final client = _client;
+    if (client is! RetryableOnlineResearchClient) {
+      throw StateError('Research retry is not available.');
+    }
+    final job = _TrustedResearchResponse(
+      request: request,
+      job: await client.retry(request, requestId),
+      allowlist: _allowlist,
+    ).sanitize();
+    await _repository.upsertResearchJob(job);
+    return job;
+  }
+
+  Future<void> cancelRetry(String requestId) async {
+    final client = _client;
+    if (client is RetryableOnlineResearchClient) {
+      await client.cancel(requestId);
+    }
   }
 
   void _requireApprovedResearchConsent(OnlineResearchRequest request) {

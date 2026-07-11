@@ -12,6 +12,7 @@ import 'intake/supporting_attachment_service.dart';
 import 'research/online_research_service.dart';
 import 'storage/local_artwork_repository.dart';
 import 'storage/local_attachment_store.dart';
+import 'storage/ai_research_record.dart';
 
 class AppDependencies {
   const AppDependencies({
@@ -63,13 +64,21 @@ class AppDependencies {
   OnlineResearchService createOnlineResearchService() {
     return OnlineResearchService(
       repository: artworkRepository,
-      client: onlineResearchClient ?? FixtureProfessionalSourceResearchClient(),
+      client: onlineResearchClient ?? const _UnavailableOnlineResearchClient(),
     );
   }
 
   CsvArtworkImportService createCsvArtworkImportService() {
     return CsvArtworkImportService();
   }
+}
+
+class _UnavailableOnlineResearchClient implements OnlineResearchClient {
+  const _UnavailableOnlineResearchClient();
+
+  @override
+  Future<ResearchJob> research(OnlineResearchRequest request) =>
+      throw StateError('Online research is unavailable.');
 }
 
 class AppDependencyScope extends InheritedWidget {

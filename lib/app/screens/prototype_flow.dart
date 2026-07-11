@@ -12,6 +12,8 @@ import '../intake/supporting_attachment_service.dart';
 import '../localization/app_currency_formatter.dart';
 import '../prototype/prototype_artwork.dart';
 import '../research/online_research_service.dart';
+import '../research/broker_online_research_client.dart';
+import '../research/broker_payload.dart' as broker;
 import '../storage/ai_research_record.dart';
 import '../storage/attachment_record.dart';
 import '../storage/artwork_record.dart';
@@ -1346,8 +1348,13 @@ class DraftReviewScreen extends StatefulWidget {
 class _DraftReviewScreenState extends State<DraftReviewScreen> {
   ResearchJob? _researchJob;
   String? _researchError;
+  BrokerResearchFailureAction _researchFailureAction =
+      BrokerResearchFailureAction.none;
+  bool _showResearchManagePlan = false;
+  broker.BrokerResearchConsent? _approvedResearchConsent;
   bool _showResearchConsent = false;
   bool _isResearchBusy = false;
+  String? _retryResearchRequestId;
   final Set<String> _acceptedResearchFieldKeys = {};
   final Set<String> _rejectedResearchFieldKeys = {};
 
@@ -1365,6 +1372,9 @@ class _DraftReviewScreenState extends State<DraftReviewScreen> {
       _acceptedResearchFieldKeys.clear();
       _rejectedResearchFieldKeys.clear();
       _researchError = null;
+      _researchFailureAction = BrokerResearchFailureAction.none;
+      _showResearchManagePlan = false;
+      _approvedResearchConsent = null;
     }
   }
 
@@ -1394,19 +1404,23 @@ class _DraftReviewScreenState extends State<DraftReviewScreen> {
           _AiDraftStatusPanel(isBusy: false, draftJob: widget.aiDraftJob),
           const SizedBox(height: 16),
           _OnlineResearchPanel(
+            key: const ValueKey('online-research-panel'),
             artwork: widget.artwork,
             researchJob: _researchJob,
-            showConsent: _showResearchConsent && _isOnlineResearchEnabled,
+            showConsent: _showResearchConsent && _isOnlineResearchAvailable,
             isBusy: _isResearchBusy,
             error: _researchError,
-            isEnabled: _isOnlineResearchEnabled,
+            isEnabled: _isOnlineResearchAvailable,
             acceptedFieldKeys: _acceptedResearchFieldKeys,
             rejectedFieldKeys: _rejectedResearchFieldKeys,
-            onStart: _isOnlineResearchEnabled
-                ? () => setState(() => _showResearchConsent = true)
-                : null,
-            onCancelConsent: () => setState(() => _showResearchConsent = false),
-            onConfirmConsent: _isOnlineResearchEnabled
+            onStart: _isOnlineResearchAvailable ? _researchAction : null,
+            researchActionLabel: _researchActionLabel,
+            showManagePlan: _showResearchManagePlan,
+            onCancelConsent: () => setState(() {
+              _showResearchConsent = false;
+              _approvedResearchConsent = null;
+            }),
+            onConfirmConsent: _isOnlineResearchAvailable
                 ? _runOnlineResearch
                 : null,
             onAcceptField: _acceptResearchField,
@@ -1451,32 +1465,75 @@ class _DraftReviewScreenState extends State<DraftReviewScreen> {
     );
   }
 
-  bool get _isOnlineResearchEnabled {
+  bool get _isOnlineResearchAvailable {
     final dependencies = _maybeDependencies(context);
-    return dependencies?.featureFlags.onlineResearchEnabled ?? false;
+    return dependencies?.featureFlags.localResearchCapabilityEnabled ?? false;
+  }
+
+  VoidCallback? get _researchAction {
+    if (_researchError == null) {
+      return () => setState(() => _showResearchConsent = true);
+    }
+    return switch (_researchFailureAction) {
+      BrokerResearchFailureAction.retrySameRequest => _retryOnlineResearch,
+      BrokerResearchFailureAction.newAttempt => _startFreshConsent,
+      BrokerResearchFailureAction.freshConsent => _startFreshConsent,
+      BrokerResearchFailureAction.none => null,
+    };
+  }
+
+  String? get _researchActionLabel => switch (_researchFailureAction) {
+    BrokerResearchFailureAction.retrySameRequest => 'Retry same request',
+    BrokerResearchFailureAction.newAttempt => 'Try research again',
+    BrokerResearchFailureAction.freshConsent => 'Review research consent',
+    BrokerResearchFailureAction.none => null,
+  };
+
+  void _startFreshConsent() {
+    setState(() {
+      _approvedResearchConsent = null;
+      _retryResearchRequestId = null;
+      _researchError = null;
+      _researchFailureAction = BrokerResearchFailureAction.none;
+      _showResearchManagePlan = false;
+      _showResearchConsent = true;
+    });
   }
 
   Future<void> _runOnlineResearch() async {
-    if (!_isOnlineResearchEnabled) {
+    if (!_isOnlineResearchAvailable) {
       return;
     }
 
     setState(() {
       _isResearchBusy = true;
       _researchError = null;
+      _researchFailureAction = BrokerResearchFailureAction.none;
+      _showResearchManagePlan = false;
     });
 
     try {
+      const consent = broker.BrokerResearchConsent.approved(
+        scope: broker.BrokerConsentScope.imagePlusDraftHints,
+        copyVersion: 'research-consent-v1',
+      );
+      _approvedResearchConsent = consent;
       final dependencies = AppDependencyScope.of(context);
       final service = dependencies.createOnlineResearchService();
       final job = await service.runResearch(
         OnlineResearchRequest(
           artworkId: widget.artwork.id,
           consentSummary:
-              'User approved the selected artwork image, draft details, and notes for Archivale research help.',
+              'User approved the selected artwork image and shown draft hints for Archivale research help.',
           consentState: ResearchConsentState.approved,
           querySummary: _researchQuerySummary(widget.artwork),
           searchTerms: _researchSearchTerms(widget.artwork),
+          brokerConsent: consent,
+          brokerDraftHints: broker.BrokerDraftHints(
+            titleHint: widget.artwork.title.value,
+            artistHint: widget.artwork.artist.value,
+            searchTerms: _researchSearchTerms(widget.artwork),
+          ),
         ),
       );
       if (!mounted) {
@@ -1484,6 +1541,7 @@ class _DraftReviewScreenState extends State<DraftReviewScreen> {
       }
       setState(() {
         _researchJob = job;
+        _retryResearchRequestId = null;
         _showResearchConsent = false;
         _isResearchBusy = false;
       });
@@ -1491,12 +1549,79 @@ class _DraftReviewScreenState extends State<DraftReviewScreen> {
       if (!mounted) {
         return;
       }
+      _handleResearchFailure(error);
+    }
+  }
+
+  Future<void> _retryOnlineResearch() async {
+    final requestId = _retryResearchRequestId;
+    final consent = _approvedResearchConsent;
+    if (requestId == null || consent == null || !_isOnlineResearchAvailable) {
+      _startFreshConsent();
+      return;
+    }
+    setState(() {
+      _isResearchBusy = true;
+      _researchError = null;
+    });
+    try {
+      final job = await AppDependencyScope.of(context)
+          .createOnlineResearchService()
+          .retryResearch(
+            OnlineResearchRequest(
+              artworkId: widget.artwork.id,
+              consentSummary:
+                  'User approved the selected artwork image and shown draft hints for Archivale research help.',
+              consentState: ResearchConsentState.approved,
+              querySummary: _researchQuerySummary(widget.artwork),
+              searchTerms: _researchSearchTerms(widget.artwork),
+              brokerConsent: consent,
+            ),
+            requestId,
+          );
+      if (!mounted) return;
       setState(() {
-        _showResearchConsent = false;
-        _researchError = _researchFailureMessage(error);
+        _researchJob = job;
+        _retryResearchRequestId = null;
         _isResearchBusy = false;
       });
+    } catch (error) {
+      if (!mounted) return;
+      _handleResearchFailure(error);
     }
+  }
+
+  void _handleResearchFailure(Object error) {
+    if (error is BrokerResearchFailureException &&
+        error.action == BrokerResearchFailureAction.freshConsent) {
+      setState(() {
+        _approvedResearchConsent = null;
+        _retryResearchRequestId = null;
+        _researchError = null;
+        _researchFailureAction = BrokerResearchFailureAction.none;
+        _showResearchManagePlan = false;
+        _showResearchConsent = true;
+        _isResearchBusy = false;
+      });
+      return;
+    }
+    setState(() {
+      _showResearchConsent = false;
+      _researchError = _researchFailureMessage(error);
+      _researchFailureAction = error is BrokerResearchFailureException
+          ? error.action
+          : BrokerResearchFailureAction.newAttempt;
+      _showResearchManagePlan =
+          error is BrokerResearchFailureException && error.showManagePlan;
+      _retryResearchRequestId = error is BrokerResearchFailureException
+          ? error.requestId
+          : null;
+      if (_researchFailureAction !=
+          BrokerResearchFailureAction.retrySameRequest) {
+        _approvedResearchConsent = null;
+      }
+      _isResearchBusy = false;
+    });
   }
 
   void _acceptResearchField(String fieldKey) {
@@ -2658,6 +2783,7 @@ class _EvidenceGuideItem extends StatelessWidget {
 
 class _OnlineResearchPanel extends StatelessWidget {
   const _OnlineResearchPanel({
+    super.key,
     required this.artwork,
     required this.researchJob,
     required this.showConsent,
@@ -2667,6 +2793,8 @@ class _OnlineResearchPanel extends StatelessWidget {
     required this.acceptedFieldKeys,
     required this.rejectedFieldKeys,
     required this.onStart,
+    required this.researchActionLabel,
+    required this.showManagePlan,
     required this.onCancelConsent,
     required this.onConfirmConsent,
     required this.onAcceptField,
@@ -2682,6 +2810,8 @@ class _OnlineResearchPanel extends StatelessWidget {
   final Set<String> acceptedFieldKeys;
   final Set<String> rejectedFieldKeys;
   final VoidCallback? onStart;
+  final String? researchActionLabel;
+  final bool showManagePlan;
   final VoidCallback onCancelConsent;
   final VoidCallback? onConfirmConsent;
   final ValueChanged<String> onAcceptField;
@@ -2739,11 +2869,21 @@ class _OnlineResearchPanel extends StatelessWidget {
             body: errorMessage,
           ),
           const SizedBox(height: 12),
-          _ActionButton(
-            icon: Icons.travel_explore,
-            label: 'Try research again',
-            onPressed: onStart,
-          ),
+          if (researchActionLabel != null) ...[
+            _ActionButton(
+              icon: Icons.travel_explore,
+              label: researchActionLabel!,
+              onPressed: onStart,
+            ),
+          ],
+          if (showManagePlan) ...[
+            const SizedBox(height: 12),
+            SecondaryActionButton(
+              icon: Icons.workspace_premium_outlined,
+              label: 'Manage plan',
+              routeName: AppRoutes.billing,
+            ),
+          ],
         ],
       );
     }
@@ -2787,6 +2927,9 @@ class _OnlineResearchPanel extends StatelessWidget {
 }
 
 String _researchFailureMessage(Object error) {
+  if (error is BrokerResearchFailureException) {
+    return error.collectorMessage;
+  }
   if (error is ResearchConsentRequiredException) {
     return 'Research consent needs to be reviewed before Archivale can run source-backed research.';
   }
@@ -2821,9 +2964,9 @@ class _ResearchConsentPanel extends StatelessWidget {
             style: Theme.of(context).textTheme.titleMedium,
           ),
           const SizedBox(height: 8),
-          const Text(
-            'If you continue, Archivale may use the selected artwork image or thumbnail, the draft details on this screen, your notes, and a short private summary to look for museum, archive, and auction references. Your full collection stays private.',
-          ),
+          const Text(researchConsentPayloadDisclosure),
+          const SizedBox(height: 10),
+          const Text(researchConsentExternalServiceDisclosure),
           const SizedBox(height: 12),
           const _Notice(
             icon: Icons.fact_check_outlined,
@@ -2848,6 +2991,12 @@ class _ResearchConsentPanel extends StatelessWidget {
     );
   }
 }
+
+const researchConsentPayloadDisclosure =
+    'If you continue, Archivale sends an EXIF-free derivative of the selected image and may send the shown title, artist, and search hints. It does not send notes, private summaries, artwork IDs, filenames, paths, values, locations, or documents.';
+
+const researchConsentExternalServiceDisclosure =
+    'Online research uses an approved external AI service and professional third-party web sources. Those web/source services may have their own retention policies. Archivale keeps the reviewed citations and source-backed suggestions with this local record.';
 
 class _ResearchResultsPanel extends StatelessWidget {
   const _ResearchResultsPanel({

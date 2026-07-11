@@ -14,7 +14,7 @@ void main() {
       expect(manifest, contains('FirebaseInitProvider'));
       expect(manifest, contains('CrashlyticsInitProvider'));
       expect(manifest, contains('tools:node="remove"'));
-      expect(main, contains('AppFeatureFlagService().localFlags()'));
+      expect(main, contains('featureFlagService.localFlags()'));
       expect(main, isNot(contains('loadAfterConsent()')));
       expect(
         gradle,

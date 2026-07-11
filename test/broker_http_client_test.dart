@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
@@ -9,6 +10,20 @@ import 'package:my_art_collection/app/config/app_feature_flags.dart';
 import 'package:my_art_collection/app/research/broker_http_client.dart';
 import 'package:my_art_collection/app/research/broker_payload.dart';
 import 'package:my_art_collection/app/research/firebase_research_runtime.dart';
+
+extension _BrokerHttpClientTestCalls on BrokerHttpClient {
+  Future<BrokerClientResult> submit(BrokerRequestPayload payload) =>
+      submitAfterConsent(
+        requestId: payload.requestId,
+        consent: payload.consent,
+        preparePayload: () async => payload,
+      );
+
+  Future<BrokerClientResult> retry(
+    String requestId, {
+    required BrokerResearchConsent consent,
+  }) => retryAfterConsent(requestId, consent: consent);
+}
 
 void main() {
   const endpoint = 'https://broker.example.test/research';
@@ -188,7 +203,73 @@ void main() {
   );
 
   test(
-    'requires matching current typed consent before retry Firebase or network work',
+    'one orchestrated submission rejects mismatched consent or request bindings before identity work',
+    () async {
+      final request = _payload();
+      final runtime = _RecordingRuntime();
+      final transport = _RecordingTransport();
+      final client = _client(runtime: runtime, transport: transport);
+      const differentConsent = BrokerResearchConsent.approved(
+        scope: BrokerConsentScope.imagePlusDraftHints,
+        copyVersion: 'research-consent-v1',
+      );
+
+      final consentMismatch = await client.submitAfterConsent(
+        requestId: request.requestId,
+        consent: differentConsent,
+        preparePayload: () async => request,
+      );
+      expect(consentMismatch.failure!.code, 'consent_required');
+      expect(runtime.calls, <String>['firebase', 'remote-config']);
+      expect(transport.requests, isEmpty);
+
+      final requestMismatch = await client.submitAfterConsent(
+        requestId: '22222222-2222-4222-8222-222222222222',
+        consent: request.consent,
+        preparePayload: () async => request,
+      );
+      expect(requestMismatch.failure!.code, 'consent_required');
+      expect(transport.requests, isEmpty);
+    },
+  );
+
+  test(
+    'concurrent duplicate request operations consume only one operation',
+    () async {
+      final request = _payload();
+      final runtime = _RecordingRuntime();
+      final client = _client(
+        runtime: runtime,
+        transport: _RecordingTransport(),
+        connectivity: const _FixedConnectivity(false),
+      );
+      final prepared = Completer<void>();
+      final first = client.submitAfterConsent(
+        requestId: request.requestId,
+        consent: request.consent,
+        preparePayload: () async {
+          await prepared.future;
+          return request;
+        },
+      );
+      await Future<void>.delayed(Duration.zero);
+
+      final second = await client.submitAfterConsent(
+        requestId: request.requestId,
+        consent: request.consent,
+        preparePayload: () async => request,
+      );
+      expect(second.failure!.code, 'request_in_flight');
+      expect(runtime.calls, <String>['firebase', 'remote-config']);
+
+      prepared.complete();
+      final firstResult = await first;
+      expect(firstResult.failure!.code, 'offline');
+    },
+  );
+
+  test(
+    'requires matching current typed consent before retry identity or network work',
     () async {
       final request = _payload();
       final store = _MemoryRetryStore();
@@ -217,13 +298,13 @@ void main() {
           );
 
       expect(result.failure!.code, 'consent_required');
-      expect(runtime.calls, isEmpty);
+      expect(runtime.calls, <String>['firebase', 'remote-config']);
       expect(transport.requests, isEmpty);
     },
   );
 
   test(
-    'rejects a frozen retry whose embedded consent differs before Firebase work',
+    'rejects a frozen retry whose embedded consent differs before identity work',
     () async {
       final request = _payload();
       final requestBody = request.toRequest()
@@ -247,13 +328,13 @@ void main() {
       ).retry(request.requestId, consent: request.consent);
 
       expect(result.failure!.code, 'retry_not_available');
-      expect(runtime.calls, isEmpty);
+      expect(runtime.calls, <String>['firebase', 'remote-config']);
       expect(transport.requests, isEmpty);
     },
   );
 
   test(
-    'strictly rejects tampered frozen requests before Firebase or transport work',
+    'strictly rejects tampered frozen requests before identity or transport work',
     () async {
       final request = _payload();
       final original = request.toRequest();
@@ -293,14 +374,14 @@ void main() {
         ).retry(request.requestId, consent: request.consent);
 
         expect(result.failure!.code, 'retry_not_available');
-        expect(runtime.calls, isEmpty);
+        expect(runtime.calls, <String>['firebase', 'remote-config']);
         expect(transport.requests, isEmpty);
       }
     },
   );
 
   test(
-    'rejects present null frozen draft hint keys before Firebase or transport work',
+    'rejects present null frozen draft hint keys before identity or transport work',
     () async {
       final request = BrokerRequestPayload(
         requestId: '11111111-1111-4111-8111-111111111111',
@@ -351,7 +432,10 @@ void main() {
         ).retry(request.requestId, consent: request.consent);
 
         expect(result.failure!.code, 'retry_not_available', reason: key);
-        expect(runtime.calls, isEmpty, reason: key);
+        expect(runtime.calls, <String>[
+          'firebase',
+          'remote-config',
+        ], reason: key);
         expect(transport.requests, isEmpty, reason: key);
       }
     },
@@ -393,6 +477,88 @@ void main() {
       expect(retryResult.isSuccess, isTrue);
       expect(secondTransport.requests.single.body, frozen!.body);
       expect(await store.read(request.requestId), isNull);
+    },
+  );
+
+  test(
+    'retains only same-request replay outcomes and reuses exact request bytes',
+    () async {
+      final request = _payload();
+      final store = _MemoryRetryStore();
+      final inFlight = _authoritativeErrorCase('quota_subject_in_flight');
+      final firstTransport = _RecordingTransport(
+        responses: _errorResponsesForCase(inFlight),
+      );
+
+      final first = await _client(
+        runtime: _RecordingRuntime(),
+        transport: firstTransport,
+        store: store,
+      ).submit(request);
+      final frozen = await store.read(request.requestId);
+
+      expect(first.failure!.code, 'request_in_flight');
+      expect(first.failure!.retryable, isTrue);
+      expect(frozen, isNotNull);
+
+      final retryTransport = _RecordingTransport(
+        responses: <Object>[
+          BrokerTransportResponse(
+            statusCode: 200,
+            body: jsonEncode(_successBody(request.requestId)),
+          ),
+        ],
+      );
+      final retried = await _client(
+        runtime: _RecordingRuntime(),
+        transport: retryTransport,
+        store: store,
+      ).retry(request.requestId, consent: request.consent);
+
+      expect(retried.isSuccess, isTrue);
+      expect(retryTransport.requests.single.body, frozen!.body);
+      expect(
+        retryTransport.requests.single.body,
+        firstTransport.requests.single.body,
+      );
+      expect(await store.read(request.requestId), isNull);
+    },
+  );
+
+  test(
+    'terminal and no-retry broker outcomes delete frozen payloads',
+    () async {
+      for (final condition in <String>[
+        'provider_rate_limited',
+        'provider_timeout',
+        'idempotency_conflict',
+        'dispatch_outcome_unknown',
+        'stale_consent',
+      ]) {
+        final request = _payload();
+        final store = _MemoryRetryStore();
+        final result = await _client(
+          runtime: _RecordingRuntime(),
+          transport: _RecordingTransport(
+            responses: _errorResponsesForCase(
+              _authoritativeErrorCase(condition),
+            ),
+          ),
+          store: store,
+        ).submit(request);
+
+        expect(result.isSuccess, isFalse, reason: condition);
+        expect(await store.read(request.requestId), isNull, reason: condition);
+
+        final retryTransport = _RecordingTransport();
+        final retry = await _client(
+          runtime: _RecordingRuntime(),
+          transport: retryTransport,
+          store: store,
+        ).retry(request.requestId, consent: request.consent);
+        expect(retry.failure!.code, 'retry_not_available', reason: condition);
+        expect(retryTransport.requests, isEmpty, reason: condition);
+      }
     },
   );
 
@@ -552,7 +718,8 @@ void main() {
       final root = await Directory.systemTemp.createTemp('broker-retry-store-');
       addTearDown(() => root.delete(recursive: true));
       const requestId = '11111111-1111-4111-8111-111111111111';
-      final first = await FileBrokerRetryStore.openAt(root);
+      final now = DateTime.utc(2026, 7, 11, 12);
+      final first = await FileBrokerRetryStore.openAt(root, now: () => now);
       await first.save(
         const FrozenBrokerRequest(
           requestId: requestId,
@@ -566,12 +733,139 @@ void main() {
         ),
       );
 
-      final second = await FileBrokerRetryStore.openAt(root);
+      final second = await FileBrokerRetryStore.openAt(root, now: () => now);
       final restored = await second.read(requestId);
       expect(restored!.payloadHash, hasLength(64));
       expect(restored.body, '{"data":{}}');
       expect(restored.consent.scope, BrokerConsentScope.imageOnly);
       expect(() => second.read('not-a-uuid'), throwsArgumentError);
+    },
+  );
+
+  test(
+    'file retry storage expires, cleans malformed data, and deletes restart orphans',
+    () async {
+      final root = await Directory.systemTemp.createTemp(
+        'broker-retry-retention-',
+      );
+      addTearDown(() => root.delete(recursive: true));
+      const requestId = '11111111-1111-4111-8111-111111111111';
+      final now = DateTime.utc(2026, 7, 11, 12);
+      final store = await FileBrokerRetryStore.openAt(root, now: () => now);
+      await store.save(
+        const FrozenBrokerRequest(
+          requestId: requestId,
+          payloadHash:
+              'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+          body: '{"data":{}}',
+          consent: BrokerResearchConsent.approved(
+            scope: BrokerConsentScope.imageOnly,
+            copyVersion: 'research-consent-v1',
+          ),
+        ),
+      );
+
+      final expired = await FileBrokerRetryStore.openAt(
+        root,
+        now: () => now.add(const Duration(hours: 25)),
+      );
+      expect(await expired.read(requestId), isNull);
+      expect(root.listSync(), isEmpty);
+
+      await File('${root.path}/malformed.json').writeAsString('not-json');
+      await FileBrokerRetryStore.openAt(root, now: () => now);
+      expect(root.listSync(), isEmpty);
+
+      await store.save(
+        const FrozenBrokerRequest(
+          requestId: requestId,
+          payloadHash:
+              'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+          body: '{"data":{}}',
+          consent: BrokerResearchConsent.approved(
+            scope: BrokerConsentScope.imageOnly,
+            copyVersion: 'research-consent-v1',
+          ),
+        ),
+      );
+      final restarted = await FileBrokerRetryStore.openAt(
+        root,
+        now: () => now,
+        deleteOrphansOnOpen: true,
+      );
+      expect(await restarted.read(requestId), isNull);
+      expect(root.listSync(), isEmpty);
+    },
+  );
+
+  test('explicit cancellation deletes a retained transport payload', () async {
+    final request = _payload();
+    final store = _MemoryRetryStore();
+    final client = _client(
+      runtime: _RecordingRuntime(),
+      transport: _RecordingTransport(
+        responses: <Object>[const SocketException('down')],
+      ),
+      store: store,
+    );
+    final result = await client.submit(request);
+    expect(result.failure!.code, 'transport_unavailable');
+    expect(await store.read(request.requestId), isNotNull);
+
+    await client.cancel(request.requestId);
+    expect(await store.read(request.requestId), isNull);
+  });
+
+  test(
+    'file retry storage enforces a strict 24-hour maximum on save and restore',
+    () async {
+      final root = await Directory.systemTemp.createTemp(
+        'broker-retry-maximum-',
+      );
+      addTearDown(() => root.delete(recursive: true));
+      const requestId = '11111111-1111-4111-8111-111111111111';
+      final now = DateTime.utc(2026, 7, 11, 12);
+      final store = await FileBrokerRetryStore.openAt(root, now: () => now);
+      final request = FrozenBrokerRequest(
+        requestId: requestId,
+        payloadHash:
+            'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        body: '{"data":{}}',
+        consent: const BrokerResearchConsent.approved(
+          scope: BrokerConsentScope.imageOnly,
+          copyVersion: 'research-consent-v1',
+        ),
+        retentionExpiresAt: now.add(const Duration(hours: 24, microseconds: 1)),
+      );
+
+      await store.save(request);
+      final file = File('${root.path}/$requestId.json');
+      final persisted =
+          jsonDecode(await file.readAsString()) as Map<String, Object?>;
+      final maximum = now.add(FileBrokerRetryStore.retentionDuration);
+      expect(persisted['retention_expires_at'], maximum.toIso8601String());
+      expect((await store.read(requestId))!.retentionExpiresAt, maximum);
+
+      final farFuture = Map<String, Object?>.from(persisted)
+        ..['retention_expires_at'] = now
+            .add(const Duration(hours: 48))
+            .toIso8601String();
+      await file.writeAsString(jsonEncode(farFuture));
+      expect(await store.read(requestId), isNull);
+      expect(await file.exists(), isFalse);
+
+      final malformedTimezone = Map<String, Object?>.from(persisted)
+        ..['retention_started_at'] = '2026-07-11T12:00:00';
+      await file.writeAsString(jsonEncode(malformedTimezone));
+      expect(await store.read(requestId), isNull);
+      expect(await file.exists(), isFalse);
+
+      await store.save(request);
+      final atBoundary = await FileBrokerRetryStore.openAt(
+        root,
+        now: () => maximum,
+      );
+      expect(await atBoundary.read(requestId), isNull);
     },
   );
 }
@@ -641,6 +935,30 @@ Map<String, Object?> _successBody(String requestId) => <String, Object?>{
 Map<String, Object?> _validResponseFixture() =>
     jsonDecode(File('test/fixtures/broker-response-v1.json').readAsStringSync())
         as Map<String, Object?>;
+
+Map<String, Object?> _authoritativeErrorCase(String condition) {
+  final fixture =
+      jsonDecode(
+            File(
+              'backend/broker/fixtures/broker-error-v1.json',
+            ).readAsStringSync(),
+          )
+          as Map<String, Object?>;
+  return (fixture['cases']! as List<Object?>)
+      .cast<Map<String, Object?>>()
+      .singleWhere((entry) => entry['condition'] == condition);
+}
+
+List<Object> _errorResponsesForCase(Map<String, Object?> errorCase) {
+  final code = errorCase['code']! as String;
+  return _errorResponses(errorCase, <String, Object?>{
+    'code': code,
+    'message': errorCase['message'],
+    'retryable': errorCase['retryable'],
+    if (errorCase.containsKey('retry_after_seconds'))
+      'retry_after_seconds': errorCase['retry_after_seconds'],
+  }, code);
+}
 
 bool _isConflictCode(String code) =>
     code == 'idempotency_conflict' ||

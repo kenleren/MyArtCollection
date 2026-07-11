@@ -16,6 +16,8 @@ import 'package:my_art_collection/app/billing/entitlement_plan.dart';
 import 'package:my_art_collection/app/billing/play_billing_adapter.dart';
 import 'package:my_art_collection/app/config/app_feature_flags.dart';
 import 'package:my_art_collection/app/research/online_research_service.dart';
+import 'package:my_art_collection/app/research/broker_online_research_client.dart';
+import 'package:my_art_collection/app/research/broker_http_client.dart';
 import 'package:my_art_collection/app/import/csv_import_file_picker.dart';
 import 'package:my_art_collection/app/intake/artwork_image_picker.dart';
 import 'package:my_art_collection/app/screens/prototype_flow.dart';
@@ -3460,7 +3462,9 @@ void main() {
         child: ArchivaleApp(
           initialRoute: AppRoutes.artworkDraft('research-draft'),
           dependencies: fixture.dependenciesWithFlags(
-            featureFlags: const AppFeatureFlags(onlineResearchEnabled: true),
+            featureFlags: const AppFeatureFlags(
+              localResearchCapabilityEnabled: true,
+            ),
           ),
         ),
       ),
@@ -3473,14 +3477,32 @@ void main() {
     await tapVisible(tester, find.text('Research this draft'));
 
     expect(find.text('Research consent'), findsOneWidget);
-    expect(find.textContaining('what leaves this device'), findsNothing);
+    expect(find.text(researchConsentPayloadDisclosure), findsOneWidget);
+    expect(find.text(researchConsentExternalServiceDisclosure), findsOneWidget);
+    expect(researchConsentPayloadDisclosure, contains('EXIF-free derivative'));
     expect(
-      find.textContaining('selected artwork image or thumbnail'),
-      findsOneWidget,
+      researchConsentPayloadDisclosure,
+      contains('title, artist, and search hints'),
+    );
+    for (final excluded in <String>[
+      'notes',
+      'private summaries',
+      'artwork IDs',
+      'filenames',
+      'paths',
+      'values',
+      'locations',
+      'documents',
+    ]) {
+      expect(researchConsentPayloadDisclosure, contains(excluded));
+    }
+    expect(
+      researchConsentExternalServiceDisclosure,
+      contains('third-party web sources'),
     );
     expect(
-      find.textContaining('Your full collection stays private'),
-      findsOneWidget,
+      researchConsentExternalServiceDisclosure,
+      contains('their own retention policies'),
     );
     await tester.ensureVisible(find.text('Research consent'));
     await tester.pump();
@@ -3583,7 +3605,9 @@ void main() {
         child: ArchivaleApp(
           initialRoute: AppRoutes.artworkDraft('research-failure-draft'),
           dependencies: fixture.dependenciesWithFlags(
-            featureFlags: const AppFeatureFlags(onlineResearchEnabled: true),
+            featureFlags: const AppFeatureFlags(
+              localResearchCapabilityEnabled: true,
+            ),
             onlineResearchClient: _ThrowingResearchClient(
               ResearchConsentRequiredException(ResearchConsentState.declined),
             ),
@@ -3617,6 +3641,316 @@ void main() {
       resetAfterCapture: false,
     );
   });
+
+  testWidgets('issue 189 captures consent-gated broker research states', (
+    WidgetTester tester,
+  ) async {
+    final fixture = await tester.runAsync(_LiveDependencyFixture.create);
+    final testFixture = fixture!;
+    addTearDown(() async {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.runAsync(testFixture.dispose);
+    });
+    await _configureMobileViewport(tester);
+
+    Future<void> captureState({
+      required String id,
+      required String fileName,
+      required AppFeatureFlags flags,
+      OnlineResearchClient? client,
+      bool openConsent = false,
+      bool startResearch = false,
+      ThemeMode themeMode = ThemeMode.light,
+    }) async {
+      await tester.runAsync(
+        () => testFixture.repository.upsert(
+          _artworkRecord(
+            id: id,
+            title: 'Issue 189 research draft',
+            state: ArtworkRecordState.needsReview,
+          ),
+        ),
+      );
+      final key = GlobalKey();
+      await tester.pumpWidget(
+        RepaintBoundary(
+          key: key,
+          child: ArchivaleApp(
+            key: ValueKey(fileName),
+            initialRoute: AppRoutes.artworkDraft(id),
+            themeMode: themeMode,
+            dependencies: testFixture.dependenciesWithFlags(
+              featureFlags: flags,
+              onlineResearchClient: client,
+            ),
+          ),
+        ),
+      );
+      await pumpLiveData(tester);
+      if (openConsent || startResearch) {
+        await tapVisible(tester, find.text('Research this draft'));
+      }
+      if (startResearch) {
+        await tapVisible(tester, find.text('Start source-backed research'));
+        await tester.pump();
+      }
+      final panel = find.byKey(const ValueKey('online-research-panel'));
+      await Scrollable.ensureVisible(
+        tester.element(panel),
+        alignment: 0,
+        duration: Duration.zero,
+      );
+      await tester.pump();
+      expect(
+        tester.getTopLeft(panel).dy,
+        inInclusiveRange(54, 58),
+        reason: fileName,
+      );
+      expect(tester.takeException(), isNull, reason: fileName);
+      await captureBoundaryToArtifacts(
+        tester,
+        key,
+        fileName,
+        resetAfterCapture: false,
+      );
+    }
+
+    const enabled = AppFeatureFlags(localResearchCapabilityEnabled: true);
+    await captureState(
+      id: 'issue189-gated',
+      fileName: 'issue-189-gated-unavailable-light.png',
+      flags: const AppFeatureFlags(),
+    );
+    expect(find.text('Research unavailable'), findsOneWidget);
+    await captureState(
+      id: 'issue189-consent',
+      fileName: 'issue-189-consent-light.png',
+      flags: enabled,
+      client: FixtureProfessionalSourceResearchClient(),
+      openConsent: true,
+    );
+    expect(find.text('Research consent'), findsOneWidget);
+    await captureState(
+      id: 'issue189-loading',
+      fileName: 'issue-189-loading-light.png',
+      flags: enabled,
+      client: _PendingResearchClient(),
+      startResearch: true,
+    );
+    expect(find.text('Researching...'), findsOneWidget);
+    for (final entry in <(String, String, String, bool)>[
+      ('offline', 'offline', 'Research needs a connection.', false),
+      ('identity_unavailable', 'identity', 'private connection', false),
+      ('rate_limited', 'rate-limit', 'Research is busy right now.', true),
+      ('request_in_flight', 'request-in-flight', 'already in progress', true),
+      ('not_entitled', 'not-entitled', 'not included for this account', false),
+      (
+        'credits_exhausted',
+        'credits-exhausted',
+        'credits are unavailable',
+        false,
+      ),
+      ('idempotency_conflict', 'conflict', 'cannot be retried', false),
+      (
+        'request_outcome_unknown',
+        'outcome-unknown',
+        'will not retry it',
+        false,
+      ),
+      ('upstream_timeout', 'timeout', 'took too long to finish', false),
+      (
+        'invalid_broker_response',
+        'invalid-response',
+        'could not display a safe',
+        false,
+      ),
+    ]) {
+      await captureState(
+        id: 'issue189-${entry.$1}',
+        fileName: 'issue-189-${entry.$2}-light.png',
+        flags: enabled,
+        client: _ThrowingResearchClient(
+          BrokerResearchFailureException.fromFailure(
+            BrokerClientFailure(
+              code: entry.$1,
+              message: 'Test-safe fixed message.',
+              retryable: entry.$4,
+            ),
+            requestId: '11111111-1111-4111-8111-111111111111',
+          ),
+        ),
+        startResearch: true,
+      );
+      expect(find.textContaining(entry.$3), findsOneWidget);
+      expect(find.text('Research unavailable'), findsOneWidget);
+      switch (entry.$1) {
+        case 'request_in_flight':
+          expect(find.text('Retry same request'), findsOneWidget);
+          expect(
+            tester
+                .widget<FilledButton>(
+                  find.widgetWithText(FilledButton, 'Retry same request'),
+                )
+                .onPressed,
+            isNotNull,
+          );
+        case 'offline':
+        case 'identity_unavailable':
+        case 'rate_limited':
+        case 'upstream_timeout':
+        case 'invalid_broker_response':
+          expect(find.text('Try research again'), findsOneWidget);
+        case 'not_entitled':
+        case 'credits_exhausted':
+          expect(find.text('Manage plan'), findsOneWidget);
+          expect(find.text('Try research again'), findsNothing);
+        case 'idempotency_conflict':
+        case 'request_outcome_unknown':
+          expect(find.text('Try research again'), findsNothing);
+          expect(find.text('Retry same request'), findsNothing);
+      }
+    }
+    await captureState(
+      id: 'issue189-consent-stale',
+      fileName: 'issue-189-consent-stale-light.png',
+      flags: enabled,
+      client: _ThrowingResearchClient(
+        BrokerResearchFailureException.fromFailure(
+          const BrokerClientFailure(
+            code: 'consent_stale',
+            message: 'Research consent must be refreshed.',
+          ),
+        ),
+      ),
+      startResearch: true,
+    );
+    expect(find.text('Research consent'), findsOneWidget);
+    expect(find.text('Research unavailable'), findsNothing);
+    await captureState(
+      id: 'issue189-results',
+      fileName: 'issue-189-cited-results-light.png',
+      flags: enabled,
+      client: FixtureProfessionalSourceResearchClient(),
+      startResearch: true,
+    );
+    expect(find.text('Source-backed candidates'), findsOneWidget);
+    expect(find.text('AI-suggested'), findsWidgets);
+    await tester.pump(const Duration(milliseconds: 200));
+    await captureState(
+      id: 'issue189-dark-gated',
+      fileName: 'issue-189-gated-unavailable-dark.png',
+      flags: const AppFeatureFlags(),
+      themeMode: ThemeMode.dark,
+    );
+    await captureState(
+      id: 'issue189-dark-results',
+      fileName: 'issue-189-cited-results-dark.png',
+      flags: enabled,
+      client: FixtureProfessionalSourceResearchClient(),
+      startResearch: true,
+      themeMode: ThemeMode.dark,
+    );
+    await captureState(
+      id: 'issue189-dark-consent',
+      fileName: 'issue-189-consent-dark.png',
+      flags: enabled,
+      client: FixtureProfessionalSourceResearchClient(),
+      openConsent: true,
+      themeMode: ThemeMode.dark,
+    );
+    await captureState(
+      id: 'issue189-dark-loading',
+      fileName: 'issue-189-loading-dark.png',
+      flags: enabled,
+      client: _PendingResearchClient(),
+      startResearch: true,
+      themeMode: ThemeMode.dark,
+    );
+    await captureState(
+      id: 'issue189-dark-request-in-flight',
+      fileName: 'issue-189-request-in-flight-dark.png',
+      flags: enabled,
+      client: _ThrowingResearchClient(
+        BrokerResearchFailureException.fromFailure(
+          const BrokerClientFailure(
+            code: 'request_in_flight',
+            message: 'A research request is already in progress.',
+            retryable: true,
+          ),
+          requestId: '11111111-1111-4111-8111-111111111111',
+        ),
+      ),
+      startResearch: true,
+      themeMode: ThemeMode.dark,
+    );
+    await captureState(
+      id: 'issue189-dark-conflict',
+      fileName: 'issue-189-conflict-dark.png',
+      flags: enabled,
+      client: _ThrowingResearchClient(
+        BrokerResearchFailureException.fromFailure(
+          const BrokerClientFailure(
+            code: 'idempotency_conflict',
+            message: 'The request conflicts.',
+          ),
+        ),
+      ),
+      startResearch: true,
+      themeMode: ThemeMode.dark,
+    );
+  });
+
+  testWidgets(
+    'same-request retry reuses the confirmed consent without recreating it',
+    (WidgetTester tester) async {
+      final fixture = await tester.runAsync(_LiveDependencyFixture.create);
+      final testFixture = fixture!;
+      final client = _RetrySequenceResearchClient();
+      addTearDown(() async {
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.runAsync(testFixture.dispose);
+      });
+      await tester.runAsync(
+        () => testFixture.repository.upsert(
+          _artworkRecord(
+            id: 'issue189-retry-consent',
+            title: 'Retry consent draft',
+            state: ArtworkRecordState.needsReview,
+          ),
+        ),
+      );
+      await tester.pumpWidget(
+        ArchivaleApp(
+          initialRoute: AppRoutes.artworkDraft('issue189-retry-consent'),
+          dependencies: testFixture.dependenciesWithFlags(
+            featureFlags: const AppFeatureFlags(
+              localResearchCapabilityEnabled: true,
+            ),
+            onlineResearchClient: client,
+          ),
+        ),
+      );
+      await pumpLiveData(tester);
+      await tapVisible(tester, find.text('Research this draft'));
+      await tapVisible(tester, find.text('Start source-backed research'));
+      await pumpLiveData(tester);
+
+      expect(find.text('Retry same request'), findsOneWidget);
+      await tapVisible(tester, find.text('Retry same request'));
+      await pumpLiveData(tester);
+
+      expect(client.researchCalls, 1);
+      expect(client.retryCalls, 1);
+      expect(
+        identical(
+          client.initialRequest!.brokerConsent,
+          client.retryRequest!.brokerConsent,
+        ),
+        isTrue,
+      );
+      expect(find.text('Source-backed candidates'), findsOneWidget);
+    },
+  );
 
   testWidgets('online research displays no reliable comparable guardrail', (
     WidgetTester tester,
@@ -5083,7 +5417,11 @@ class _LiveDependencyFixture {
       entitlementService: entitlementService,
       billingManagementService: billingManagementService,
       onDeviceAiDraftProvider: onDeviceAiDraftProvider,
-      onlineResearchClient: onlineResearchClient,
+      onlineResearchClient:
+          onlineResearchClient ??
+          (featureFlags.localResearchCapabilityEnabled
+              ? FixtureProfessionalSourceResearchClient()
+              : null),
     );
   }
 
@@ -5276,6 +5614,46 @@ class _ThrowingResearchClient implements OnlineResearchClient {
   Future<ResearchJob> research(OnlineResearchRequest request) async {
     throw _error;
   }
+}
+
+class _PendingResearchClient implements OnlineResearchClient {
+  @override
+  Future<ResearchJob> research(OnlineResearchRequest request) =>
+      Completer<ResearchJob>().future;
+}
+
+class _RetrySequenceResearchClient implements RetryableOnlineResearchClient {
+  int researchCalls = 0;
+  int retryCalls = 0;
+  OnlineResearchRequest? initialRequest;
+  OnlineResearchRequest? retryRequest;
+
+  @override
+  Future<ResearchJob> research(OnlineResearchRequest request) async {
+    researchCalls += 1;
+    initialRequest = request;
+    throw BrokerResearchFailureException.fromFailure(
+      const BrokerClientFailure(
+        code: 'request_in_flight',
+        message: 'A research request is already in progress.',
+        retryable: true,
+      ),
+      requestId: '11111111-1111-4111-8111-111111111111',
+    );
+  }
+
+  @override
+  Future<ResearchJob> retry(
+    OnlineResearchRequest request,
+    String requestId,
+  ) async {
+    retryCalls += 1;
+    retryRequest = request;
+    return _researchJob(artworkId: request.artworkId);
+  }
+
+  @override
+  Future<void> cancel(String requestId) async {}
 }
 
 class _SingleCsvPicker implements CsvImportFilePicker {
