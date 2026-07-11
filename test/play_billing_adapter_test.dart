@@ -3,18 +3,19 @@ import 'dart:async';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:my_art_collection/app/billing/entitlement_plan.dart';
 import 'package:my_art_collection/app/billing/play_billing_adapter.dart';
+import 'package:my_art_collection/app/research/firebase_research_runtime.dart';
 
 void main() {
   late FakeStore store;
   late FakeVerifier verifier;
-  late DateTime now;
+  late FakeClock clock;
   late PlayBillingEntitlementService service;
 
   setUp(() {
-    now = DateTime.utc(2026, 7, 11, 12);
+    clock = FakeClock(DateTime.utc(2026, 7, 11, 12));
     store = FakeStore();
-    verifier = FakeVerifier(now: () => now);
-    service = PlayBillingEntitlementService(store, verifier, now: () => now);
+    verifier = FakeVerifier();
+    service = PlayBillingEntitlementService(store, verifier, clock: clock);
   });
 
   tearDown(() => service.dispose());
@@ -123,13 +124,13 @@ void main() {
     store.emit(purchase(EntitlementPlans.starter));
     await tick();
     expect((await service.currentState()).plan, EntitlementPlans.starter);
-    now = now.add(const Duration(minutes: 16));
+    clock.advance(const Duration(minutes: 16));
     expect((await service.currentState()).plan, EntitlementPlans.free);
 
     final restarted = PlayBillingEntitlementService(
       FakeStore(),
-      FakeVerifier(now: () => now),
-      now: () => now,
+      FakeVerifier(),
+      clock: clock,
     );
     addTearDown(restarted.dispose);
     expect((await restarted.currentState()).plan, EntitlementPlans.free);
@@ -190,6 +191,263 @@ void main() {
     await service.refreshForGatedAction();
     expect((await service.currentState()).plan, EntitlementPlans.free);
   });
+
+  test(
+    'sign-out clears an existing paid lease when current state is read',
+    () async {
+      await preparePurchase();
+      store.emit(purchase(EntitlementPlans.starter));
+      await tick();
+      expect((await service.currentState()).plan, EntitlementPlans.starter);
+
+      verifier.uid = null;
+      expect((await service.currentState()).plan, EntitlementPlans.free);
+      expect(await service.purchase(EntitlementPlans.starter), isFalse);
+    },
+  );
+
+  test(
+    'lease expiry is bounded by monotonic elapsed time despite wall rollback',
+    () async {
+      await preparePurchase();
+      store.emit(purchase(EntitlementPlans.starter));
+      await tick();
+      clock.moveWall(const Duration(days: -1));
+      clock.advanceMonotonic(const Duration(minutes: 14, seconds: 59));
+      expect((await service.currentState()).plan, EntitlementPlans.starter);
+      clock.advanceMonotonic(const Duration(seconds: 1));
+      expect((await service.currentState()).plan, EntitlementPlans.free);
+    },
+  );
+
+  test(
+    'stale disclosure identity completion cannot restore account state',
+    () async {
+      final identity = Completer<String?>();
+      verifier.identityNext = () => identity.future;
+      final accepting = service.acceptBillingDisclosure();
+      await tick();
+      service.handleAccountChange();
+      identity.complete('uid-a');
+
+      expect(await accepting, isFalse);
+      expect(verifier.accepts, isEmpty);
+    },
+  );
+
+  test(
+    'account changes during a product query cannot start purchase',
+    () async {
+      await preparePurchase();
+      final query = Completer<PlayProductQuery>();
+      store.queryNext = (_) => query.future;
+      final purchasing = service.purchase(EntitlementPlans.starter);
+      await tick();
+      service.handleAccountChange();
+      query.complete(
+        PlayProductQuery(
+          products: <PlayProduct>[product(EntitlementPlans.starter)],
+        ),
+      );
+
+      expect(await purchasing, isFalse);
+      expect(store.buyAccountId, isNull);
+    },
+  );
+
+  test(
+    'account changes during restore cannot leave a paid lease active',
+    () async {
+      await preparePurchase();
+      final restoring = Completer<void>();
+      store.restoreNext = () => restoring.future;
+      final restore = service.restore();
+      await tick();
+      service.handleAccountChange();
+      restoring.complete();
+      await restore;
+
+      expect((await service.currentState()).plan, EntitlementPlans.free);
+    },
+  );
+
+  test(
+    'account changes during a purchase launch cannot restore paid state',
+    () async {
+      await preparePurchase();
+      final buying = Completer<bool>();
+      store.buyNext = (_, _) => buying.future;
+      final purchase = service.purchase(EntitlementPlans.starter);
+      await tick();
+      service.handleAccountChange();
+      buying.complete(true);
+
+      expect(await purchase, isFalse);
+      expect((await service.currentState()).plan, EntitlementPlans.free);
+    },
+  );
+
+  test(
+    'account changes during foreground refresh cannot retain a lease',
+    () async {
+      await preparePurchase();
+      store.emit(purchase(EntitlementPlans.starter));
+      await tick();
+      final restoring = Completer<void>();
+      store.restoreNext = () => restoring.future;
+      final refresh = service.refreshForForeground();
+      await tick();
+      service.handleAccountChange();
+      restoring.complete();
+      await refresh;
+
+      expect((await service.currentState()).plan, EntitlementPlans.free);
+    },
+  );
+
+  test(
+    'callable resolution is lazy and uses the required App Check options',
+    () async {
+      final wallNow = DateTime.utc(2026, 7, 11, 12);
+      final runtime = FakeFirebaseRuntime();
+      final callables = FakeCallableFactory(
+        onCall: (name, data) => switch (name) {
+          'acceptPlayBillingDisclosure' => <String, Object>{
+            'version': 'play-billing-v1',
+            'requestId': data['requestId']!,
+            'status': 'accepted',
+          },
+          'verifyPlaySubscription' => <String, Object>{
+            'version': 'play-billing-v1',
+            'requestId': data['requestId']!,
+            'state': 'active',
+            'planId': EntitlementPlans.starter.id,
+            'productId': EntitlementPlans.starter.playProductId!,
+            'verifiedAt': wallNow.toIso8601String(),
+            'playExpiresAt': wallNow
+                .add(const Duration(days: 30))
+                .toIso8601String(),
+            'leaseExpiresAt': wallNow
+                .add(const Duration(minutes: 15))
+                .toIso8601String(),
+          },
+          _ => throw StateError('unexpected callable'),
+        },
+      );
+      final firebaseVerifier = FirebasePlayBillingVerifier(
+        runtime,
+        callableFactory: callables,
+        now: () => wallNow,
+      );
+
+      expect(runtime.calls, isEmpty);
+      expect(callables.invocations, isEmpty);
+      expect(await firebaseVerifier.acceptDisclosure('before-init'), isFalse);
+      expect(callables.invocations, isEmpty);
+
+      expect(await firebaseVerifier.ensureBillingIdentity(), 'uid-a');
+      expect(await firebaseVerifier.acceptDisclosure('disclosure-1'), isTrue);
+      final verified = await firebaseVerifier.verify(
+        requestId: 'verify-1',
+        productId: EntitlementPlans.starter.playProductId!,
+        purchaseToken: 'fake-token',
+      );
+
+      expect(verified.leaseDuration, const Duration(minutes: 15));
+      expect(callables.invocations.map((item) => item.name), <String>[
+        'acceptPlayBillingDisclosure',
+        'verifyPlaySubscription',
+      ]);
+      for (final invocation in callables.invocations) {
+        expect(invocation.options.region, 'us-central1');
+        expect(invocation.options.timeout, const Duration(seconds: 60));
+        expect(invocation.options.limitedUseAppCheckToken, isTrue);
+      }
+    },
+  );
+
+  test(
+    'verifier rejects malformed and materially future server timestamps',
+    () async {
+      final now = DateTime.utc(2026, 7, 11, 12);
+      final runtime = FakeFirebaseRuntime();
+      Object? response = <String, Object>{
+        'version': 'play-billing-v1',
+        'requestId': 'verify-1',
+        'state': 'active',
+        'planId': EntitlementPlans.starter.id,
+        'productId': EntitlementPlans.starter.playProductId!,
+        'verifiedAt': now.add(const Duration(hours: 25)).toIso8601String(),
+        'playExpiresAt': now.add(const Duration(days: 30)).toIso8601String(),
+        'leaseExpiresAt': now
+            .add(const Duration(minutes: 15))
+            .toIso8601String(),
+      };
+      final verifier = FirebasePlayBillingVerifier(
+        runtime,
+        callableFactory: FakeCallableFactory(onCall: (_, _) => response),
+        now: () => now,
+      );
+      await verifier.ensureBillingIdentity();
+
+      expect(
+        (await verifier.verify(
+          requestId: 'verify-1',
+          productId: EntitlementPlans.starter.playProductId!,
+          purchaseToken: 'fake-token',
+        )).isPaid,
+        isFalse,
+      );
+      response = <String, Object>{
+        ...(response as Map<String, Object>),
+        'verifiedAt': 'not-a-timestamp',
+      };
+      expect(
+        (await verifier.verify(
+          requestId: 'verify-1',
+          productId: EntitlementPlans.starter.playProductId!,
+          purchaseToken: 'fake-token',
+        )).isPaid,
+        isFalse,
+      );
+    },
+  );
+
+  test(
+    'clock-behind receipt receives at most a fifteen-minute lease',
+    () async {
+      final deviceNow = DateTime.utc(2026, 7, 11, 11);
+      final serverNow = deviceNow.add(const Duration(hours: 1));
+      final verifier = FirebasePlayBillingVerifier(
+        FakeFirebaseRuntime(),
+        callableFactory: FakeCallableFactory(
+          onCall: (_, data) => <String, Object>{
+            'version': 'play-billing-v1',
+            'requestId': data['requestId']!,
+            'state': 'active',
+            'planId': EntitlementPlans.starter.id,
+            'productId': EntitlementPlans.starter.playProductId!,
+            'verifiedAt': serverNow.toIso8601String(),
+            'playExpiresAt': serverNow
+                .add(const Duration(days: 30))
+                .toIso8601String(),
+            'leaseExpiresAt': serverNow
+                .add(const Duration(minutes: 15))
+                .toIso8601String(),
+          },
+        ),
+        now: () => deviceNow,
+      );
+      await verifier.ensureBillingIdentity();
+
+      final verification = await verifier.verify(
+        requestId: 'verify-1',
+        productId: EntitlementPlans.starter.playProductId!,
+        purchaseToken: 'fake-token',
+      );
+      expect(verification.leaseDuration, const Duration(minutes: 15));
+    },
+  );
 }
 
 PlayProduct product(EntitlementPlan plan) => PlayProduct(
@@ -219,9 +477,14 @@ class FakeStore implements PlayBillingStore {
   List<PlayProduct> products = const <PlayProduct>[];
   int restoreCalls = 0;
   String? buyAccountId;
+  FutureOr<bool> Function()? availabilityNext;
+  FutureOr<bool> Function(PlayProduct product, String accountId)? buyNext;
+  FutureOr<PlayProductQuery> Function(Set<String> productIds)? queryNext;
+  FutureOr<void> Function()? restoreNext;
 
   @override
-  Future<bool> isAvailable() async => available;
+  Future<bool> isAvailable() async =>
+      await (availabilityNext?.call() ?? available);
 
   @override
   Stream<PlayPurchase> get purchaseStream => _purchases.stream;
@@ -232,26 +495,28 @@ class FakeStore implements PlayBillingStore {
     String obfuscatedAccountId,
   ) async {
     buyAccountId = obfuscatedAccountId;
-    return true;
+    return await (buyNext?.call(product, obfuscatedAccountId) ?? true);
   }
 
   @override
   Future<PlayProductQuery> queryProducts(Set<String> productIds) async =>
-      PlayProductQuery(products: products, unavailable: unavailable);
+      await (queryNext?.call(productIds) ??
+          PlayProductQuery(products: products, unavailable: unavailable));
 
   @override
-  Future<void> restorePurchases() async => restoreCalls++;
+  Future<void> restorePurchases() async {
+    restoreCalls++;
+    await restoreNext?.call();
+  }
 
   void emit(PlayPurchase purchase) => _purchases.add(purchase);
 }
 
 class FakeVerifier implements PlayBillingVerifier {
-  FakeVerifier({required this.now});
-
-  final DateTime Function() now;
-  String uid = 'uid-a';
+  String? uid = 'uid-a';
   final List<String> accepts = <String>[];
   final List<String> requests = <String>[];
+  FutureOr<String?> Function()? identityNext;
   FutureOr<PlayBillingVerification> Function(String request)? next;
 
   @override
@@ -261,7 +526,11 @@ class FakeVerifier implements PlayBillingVerifier {
   }
 
   @override
-  Future<String?> ensureBillingIdentity() async => uid;
+  Future<String?> ensureBillingIdentity() async =>
+      await (identityNext?.call() ?? uid);
+
+  @override
+  String? currentBillingUserId() => uid;
 
   @override
   Future<PlayBillingVerification> verify({
@@ -285,6 +554,90 @@ class FakeVerifier implements PlayBillingVerifier {
         plan: plan,
         productId: plan.playProductId!,
         state: 'active',
-        leaseExpiresAt: now().add(const Duration(minutes: 15)),
+        leaseDuration: const Duration(minutes: 15),
       );
+}
+
+class FakeClock implements PlayBillingClock {
+  FakeClock(this.wall);
+
+  DateTime wall;
+  Duration monotonic = Duration.zero;
+
+  @override
+  Duration elapsed() => monotonic;
+
+  @override
+  DateTime wallNow() => wall;
+
+  void advance(Duration duration) {
+    wall = wall.add(duration);
+    monotonic += duration;
+  }
+
+  void moveWall(Duration duration) => wall = wall.add(duration);
+
+  void advanceMonotonic(Duration duration) => monotonic += duration;
+}
+
+class FakeFirebaseRuntime implements FirebaseResearchRuntime {
+  final List<String> calls = <String>[];
+  String? uid = 'uid-a';
+
+  @override
+  Future<String?> authToken({required bool forceRefresh}) async => null;
+
+  @override
+  String? currentUserId() => uid;
+
+  @override
+  Future<bool> fetchOnlineResearchEnabled() async => false;
+
+  @override
+  Future<void> initializeAppCheck() async => calls.add('app-check');
+
+  @override
+  Future<void> initializeFirebase() async => calls.add('firebase');
+
+  @override
+  Future<String?> limitedUseAppCheckToken({required bool forceRefresh}) async =>
+      null;
+
+  @override
+  Future<void> signInAnonymously() async => calls.add('anonymous-auth');
+}
+
+class FakeCallableFactory implements PlayBillingCallableFactory {
+  FakeCallableFactory({required this.onCall});
+
+  final Object? Function(String name, Map<String, Object> data) onCall;
+  final List<FakeCallableInvocation> invocations = <FakeCallableInvocation>[];
+
+  @override
+  PlayBillingCallable create(
+    String name, {
+    required PlayBillingCallableOptions options,
+  }) {
+    final invocation = FakeCallableInvocation(name, options);
+    invocations.add(invocation);
+    return _FakeCallable(invocation, onCall);
+  }
+}
+
+class FakeCallableInvocation {
+  FakeCallableInvocation(this.name, this.options);
+
+  final String name;
+  final PlayBillingCallableOptions options;
+}
+
+class _FakeCallable implements PlayBillingCallable {
+  _FakeCallable(this._invocation, this._onCall);
+
+  final FakeCallableInvocation _invocation;
+  final Object? Function(String name, Map<String, Object> data) _onCall;
+
+  @override
+  Future<Object?> call(Map<String, Object> data) async =>
+      _onCall(_invocation.name, data);
 }

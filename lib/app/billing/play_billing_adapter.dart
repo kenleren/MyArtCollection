@@ -14,6 +14,11 @@ const _contractVersion = 'play-billing-v1';
 const _disclosureVersion = 'billing-verification-disclosure-v1';
 const _disclosurePurpose = 'play_subscription_verification';
 const _maxLease = Duration(minutes: 15);
+// A device can start with a stale wall clock. The lease never uses wall time,
+// so this only rejects implausibly distant server timestamps.
+const _maxVerifiedAtFutureSkew = Duration(hours: 24);
+const _functionsRegion = 'us-central1';
+const _callableTimeout = Duration(seconds: 60);
 
 enum PlayPurchaseState { pending, purchased, restored, canceled, error }
 
@@ -137,7 +142,7 @@ class PlayBillingVerification {
     required this.state,
     this.plan,
     this.productId,
-    this.leaseExpiresAt,
+    this.leaseDuration,
   });
 
   factory PlayBillingVerification.free(String requestId) =>
@@ -148,27 +153,28 @@ class PlayBillingVerification {
     required EntitlementPlan plan,
     required String productId,
     required String state,
-    required DateTime leaseExpiresAt,
+    required Duration leaseDuration,
   }) => PlayBillingVerification._(
     requestId: requestId,
     state: state,
     plan: plan,
     productId: productId,
-    leaseExpiresAt: leaseExpiresAt,
+    leaseDuration: leaseDuration,
   );
 
   final String requestId;
   final String state;
   final EntitlementPlan? plan;
   final String? productId;
-  final DateTime? leaseExpiresAt;
+  final Duration? leaseDuration;
 
-  bool get isPaid => plan != null && leaseExpiresAt != null;
+  bool get isPaid => plan != null && leaseDuration != null;
 }
 
 abstract interface class PlayBillingVerifier {
   /// Called only after the billing disclosure has been accepted in the UI.
   Future<String?> ensureBillingIdentity();
+  String? currentBillingUserId();
   Future<bool> acceptDisclosure(String requestId);
   Future<PlayBillingVerification> verify({
     required String requestId,
@@ -177,17 +183,73 @@ abstract interface class PlayBillingVerifier {
   });
 }
 
+/// A narrow callable boundary keeps Functions resolution out of startup and
+/// lets tests inspect every callable contract without a Firebase app.
+abstract interface class PlayBillingCallable {
+  Future<Object?> call(Map<String, Object> data);
+}
+
+class PlayBillingCallableOptions {
+  const PlayBillingCallableOptions({
+    required this.region,
+    required this.timeout,
+    required this.limitedUseAppCheckToken,
+  });
+
+  final String region;
+  final Duration timeout;
+  final bool limitedUseAppCheckToken;
+}
+
+abstract interface class PlayBillingCallableFactory {
+  PlayBillingCallable create(
+    String name, {
+    required PlayBillingCallableOptions options,
+  });
+}
+
+class FirebasePlayBillingCallableFactory implements PlayBillingCallableFactory {
+  const FirebasePlayBillingCallableFactory();
+
+  @override
+  PlayBillingCallable create(
+    String name, {
+    required PlayBillingCallableOptions options,
+  }) {
+    // This is called only after the consent-gated runtime initialized Firebase.
+    final callable = FirebaseFunctions.instanceFor(region: options.region)
+        .httpsCallable(
+          name,
+          options: HttpsCallableOptions(
+            timeout: options.timeout,
+            limitedUseAppCheckToken: options.limitedUseAppCheckToken,
+          ),
+        );
+    return _FirebasePlayBillingCallable(callable);
+  }
+}
+
+class _FirebasePlayBillingCallable implements PlayBillingCallable {
+  const _FirebasePlayBillingCallable(this._callable);
+
+  final HttpsCallable _callable;
+
+  @override
+  Future<Object?> call(Map<String, Object> data) async =>
+      (await _callable.call(data)).data;
+}
+
 class FirebasePlayBillingVerifier implements PlayBillingVerifier {
   FirebasePlayBillingVerifier(
     this._runtime, {
-    FirebaseFunctions? functions,
+    this._callableFactory = const FirebasePlayBillingCallableFactory(),
     DateTime Function()? now,
-  }) : _functions = functions ?? FirebaseFunctions.instance,
-       _now = now ?? DateTime.now;
+  }) : _now = now ?? DateTime.now;
 
   final FirebaseResearchRuntime _runtime;
-  final FirebaseFunctions _functions;
+  final PlayBillingCallableFactory _callableFactory;
   final DateTime Function() _now;
+  bool _identityInitialized = false;
 
   @override
   Future<String?> ensureBillingIdentity() async {
@@ -195,28 +257,34 @@ class FirebasePlayBillingVerifier implements PlayBillingVerifier {
       await _runtime.initializeFirebase();
       await _runtime.initializeAppCheck();
       await _runtime.signInAnonymously();
-      return _runtime.currentUserId();
+      final uid = _runtime.currentUserId();
+      _identityInitialized = uid != null;
+      return uid;
     } catch (_) {
+      _identityInitialized = false;
       return null;
     }
   }
 
   @override
+  String? currentBillingUserId() =>
+      _identityInitialized ? _runtime.currentUserId() : null;
+
+  @override
   Future<bool> acceptDisclosure(String requestId) async {
+    if (!_identityInitialized) return false;
     try {
-      final result = await _functions
-          .httpsCallable('acceptPlayBillingDisclosure')
+      final result = await _callable('acceptPlayBillingDisclosure')
           .call(<String, Object>{
             'requestId': requestId,
             'disclosureVersion': _disclosureVersion,
             'purpose': _disclosurePurpose,
             'accepted': true,
           });
-      final data = result.data;
-      return data is Map &&
-          data['version'] == _contractVersion &&
-          data['requestId'] == requestId &&
-          data['status'] == 'accepted';
+      return result is Map &&
+          result['version'] == _contractVersion &&
+          result['requestId'] == requestId &&
+          result['status'] == 'accepted';
     } catch (_) {
       return false;
     }
@@ -228,20 +296,29 @@ class FirebasePlayBillingVerifier implements PlayBillingVerifier {
     required String productId,
     required String purchaseToken,
   }) async {
+    if (!_identityInitialized) return PlayBillingVerification.free(requestId);
     try {
-      final result = await _functions
-          .httpsCallable('verifyPlaySubscription')
+      final result = await _callable('verifyPlaySubscription')
           .call(<String, Object>{
             'requestId': requestId,
             'billingDisclosureVersion': _disclosureVersion,
             'productId': productId,
             'purchaseToken': purchaseToken,
           });
-      return _parseVerification(result.data, requestId, _now());
+      return _parseVerification(result, requestId, _now());
     } catch (_) {
       return PlayBillingVerification.free(requestId);
     }
   }
+
+  PlayBillingCallable _callable(String name) => _callableFactory.create(
+    name,
+    options: const PlayBillingCallableOptions(
+      region: _functionsRegion,
+      timeout: _callableTimeout,
+      limitedUseAppCheckToken: true,
+    ),
+  );
 }
 
 PlayBillingVerification _parseVerification(
@@ -276,12 +353,14 @@ PlayBillingVerification _parseVerification(
   final verified = DateTime.tryParse(verifiedAt)?.toUtc();
   final playExpiry = DateTime.tryParse(playExpiresAt)?.toUtc();
   final leaseExpiry = DateTime.tryParse(leaseExpiresAt)?.toUtc();
+  final receivedAt = now.toUtc();
   if (verified == null ||
       playExpiry == null ||
       leaseExpiry == null ||
-      !leaseExpiry.isAfter(now.toUtc()) ||
+      verified.isAfter(receivedAt.add(_maxVerifiedAtFutureSkew)) ||
+      !leaseExpiry.isAfter(verified) ||
       leaseExpiry.isAfter(playExpiry) ||
-      leaseExpiry.isAfter(verified.add(_maxLease))) {
+      leaseExpiry.difference(verified) > _maxLease) {
     return PlayBillingVerification.free(requestId);
   }
   return PlayBillingVerification.paid(
@@ -289,8 +368,26 @@ PlayBillingVerification _parseVerification(
     plan: plan,
     productId: productId,
     state: state,
-    leaseExpiresAt: leaseExpiry,
+    leaseDuration: leaseExpiry.difference(verified),
   );
+}
+
+/// Separates receipt-wall time from the process-monotonic lease timer.
+abstract interface class PlayBillingClock {
+  DateTime wallNow();
+  Duration elapsed();
+}
+
+class SystemPlayBillingClock implements PlayBillingClock {
+  SystemPlayBillingClock() : _started = Stopwatch()..start();
+
+  final Stopwatch _started;
+
+  @override
+  Duration elapsed() => _started.elapsed;
+
+  @override
+  DateTime wallNow() => DateTime.now();
 }
 
 /// Fail-closed, memory-only coordinator for the server-verified Play lease.
@@ -298,14 +395,14 @@ class PlayBillingEntitlementService implements EntitlementService {
   PlayBillingEntitlementService(
     this._store,
     this._verifier, {
-    DateTime Function()? now,
-  }) : _now = now ?? DateTime.now {
+    PlayBillingClock? clock,
+  }) : _clock = clock ?? SystemPlayBillingClock() {
     _purchaseSubscription = _store.purchaseStream.listen(_onPurchase);
   }
 
   final PlayBillingStore _store;
   final PlayBillingVerifier _verifier;
-  final DateTime Function() _now;
+  final PlayBillingClock _clock;
   final Set<String> _inFlightTokens = <String>{};
   late final StreamSubscription<PlayPurchase> _purchaseSubscription;
 
@@ -319,13 +416,24 @@ class PlayBillingEntitlementService implements EntitlementService {
   @override
   Future<EntitlementState> currentState() async {
     if (_disposed) return _free(EntitlementBillingStatus.unavailable);
+    final fence = _captureFence();
+    if (!_isFenceCurrent(fence, requireIdentity: fence.uid != null)) {
+      return _free(EntitlementBillingStatus.available);
+    }
     final available = await _storeAvailable();
+    if (!_isFenceCurrent(fence, requireIdentity: fence.uid != null)) {
+      return _free(
+        available
+            ? EntitlementBillingStatus.available
+            : EntitlementBillingStatus.unavailable,
+      );
+    }
     final lease = _lease;
     if (!available) {
       _transitionFree();
       return _free(EntitlementBillingStatus.unavailable);
     }
-    if (lease != null && lease.expiresAt.isAfter(_now().toUtc())) {
+    if (lease != null && _clock.elapsed() < lease.expiresAtElapsed) {
       return EntitlementState(
         plan: lease.plan,
         billingStatus: EntitlementBillingStatus.available,
@@ -338,9 +446,16 @@ class PlayBillingEntitlementService implements EntitlementService {
   }
 
   Future<List<PlayProduct>> products() async {
-    if (!await _storeAvailable()) return const <PlayProduct>[];
-    final result = await _store.queryProducts(_paidProductIds);
-    if (result.unavailable) return const <PlayProduct>[];
+    final fence = _captureFence();
+    if (!await _storeAvailable() ||
+        !_isFenceCurrent(fence, requireIdentity: fence.uid != null)) {
+      return const <PlayProduct>[];
+    }
+    final result = await _queryProducts(_paidProductIds);
+    if (result.unavailable ||
+        !_isFenceCurrent(fence, requireIdentity: fence.uid != null)) {
+      return const <PlayProduct>[];
+    }
     return result.products
         .where((product) => _paidProductIds.contains(product.id))
         .toList(growable: false);
@@ -348,43 +463,87 @@ class PlayBillingEntitlementService implements EntitlementService {
 
   /// The caller invokes this only after displaying the billing disclosure.
   Future<bool> acceptBillingDisclosure() async {
-    final uid = await _verifier.ensureBillingIdentity();
-    if (uid == null) return false;
+    final entryFence = _captureFence();
+    final uid = await _ensureBillingIdentity();
+    if (!_isFenceCurrent(entryFence) || uid == null) return false;
     _observeUid(uid);
-    _disclosureAccepted = await _verifier.acceptDisclosure(_newRequestId());
-    return _disclosureAccepted;
+    final fence = _beginOperation(uid);
+    final accepted = await _verifier.acceptDisclosure(fence.requestId!);
+    if (!_isFenceCurrent(fence, requireIdentity: true)) return false;
+    if (!accepted) {
+      _transitionFree(clearPurchase: true);
+      return false;
+    }
+    _disclosureAccepted = true;
+    return true;
   }
 
   Future<bool> purchase(EntitlementPlan plan) async {
     final productId = plan.playProductId;
-    if (productId == null || !_disclosureAccepted || !await _storeAvailable()) {
+    if (productId == null || !_disclosureAccepted) {
       return false;
     }
-    final uid = await _verifier.ensureBillingIdentity();
-    if (uid == null) return false;
+    final entryFence = _captureFence();
+    if (!await _storeAvailable() ||
+        !_isFenceCurrent(entryFence, requireIdentity: true)) {
+      return false;
+    }
+    final uid = await _ensureBillingIdentity();
+    if (!_isFenceCurrent(entryFence, requireIdentity: true) || uid == null) {
+      return false;
+    }
     _observeUid(uid);
-    final products = await _store.queryProducts(<String>{productId});
+    if (!_disclosureAccepted || _currentUid != uid) return false;
+    final identityFence = _captureFence();
+    final products = await _queryProducts(<String>{productId});
+    if (!_isFenceCurrent(identityFence, requireIdentity: true)) return false;
     final product = products.products
         .where((item) => item.id == productId)
         .firstOrNull;
     if (products.unavailable || product == null) return false;
-    _beginOperation(uid);
-    return _store.buySubscription(product, _obfuscatedAccountId(uid));
+    final purchaseFence = _beginOperation(uid);
+    bool started;
+    try {
+      started = await _store.buySubscription(
+        product,
+        _obfuscatedAccountId(uid),
+      );
+    } catch (_) {
+      if (_isFenceCurrent(purchaseFence, requireIdentity: true)) {
+        _transitionFree();
+      }
+      return false;
+    }
+    return started && _isFenceCurrent(purchaseFence, requireIdentity: true);
   }
 
   Future<void> restore() async {
-    if (!_disclosureAccepted || !await _storeAvailable()) {
+    if (!_disclosureAccepted) {
       _transitionFree();
       return;
     }
-    final uid = await _verifier.ensureBillingIdentity();
-    if (uid == null) {
+    final entryFence = _captureFence();
+    if (!await _storeAvailable() ||
+        !_isFenceCurrent(entryFence, requireIdentity: true)) {
+      return;
+    }
+    final uid = await _ensureBillingIdentity();
+    if (!_isFenceCurrent(entryFence, requireIdentity: true) || uid == null) {
       _transitionFree();
       return;
     }
     _observeUid(uid);
-    _beginOperation(uid);
-    await _store.restorePurchases();
+    if (!_disclosureAccepted || _currentUid != uid) return;
+    final fence = _beginOperation(uid);
+    try {
+      await _store.restorePurchases();
+    } catch (_) {
+      if (_isFenceCurrent(fence, requireIdentity: true)) {
+        _transitionFree();
+      }
+      return;
+    }
+    _isFenceCurrent(fence, requireIdentity: true);
   }
 
   Future<void> refreshForForeground() => _refresh();
@@ -392,12 +551,26 @@ class PlayBillingEntitlementService implements EntitlementService {
 
   Future<void> _refresh() async {
     final uid = _currentUid;
-    if (!_disclosureAccepted || !await _storeAvailable() || uid == null) {
+    if (!_disclosureAccepted || uid == null) {
       _transitionFree();
       return;
     }
-    _beginOperation(uid);
-    await _store.restorePurchases();
+    final entryFence = _captureFence();
+    if (!_isFenceCurrent(entryFence, requireIdentity: true) ||
+        !await _storeAvailable() ||
+        !_isFenceCurrent(entryFence, requireIdentity: true)) {
+      return;
+    }
+    final fence = _beginOperation(uid);
+    try {
+      await _store.restorePurchases();
+    } catch (_) {
+      if (_isFenceCurrent(fence, requireIdentity: true)) {
+        _transitionFree();
+      }
+      return;
+    }
+    _isFenceCurrent(fence, requireIdentity: true);
   }
 
   void handleAccountChange() => _transitionFree(clearPurchase: true);
@@ -405,6 +578,7 @@ class PlayBillingEntitlementService implements EntitlementService {
   Future<void> _onPurchase(PlayPurchase purchase) async {
     if (_disposed) return;
     final uid = _currentUid;
+    final eventFence = _captureFence();
     switch (purchase.state) {
       case PlayPurchaseState.pending:
         _transitionFree();
@@ -414,6 +588,7 @@ class PlayBillingEntitlementService implements EntitlementService {
       case PlayPurchaseState.purchased:
       case PlayPurchaseState.restored:
         if (uid == null ||
+            !_isFenceCurrent(eventFence, requireIdentity: true) ||
             purchase.purchaseToken.isEmpty ||
             !_paidProductIds.contains(purchase.productId)) {
           _transitionFree(clearPurchase: true);
@@ -429,41 +604,71 @@ class PlayBillingEntitlementService implements EntitlementService {
   }
 
   Future<void> _verifyPurchase(PlayPurchase purchase, String uid) async {
-    final requestId = _beginOperation(uid);
-    final generation = _generation;
+    final fence = _beginOperation(uid);
     PlayBillingVerification result;
     try {
       result = await _verifier.verify(
-        requestId: requestId,
+        requestId: fence.requestId!,
         productId: purchase.productId,
         purchaseToken: purchase.purchaseToken,
       );
     } catch (_) {
-      if (generation == _generation && requestId == _currentRequestId) {
+      if (_isFenceCurrent(fence, requireIdentity: true)) {
         _transitionFree();
       }
       return;
     }
-    if (_disposed ||
-        generation != _generation ||
-        requestId != _currentRequestId ||
-        uid != _currentUid) {
+    if (!_isFenceCurrent(fence, requireIdentity: true)) {
       return;
     }
     if (!result.isPaid ||
-        result.requestId != requestId ||
+        result.requestId != fence.requestId ||
         result.productId != purchase.productId) {
       _transitionFree();
       return;
     }
-    _lease = _Lease(result.plan!, result.leaseExpiresAt!);
+    final duration = result.leaseDuration!;
+    if (duration <= Duration.zero || duration > _maxLease) {
+      _transitionFree();
+      return;
+    }
+    _lease = _Lease(result.plan!, _clock.elapsed() + duration);
   }
 
-  String _beginOperation(String uid) {
+  _OperationFence _beginOperation(String uid) {
     _generation++;
     _lease = null;
     _currentUid = uid;
-    return _currentRequestId = _newRequestId();
+    _currentRequestId = _newRequestId();
+    return _captureFence();
+  }
+
+  _OperationFence _captureFence() => _OperationFence(
+    generation: _generation,
+    uid: _currentUid,
+    requestId: _currentRequestId,
+  );
+
+  bool _isFenceCurrent(_OperationFence fence, {bool requireIdentity = false}) {
+    if (_disposed ||
+        fence.generation != _generation ||
+        fence.uid != _currentUid ||
+        fence.requestId != _currentRequestId) {
+      return false;
+    }
+    if (!requireIdentity || fence.uid == null) return true;
+    String? liveUid;
+    try {
+      liveUid = _verifier.currentBillingUserId();
+    } catch (_) {
+      _transitionFree(clearPurchase: true);
+      return false;
+    }
+    if (liveUid != fence.uid) {
+      _transitionFree(clearPurchase: true);
+      return false;
+    }
+    return true;
   }
 
   void _observeUid(String uid) {
@@ -491,6 +696,25 @@ class PlayBillingEntitlementService implements EntitlementService {
     }
   }
 
+  Future<String?> _ensureBillingIdentity() async {
+    try {
+      return await _verifier.ensureBillingIdentity();
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<PlayProductQuery> _queryProducts(Set<String> productIds) async {
+    try {
+      return await _store.queryProducts(productIds);
+    } catch (_) {
+      return const PlayProductQuery(
+        products: <PlayProduct>[],
+        unavailable: true,
+      );
+    }
+  }
+
   EntitlementState _free(EntitlementBillingStatus status) =>
       EntitlementState(plan: EntitlementPlans.free, billingStatus: status);
 
@@ -502,9 +726,21 @@ class PlayBillingEntitlementService implements EntitlementService {
 }
 
 class _Lease {
-  const _Lease(this.plan, this.expiresAt);
+  const _Lease(this.plan, this.expiresAtElapsed);
   final EntitlementPlan plan;
-  final DateTime expiresAt;
+  final Duration expiresAtElapsed;
+}
+
+class _OperationFence {
+  const _OperationFence({
+    required this.generation,
+    required this.uid,
+    required this.requestId,
+  });
+
+  final int generation;
+  final String? uid;
+  final String? requestId;
 }
 
 final Set<String> _paidProductIds = EntitlementPlans.all
