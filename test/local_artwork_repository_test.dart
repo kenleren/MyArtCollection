@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:my_art_collection/app/storage/artwork_collection_query.dart';
 import 'package:my_art_collection/app/storage/artwork_record.dart';
 import 'package:my_art_collection/app/storage/attachment_record.dart';
 import 'package:my_art_collection/app/storage/local_artwork_repository.dart';
@@ -845,6 +846,377 @@ void main() {
       ),
     );
   });
+
+  test('collection query composes search and operational filters', () async {
+    await repository.createAll([
+      _queryRecord(
+        'title-match',
+        title: '  Harbor NEEDLE  ',
+        artist: 'Elsewhere',
+        notes: 'Quiet note',
+        location: 'Main Hall',
+        state: ArtworkRecordState.missingDocuments,
+      ),
+      _queryRecord(
+        'artist-match',
+        title: 'Portrait',
+        artist: 'Needle Studio',
+        notes: 'Quiet note',
+        location: 'Main Hall',
+        state: ArtworkRecordState.missingDocuments,
+      ),
+      _queryRecord(
+        'notes-match',
+        title: 'Landscape',
+        artist: 'Elsewhere',
+        notes: 'Contains needle in collector notes',
+        location: 'Main Hall',
+        state: ArtworkRecordState.missingDocuments,
+      ),
+      _queryRecord(
+        'wrong-location',
+        title: 'Needle work',
+        artist: 'Elsewhere',
+        notes: '',
+        location: 'Storage',
+        state: ArtworkRecordState.missingDocuments,
+      ),
+      _queryRecord(
+        'historical',
+        title: 'Needle archive',
+        artist: 'Elsewhere',
+        notes: '',
+        location: 'Main Hall',
+        state: ArtworkRecordState.missingDocuments,
+        lifecycle: ArtworkLifecycleStatus.sold,
+      ),
+    ]);
+
+    final snapshot = await repository.queryCollection(
+      query: const ArtworkCollectionQuery(
+        searchTerm: '  nEeDlE ',
+        locations: {'main hall'},
+        recordStates: {ArtworkRecordState.missingDocuments},
+        lifecycleStatuses: {ArtworkLifecycleStatus.active},
+        missingSupportingRecords: true,
+        sort: ArtworkCollectionSort.title,
+      ),
+    );
+
+    expect(snapshot.entries.map((entry) => entry.record.id), [
+      'title-match',
+      'notes-match',
+      'artist-match',
+    ]);
+    expect(snapshot.totalRecordCount, 5);
+    expect(snapshot.activeRecordCount, 4);
+    expect(snapshot.availableLocations, ['Main Hall', 'Storage']);
+
+    final historical = await repository.queryCollection(
+      query: const ArtworkCollectionQuery(
+        lifecycleStatuses: {ArtworkLifecycleStatus.sold},
+      ),
+    );
+    expect(historical.entries.single.record.id, 'historical');
+  });
+
+  test('missing supporting records uses the exact shared predicate', () async {
+    await repository.createAll([
+      _queryRecord(
+        'matches',
+        title: 'Matches',
+        state: ArtworkRecordState.missingDocuments,
+      ),
+      _queryRecord(
+        'absence-alone',
+        title: 'Absence alone',
+        state: ArtworkRecordState.verifiedByYou,
+      ),
+      _queryRecord(
+        'primary-only',
+        title: 'Primary only',
+        state: ArtworkRecordState.missingDocuments,
+      ),
+      _queryRecord(
+        'supporting-photo',
+        title: 'Supporting photo',
+        state: ArtworkRecordState.missingDocuments,
+      ),
+      _queryRecord(
+        'supporting-document',
+        title: 'Supporting document',
+        state: ArtworkRecordState.missingDocuments,
+      ),
+      for (final lifecycle in ArtworkLifecycleStatus.values.where(
+        (status) => status != ArtworkLifecycleStatus.active,
+      ))
+        _queryRecord(
+          'non-active-${lifecycle.storageValue}',
+          title: lifecycle.label,
+          state: ArtworkRecordState.missingDocuments,
+          lifecycle: lifecycle,
+        ),
+    ]);
+    await repository.addAttachment(
+      _queryAttachment(
+        id: 'primary',
+        artworkId: 'primary-only',
+        role: AttachmentRole.primaryArtworkPhoto,
+      ),
+    );
+    await repository.addAttachment(
+      _queryAttachment(
+        id: 'supporting-photo-attachment',
+        artworkId: 'supporting-photo',
+        role: AttachmentRole.supportingPhoto,
+      ),
+    );
+    await repository.addAttachment(
+      _queryAttachment(
+        id: 'supporting-document-attachment',
+        artworkId: 'supporting-document',
+        role: AttachmentRole.supportingDocument,
+        type: AttachmentType.receipt,
+      ),
+    );
+
+    await repository.close();
+    repository = LocalArtworkRepository.forDatabase(
+      await LocalArtworkRepository.openAt(databasePath),
+    );
+    final snapshot = await repository.queryCollection(
+      query: const ArtworkCollectionQuery(missingSupportingRecords: true),
+    );
+
+    expect(snapshot.entries.map((entry) => entry.record.id), [
+      'matches',
+      'primary-only',
+    ]);
+    for (final entry in snapshot.entries) {
+      expect(
+        entry.isMissingSupportingRecords,
+        hasMissingSupportingRecords(
+          entry.record,
+          supportingAttachmentCount: entry.supportingAttachmentCount,
+        ),
+      );
+    }
+  });
+
+  test(
+    'acquisition sort validates partial dates and leaves storage unchanged',
+    () async {
+      const dates = {
+        'full-b': '2024-02-29',
+        'full-a': '2024-02-29',
+        'month': '2024-02',
+        'year': '2024',
+        'older': '2023-12-31',
+        'invalid-day': '2023-02-29',
+        'invalid-month': '2024-13',
+        'free-form': 'Spring 2022',
+        'blank': '   ',
+      };
+      await repository.createAll([
+        for (final entry in dates.entries)
+          _queryRecord(
+            entry.key,
+            title: entry.key.startsWith('full') ? 'Same title' : entry.key,
+            acquisitionDate: entry.value,
+          ),
+      ]);
+      await repository.close();
+      repository = LocalArtworkRepository.forDatabase(
+        await LocalArtworkRepository.openAt(databasePath),
+      );
+
+      final snapshot = await repository.queryCollection(
+        query: const ArtworkCollectionQuery(
+          sort: ArtworkCollectionSort.acquisitionDate,
+        ),
+      );
+      expect(snapshot.entries.map((entry) => entry.record.id), [
+        'full-a',
+        'full-b',
+        'month',
+        'year',
+        'older',
+        'blank',
+        'free-form',
+        'invalid-day',
+        'invalid-month',
+      ]);
+      expect({
+        for (final entry in snapshot.entries)
+          entry.record.id: entry.record
+              .field(ArtworkFieldKeys.purchaseDate)
+              ?.value,
+      }, dates);
+    },
+  );
+
+  test('text and recent sorts are stable with blanks and ties', () async {
+    await repository.createAll([
+      _queryRecord(
+        'b',
+        title: 'alpha',
+        artist: 'Same',
+        updatedAt: DateTime.utc(2026, 7, 4, 13),
+      ),
+      _queryRecord(
+        'a',
+        title: 'Alpha',
+        artist: 'same',
+        updatedAt: DateTime.utc(2026, 7, 4, 13),
+      ),
+      _queryRecord('blank-title', title: '  ', artist: 'Aardvark'),
+      _queryRecord('blank-artist', title: 'Beta', artist: '  '),
+    ]);
+
+    Future<List<String>> idsFor(ArtworkCollectionSort sort) async {
+      final snapshot = await repository.queryCollection(
+        query: ArtworkCollectionQuery(sort: sort),
+      );
+      return snapshot.entries.map((entry) => entry.record.id).toList();
+    }
+
+    expect(await idsFor(ArtworkCollectionSort.title), [
+      'a',
+      'b',
+      'blank-artist',
+      'blank-title',
+    ]);
+    expect(await idsFor(ArtworkCollectionSort.artist), [
+      'blank-title',
+      'a',
+      'b',
+      'blank-artist',
+    ]);
+    expect((await idsFor(ArtworkCollectionSort.recentlyUpdated)).take(2), [
+      'a',
+      'b',
+    ]);
+  });
+
+  for (final size in [50, 200]) {
+    test('bulk snapshot hydrates a persisted $size-record dataset', () async {
+      await repository.createAll([
+        for (var index = 0; index < size; index += 1)
+          _queryRecord(
+            'record-${index.toString().padLeft(3, '0')}',
+            title: 'Work ${index.toString().padLeft(3, '0')}',
+            artist: index.isEven ? 'Even Artist' : 'Odd Artist',
+            notes: index.isEven ? 'group-even' : 'group-odd',
+            location: index % 3 == 0 ? 'Studio' : 'Archive',
+            state: index.isEven
+                ? ArtworkRecordState.missingDocuments
+                : ArtworkRecordState.verifiedByYou,
+          ),
+      ]);
+      for (var index = 0; index < size; index += 10) {
+        await repository.addAttachment(
+          _queryAttachment(
+            id: 'support-$index',
+            artworkId: 'record-${index.toString().padLeft(3, '0')}',
+            role: AttachmentRole.supportingDocument,
+            type: AttachmentType.receipt,
+          ),
+        );
+      }
+
+      await repository.close();
+      final reads = <ArtworkCollectionSnapshotRead>[];
+      repository = LocalArtworkRepository.forDatabase(
+        await LocalArtworkRepository.openAt(databasePath),
+        collectionSnapshotObserver: ArtworkCollectionSnapshotObserver(
+          onRead: reads.add,
+        ),
+      );
+      final snapshot = await repository.queryCollection(
+        query: const ArtworkCollectionQuery(
+          searchTerm: 'GROUP-EVEN',
+          locations: {'studio'},
+          recordStates: {ArtworkRecordState.missingDocuments},
+          lifecycleStatuses: {ArtworkLifecycleStatus.active},
+          missingSupportingRecords: true,
+          sort: ArtworkCollectionSort.title,
+        ),
+      );
+
+      final expectedIds = [
+        for (var index = 0; index < size; index += 1)
+          if (index.isEven && index % 3 == 0 && index % 10 != 0)
+            'record-${index.toString().padLeft(3, '0')}',
+      ];
+      expect(snapshot.totalRecordCount, size);
+      expect(snapshot.entries.map((entry) => entry.record.id), expectedIds);
+      expect(
+        snapshot.entries.every(
+          (entry) =>
+              entry.record.fields.length == 4 &&
+              entry.supportingAttachmentCount == 0,
+        ),
+        isTrue,
+      );
+      expect(reads, ArtworkCollectionSnapshotRead.values);
+    });
+  }
+}
+
+ArtworkRecord _queryRecord(
+  String id, {
+  required String title,
+  String artist = 'Artist',
+  String notes = '',
+  String location = 'Studio',
+  String? acquisitionDate,
+  ArtworkRecordState state = ArtworkRecordState.verifiedByYou,
+  ArtworkLifecycleStatus lifecycle = ArtworkLifecycleStatus.active,
+  DateTime? updatedAt,
+}) {
+  final now = updatedAt ?? DateTime.utc(2026, 7, 4, 12);
+  return ArtworkRecord(
+    id: id,
+    recordState: state,
+    lifecycleStatus: lifecycle,
+    createdAt: now,
+    updatedAt: now,
+    fields: {
+      for (final entry in {
+        ArtworkFieldKeys.title: title,
+        ArtworkFieldKeys.artist: artist,
+        ArtworkFieldKeys.notes: notes,
+        ArtworkFieldKeys.currentLocation: location,
+        ArtworkFieldKeys.purchaseDate: ?acquisitionDate,
+      }.entries)
+        entry.key: ArtworkFieldValue(
+          value: entry.value,
+          source: ArtworkFieldSource.userConfirmed,
+          note: 'User-entered query fixture.',
+        ),
+    },
+  );
+}
+
+AttachmentRecord _queryAttachment({
+  required String id,
+  required String artworkId,
+  required AttachmentRole role,
+  AttachmentType type = AttachmentType.photo,
+}) {
+  return AttachmentRecord(
+    id: id,
+    artworkId: artworkId,
+    type: type,
+    role: role,
+    fileName: '$id.bin',
+    mimeType: type == AttachmentType.photo ? 'image/jpeg' : 'application/pdf',
+    fileSizeBytes: 4,
+    importedAt: DateTime.utc(2026, 7, 4, 12),
+    source: ArtworkFieldSource.userConfirmed,
+    relativePath: 'artworks/$artworkId/attachments/$id/payload',
+    checksum: 'checksum-$id',
+  );
 }
 
 ArtworkRecord _record(String id, {required String title}) {

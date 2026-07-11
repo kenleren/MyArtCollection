@@ -23,12 +23,20 @@ import 'package:my_art_collection/app/intake/artwork_image_picker.dart';
 import 'package:my_art_collection/app/screens/prototype_flow.dart';
 import 'package:my_art_collection/app/startup_route.dart';
 import 'package:my_art_collection/app/storage/ai_research_record.dart';
+import 'package:my_art_collection/app/storage/artwork_collection_query.dart';
 import 'package:my_art_collection/app/storage/artwork_record.dart';
 import 'package:my_art_collection/app/storage/attachment_record.dart';
 import 'package:my_art_collection/app/storage/local_artwork_repository.dart';
 import 'package:my_art_collection/app/storage/local_attachment_store.dart';
 import 'package:path/path.dart' as p;
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+
+enum _Issue211CollectionVisualState {
+  populated,
+  composed,
+  noResults,
+  trueEmpty,
+}
 
 void main() {
   setUpAll(() async {
@@ -215,6 +223,28 @@ void main() {
       themeMode: ThemeMode.dark,
       fileName: 'dark_settings.png',
     );
+  });
+
+  testWidgets('visual evidence covers issue 211 collection query states', (
+    WidgetTester tester,
+  ) async {
+    for (final themeMode in [ThemeMode.light, ThemeMode.dark]) {
+      final themeName = themeMode == ThemeMode.light ? 'light' : 'dark';
+      for (final state in _Issue211CollectionVisualState.values) {
+        final stateName = switch (state) {
+          _Issue211CollectionVisualState.populated => 'populated',
+          _Issue211CollectionVisualState.composed => 'composed',
+          _Issue211CollectionVisualState.noResults => 'no-results',
+          _Issue211CollectionVisualState.trueEmpty => 'true-empty',
+        };
+        await _captureIssue211CollectionVisualEvidence(
+          tester,
+          themeMode: themeMode,
+          state: state,
+          fileName: 'issue-211-$stateName-$themeName.png',
+        );
+      }
+    }
   });
 
   testWidgets('visual evidence captures required csv import mobile states', (
@@ -659,6 +689,223 @@ void main() {
     expect(find.textContaining('appraise value'), findsNothing);
   });
 
+  testWidgets('collection controls compose, sort, show no results, and clear', (
+    WidgetTester tester,
+  ) async {
+    final testDependencies = await tester.runAsync(
+      () async => _LiveDependencyFixture.create(),
+    );
+    final fixture = testDependencies!;
+    addTearDown(() async {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.runAsync(fixture.dispose);
+    });
+    await tester.runAsync(() async {
+      await fixture.repository.createAll([
+        _collectionQueryRecord(
+          id: 'harbor',
+          title: 'Harbor Study',
+          artist: 'Zed Artist',
+          notes: 'Needle note',
+          location: 'Main Hall',
+          state: ArtworkRecordState.missingDocuments,
+        ),
+        _collectionQueryRecord(
+          id: 'alpha',
+          title: 'Alpha Work',
+          artist: 'Aster Artist',
+          notes: 'Needle note',
+          location: 'Archive',
+          state: ArtworkRecordState.missingDocuments,
+        ),
+        _collectionQueryRecord(
+          id: 'sold',
+          title: 'Sold Needle',
+          artist: 'Past Artist',
+          notes: '',
+          location: 'Main Hall',
+          state: ArtworkRecordState.missingDocuments,
+          lifecycleStatus: ArtworkLifecycleStatus.sold,
+        ),
+      ]);
+    });
+    await tester.pumpWidget(
+      ArchivaleApp(
+        initialRoute: AppRoutes.collection,
+        dependencies: fixture.dependencies,
+      ),
+    );
+    await pumpLiveData(tester);
+
+    expect(
+      find.byKey(const ValueKey('collection-search-field')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('collection-sort-control')),
+      findsOneWidget,
+    );
+    expect(find.text('Filters'), findsOneWidget);
+
+    final sort = tester.widget<DropdownButtonFormField<ArtworkCollectionSort>>(
+      find.byKey(const ValueKey('collection-sort-control')),
+    );
+    sort.onChanged!(ArtworkCollectionSort.title);
+    await pumpLiveData(tester);
+    expect(
+      tester
+          .widget<DropdownButtonFormField<ArtworkCollectionSort>>(
+            find.byKey(const ValueKey('collection-sort-control')),
+          )
+          .initialValue,
+      ArtworkCollectionSort.title,
+    );
+
+    await enterVisibleText(
+      tester,
+      find.byKey(const ValueKey('collection-search-field')),
+      '  NEEDLE ',
+    );
+    await pumpLiveData(tester);
+    await tapVisible(
+      tester,
+      find.byKey(const ValueKey('collection-filter-toggle')),
+    );
+    await tapVisible(tester, find.widgetWithText(FilterChip, 'Main Hall'));
+    await tapVisible(
+      tester,
+      find.byKey(const ValueKey('missing-supporting-filter')),
+    );
+    await pumpLiveData(tester);
+
+    expect(find.text('Filters 2'), findsOneWidget);
+    expect(find.text('Harbor Study'), findsOneWidget);
+    expect(find.text('Alpha Work'), findsNothing);
+    expect(find.text('Sold Needle'), findsNothing);
+
+    await tapVisible(tester, find.widgetWithText(FilterChip, 'Sold'));
+    expect(find.text('No matching artworks'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('collection-no-results-clear')),
+      findsOneWidget,
+    );
+
+    await tapVisible(
+      tester,
+      find.byKey(const ValueKey('collection-no-results-clear')),
+    );
+    expect(find.text('No matching artworks'), findsNothing);
+    await tester.dragUntilVisible(
+      find.byKey(const ValueKey('collection-search-field')),
+      find.byType(ListView).first,
+      const Offset(0, 300),
+    );
+    expect(find.text('Filters'), findsOneWidget);
+    expect(
+      tester
+          .widget<TextField>(
+            find.byKey(const ValueKey('collection-search-field')),
+          )
+          .controller
+          ?.text,
+      isEmpty,
+    );
+    for (final title in ['Alpha Work', 'Harbor Study', 'Sold Needle']) {
+      await tester.dragUntilVisible(
+        find.text(title),
+        find.byType(ListView).first,
+        const Offset(0, -300),
+      );
+      expect(find.text(title), findsOneWidget);
+    }
+  });
+
+  testWidgets('collection query is session-local across repository reopen', (
+    WidgetTester tester,
+  ) async {
+    final testDependencies = await tester.runAsync(
+      () async => _LiveDependencyFixture.create(),
+    );
+    final fixture = testDependencies!;
+    addTearDown(() async {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.runAsync(fixture.dispose);
+    });
+    await tester.runAsync(() async {
+      await fixture.repository.create(
+        _collectionQueryRecord(
+          id: 'persisted-query-record',
+          title: 'Persisted Collection Record',
+          artist: 'Artist',
+          notes: '',
+          location: 'Studio',
+          state: ArtworkRecordState.verifiedByYou,
+        ),
+      );
+    });
+    await tester.pumpWidget(
+      ArchivaleApp(
+        initialRoute: AppRoutes.collection,
+        dependencies: fixture.dependencies,
+      ),
+    );
+    await pumpLiveData(tester);
+    await enterVisibleText(
+      tester,
+      find.byKey(const ValueKey('collection-search-field')),
+      'does not match',
+    );
+    await pumpLiveData(tester);
+    expect(find.text('No matching artworks'), findsOneWidget);
+
+    await tester.runAsync(fixture.reopenRepository);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+    await tester.pumpWidget(
+      ArchivaleApp(
+        initialRoute: AppRoutes.collection,
+        dependencies: fixture.dependencies,
+      ),
+    );
+    await pumpLiveData(tester);
+
+    expect(find.text('Persisted Collection Record'), findsOneWidget);
+    expect(find.text('No matching artworks'), findsNothing);
+    expect(
+      tester
+          .widget<TextField>(
+            find.byKey(const ValueKey('collection-search-field')),
+          )
+          .controller
+          ?.text,
+      isEmpty,
+    );
+  });
+
+  testWidgets('empty collection stays distinct from query no-results', (
+    WidgetTester tester,
+  ) async {
+    final testDependencies = await tester.runAsync(
+      () async => _LiveDependencyFixture.create(),
+    );
+    final fixture = testDependencies!;
+    addTearDown(() async {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.runAsync(fixture.dispose);
+    });
+    await tester.pumpWidget(
+      ArchivaleApp(
+        initialRoute: AppRoutes.collection,
+        dependencies: fixture.dependencies,
+      ),
+    );
+    await pumpLiveData(tester);
+
+    expect(find.text('No artworks yet'), findsOneWidget);
+    expect(find.text('No matching artworks'), findsNothing);
+    expect(find.byKey(const ValueKey('collection-search-field')), findsNothing);
+  });
+
   testWidgets('free plan gates new artwork growth without hiding records', (
     WidgetTester tester,
   ) async {
@@ -697,7 +944,11 @@ void main() {
       find.textContaining('Free plan: 5 of 5 active records'),
       findsOneWidget,
     );
-    await tester.scrollUntilVisible(find.text('Free plan is at capacity'), 300);
+    await tester.dragUntilVisible(
+      find.text('Free plan is at capacity'),
+      find.byType(ListView).first,
+      const Offset(0, -300),
+    );
     await tester.pump();
 
     expect(find.text('Free plan is at capacity'), findsOneWidget);
@@ -806,12 +1057,17 @@ void main() {
       find.textContaining('Free plan: 4 of 5 active records'),
       findsOneWidget,
     );
-    await tester.scrollUntilVisible(find.text('Removed Free Record'), 300);
+    await tester.dragUntilVisible(
+      find.text('Removed Free Record'),
+      find.byType(ListView).first,
+      const Offset(0, -300),
+    );
     await tester.pump();
     expect(find.text('Removed Free Record'), findsOneWidget);
-    await tester.scrollUntilVisible(
+    await tester.dragUntilVisible(
       find.widgetWithText(FilledButton, 'Add artwork'),
-      300,
+      find.byType(ListView).first,
+      const Offset(0, -300),
     );
     await tester.pump();
     expect(find.widgetWithText(FilledButton, 'Add artwork'), findsOneWidget);
@@ -2332,7 +2588,7 @@ void main() {
         _artworkRecord(
           id: 'cold-start-local-record',
           title: 'Cold Start Local Record',
-          state: ArtworkRecordState.needsReview,
+          state: ArtworkRecordState.missingDocuments,
         ),
       );
       await fixture.reopenRepository();
@@ -2609,7 +2865,7 @@ void main() {
         _artworkRecord(
           id: 'local-incomplete',
           title: 'Needs Local Review',
-          state: ArtworkRecordState.needsReview,
+          state: ArtworkRecordState.missingDocuments,
         ),
       );
       await fixture.repository.upsert(
@@ -3289,7 +3545,10 @@ void main() {
 
     expect(find.text('Manual Confirmed Title'), findsOneWidget);
     expect(find.text('Verified by you'), findsOneWidget);
-    expect(find.text('1 detail still needs review.'), findsOneWidget);
+    expect(
+      find.text('Nothing else needs review for this record.'),
+      findsOneWidget,
+    );
 
     await tapVisible(tester, find.text('Open record'));
     await pumpLiveData(tester);
@@ -5047,6 +5306,102 @@ Future<void> _configureMobileViewport(WidgetTester tester) async {
   });
 }
 
+Future<void> _captureIssue211CollectionVisualEvidence(
+  WidgetTester tester, {
+  required ThemeMode themeMode,
+  required _Issue211CollectionVisualState state,
+  required String fileName,
+}) async {
+  await _configureMobileViewport(tester);
+  final fixture = await tester.runAsync(_LiveDependencyFixture.create);
+  final liveFixture = fixture!;
+  try {
+    if (state != _Issue211CollectionVisualState.trueEmpty) {
+      await tester.runAsync(() async {
+        await liveFixture.repository.createAll([
+          _collectionQueryRecord(
+            id: 'visual-harbor',
+            title: 'Harbor Study',
+            artist: 'Ingrid Vale',
+            notes: 'Framed after the Oslo studio visit.',
+            location: 'Main Hall',
+            state: ArtworkRecordState.missingDocuments,
+          ),
+          _collectionQueryRecord(
+            id: 'visual-blue',
+            title: 'Blue Interior',
+            artist: 'A. Maker',
+            notes: 'Collector note for the archive.',
+            location: 'Archive',
+            state: ArtworkRecordState.verifiedByYou,
+          ),
+        ]);
+      });
+    }
+
+    final boundaryKey = GlobalKey();
+    await tester.pumpWidget(
+      RepaintBoundary(
+        key: boundaryKey,
+        child: ArchivaleApp(
+          initialRoute: AppRoutes.collection,
+          themeMode: themeMode,
+          dependencies: liveFixture.dependencies,
+        ),
+      ),
+    );
+    await pumpLiveData(tester);
+
+    if (state == _Issue211CollectionVisualState.composed ||
+        state == _Issue211CollectionVisualState.noResults) {
+      await enterVisibleText(
+        tester,
+        find.byKey(const ValueKey('collection-search-field')),
+        state == _Issue211CollectionVisualState.noResults
+            ? 'No matching collector text'
+            : 'Harbor',
+      );
+      await pumpLiveData(tester);
+      await tapVisible(
+        tester,
+        find.byKey(const ValueKey('collection-filter-toggle')),
+      );
+      await tapVisible(tester, find.widgetWithText(FilterChip, 'Main Hall'));
+      if (state == _Issue211CollectionVisualState.composed) {
+        await tapVisible(
+          tester,
+          find.byKey(const ValueKey('missing-supporting-filter')),
+        );
+      }
+      await tapVisible(
+        tester,
+        find.byKey(const ValueKey('collection-filter-toggle')),
+      );
+      await tester.drag(find.byType(ListView).first, const Offset(0, 2000));
+      await tester.pump();
+    }
+
+    final boundary =
+        boundaryKey.currentContext!.findRenderObject()!
+            as RenderRepaintBoundary;
+    boundary.markNeedsPaint();
+    await tester.pump();
+    final bytes = await tester.runAsync<Uint8List>(() async {
+      final image = await boundary.toImage(pixelRatio: 1);
+      final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
+      image.dispose();
+      return byteData!.buffer.asUint8List();
+    });
+    final outputDirectory = Directory(p.join('artifacts', 'visual'));
+    outputDirectory.createSync(recursive: true);
+    File(p.join(outputDirectory.path, fileName)).writeAsBytesSync(bytes!);
+  } finally {
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+    await tester.runAsync(liveFixture.dispose);
+  }
+}
+
 Future<void> captureVisualEvidence(
   WidgetTester tester, {
   required String routeName,
@@ -5230,7 +5585,11 @@ Future<void> captureCollectionLimitVisualEvidence(
     ),
   );
   await pumpLiveData(tester);
-  await tester.scrollUntilVisible(find.text('Free plan is at capacity'), 300);
+  await tester.dragUntilVisible(
+    find.text('Free plan is at capacity'),
+    find.byType(ListView).first,
+    const Offset(0, -300),
+  );
   await tester.pump();
   await captureBoundaryToArtifacts(tester, boundaryKey, fileName);
 }
@@ -6051,6 +6410,38 @@ class _DownloadFailureAiDraftProvider implements OnDeviceAiDraftProvider {
   ) async {
     throw StateError('createDraft must not run after a failed download');
   }
+}
+
+ArtworkRecord _collectionQueryRecord({
+  required String id,
+  required String title,
+  required String artist,
+  required String notes,
+  required String location,
+  required ArtworkRecordState state,
+  ArtworkLifecycleStatus lifecycleStatus = ArtworkLifecycleStatus.active,
+}) {
+  final now = DateTime.utc(2026, 7, 4, 12);
+  return ArtworkRecord(
+    id: id,
+    recordState: state,
+    lifecycleStatus: lifecycleStatus,
+    createdAt: now,
+    updatedAt: now,
+    fields: {
+      for (final entry in {
+        ArtworkFieldKeys.title: title,
+        ArtworkFieldKeys.artist: artist,
+        ArtworkFieldKeys.notes: notes,
+        ArtworkFieldKeys.currentLocation: location,
+      }.entries)
+        entry.key: ArtworkFieldValue(
+          value: entry.value,
+          source: ArtworkFieldSource.userConfirmed,
+          note: 'User-entered collection query fixture.',
+        ),
+    },
+  );
 }
 
 ArtworkRecord _artworkRecord({
