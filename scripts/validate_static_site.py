@@ -76,6 +76,52 @@ TWITTER_FIELDS = {
     "twitter:image:alt",
 }
 
+# Keep browser request surfaces closed by default. The five attributes below that
+# are not listed here are handled by exact tag and per-route inventories in
+# validate_resources: img/src, script/src, link/href, a/href, and form/action.
+FORBIDDEN_REQUEST_ATTRIBUTES = {
+    "archive",
+    "attributionsrc",
+    "background",
+    "classid",
+    "code",
+    "codebase",
+    "data",
+    "datasrc",
+    "dynsrc",
+    "formaction",
+    "icon",
+    "imagesrcset",
+    "longdesc",
+    "lowsrc",
+    "manifest",
+    "object",
+    "ping",
+    "poster",
+    "profile",
+    "srcdoc",
+    "srcset",
+    "xlink:href",
+}
+FORBIDDEN_RESOURCE_TAGS = {
+    "applet",
+    "audio",
+    "embed",
+    "fencedframe",
+    "frame",
+    "frameset",
+    "iframe",
+    "image",
+    "object",
+    "param",
+    "picture",
+    "portal",
+    "source",
+    "track",
+    "use",
+    "video",
+}
+
 ALLOWED_SCHEMA_TYPES = {
     "Blog",
     "BlogPosting",
@@ -552,10 +598,14 @@ def validate_resources(path: Path, parser: SiteParser, site_root: Path) -> list[
     for tag, attrs, section in parser.tags:
         if tag == "style" or "style" in attrs:
             errors.append(f"{route}: inline style/resource expansion is forbidden")
-        for request_attribute in ("srcset", "poster"):
-            if request_attribute in attrs:
+        for attribute in attrs:
+            if attribute.startswith("on"):
                 errors.append(
-                    f"{route}: request-bearing attribute {request_attribute} is forbidden"
+                    f"{route}: inline event handler {attribute} is forbidden"
+                )
+            elif attribute in FORBIDDEN_REQUEST_ATTRIBUTES:
+                errors.append(
+                    f"{route}: request-bearing attribute {attribute} is forbidden"
                 )
         if "src" in attrs and tag not in {"img", "script"}:
             errors.append(f"{route}: unexpected src resource on <{tag}>")
@@ -577,11 +627,14 @@ def validate_resources(path: Path, parser: SiteParser, site_root: Path) -> list[
                 stylesheets.append(attrs.get("href") or "")
             elif "canonical" not in rel:
                 errors.append(f"{route}: unexpected link resource")
-        elif tag == "img" and section == "body":
-            body_images.append(attrs.get("src") or "")
+        elif tag == "img":
+            if section != "body":
+                errors.append(f"{route}: image resources must be in body")
+            else:
+                body_images.append(attrs.get("src") or "")
         elif tag == "form":
             form_actions.append(attrs.get("action") or "")
-        elif tag in {"source", "iframe", "video", "audio", "embed", "object", "picture"}:
+        elif tag in FORBIDDEN_RESOURCE_TAGS:
             errors.append(f"{route}: <{tag}> resource is forbidden")
         elif tag == "meta" and (attrs.get("http-equiv") or "").lower() in {
             "refresh",

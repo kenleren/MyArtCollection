@@ -62,6 +62,15 @@ class StaticSiteValidatorTest(unittest.TestCase):
             if route == "/"
             else ""
         )
+        route_form = ""
+        route_script = ""
+        if route == "/beta/":
+            route_form = '<form action="/api/forms/beta-signup"><button>Join</button></form>'
+            route_script = '<script src="/scripts/beta-signup.js" defer></script>'
+        elif route == "/support/":
+            route_form = (
+                '<form action="mailto:ken.leren@icloud.com"><button>Send</button></form>'
+            )
         body_h1 = html.escape(headline if is_article else title)
         content = f"""<!doctype html>
 <html lang="en">
@@ -92,6 +101,8 @@ class StaticSiteValidatorTest(unittest.TestCase):
   <img src="/assets/archivale-logo.svg" alt="">
   {collector_image}
   <h1>{body_h1}</h1>
+  {route_form}
+  {route_script}
   <script src="/scripts/pageview-counter.js" defer></script>
 </body>
 </html>
@@ -337,6 +348,78 @@ class StaticSiteValidatorTest(unittest.TestCase):
                 path = self.write_page()
                 self.mutate(path, "</head>", f"{addition}</head>")
                 self.assert_error(self.errors_for(path), expected)
+
+    def test_request_bearing_bypasses_fail_in_every_document_section(self) -> None:
+        additions = (
+            (
+                '<img src="https://tracker.example/pixel.gif" alt="">',
+                "image resources must be in body",
+                "body image inventory",
+            ),
+            (
+                '<a href="/pricing/" ping="https://tracker.example/collect">Pricing</a>',
+                "ping",
+                "ping",
+            ),
+            (
+                '<button formaction="https://tracker.example/collect">Send</button>',
+                "formaction",
+                "formaction",
+            ),
+            (
+                '<input type="submit" formaction="/unexpected">',
+                "formaction",
+                "formaction",
+            ),
+            (
+                '<svg><image href="https://tracker.example/pixel.svg"></image></svg>',
+                "unexpected href resource",
+                "unexpected href resource",
+            ),
+            (
+                '<svg><use xlink:href="https://tracker.example/icons.svg#mark"></use></svg>',
+                "xlink:href",
+                "xlink:href",
+            ),
+            (
+                '<object data="https://tracker.example/pixel"></object>',
+                "request-bearing attribute data",
+                "request-bearing attribute data",
+            ),
+            (
+                '<link rel="preload" imagesrcset="https://tracker.example/pixel.png 1x">',
+                "imagesrcset",
+                "imagesrcset",
+            ),
+            (
+                '<img src="/assets/archivale-logo.svg" '
+                'attributionsrc="https://tracker.example/report">',
+                "attributionsrc",
+                "attributionsrc",
+            ),
+            (
+                '<div background="https://tracker.example/pixel.png"></div>',
+                "background",
+                "background",
+            ),
+            (
+                '<button onclick="fetch(\'https://tracker.example/collect\')">Send</button>',
+                "inline event handler onclick",
+                "inline event handler onclick",
+            ),
+        )
+        for addition, head_error, body_error in additions:
+            for marker, expected in (("</head>", head_error), ("</body>", body_error)):
+                with self.subTest(addition=addition, section=marker):
+                    path = self.write_page()
+                    self.mutate(path, marker, f"{addition}{marker}")
+                    self.assert_error(self.errors_for(path), expected)
+
+    def test_approved_resources_links_and_form_actions_remain_allowed(self) -> None:
+        for route in ("/", "/beta/", "/support/"):
+            with self.subTest(route=route):
+                path = self.write_page(route, title="Archivale", headline="Archivale")
+                self.assertEqual([], self.errors_for(path))
 
     def test_unsafe_hidden_social_and_nested_schema_copy_fail(self) -> None:
         path = self.write_page()
