@@ -539,8 +539,13 @@ class PlayBillingEntitlementService implements BillingManagementService {
     final entryFence = _captureFence();
     final uid = await _ensureBillingIdentity();
     if (!_isFenceCurrent(entryFence) || uid == null) return false;
+    final retainUnresolvedRecovery =
+        _currentUid == uid && _isUnresolved(_presentation);
     _observeUid(uid);
-    final fence = _beginOperation(uid);
+    final fence = _beginOperation(
+      uid,
+      retainUnresolvedRecovery: retainUnresolvedRecovery,
+    );
     final accepted = await _verifier.acceptDisclosure(fence.requestId!);
     if (!_isFenceCurrent(fence, requireIdentity: true)) return false;
     if (!accepted) {
@@ -554,7 +559,10 @@ class PlayBillingEntitlementService implements BillingManagementService {
   @override
   Future<bool> purchase(EntitlementPlan plan) async {
     final productId = plan.playProductId;
-    if (productId == null || !_disclosureAccepted) {
+    if (productId == null ||
+        !_disclosureAccepted ||
+        _recovering ||
+        _isUnresolved(_presentation)) {
       return false;
     }
     final entryFence = _beginPreflight(
@@ -695,11 +703,19 @@ class PlayBillingEntitlementService implements BillingManagementService {
     if (_disposed) return;
     final uid = _currentUid;
     final eventFence = _captureFence();
+    final retainUnresolvedRecovery =
+        _isUnresolved(_presentation) ||
+        _isUnresolved(
+          _recoveryFallbackPresentation ?? EntitlementPresentation.idle,
+        );
     _recovering = false;
     _recoveryFallbackPresentation = null;
     switch (purchase.state) {
       case PlayPurchaseState.pending:
-        _transitionFree(presentation: EntitlementPresentation.playPending);
+        _transitionFree(
+          presentation: EntitlementPresentation.playPending,
+          preserveRecoveryAttempts: retainUnresolvedRecovery,
+        );
         return;
       case PlayPurchaseState.canceled:
       case PlayPurchaseState.error:
@@ -792,12 +808,17 @@ class PlayBillingEntitlementService implements BillingManagementService {
     }
   }
 
-  _OperationFence _beginOperation(String uid) {
+  _OperationFence _beginOperation(
+    String uid, {
+    bool retainUnresolvedRecovery = false,
+  }) {
     _generation++;
     _lease = null;
     _currentUid = uid;
     _currentRequestId = _newRequestId();
-    _resetRecoveryAttempts();
+    if (!retainUnresolvedRecovery) {
+      _resetRecoveryAttempts();
+    }
     return _captureFence();
   }
 
@@ -838,6 +859,7 @@ class PlayBillingEntitlementService implements BillingManagementService {
 
   void _transitionFree({
     bool clearPurchase = false,
+    bool preserveRecoveryAttempts = false,
     EntitlementBillingStatus status = EntitlementBillingStatus.available,
     EntitlementPresentation presentation = EntitlementPresentation.idle,
   }) {
@@ -846,7 +868,12 @@ class PlayBillingEntitlementService implements BillingManagementService {
     _leaseExpiryTimer?.cancel();
     _currentRequestId = null;
     _presentation = presentation;
-    _resetRecoveryAttempts();
+    if (preserveRecoveryAttempts) {
+      _recovering = false;
+      _recoveryFallbackPresentation = null;
+    } else {
+      _resetRecoveryAttempts();
+    }
     if (clearPurchase) {
       _currentUid = null;
       _disclosureAccepted = false;

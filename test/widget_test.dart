@@ -18,7 +18,6 @@ import 'package:my_art_collection/app/config/app_feature_flags.dart';
 import 'package:my_art_collection/app/research/online_research_service.dart';
 import 'package:my_art_collection/app/import/csv_import_file_picker.dart';
 import 'package:my_art_collection/app/intake/artwork_image_picker.dart';
-import 'package:my_art_collection/app/screens/billing_plan_screen.dart';
 import 'package:my_art_collection/app/screens/prototype_flow.dart';
 import 'package:my_art_collection/app/startup_route.dart';
 import 'package:my_art_collection/app/storage/ai_research_record.dart';
@@ -1565,14 +1564,6 @@ void main() {
       const EntitlementState(
         plan: EntitlementPlans.free,
         billingStatus: EntitlementBillingStatus.available,
-        presentation: EntitlementPresentation.verificationPending,
-      ),
-      'issue-193-07-verifying-mobile.png',
-    ),
-    (
-      const EntitlementState(
-        plan: EntitlementPlans.free,
-        billingStatus: EntitlementBillingStatus.available,
         presentation: EntitlementPresentation.restoring,
       ),
       'issue-193-08-restoring-mobile.png',
@@ -1604,6 +1595,34 @@ void main() {
       await _captureIssue193BillingState(tester, entry.$1, entry.$2);
     });
   }
+
+  testWidgets('captures issue-193-07-verifying-mobile.png', (tester) async {
+    await _captureIssue193BillingState(
+      tester,
+      const EntitlementState(
+        plan: EntitlementPlans.free,
+        billingStatus: EntitlementBillingStatus.available,
+      ),
+      'issue-193-07-verifying-mobile.png',
+      showVerifyingFlow: true,
+    );
+  });
+
+  testWidgets(
+    'captures pending billing state with a complete disabled purchase choice',
+    (tester) async {
+      await _captureIssue193BillingState(
+        tester,
+        const EntitlementState(
+          plan: EntitlementPlans.free,
+          billingStatus: EntitlementBillingStatus.available,
+          presentation: EntitlementPresentation.playPending,
+        ),
+        'issue-193-12-pending-disabled-choice-mobile.png',
+        showDisabledPurchaseChoice: true,
+      );
+    },
+  );
 
   testWidgets('collection shell localizes supported mobile locales', (
     WidgetTester tester,
@@ -4524,8 +4543,10 @@ Future<void> captureVisualEvidence(
 Future<void> _captureIssue193BillingState(
   WidgetTester tester,
   EntitlementState state,
-  String fileName,
-) async {
+  String fileName, {
+  bool showDisabledPurchaseChoice = false,
+  bool showVerifyingFlow = false,
+}) async {
   final fixture = await tester.runAsync(_LiveDependencyFixture.create);
   final testFixture = fixture!;
   addTearDown(() async => tester.runAsync(testFixture.dispose));
@@ -4538,11 +4559,13 @@ Future<void> _captureIssue193BillingState(
         price: 'NOK 35.00',
       ),
     ],
-  );
+  )..state = state;
   final boundaryKey = GlobalKey();
   await _configureMobileViewport(tester);
-  await tester.pumpWidget(
-    ArchivaleApp(
+  Widget buildBillingApp() => RepaintBoundary(
+    key: boundaryKey,
+    child: ArchivaleApp(
+      key: ValueKey('issue-193-$fileName'),
       initialRoute: AppRoutes.billing,
       dependencies: testFixture.dependenciesWithFlags(
         entitlementService: billing,
@@ -4550,39 +4573,43 @@ Future<void> _captureIssue193BillingState(
       ),
     ),
   );
-  await tester.pump();
-  final theme = tester.widget<MaterialApp>(find.byType(MaterialApp)).theme;
-  await tester.pumpWidget(
-    RepaintBoundary(
-      key: boundaryKey,
-      child: AppDependencyScope(
-        dependencies: testFixture.dependenciesWithFlags(
-          entitlementService: billing,
-          billingManagementService: billing,
-        ),
-        child: MaterialApp(
-          title: 'Archivale',
-          theme: theme,
-          home: const BillingPlanScreen(),
-        ),
-      ),
-    ),
-  );
+  await tester.pumpWidget(buildBillingApp());
   await pumpLiveData(tester);
-  billing.publish(state);
+  await tester.pumpWidget(buildBillingApp());
   await tester.pumpAndSettle();
   final billingScrollable = find.descendant(
     of: find.byKey(const ValueKey('billing-plan-scrollable')),
     matching: find.byType(Scrollable),
   );
   expect(billingScrollable, findsOneWidget);
-  tester.state<ScrollableState>(billingScrollable).position.jumpTo(0);
+  if (showVerifyingFlow) {
+    final purchaseChoice = find.widgetWithText(FilledButton, 'Choose plan');
+    await tester.scrollUntilVisible(purchaseChoice, 300);
+    await tester.tap(purchaseChoice);
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Continue'));
+    await tester.pumpAndSettle();
+    expect(find.text('Verifying subscription'), findsOneWidget);
+  }
+  final position = tester.state<ScrollableState>(billingScrollable).position;
+  position.jumpTo(0);
+  await tester.pump();
+  position.jumpTo(1);
+  await tester.pump();
+  position.jumpTo(0);
   await tester.pumpAndSettle();
-  expect(tester.state<ScrollableState>(billingScrollable).position.pixels, 0);
-  final surface = tester.renderObject<RenderRepaintBoundary>(
-    find.byKey(const ValueKey('billing-plan-surface')),
-  );
-  await captureRenderedBoundaryToArtifacts(tester, surface, fileName);
+  expect(position.pixels, 0);
+  expect(find.text('Plan and billing'), findsOneWidget);
+  expect(find.text('Free plan'), findsOneWidget);
+  if (showDisabledPurchaseChoice) {
+    expect(find.text('Purchase pending'), findsOneWidget);
+    final purchaseChoice = find.widgetWithText(FilledButton, 'Choose plan');
+    await tester.scrollUntilVisible(purchaseChoice, 300);
+    await tester.pumpAndSettle();
+    expect(tester.widget<FilledButton>(purchaseChoice).onPressed, isNull);
+    expect(tester.getRect(purchaseChoice).bottom, lessThanOrEqualTo(852));
+  }
+  await captureBoundaryToArtifacts(tester, boundaryKey, fileName);
   await tester.pumpWidget(const SizedBox.shrink());
   await tester.pump();
 }

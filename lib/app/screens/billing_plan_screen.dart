@@ -141,10 +141,25 @@ class _BillingPlanScreenState extends State<BillingPlanScreen> {
     final displayedAction = presentationAction == _BillingAction.idle
         ? _action
         : presentationAction;
-    return RepaintBoundary(
+    return KeyedSubtree(
       key: const ValueKey('billing-plan-surface'),
       child: Scaffold(
-        appBar: AppBar(title: const Text('Plan and billing')),
+        appBar: PreferredSize(
+          preferredSize: const Size.fromHeight(56),
+          child: SafeArea(
+            bottom: false,
+            child: Padding(
+              padding: const EdgeInsetsDirectional.only(start: 16),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  'Plan and billing',
+                  style: Theme.of(context).textTheme.titleLarge,
+                ),
+              ),
+            ),
+          ),
+        ),
         body: SafeArea(
           child: ListView(
             key: const ValueKey('billing-plan-scrollable'),

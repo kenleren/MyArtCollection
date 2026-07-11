@@ -271,7 +271,7 @@ void main() {
   );
 
   test(
-    'no-result recovery retains unresolved purchase blocking and is bounded',
+    'repeated disclosure, recovery, and pending events retain one bounded unresolved recovery budget',
     () async {
       await preparePurchase();
       store.emit(
@@ -288,13 +288,29 @@ void main() {
         (await service.currentState()).presentation,
         EntitlementPresentation.playPending,
       );
+
+      // The UI presents the disclosure before every Restore. Re-accepting for
+      // the same unresolved identity must not create a new recovery budget.
+      expect(await service.acceptBillingDisclosure(), isTrue);
       await service.refreshForForeground();
       expect(
         (await service.currentState()).presentation,
         EntitlementPresentation.playPending,
       );
 
+      // Duplicate pending stream events are non-terminal and must not reset
+      // the budget before another Restore or foreground Refresh.
+      store.emit(
+        purchase(
+          EntitlementPlans.starter,
+          state: PlayPurchaseState.pending,
+          token: 'unresolved-purchase',
+        ),
+      );
+      await tick();
+
       await service.restore();
+      await service.refreshForForeground();
       expect(store.restoreCalls, 2);
       expect(
         (await service.currentState()).presentation,
