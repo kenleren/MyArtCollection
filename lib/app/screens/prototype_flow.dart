@@ -1701,6 +1701,7 @@ class _ArtworkDetailsScreenState extends State<ArtworkDetailsScreen> {
     ];
     final displayedFields = [
       ...completenessFields.take(5),
+      if (artwork.edition != null) artwork.edition!,
       artwork.purchasePrice,
       ...completenessFields.skip(5),
     ];
@@ -4674,6 +4675,11 @@ class _ReportSummary extends StatelessWidget {
             icon: Icons.receipt_long_outlined,
             text: 'Purchase price: ${artwork.purchasePrice.value}.',
           ),
+          if (artwork.edition != null)
+            _StatusLine(
+              icon: Icons.confirmation_number_outlined,
+              text: _editionPreviewLine(artwork.edition!),
+            ),
           _StatusLine(
             icon: Icons.price_check_outlined,
             text: l10n.userProvidedInsuranceValueLine(
@@ -4684,6 +4690,16 @@ class _ReportSummary extends StatelessWidget {
       ),
     );
   }
+}
+
+String _editionPreviewLine(PrototypeField edition) {
+  return switch (edition.source) {
+    PrototypeSource.userConfirmed =>
+      'Edition - User confirmed: ${edition.value}.',
+    PrototypeSource.documentExtracted =>
+      'Edition - document-extracted, needs review: ${edition.value}.',
+    _ => 'Edition - needs review: ${edition.value}.',
+  };
 }
 
 class _StatusPanel extends StatelessWidget {
@@ -5106,6 +5122,12 @@ const _editableArtworkFields = [
     helperText: 'Include units, for example 60 x 80 cm.',
   ),
   _EditableArtworkField(
+    key: ArtworkFieldKeys.edition,
+    label: 'Edition',
+    helperText: 'Record an edition detail only when you want to keep it.',
+    helperMaxLines: 2,
+  ),
+  _EditableArtworkField(
     key: ArtworkFieldKeys.purchasePrice,
     label: 'Purchase price',
     helperText: 'Legacy text is fine, or add amount and currency.',
@@ -5329,6 +5351,9 @@ PrototypeArtwork _detailArtworkFromRecord(PrototypeArtwork artwork) {
     year: _detailDisplayField(artwork.year),
     medium: _detailDisplayField(artwork.medium),
     dimensions: _detailDisplayField(artwork.dimensions),
+    edition: artwork.edition == null
+        ? null
+        : _detailDisplayField(artwork.edition!),
     purchasePrice: _detailDisplayField(artwork.purchasePrice),
     location: _detailDisplayField(artwork.location),
     insuranceValue: _detailDisplayField(artwork.insuranceValue),
@@ -5375,6 +5400,14 @@ PrototypeArtwork prototypeArtworkFromRecord(
       label: 'Dimensions',
       fallback: 'Needs review',
     ),
+    edition: record.field(ArtworkFieldKeys.edition) == null
+        ? null
+        : _field(
+            record,
+            key: ArtworkFieldKeys.edition,
+            label: 'Edition',
+            fallback: '',
+          ),
     purchasePrice: _field(
       record,
       key: ArtworkFieldKeys.purchasePrice,

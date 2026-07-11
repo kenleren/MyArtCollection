@@ -3322,6 +3322,204 @@ void main() {
     );
   });
 
+  testWidgets('edition stays review-needed until a manual save confirms it', (
+    WidgetTester tester,
+  ) async {
+    final testDependencies = await tester.runAsync(
+      () async => _LiveDependencyFixture.create(),
+    );
+    final fixture = testDependencies!;
+    addTearDown(() async {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.runAsync(fixture.dispose);
+    });
+
+    await tester.runAsync(() async {
+      await fixture.repository.upsert(
+        _artworkRecord(
+          id: 'edition-review',
+          title: 'Edition Study',
+          state: ArtworkRecordState.verifiedByYou,
+          source: ArtworkFieldSource.userConfirmed,
+          overrides: {
+            ArtworkFieldKeys.edition: const ArtworkFieldValue(
+              value: '12/75',
+              source: ArtworkFieldSource.documentExtracted,
+              note: 'Imported from a CSV column and needs review.',
+            ),
+          },
+        ),
+      );
+    });
+
+    await tester.pumpWidget(
+      ArchivaleApp(
+        initialRoute: AppRoutes.artworkDetails('edition-review'),
+        dependencies: fixture.dependencies,
+      ),
+    );
+    await pumpLiveData(tester);
+    expect(find.text('Edition'), findsOneWidget);
+    expect(find.text('Document-extracted'), findsOneWidget);
+    expect(
+      find.text('Imported from a CSV column and needs review.'),
+      findsOneWidget,
+    );
+    for (final themeMode in [ThemeMode.light, ThemeMode.dark]) {
+      final themeName = themeMode == ThemeMode.light ? 'light' : 'dark';
+      await captureArtifactForApp(
+        tester,
+        routeName: AppRoutes.artworkDetails('edition-review'),
+        dependencies: fixture.dependencies,
+        themeMode: themeMode,
+        fileName: 'issue-212-edition-detail-$themeName.png',
+        ensureVisibleFinder: find.text('Edition'),
+        minimumTopClearance: 4,
+      );
+      await captureArtifactForApp(
+        tester,
+        routeName: AppRoutes.artworkEdit('edition-review'),
+        dependencies: fixture.dependencies,
+        themeMode: themeMode,
+        fileName: 'issue-212-edition-edit-$themeName.png',
+        ensureVisibleFinder: find.byKey(const ValueKey('artwork-edit-edition')),
+        revealTopPadding: 80,
+        minimumTopClearance: 4,
+      );
+      await captureArtifactForApp(
+        tester,
+        routeName: AppRoutes.artworkReportPreview('edition-review'),
+        dependencies: fixture.dependencies,
+        themeMode: themeMode,
+        fileName: 'issue-212-edition-report-$themeName.png',
+        ensureVisibleFinder: find.text('Report preview'),
+        minimumTopClearance: 0,
+      );
+      await captureArtifactForApp(
+        tester,
+        routeName: AppRoutes.artworkExport('edition-review'),
+        dependencies: fixture.dependencies,
+        themeMode: themeMode,
+        fileName: 'issue-212-edition-export-$themeName.png',
+        ensureVisibleFinder: find.text(
+          'Edition - document-extracted, needs review: 12/75.',
+        ),
+      );
+    }
+
+    await tester.pumpWidget(
+      ArchivaleApp(
+        initialRoute: AppRoutes.artworkDetails('edition-review'),
+        dependencies: fixture.dependencies,
+      ),
+    );
+    await pumpLiveData(tester);
+
+    await tapVisible(tester, find.text('Report preview'));
+    await pumpLiveData(tester);
+    expect(
+      find.text('Edition - document-extracted, needs review: 12/75.'),
+      findsOneWidget,
+    );
+
+    await tapVisible(tester, find.text('Preview record export'));
+    await pumpLiveData(tester);
+    expect(
+      find.text('Edition - document-extracted, needs review: 12/75.'),
+      findsOneWidget,
+    );
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+    await tester.pumpWidget(
+      ArchivaleApp(
+        initialRoute: AppRoutes.artworkEdit('edition-review'),
+        dependencies: fixture.dependencies,
+      ),
+    );
+    await pumpLiveData(tester);
+    await tapVisible(tester, find.text('Save confirmed details'));
+    await pumpLiveData(tester);
+
+    final saved = await tester.runAsync(
+      () => fixture.repository.get('edition-review'),
+    );
+    expect(
+      saved?.field(ArtworkFieldKeys.edition)?.source,
+      ArtworkFieldSource.userConfirmed,
+    );
+    expect(saved?.field(ArtworkFieldKeys.edition)?.lastConfirmedAt, isNotNull);
+
+    for (final themeMode in [ThemeMode.light, ThemeMode.dark]) {
+      final themeName = themeMode == ThemeMode.light ? 'light' : 'dark';
+      await captureArtifactForApp(
+        tester,
+        routeName: AppRoutes.artworkDetails('edition-review'),
+        dependencies: fixture.dependencies,
+        themeMode: themeMode,
+        fileName: 'issue-212-edition-confirmed-detail-$themeName.png',
+        ensureVisibleFinder: find.text('Edition'),
+        minimumTopClearance: 4,
+      );
+      await captureArtifactForApp(
+        tester,
+        routeName: AppRoutes.artworkReportPreview('edition-review'),
+        dependencies: fixture.dependencies,
+        themeMode: themeMode,
+        fileName: 'issue-212-edition-confirmed-report-$themeName.png',
+        ensureVisibleFinder: find.text('Report preview'),
+        minimumTopClearance: 0,
+      );
+      await captureArtifactForApp(
+        tester,
+        routeName: AppRoutes.artworkExport('edition-review'),
+        dependencies: fixture.dependencies,
+        themeMode: themeMode,
+        fileName: 'issue-212-edition-confirmed-export-$themeName.png',
+        ensureVisibleFinder: find.text('Edition - User confirmed: 12/75.'),
+      );
+    }
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+    await tester.pumpWidget(
+      ArchivaleApp(
+        initialRoute: AppRoutes.artworkDetails('edition-review'),
+        dependencies: fixture.dependencies,
+      ),
+    );
+    await pumpLiveData(tester);
+    expect(find.text('User confirmed'), findsWidgets);
+    await tapVisible(tester, find.text('Report preview'));
+    await pumpLiveData(tester);
+    expect(find.text('Edition - User confirmed: 12/75.'), findsOneWidget);
+    await tapVisible(tester, find.text('Preview record export'));
+    await pumpLiveData(tester);
+    expect(find.text('Edition - User confirmed: 12/75.'), findsOneWidget);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+    await tester.pumpWidget(
+      ArchivaleApp(
+        initialRoute: AppRoutes.artworkEdit('edition-review'),
+        dependencies: fixture.dependencies,
+      ),
+    );
+    await pumpLiveData(tester);
+    await enterVisibleText(
+      tester,
+      find.byKey(const ValueKey('artwork-edit-edition')),
+      '',
+    );
+    await tapVisible(tester, find.text('Save confirmed details'));
+    await pumpLiveData(tester);
+    final cleared = await tester.runAsync(
+      () => fixture.repository.get('edition-review'),
+    );
+    expect(cleared?.field(ArtworkFieldKeys.edition), isNull);
+    expect(cleared?.recordState, ArtworkRecordState.verifiedByYou);
+  });
+
   testWidgets(
     'structured money fields render in details, report, and export views',
     (WidgetTester tester) async {
@@ -4967,6 +5165,8 @@ Future<void> captureArtifactForApp(
   ThemeMode themeMode = ThemeMode.system,
   AppDependencies? dependencies,
   Finder? ensureVisibleFinder,
+  double revealTopPadding = 0,
+  double? minimumTopClearance,
 }) async {
   await _configureMobileViewport(tester);
 
@@ -4985,6 +5185,28 @@ Future<void> captureArtifactForApp(
   if (ensureVisibleFinder != null) {
     await tester.ensureVisible(ensureVisibleFinder);
     await tester.pump();
+    if (revealTopPadding > 0) {
+      final scrollable = find
+          .ancestor(of: ensureVisibleFinder, matching: find.byType(Scrollable))
+          .first;
+      final position = tester.state<ScrollableState>(scrollable).position;
+      position.jumpTo(
+        (position.pixels - revealTopPadding).clamp(
+          position.minScrollExtent,
+          position.maxScrollExtent,
+        ),
+      );
+      await tester.pump();
+    }
+    if (minimumTopClearance != null) {
+      final appBarBottom = tester.getBottomLeft(find.byType(AppBar).first).dy;
+      final targetTop = tester.getTopLeft(ensureVisibleFinder).dy;
+      expect(
+        targetTop,
+        greaterThanOrEqualTo(appBarBottom + minimumTopClearance),
+        reason: 'Captured target must be fully framed below the app bar.',
+      );
+    }
   }
   await captureBoundaryToArtifacts(tester, boundaryKey, fileName);
 }
@@ -5865,6 +6087,7 @@ ArtworkRecord _artworkRecord({
                     ? now
                     : null,
               ),
+      ...overrides,
     },
   );
 }

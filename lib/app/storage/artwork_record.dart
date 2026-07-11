@@ -137,6 +137,7 @@ abstract final class ArtworkFieldKeys {
   static const year = 'year';
   static const medium = 'medium';
   static const dimensions = 'dimensions';
+  static const edition = 'edition';
   static const purchasePrice = 'purchase_price';
   static const purchaseDate = 'purchase_date';
   static const sellerOrGallery = 'seller_or_gallery';

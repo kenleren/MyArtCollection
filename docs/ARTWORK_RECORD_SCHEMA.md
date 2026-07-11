@@ -60,6 +60,29 @@ Each user-visible field stores:
 - `source_note`
 - `last_confirmed_at`
 
+### Edition Envelope And Output Contract
+
+`edition` is an optional free-text artwork field stored in the existing field
+envelope: `{ value, source_state, source_note, last_confirmed_at }`.
+
+- A manually saved non-empty edition is `user-confirmed`, has the standard
+  confirmation note, and records `last_confirmed_at` in UTC.
+- An edition imported from CSV remains `document-extracted`, keeps the import
+  review note, and has `last_confirmed_at: null` until the user saves it.
+- Clearing edition removes only the edition field. It does not change core
+  completeness or record state by itself.
+- Detail UI displays every non-empty edition with its source badge and note.
+- Report preview, and future PDF output, keep a document-extracted edition
+  separate from confirmed details as `Edition - document-extracted, needs
+  review`; a confirmed edition is labelled `Edition - User confirmed`.
+- Export preview, and the future structured archive, preserve all four
+  envelope properties exactly and retain the review-needed state.
+
+Issue #212 implements this contract and previews only. Issue #178 owns future
+PDF/ZIP serialization, generated files, sharing, and archive round-trip
+evidence. An edition label does not assert authenticity, scarcity, market
+value, or appraisal status.
+
 Permitted `source_state` values:
 
 - `AI-suggested`
