@@ -6,6 +6,7 @@ class PrototypeArtwork {
     required this.year,
     required this.medium,
     required this.dimensions,
+    this.edition,
     required this.purchasePrice,
     required this.location,
     required this.insuranceValue,
@@ -19,6 +20,7 @@ class PrototypeArtwork {
   final PrototypeField year;
   final PrototypeField medium;
   final PrototypeField dimensions;
+  final PrototypeField? edition;
   final PrototypeField purchasePrice;
   final PrototypeField location;
   final PrototypeField insuranceValue;

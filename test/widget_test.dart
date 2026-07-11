@@ -3322,6 +3322,172 @@ void main() {
     );
   });
 
+  testWidgets('edition stays review-needed until a manual save confirms it', (
+    WidgetTester tester,
+  ) async {
+    final testDependencies = await tester.runAsync(
+      () async => _LiveDependencyFixture.create(),
+    );
+    final fixture = testDependencies!;
+    addTearDown(() async {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.runAsync(fixture.dispose);
+    });
+
+    await tester.runAsync(() async {
+      await fixture.repository.upsert(
+        _artworkRecord(
+          id: 'edition-review',
+          title: 'Edition Study',
+          state: ArtworkRecordState.verifiedByYou,
+          source: ArtworkFieldSource.userConfirmed,
+          overrides: {
+            ArtworkFieldKeys.edition: const ArtworkFieldValue(
+              value: '12/75',
+              source: ArtworkFieldSource.documentExtracted,
+              note: 'Imported from a CSV column and needs review.',
+            ),
+          },
+        ),
+      );
+    });
+
+    await tester.pumpWidget(
+      ArchivaleApp(
+        initialRoute: AppRoutes.artworkDetails('edition-review'),
+        dependencies: fixture.dependencies,
+      ),
+    );
+    await pumpLiveData(tester);
+    expect(find.text('Edition'), findsOneWidget);
+    expect(find.text('Document-extracted'), findsOneWidget);
+    expect(
+      find.text('Imported from a CSV column and needs review.'),
+      findsOneWidget,
+    );
+    for (final themeMode in [ThemeMode.light, ThemeMode.dark]) {
+      final themeName = themeMode == ThemeMode.light ? 'light' : 'dark';
+      await captureArtifactForApp(
+        tester,
+        routeName: AppRoutes.artworkDetails('edition-review'),
+        dependencies: fixture.dependencies,
+        themeMode: themeMode,
+        fileName: 'issue-212-edition-detail-$themeName.png',
+        ensureVisibleFinder: find.text('Edition'),
+      );
+      await captureArtifactForApp(
+        tester,
+        routeName: AppRoutes.artworkEdit('edition-review'),
+        dependencies: fixture.dependencies,
+        themeMode: themeMode,
+        fileName: 'issue-212-edition-edit-$themeName.png',
+        ensureVisibleFinder: find.byKey(const ValueKey('artwork-edit-edition')),
+      );
+      await captureArtifactForApp(
+        tester,
+        routeName: AppRoutes.artworkReportPreview('edition-review'),
+        dependencies: fixture.dependencies,
+        themeMode: themeMode,
+        fileName: 'issue-212-edition-report-$themeName.png',
+        ensureVisibleFinder: find.text(
+          'Edition - document-extracted, needs review: 12/75.',
+        ),
+      );
+      await captureArtifactForApp(
+        tester,
+        routeName: AppRoutes.artworkExport('edition-review'),
+        dependencies: fixture.dependencies,
+        themeMode: themeMode,
+        fileName: 'issue-212-edition-export-$themeName.png',
+        ensureVisibleFinder: find.text(
+          'Edition - document-extracted, needs review: 12/75.',
+        ),
+      );
+    }
+
+    await tester.pumpWidget(
+      ArchivaleApp(
+        initialRoute: AppRoutes.artworkDetails('edition-review'),
+        dependencies: fixture.dependencies,
+      ),
+    );
+    await pumpLiveData(tester);
+
+    await tapVisible(tester, find.text('Report preview'));
+    await pumpLiveData(tester);
+    expect(
+      find.text('Edition - document-extracted, needs review: 12/75.'),
+      findsOneWidget,
+    );
+
+    await tapVisible(tester, find.text('Preview record export'));
+    await pumpLiveData(tester);
+    expect(
+      find.text('Edition - document-extracted, needs review: 12/75.'),
+      findsOneWidget,
+    );
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+    await tester.pumpWidget(
+      ArchivaleApp(
+        initialRoute: AppRoutes.artworkEdit('edition-review'),
+        dependencies: fixture.dependencies,
+      ),
+    );
+    await pumpLiveData(tester);
+    await tapVisible(tester, find.text('Save confirmed details'));
+    await pumpLiveData(tester);
+
+    final saved = await tester.runAsync(
+      () => fixture.repository.get('edition-review'),
+    );
+    expect(
+      saved?.field(ArtworkFieldKeys.edition)?.source,
+      ArtworkFieldSource.userConfirmed,
+    );
+    expect(saved?.field(ArtworkFieldKeys.edition)?.lastConfirmedAt, isNotNull);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+    await tester.pumpWidget(
+      ArchivaleApp(
+        initialRoute: AppRoutes.artworkDetails('edition-review'),
+        dependencies: fixture.dependencies,
+      ),
+    );
+    await pumpLiveData(tester);
+    expect(find.text('User confirmed'), findsWidgets);
+    await tapVisible(tester, find.text('Report preview'));
+    await pumpLiveData(tester);
+    expect(find.text('Edition - User confirmed: 12/75.'), findsOneWidget);
+    await tapVisible(tester, find.text('Preview record export'));
+    await pumpLiveData(tester);
+    expect(find.text('Edition - User confirmed: 12/75.'), findsOneWidget);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+    await tester.pumpWidget(
+      ArchivaleApp(
+        initialRoute: AppRoutes.artworkEdit('edition-review'),
+        dependencies: fixture.dependencies,
+      ),
+    );
+    await pumpLiveData(tester);
+    await enterVisibleText(
+      tester,
+      find.byKey(const ValueKey('artwork-edit-edition')),
+      '',
+    );
+    await tapVisible(tester, find.text('Save confirmed details'));
+    await pumpLiveData(tester);
+    final cleared = await tester.runAsync(
+      () => fixture.repository.get('edition-review'),
+    );
+    expect(cleared?.field(ArtworkFieldKeys.edition), isNull);
+    expect(cleared?.recordState, ArtworkRecordState.verifiedByYou);
+  });
+
   testWidgets(
     'structured money fields render in details, report, and export views',
     (WidgetTester tester) async {
@@ -5865,6 +6031,7 @@ ArtworkRecord _artworkRecord({
                     ? now
                     : null,
               ),
+      ...overrides,
     },
   );
 }

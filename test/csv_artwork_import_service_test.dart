@@ -116,6 +116,22 @@ void main() {
   });
 
   group('CSV mapping and validation', () {
+    test('maps edition aliases as document-extracted and review-needed', () {
+      for (final header in ['Edition', 'edition_number', 'edition_no']) {
+        final record = _service()
+            .previewFromString('Title,$header\nHarbor Study,12/75\n')
+            .rows
+            .single
+            .record!;
+        final edition = record.field(ArtworkFieldKeys.edition)!;
+
+        expect(edition.value, '12/75');
+        expect(edition.source, ArtworkFieldSource.documentExtracted);
+        expect(edition.note, 'Imported from a CSV column and needs review.');
+        expect(edition.lastConfirmedAt, isNull);
+      }
+    });
+
     test(
       'maps canonical headers and generates preview fields with sources',
       () {

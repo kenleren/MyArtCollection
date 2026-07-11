@@ -188,6 +188,42 @@ void main() {
     expect(await repository.list(), isEmpty);
   });
 
+  test('persists an edition envelope through a version 7 reopen', () async {
+    final confirmedAt = DateTime.utc(2026, 7, 11, 10, 30);
+    await repository.create(
+      ArtworkRecord(
+        id: 'edition-v7',
+        recordState: ArtworkRecordState.needsReview,
+        createdAt: confirmedAt,
+        updatedAt: confirmedAt,
+        fields: {
+          ArtworkFieldKeys.edition: ArtworkFieldValue(
+            value: '12/75',
+            source: ArtworkFieldSource.userConfirmed,
+            note: 'Saved as part of your confirmed record.',
+            lastConfirmedAt: confirmedAt,
+          ),
+        },
+      ),
+    );
+
+    final reloaded = await reloadAndGet('edition-v7');
+
+    expect(reloaded?.field(ArtworkFieldKeys.edition)?.value, '12/75');
+    expect(
+      reloaded?.field(ArtworkFieldKeys.edition)?.source,
+      ArtworkFieldSource.userConfirmed,
+    );
+    expect(
+      reloaded?.field(ArtworkFieldKeys.edition)?.note,
+      'Saved as part of your confirmed record.',
+    );
+    expect(
+      reloaded?.field(ArtworkFieldKeys.edition)?.lastConfirmedAt,
+      confirmedAt.toLocal(),
+    );
+  });
+
   test('create is insert-only and leaves existing records unchanged', () async {
     await repository.create(_record('artwork-001', title: 'Original title'));
 

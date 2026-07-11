@@ -31,6 +31,10 @@ Placeholder copy follows [Copy and Trust Rules](docs/COPY_TRUST_SPEC.md): AI can
 suggest, the user confirms, and the app does not claim authenticity or market
 value.
 
+Artwork records can also retain optional edition text with its source and
+review state. This improves private record keeping without treating edition
+information as an authenticity, scarcity, or value claim.
+
 ## Commands
 
 Install dependencies:
