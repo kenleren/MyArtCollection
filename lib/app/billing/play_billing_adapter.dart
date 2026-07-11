@@ -483,24 +483,31 @@ class PlayBillingEntitlementService implements EntitlementService {
     if (productId == null || !_disclosureAccepted) {
       return false;
     }
-    final entryFence = _captureFence();
+    final entryFence = _beginPreflight();
     if (!await _storeAvailable() ||
         !_isFenceCurrent(entryFence, requireIdentity: true)) {
+      _failPreflight(entryFence);
       return false;
     }
     final uid = await _ensureBillingIdentity();
     if (!_isFenceCurrent(entryFence, requireIdentity: true) || uid == null) {
+      _failPreflight(entryFence);
       return false;
     }
     _observeUid(uid);
     if (!_disclosureAccepted || _currentUid != uid) return false;
-    final identityFence = _captureFence();
     final products = await _queryProducts(<String>{productId});
-    if (!_isFenceCurrent(identityFence, requireIdentity: true)) return false;
+    if (!_isFenceCurrent(entryFence, requireIdentity: true)) {
+      _failPreflight(entryFence);
+      return false;
+    }
     final product = products.products
         .where((item) => item.id == productId)
         .firstOrNull;
-    if (products.unavailable || product == null) return false;
+    if (products.unavailable || product == null) {
+      _failPreflight(entryFence);
+      return false;
+    }
     final purchaseFence = _beginOperation(uid);
     bool started;
     try {
@@ -522,14 +529,15 @@ class PlayBillingEntitlementService implements EntitlementService {
       _transitionFree();
       return;
     }
-    final entryFence = _captureFence();
+    final entryFence = _beginPreflight();
     if (!await _storeAvailable() ||
         !_isFenceCurrent(entryFence, requireIdentity: true)) {
+      _failPreflight(entryFence);
       return;
     }
     final uid = await _ensureBillingIdentity();
     if (!_isFenceCurrent(entryFence, requireIdentity: true) || uid == null) {
-      _transitionFree();
+      _failPreflight(entryFence);
       return;
     }
     _observeUid(uid);
@@ -555,10 +563,11 @@ class PlayBillingEntitlementService implements EntitlementService {
       _transitionFree();
       return;
     }
-    final entryFence = _captureFence();
+    final entryFence = _beginPreflight();
     if (!_isFenceCurrent(entryFence, requireIdentity: true) ||
         !await _storeAvailable() ||
         !_isFenceCurrent(entryFence, requireIdentity: true)) {
+      _failPreflight(entryFence);
       return;
     }
     final fence = _beginOperation(uid);
@@ -605,6 +614,7 @@ class PlayBillingEntitlementService implements EntitlementService {
 
   Future<void> _verifyPurchase(PlayPurchase purchase, String uid) async {
     final fence = _beginOperation(uid);
+    final verificationStartedAt = _clock.elapsed();
     PlayBillingVerification result;
     try {
       result = await _verifier.verify(
@@ -632,7 +642,25 @@ class PlayBillingEntitlementService implements EntitlementService {
       _transitionFree();
       return;
     }
-    _lease = _Lease(result.plan!, _clock.elapsed() + duration);
+    final expiresAtElapsed = verificationStartedAt + duration;
+    if (_clock.elapsed() >= expiresAtElapsed) {
+      _transitionFree();
+      return;
+    }
+    _lease = _Lease(result.plan!, expiresAtElapsed);
+  }
+
+  _OperationFence _beginPreflight() {
+    _generation++;
+    _lease = null;
+    _currentRequestId = null;
+    return _captureFence();
+  }
+
+  void _failPreflight(_OperationFence fence) {
+    if (_isFenceCurrent(fence)) {
+      _transitionFree();
+    }
   }
 
   _OperationFence _beginOperation(String uid) {

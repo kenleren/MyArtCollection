@@ -25,6 +25,21 @@ void main() {
     expect(await service.acceptBillingDisclosure(), isTrue);
   }
 
+  Future<Completer<PlayBillingVerification>>
+  deferOlderVerificationThenInstallNewerLease() async {
+    await preparePurchase();
+    final delayed = Completer<PlayBillingVerification>();
+    verifier.next = (_) => delayed.future;
+    store.emit(purchase(EntitlementPlans.starter, token: 'older-token'));
+    await tick();
+    verifier.next = (request) =>
+        verifier.paidFor(EntitlementPlans.starter, request);
+    store.emit(purchase(EntitlementPlans.starter, token: 'newer-token'));
+    await tick();
+    expect((await service.currentState()).plan, EntitlementPlans.starter);
+    return delayed;
+  }
+
   test(
     'product lookup returns only fixed Play products and unavailable fails closed',
     () async {
@@ -193,6 +208,71 @@ void main() {
   });
 
   test(
+    'an unavailable refresh preflight clears a lease and fences older verification',
+    () async {
+      final delayed = await deferOlderVerificationThenInstallNewerLease();
+      final unavailable = Completer<bool>();
+      store.availabilityNext = () => unavailable.future;
+
+      final refresh = service.refreshForGatedAction();
+      await tick();
+      store.availabilityNext = null;
+      expect((await service.currentState()).plan, EntitlementPlans.free);
+      unavailable.complete(false);
+      await refresh;
+
+      delayed.complete(
+        verifier.paidFor(EntitlementPlans.starter, verifier.requests.first),
+      );
+      await tick();
+      expect((await service.currentState()).plan, EntitlementPlans.free);
+    },
+  );
+
+  test(
+    'a failed restore clears a lease and fences older verification',
+    () async {
+      final delayed = await deferOlderVerificationThenInstallNewerLease();
+      final failedRestore = Completer<void>();
+      store.restoreNext = () => failedRestore.future;
+
+      final restore = service.restore();
+      await tick();
+      expect((await service.currentState()).plan, EntitlementPlans.free);
+      failedRestore.completeError(StateError('fake restore failure'));
+      await restore;
+
+      delayed.complete(
+        verifier.paidFor(EntitlementPlans.starter, verifier.requests.first),
+      );
+      await tick();
+      expect((await service.currentState()).plan, EntitlementPlans.free);
+    },
+  );
+
+  test(
+    'a failed purchase preflight clears a lease and fences older verification',
+    () async {
+      final delayed = await deferOlderVerificationThenInstallNewerLease();
+      final unavailable = Completer<bool>();
+      store.availabilityNext = () => unavailable.future;
+
+      final buying = service.purchase(EntitlementPlans.starter);
+      await tick();
+      store.availabilityNext = null;
+      expect((await service.currentState()).plan, EntitlementPlans.free);
+      unavailable.complete(false);
+      expect(await buying, isFalse);
+
+      delayed.complete(
+        verifier.paidFor(EntitlementPlans.starter, verifier.requests.first),
+      );
+      await tick();
+      expect((await service.currentState()).plan, EntitlementPlans.free);
+    },
+  );
+
+  test(
     'sign-out clears an existing paid lease when current state is read',
     () async {
       await preparePurchase();
@@ -219,6 +299,44 @@ void main() {
       expect((await service.currentState()).plan, EntitlementPlans.free);
     },
   );
+
+  test(
+    'verifier delay is subtracted from the monotonic lease deadline',
+    () async {
+      await preparePurchase();
+      final delayed = Completer<PlayBillingVerification>();
+      verifier.next = (_) => delayed.future;
+      store.emit(purchase(EntitlementPlans.starter));
+      await tick();
+
+      clock.advanceMonotonic(const Duration(minutes: 5));
+      delayed.complete(
+        verifier.paidFor(EntitlementPlans.starter, verifier.requests.single),
+      );
+      await tick();
+      expect((await service.currentState()).plan, EntitlementPlans.starter);
+
+      clock.advanceMonotonic(const Duration(minutes: 9, seconds: 59));
+      expect((await service.currentState()).plan, EntitlementPlans.starter);
+      clock.advanceMonotonic(const Duration(seconds: 1));
+      expect((await service.currentState()).plan, EntitlementPlans.free);
+    },
+  );
+
+  test('an already elapsed verifier lease is rejected', () async {
+    await preparePurchase();
+    final delayed = Completer<PlayBillingVerification>();
+    verifier.next = (_) => delayed.future;
+    store.emit(purchase(EntitlementPlans.starter));
+    await tick();
+
+    clock.advanceMonotonic(const Duration(minutes: 15));
+    delayed.complete(
+      verifier.paidFor(EntitlementPlans.starter, verifier.requests.single),
+    );
+    await tick();
+    expect((await service.currentState()).plan, EntitlementPlans.free);
+  });
 
   test(
     'stale disclosure identity completion cannot restore account state',
@@ -380,6 +498,7 @@ void main() {
         'verifiedAt': now.add(const Duration(hours: 25)).toIso8601String(),
         'playExpiresAt': now.add(const Duration(days: 30)).toIso8601String(),
         'leaseExpiresAt': now
+            .add(const Duration(hours: 25))
             .add(const Duration(minutes: 15))
             .toIso8601String(),
       };
