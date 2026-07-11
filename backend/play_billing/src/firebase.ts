@@ -14,7 +14,7 @@ import {
 import type { BillingIdentity } from './contracts.js';
 import { createBillingIdentifiers, CryptoNonceSource } from './crypto.js';
 import { FirestoreBillingDatabase } from './firestore_store.js';
-import { DisabledPlaySubscriptionsAdapter } from './play_adapter.js';
+import { createConfiguredPlaySubscriptionsAdapter } from './play_adapter.js';
 import { BillingRepository } from './store.js';
 import { PlayBillingService } from './verifier.js';
 
@@ -72,7 +72,9 @@ function createService(app: App): PlayBillingService | undefined {
     return new PlayBillingService({
       repository: new BillingRepository(database, new CryptoNonceSource()),
       identifiers,
-      play: new DisabledPlaySubscriptionsAdapter(),
+      play: createConfiguredPlaySubscriptionsAdapter({
+        enabled: process.env.PLAY_BILLING_ANDROID_PUBLISHER_ENABLED === 'enabled',
+      }),
       clock: { now: () => new Date() },
     });
   } catch {

@@ -5,10 +5,13 @@ contract from `docs/PLAY_BILLING_GATE_SPEC.md`. It is isolated to Firebase
 Functions codebase `play-billing` and named Firestore database
 `archivale-play-billing`.
 
-The checked-in runtime uses a disabled Play adapter. It cannot call Android
-Publisher until a separately reviewed adapter and deployment gate replace that
-fail-closed boundary. Nothing in this package authorizes deployment, Firebase
-or Play mutation, a purchase, or paid rollout.
+The checked-in runtime defaults to a disabled Play adapter. The
+`GoogleAndroidPublisherTransport` is an Android Publisher REST transport using
+application-default credentials at request time, but it is not constructed
+unless the owner-controlled `PLAY_BILLING_ANDROID_PUBLISHER_ENABLED=enabled`
+runtime configuration is present. Local and test runtimes therefore fail
+closed. This source change does not authorize deployment, Firebase or Play
+mutation, a purchase, or paid rollout.
 
 ## Local Checks
 
@@ -43,7 +46,10 @@ material:
 - approved App Check application identity and anonymous Auth configuration;
 - fingerprint-key custody and an explicit active key version;
 - an Android Publisher adapter with read/acknowledge-only authority, absolute
-  deadlines, and retries disabled; and
+  deadlines, and retries disabled;
+- explicit owner custody of `PLAY_BILLING_ANDROID_PUBLISHER_ENABLED` and the
+  application-default runtime identity, with Android Publisher read and
+  acknowledgement authority only; and
 - approved rollback, budget, monitoring, privacy, redteam, and payment-owner
   evidence.
 
