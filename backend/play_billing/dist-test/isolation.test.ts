@@ -130,6 +130,9 @@ describe('billing isolation and redaction', () => {
     assert.equal(source.includes('consumeAppCheckToken: true'), true);
     assert.equal(source.includes("region: 'us-central1'"), true);
     assert.equal(source.includes('timeoutSeconds: 60'), true);
+    assert.equal(source.includes('minInstances: 0'), true);
+    assert.equal(source.includes('maxInstances: 1'), true);
+    assert.equal(source.includes('concurrency: 10'), true);
     assert.equal(source.includes('serviceAccount: BILLING_VERIFIER_SERVICE_ACCOUNT'), true);
     assert.equal(
       BILLING_VERIFIER_SERVICE_ACCOUNT,
@@ -137,7 +140,9 @@ describe('billing isolation and redaction', () => {
     );
     assert.equal(source.includes("verifyIdToken(authorization.slice('Bearer '.length), true)"), true);
     assert.equal(source.includes("sign_in_provider !== 'anonymous'"), true);
-    assert.equal(source.includes('request.app.appId !== approvedAppId'), true);
+    assert.equal(source.includes("defineString('PLAY_BILLING_APPROVED_APP_ID')"), true);
+    assert.equal(source.includes('process.env.PLAY_BILLING_APPROVED_APP_ID'), false);
+    assert.equal(source.includes('matchesApprovedAppId(approvedAppId, request.app.appId)'), true);
   });
 
   test('rollback fixture excludes destructive and broker targets', async () => {
