@@ -587,18 +587,29 @@ class _PlanStatusPanel extends StatelessWidget {
     final plan = entitlementState.plan;
     final billingCopy = switch (entitlementState.billingStatus) {
       EntitlementBillingStatus.available =>
-        'You can review plan previews here. In-app upgrades are not available in this build yet.',
+        'Review your plan, restore purchases, or see available Play plans.',
       EntitlementBillingStatus.unavailable =>
-        'You can review plan previews here, but in-app upgrades are unavailable on this device right now.',
+        'Plan changes are unavailable on this device right now.',
       EntitlementBillingStatus.notConfigured =>
-        'You can review plan previews here, but in-app upgrades are not available in this preview yet.',
+        'Plan management is not configured in this app session.',
     };
 
-    return _StatusPanel(
-      icon: Icons.workspace_premium_outlined,
-      title: '${plan.name} plan',
-      body:
-          '${_planArtworkLimitCopy(plan)}, ${_planResearchDraftCopy(plan)}. Existing records remain editable and exportable. $billingCopy',
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _StatusPanel(
+          icon: Icons.workspace_premium_outlined,
+          title: '${plan.name} plan',
+          body:
+              '${_planArtworkLimitCopy(plan)}, ${_planResearchDraftCopy(plan)}. Existing records remain editable and exportable. $billingCopy',
+        ),
+        const SizedBox(height: 12),
+        SecondaryActionButton(
+          icon: Icons.workspace_premium_outlined,
+          label: 'Manage plan',
+          routeName: AppRoutes.billing,
+        ),
+      ],
     );
   }
 }
@@ -2855,6 +2866,25 @@ class _ResearchResultsPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    if (researchJob.entitlementOrCreditDenied) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const _StatusPanel(
+            icon: Icons.workspace_premium_outlined,
+            title: 'Research credit unavailable',
+            body:
+                'Source-backed research is not available right now. Your draft, notes, supporting documents, and existing records remain available.',
+          ),
+          const SizedBox(height: 12),
+          SecondaryActionButton(
+            icon: Icons.workspace_premium_outlined,
+            label: 'Manage plan',
+            routeName: AppRoutes.billing,
+          ),
+        ],
+      );
+    }
     if (researchJob.sourceHits.isEmpty) {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -4061,11 +4091,22 @@ class _BillingGatePanel extends StatelessWidget {
     final suggestedPlan = nextPlans.isEmpty
         ? EntitlementPlans.archive
         : nextPlans.first;
-    return _StatusPanel(
-      icon: Icons.workspace_premium_outlined,
-      title: '${plan.name} plan is at capacity',
-      body:
-          'You already have $currentActiveArtworkCount active artwork${currentActiveArtworkCount == 1 ? '' : 's'} in this plan. Existing records stay editable and exportable. ${suggestedPlan.name} plan preview includes ${_planArtworkLimitBenefitCopy(suggestedPlan)} and ${_planResearchDraftCopy(suggestedPlan)} at ${suggestedPlan.priceLabel}. ${_upgradePreviewCopy(entitlementState.billingStatus)}',
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _StatusPanel(
+          icon: Icons.workspace_premium_outlined,
+          title: '${plan.name} plan is at capacity',
+          body:
+              'You already have $currentActiveArtworkCount active artwork${currentActiveArtworkCount == 1 ? '' : 's'} in this plan. Existing records stay editable and exportable. ${suggestedPlan.name} plan can provide ${_planArtworkLimitBenefitCopy(suggestedPlan)} and ${_planResearchDraftCopy(suggestedPlan)}. ${_upgradePreviewCopy(entitlementState.billingStatus)}',
+        ),
+        const SizedBox(height: 12),
+        SecondaryActionButton(
+          icon: Icons.workspace_premium_outlined,
+          label: 'Manage plan',
+          routeName: AppRoutes.billing,
+        ),
+      ],
     );
   }
 }
@@ -4870,11 +4911,11 @@ String _planResearchDraftCopy(EntitlementPlan plan) {
 String _upgradePreviewCopy(EntitlementBillingStatus billingStatus) {
   return switch (billingStatus) {
     EntitlementBillingStatus.available =>
-      'Preview only in this build. In-app upgrades are not available yet.',
+      'Choose a plan to see currently available Play options.',
     EntitlementBillingStatus.unavailable =>
-      'Preview only in this build. In-app upgrades are unavailable on this device right now.',
+      'Plan changes are unavailable on this device right now.',
     EntitlementBillingStatus.notConfigured =>
-      'Preview only in this build. In-app upgrades are not available in this preview yet.',
+      'Plan management is not configured in this app session.',
   };
 }
 

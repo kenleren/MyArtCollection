@@ -1027,6 +1027,16 @@ class _CsvConfirmActions extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 12),
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  onPressed: () =>
+                      Navigator.pushNamed(context, AppRoutes.billing),
+                  icon: const Icon(Icons.workspace_premium_outlined),
+                  label: const Text('Manage plan'),
+                ),
+              ),
+              const SizedBox(height: 12),
               _CancelImportButton(isSaving: isSaving, onCancel: onCancel),
             ],
           );
@@ -1122,13 +1132,13 @@ class _CsvImportPlanGate {
         '${upgradePlan.monthlyAiCredits} Archivale AI research draft${upgradePlan.monthlyAiCredits == 1 ? '' : 's'} each month';
     final previewCopy = switch (entitlementState.billingStatus) {
       EntitlementBillingStatus.available =>
-        'Preview only in this build. In-app upgrades are not available yet.',
+        'Choose a plan to see currently available Play options.',
       EntitlementBillingStatus.unavailable =>
-        'Preview only in this build. In-app upgrades are unavailable on this device right now.',
+        'Plan changes are unavailable on this device right now.',
       EntitlementBillingStatus.notConfigured =>
-        'Preview only in this build. In-app upgrades are not available in this preview yet.',
+        'Plan management is not configured in this app session.',
     };
-    return 'This import would bring this plan from $currentActiveArtworkCount to $projectedActiveCount active records. Existing records remain editable and exportable. ${upgradePlan.name} plan preview includes $planLimitCopy and $draftCopy at ${upgradePlan.priceLabel}. $previewCopy';
+    return 'This import would bring this plan from $currentActiveArtworkCount to $projectedActiveCount active records. Existing records remain editable and exportable. ${upgradePlan.name} plan can provide $planLimitCopy and $draftCopy. $previewCopy';
   }
 }
 

@@ -210,6 +210,8 @@ class BrokerResearchClient implements OnlineResearchClient {
         request: request,
         requestId: body.requestId,
         errorMessage: _safeBrokerErrorMessage(body.error.code),
+        entitlementOrCreditDenied:
+            body.error.code == 'entitlement_or_credit_denied',
       ),
     };
   }
@@ -347,6 +349,7 @@ class BrokerResearchClient implements OnlineResearchClient {
     required OnlineResearchRequest request,
     required String errorMessage,
     String? requestId,
+    bool entitlementOrCreditDenied = false,
   }) {
     final now = _now().toUtc();
     final jobId =
@@ -361,6 +364,7 @@ class BrokerResearchClient implements OnlineResearchClient {
       querySummary: request.querySummary,
       provider: 'archivale-broker-fake-endpoint',
       errorMessage: errorMessage,
+      entitlementOrCreditDenied: entitlementOrCreditDenied,
     );
   }
 }
@@ -608,6 +612,7 @@ class _TrustedResearchResponse {
       querySummary: job.querySummary,
       provider: job.provider,
       errorMessage: job.errorMessage,
+      entitlementOrCreditDenied: job.entitlementOrCreditDenied,
       sourceHits: sanitizedSourceHits,
       candidateAttributions: sanitizedCandidates,
       comparableValueSignals: sanitizedSignals,

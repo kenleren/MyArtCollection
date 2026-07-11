@@ -261,6 +261,7 @@ class ResearchJob {
     this.querySummary,
     this.provider,
     this.errorMessage,
+    this.entitlementOrCreditDenied = false,
     this.sourceHits = const [],
     this.candidateAttributions = const [],
     this.comparableValueSignals = const [],
@@ -276,6 +277,9 @@ class ResearchJob {
   final String? querySummary;
   final String? provider;
   final String? errorMessage;
+
+  /// An in-memory, normalized UI signal. It is deliberately not persisted.
+  final bool entitlementOrCreditDenied;
   final List<ResearchSourceHit> sourceHits;
   final List<CandidateAttribution> candidateAttributions;
   final List<ComparableValueSignal> comparableValueSignals;

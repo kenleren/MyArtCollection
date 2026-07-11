@@ -35,15 +35,17 @@ Future<void> main() async {
     // Firebase-backed feature evaluation is intentionally not part of startup.
     // Consent-gated research initializes it only after confirmed consent.
     final featureFlags = const AppFeatureFlagService().localFlags();
+    final billingService = PlayBillingEntitlementService(
+      InAppPurchasePlayBillingStore(),
+      FirebasePlayBillingVerifier(FlutterFirebaseResearchRuntime()),
+    );
     final dependencies = AppDependencies(
       artworkRepository: artworkRepository,
       attachmentStore: await LocalAttachmentStore.open(),
       imagePicker: SystemArtworkImagePicker(),
       featureFlags: featureFlags,
-      entitlementService: PlayBillingEntitlementService(
-        InAppPurchasePlayBillingStore(),
-        FirebasePlayBillingVerifier(FlutterFirebaseResearchRuntime()),
-      ),
+      entitlementService: billingService,
+      billingManagementService: billingService,
       onDeviceAiDraftProvider: MethodChannelOnDeviceAiDraftProvider(),
     );
 

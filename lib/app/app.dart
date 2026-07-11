@@ -6,7 +6,7 @@ import 'app_dependencies.dart';
 import 'app_router.dart';
 import 'app_routes.dart';
 
-class ArchivaleApp extends StatelessWidget {
+class ArchivaleApp extends StatefulWidget {
   const ArchivaleApp({
     super.key,
     this.initialRoute = AppRoutes.splash,
@@ -21,6 +21,31 @@ class ArchivaleApp extends StatelessWidget {
   final ThemeMode themeMode;
 
   @override
+  State<ArchivaleApp> createState() => _ArchivaleAppState();
+}
+
+class _ArchivaleAppState extends State<ArchivaleApp>
+    with WidgetsBindingObserver {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      widget.dependencies?.billingManagementService?.refreshForForeground();
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
     final app = MaterialApp(
       title: 'Archivale',
@@ -32,18 +57,18 @@ class ArchivaleApp extends StatelessWidget {
         GlobalWidgetsLocalizations.delegate,
       ],
       supportedLocales: AppLocalizations.supportedLocales,
-      locale: locale,
+      locale: widget.locale,
       theme: _archivaleTheme(Brightness.light),
       darkTheme: _archivaleTheme(Brightness.dark),
-      themeMode: themeMode,
-      initialRoute: initialRoute,
+      themeMode: widget.themeMode,
+      initialRoute: widget.initialRoute,
       onGenerateRoute: AppRouter.onGenerateRoute,
       onGenerateInitialRoutes: (initialRoute) {
         return [AppRouter.onGenerateRoute(RouteSettings(name: initialRoute))];
       },
     );
 
-    final dependencies = this.dependencies;
+    final dependencies = widget.dependencies;
     if (dependencies == null) {
       return app;
     }

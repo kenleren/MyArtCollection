@@ -66,6 +66,18 @@ abstract interface class PlayBillingStore {
   Future<void> restorePurchases();
 }
 
+/// The narrow UI-facing command surface. It intentionally exposes no payment
+/// tokens, account IDs, verifier responses, or expiry details.
+abstract interface class BillingManagementService
+    implements EntitlementService {
+  Future<List<PlayProduct>> products();
+  Future<bool> acceptBillingDisclosure();
+  Future<bool> purchase(EntitlementPlan plan);
+  Future<void> restore();
+  Future<void> refreshForForeground();
+  void handleAccountChange();
+}
+
 class InAppPurchasePlayBillingStore implements PlayBillingStore {
   InAppPurchasePlayBillingStore({InAppPurchase? inAppPurchase})
     : _inAppPurchase = inAppPurchase ?? InAppPurchase.instance;
@@ -391,7 +403,7 @@ class SystemPlayBillingClock implements PlayBillingClock {
 }
 
 /// Fail-closed, memory-only coordinator for the server-verified Play lease.
-class PlayBillingEntitlementService implements EntitlementService {
+class PlayBillingEntitlementService implements BillingManagementService {
   PlayBillingEntitlementService(
     this._store,
     this._verifier, {
@@ -437,6 +449,7 @@ class PlayBillingEntitlementService implements EntitlementService {
       return EntitlementState(
         plan: lease.plan,
         billingStatus: EntitlementBillingStatus.available,
+        lifecycle: lease.lifecycle,
       );
     }
     if (lease != null) {
@@ -445,6 +458,7 @@ class PlayBillingEntitlementService implements EntitlementService {
     return _free(EntitlementBillingStatus.available);
   }
 
+  @override
   Future<List<PlayProduct>> products() async {
     final fence = _captureFence();
     if (!await _storeAvailable() ||
@@ -462,6 +476,7 @@ class PlayBillingEntitlementService implements EntitlementService {
   }
 
   /// The caller invokes this only after displaying the billing disclosure.
+  @override
   Future<bool> acceptBillingDisclosure() async {
     final entryFence = _captureFence();
     final uid = await _ensureBillingIdentity();
@@ -478,6 +493,7 @@ class PlayBillingEntitlementService implements EntitlementService {
     return true;
   }
 
+  @override
   Future<bool> purchase(EntitlementPlan plan) async {
     final productId = plan.playProductId;
     if (productId == null || !_disclosureAccepted) {
@@ -524,6 +540,7 @@ class PlayBillingEntitlementService implements EntitlementService {
     return started && _isFenceCurrent(purchaseFence, requireIdentity: true);
   }
 
+  @override
   Future<void> restore() async {
     if (!_disclosureAccepted) {
       _transitionFree();
@@ -554,6 +571,7 @@ class PlayBillingEntitlementService implements EntitlementService {
     _isFenceCurrent(fence, requireIdentity: true);
   }
 
+  @override
   Future<void> refreshForForeground() => _refresh();
   Future<void> refreshForGatedAction() => _refresh();
 
@@ -582,6 +600,7 @@ class PlayBillingEntitlementService implements EntitlementService {
     _isFenceCurrent(fence, requireIdentity: true);
   }
 
+  @override
   void handleAccountChange() => _transitionFree(clearPurchase: true);
 
   Future<void> _onPurchase(PlayPurchase purchase) async {
@@ -647,7 +666,15 @@ class PlayBillingEntitlementService implements EntitlementService {
       _transitionFree();
       return;
     }
-    _lease = _Lease(result.plan!, expiresAtElapsed);
+    _lease = _Lease(
+      result.plan!,
+      expiresAtElapsed,
+      result.state == 'grace'
+          ? EntitlementLifecycle.grace
+          : result.state == 'canceled'
+          ? EntitlementLifecycle.canceledThroughExpiry
+          : EntitlementLifecycle.active,
+    );
   }
 
   _OperationFence _beginPreflight() {
@@ -743,8 +770,11 @@ class PlayBillingEntitlementService implements EntitlementService {
     }
   }
 
-  EntitlementState _free(EntitlementBillingStatus status) =>
-      EntitlementState(plan: EntitlementPlans.free, billingStatus: status);
+  EntitlementState _free(EntitlementBillingStatus status) => EntitlementState(
+    plan: EntitlementPlans.free,
+    billingStatus: status,
+    lifecycle: EntitlementLifecycle.free,
+  );
 
   Future<void> dispose() async {
     _disposed = true;
@@ -754,9 +784,10 @@ class PlayBillingEntitlementService implements EntitlementService {
 }
 
 class _Lease {
-  const _Lease(this.plan, this.expiresAtElapsed);
+  const _Lease(this.plan, this.expiresAtElapsed, this.lifecycle);
   final EntitlementPlan plan;
   final Duration expiresAtElapsed;
+  final EntitlementLifecycle lifecycle;
 }
 
 class _OperationFence {

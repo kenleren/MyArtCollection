@@ -132,6 +132,33 @@ void main() {
     expect((await service.currentState()).plan, EntitlementPlans.starter);
   });
 
+  test(
+    'verified grace and cancellation states are safe for UI presentation',
+    () async {
+      await preparePurchase();
+      verifier.next = (request) =>
+          verifier.paidFor(EntitlementPlans.starter, request, state: 'grace');
+      store.emit(purchase(EntitlementPlans.starter, token: 'grace-token'));
+      await tick();
+      expect(
+        (await service.currentState()).lifecycle,
+        EntitlementLifecycle.grace,
+      );
+
+      verifier.next = (request) => verifier.paidFor(
+        EntitlementPlans.starter,
+        request,
+        state: 'canceled',
+      );
+      store.emit(purchase(EntitlementPlans.starter, token: 'canceled-token'));
+      await tick();
+      expect(
+        (await service.currentState()).lifecycle,
+        EntitlementLifecycle.canceledThroughExpiry,
+      );
+    },
+  );
+
   test('restart and expired leases return to Free', () async {
     await preparePurchase();
     verifier.next = (request) =>
@@ -667,14 +694,17 @@ class FakeVerifier implements PlayBillingVerifier {
         ));
   }
 
-  PlayBillingVerification paidFor(EntitlementPlan plan, String requestId) =>
-      PlayBillingVerification.paid(
-        requestId: requestId,
-        plan: plan,
-        productId: plan.playProductId!,
-        state: 'active',
-        leaseDuration: const Duration(minutes: 15),
-      );
+  PlayBillingVerification paidFor(
+    EntitlementPlan plan,
+    String requestId, {
+    String state = 'active',
+  }) => PlayBillingVerification.paid(
+    requestId: requestId,
+    plan: plan,
+    productId: plan.playProductId!,
+    state: state,
+    leaseDuration: const Duration(minutes: 15),
+  );
 }
 
 class FakeClock implements PlayBillingClock {

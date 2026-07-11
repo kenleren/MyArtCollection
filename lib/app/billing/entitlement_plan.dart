@@ -90,13 +90,27 @@ class EntitlementState {
   const EntitlementState({
     required this.plan,
     this.billingStatus = EntitlementBillingStatus.notConfigured,
+    this.lifecycle = EntitlementLifecycle.free,
   });
 
   final EntitlementPlan plan;
   final EntitlementBillingStatus billingStatus;
+  final EntitlementLifecycle lifecycle;
 }
 
 enum EntitlementBillingStatus { notConfigured, unavailable, available }
+
+/// Sanitized subscription state for presentation only. This never carries
+/// Play, identity, verification, or expiry data.
+enum EntitlementLifecycle {
+  active,
+  grace,
+  canceledThroughExpiry,
+  hold,
+  paused,
+  expired,
+  free,
+}
 
 abstract class EntitlementService {
   Future<EntitlementState> currentState();

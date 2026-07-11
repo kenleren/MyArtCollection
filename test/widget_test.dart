@@ -13,6 +13,7 @@ import 'package:my_art_collection/app/app.dart';
 import 'package:my_art_collection/app/app_dependencies.dart';
 import 'package:my_art_collection/app/app_routes.dart';
 import 'package:my_art_collection/app/billing/entitlement_plan.dart';
+import 'package:my_art_collection/app/billing/play_billing_adapter.dart';
 import 'package:my_art_collection/app/config/app_feature_flags.dart';
 import 'package:my_art_collection/app/research/online_research_service.dart';
 import 'package:my_art_collection/app/import/csv_import_file_picker.dart';
@@ -700,7 +701,7 @@ void main() {
     expect(find.text('Free plan is at capacity'), findsOneWidget);
     expect(
       find.textContaining(
-        'Starter plan preview includes room for up to 50 active records',
+        'Starter plan can provide room for up to 50 active records',
       ),
       findsOneWidget,
     );
@@ -710,7 +711,7 @@ void main() {
     );
     expect(
       find.textContaining(
-        'Preview only in this build. In-app upgrades are not available in this preview yet.',
+        'Plan management is not configured in this app session.',
       ),
       findsOneWidget,
     );
@@ -1200,17 +1201,14 @@ void main() {
       ),
       findsOneWidget,
     );
-    expect(
-      find.textContaining('Starter plan preview includes'),
-      findsOneWidget,
-    );
+    expect(find.textContaining('Starter plan can provide'), findsOneWidget);
     expect(
       find.textContaining('Archivale AI research drafts each month'),
       findsOneWidget,
     );
     expect(
       find.textContaining(
-        'Preview only in this build. In-app upgrades are not available in this preview yet.',
+        'Plan management is not configured in this app session.',
       ),
       findsOneWidget,
     );
@@ -1414,19 +1412,127 @@ void main() {
 
     await verifyVariant(
       billingStatus: EntitlementBillingStatus.available,
-      expectedCopy: 'In-app upgrades are not available in this build yet.',
+      expectedCopy: 'Review your plan, restore purchases',
       fileName: 'issue-173-04-settings-plan-available-light.png',
     );
     await verifyVariant(
       billingStatus: EntitlementBillingStatus.unavailable,
-      expectedCopy: 'in-app upgrades are unavailable on this device right now.',
+      expectedCopy: 'Plan changes are unavailable on this device right now.',
       fileName: 'issue-173-05-settings-plan-unavailable-light.png',
     );
     await verifyVariant(
       billingStatus: EntitlementBillingStatus.notConfigured,
-      expectedCopy: 'in-app upgrades are not available in this preview yet.',
+      expectedCopy: 'Plan management is not configured in this app session.',
       fileName: 'issue-173-06-settings-plan-not-configured-light.png',
     );
+  });
+
+  testWidgets('captures issue 193 billing mobile states', (tester) async {
+    final fixture = await tester.runAsync(_LiveDependencyFixture.create);
+    final testFixture = fixture!;
+    addTearDown(() async => tester.runAsync(testFixture.dispose));
+    final billing = _FakeBillingManagementService(
+      productsValue: const [
+        PlayProduct(
+          id: 'archivale_starter_monthly',
+          title: 'Starter monthly',
+          description: 'Up to 50 active artworks',
+          price: 'NOK 35.00',
+        ),
+      ],
+    );
+
+    Future<void> captureState({
+      required EntitlementState state,
+      required String fileName,
+    }) async {
+      billing.state = state;
+      final boundaryKey = GlobalKey();
+      await _configureMobileViewport(tester);
+      await tester.pumpWidget(
+        RepaintBoundary(
+          key: boundaryKey,
+          child: ArchivaleApp(
+            initialRoute: AppRoutes.billing,
+            dependencies: testFixture.dependenciesWithFlags(
+              entitlementService: billing,
+              billingManagementService: billing,
+            ),
+          ),
+        ),
+      );
+      await pumpLiveData(tester);
+      await captureBoundaryToArtifacts(
+        tester,
+        boundaryKey,
+        fileName,
+        resetAfterCapture: false,
+      );
+    }
+
+    await captureState(
+      state: const EntitlementState(
+        plan: EntitlementPlans.free,
+        billingStatus: EntitlementBillingStatus.available,
+      ),
+      fileName: 'issue-193-01-plan-localized-price-mobile.png',
+    );
+    await tester.scrollUntilVisible(find.text('Choose plan'), 300);
+    await tester.tap(find.widgetWithText(FilledButton, 'Choose plan'));
+    await tester.pumpAndSettle();
+    final disclosureKey = GlobalKey();
+    await tester.pumpWidget(
+      RepaintBoundary(
+        key: disclosureKey,
+        child: ArchivaleApp(
+          initialRoute: AppRoutes.billing,
+          dependencies: testFixture.dependenciesWithFlags(
+            entitlementService: billing,
+            billingManagementService: billing,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    // Reopen after rebuilding into the screenshot boundary.
+    await tester.scrollUntilVisible(find.text('Choose plan'), 300);
+    await tester.tap(find.widgetWithText(FilledButton, 'Choose plan'));
+    await tester.pumpAndSettle();
+    await captureBoundaryToArtifacts(
+      tester,
+      disclosureKey,
+      'issue-193-02-disclosure-mobile.png',
+      resetAfterCapture: false,
+    );
+
+    for (final entry in <(EntitlementState, String)>[
+      (
+        const EntitlementState(
+          plan: EntitlementPlans.starter,
+          billingStatus: EntitlementBillingStatus.available,
+          lifecycle: EntitlementLifecycle.grace,
+        ),
+        'issue-193-03-grace-mobile.png',
+      ),
+      (
+        const EntitlementState(
+          plan: EntitlementPlans.starter,
+          billingStatus: EntitlementBillingStatus.available,
+          lifecycle: EntitlementLifecycle.canceledThroughExpiry,
+        ),
+        'issue-193-04-canceled-mobile.png',
+      ),
+      (
+        const EntitlementState(
+          plan: EntitlementPlans.free,
+          billingStatus: EntitlementBillingStatus.unavailable,
+          lifecycle: EntitlementLifecycle.expired,
+        ),
+        'issue-193-05-expired-unavailable-mobile.png',
+      ),
+    ]) {
+      await captureState(state: entry.$1, fileName: entry.$2);
+    }
   });
 
   testWidgets('collection shell localizes supported mobile locales', (
@@ -4780,6 +4886,7 @@ class _LiveDependencyFixture {
     CsvImportFilePicker csvImportFilePicker = const _NoCsvPicker(),
     AppFeatureFlags featureFlags = const AppFeatureFlags(),
     EntitlementService entitlementService = const StaticEntitlementService(),
+    BillingManagementService? billingManagementService,
     OnlineResearchClient? onlineResearchClient,
   }) {
     return AppDependencies(
@@ -4789,6 +4896,7 @@ class _LiveDependencyFixture {
       csvImportFilePicker: csvImportFilePicker,
       featureFlags: featureFlags,
       entitlementService: entitlementService,
+      billingManagementService: billingManagementService,
       onDeviceAiDraftProvider: onDeviceAiDraftProvider,
       onlineResearchClient: onlineResearchClient,
     );
@@ -4919,6 +5027,39 @@ class _PendingImagePicker implements ArtworkImagePicker {
 
   @override
   Future<XFile?> retrieveLostImage() async => null;
+}
+
+class _FakeBillingManagementService implements BillingManagementService {
+  _FakeBillingManagementService({this.productsValue = const []});
+
+  EntitlementState state = const EntitlementState(
+    plan: EntitlementPlans.free,
+    billingStatus: EntitlementBillingStatus.available,
+  );
+  List<PlayProduct> productsValue;
+
+  @override
+  Future<bool> acceptBillingDisclosure() async => true;
+
+  @override
+  Future<EntitlementState> currentState() async => state;
+
+  @override
+  void handleAccountChange() {
+    state = const EntitlementState(plan: EntitlementPlans.free);
+  }
+
+  @override
+  Future<bool> purchase(EntitlementPlan plan) async => true;
+
+  @override
+  Future<List<PlayProduct>> products() async => productsValue;
+
+  @override
+  Future<void> refreshForForeground() async {}
+
+  @override
+  Future<void> restore() async {}
 }
 
 class _NoCsvPicker implements CsvImportFilePicker {
