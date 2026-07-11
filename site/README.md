@@ -13,11 +13,18 @@ Included routes:
 - `/pricing/`
 - `/beta/`
 - `/blog/`
-- `/blog/collector-records-that-age-well/`
-- `/blog/how-to-organize-provenance-records-private-art-collection/`
-- `/blog/how-to-document-artwork-for-insurance-conversations/`
+- `/blog/annual-art-collection-record-review-checklist/`
 - `/blog/art-inventory-template-private-collectors/`
 - `/blog/artwork-condition-report-checklist-private-collectors/`
+- `/blog/artwork-location-inventory-for-private-collections/`
+- `/blog/collector-records-that-age-well/`
+- `/blog/how-to-document-artwork-for-insurance-conversations/`
+- `/blog/how-to-organize-provenance-records-private-art-collection/`
+- `/blog/how-to-photograph-artwork-for-private-records/`
+- `/blog/how-to-prepare-art-records-for-family-handoff/`
+- `/blog/how-to-prepare-artwork-records-before-a-move/`
+- `/blog/how-to-record-artwork-labels-and-inscriptions/`
+- `/blog/what-to-record-after-buying-artwork/`
 
 `/updates/` is intentionally omitted in this task because the repo did not have
 public-safe update content ready to publish.
@@ -26,8 +33,9 @@ public-safe update content ready to publish.
 
 - Static HTML, CSS, and first-party local JavaScript only.
 - No deploy, DNS change, Firebase Hosting mutation, or external publication.
-- No analytics, cookies, trackers, JavaScript frameworks, external scripts, or
-  third-party form tools.
+- No third-party analytics, cookies, tracking pixels, JavaScript frameworks,
+  external scripts, or third-party form tools. The existing first-party,
+  DNT-aware aggregate pageview counter is frozen and must not expand here.
 - Support uses a static form that opens the user's mail client.
 - The beta page is wired for the reserved first-party route
   `/api/forms/beta-signup`, backed by the separate `backend/forms` package.
@@ -107,6 +115,13 @@ Blog posts are plain static HTML under `site/blog/<slug>/index.html`, with the
 index at `site/blog/index.html`. Each published post should include:
 
 - a page-specific `<title>` and meta description;
+- a self-referencing `https://archivale.app` canonical URL with a trailing slash;
+- exactly ten Open Graph fields and five Twitter fields aligned with the title,
+  description, canonical URL, and primary schema node;
+- `og:site_name=Archivale`, `twitter:card=summary_large_image`, and
+  `og:type=article`;
+- the checked-in `collector-room.png` social image declared as PNG at 1672x941,
+  with neutral matching Open Graph and Twitter alt text;
 - conservative inline `schema.org` JSON-LD that matches visible page copy;
 - a link from the blog index;
 - copy that supports collector education without presenting Archivale as an
@@ -118,6 +133,20 @@ Publication approval rule: every new post needs owner approval before it is
 merged or published. Approval should check product truth, privacy posture,
 claims guardrails, and whether the post describes only shipped behavior or
 clearly labeled launch intent.
+
+The six non-article routes use `og:type=website`; only the twelve article routes
+use `og:type=article`. Primary schema nodes are `WebPage#webpage` for home,
+pricing, and beta; `ContactPage#webpage` for support; `PrivacyPolicy#webpage`
+for privacy; `Blog#blog` for the notes index; and `BlogPosting#post` for each
+article. The shared collection-room image is intentionally generic: it is an
+accurate, already-public visual without article-specific attribution or a new
+claim. Article-specific cards require separately approved assets.
+
+Every route keeps the existing `/styles.css`, logo, JSON-LD, and
+`/scripts/pageview-counter.js` inventory. Only home includes the collection-room
+body image; only beta adds `/scripts/beta-signup.js` and its reserved form
+action; only support uses its existing `mailto:` action. Metadata changes must
+not expand executable code, body resources, pixels, trackers, or external calls.
 
 ## Local preview
 
@@ -136,11 +165,18 @@ Then open:
 - `http://127.0.0.1:8000/pricing/`
 - `http://127.0.0.1:8000/beta/`
 - `http://127.0.0.1:8000/blog/`
-- `http://127.0.0.1:8000/blog/collector-records-that-age-well/`
-- `http://127.0.0.1:8000/blog/how-to-organize-provenance-records-private-art-collection/`
-- `http://127.0.0.1:8000/blog/how-to-document-artwork-for-insurance-conversations/`
+- `http://127.0.0.1:8000/blog/annual-art-collection-record-review-checklist/`
 - `http://127.0.0.1:8000/blog/art-inventory-template-private-collectors/`
 - `http://127.0.0.1:8000/blog/artwork-condition-report-checklist-private-collectors/`
+- `http://127.0.0.1:8000/blog/artwork-location-inventory-for-private-collections/`
+- `http://127.0.0.1:8000/blog/collector-records-that-age-well/`
+- `http://127.0.0.1:8000/blog/how-to-document-artwork-for-insurance-conversations/`
+- `http://127.0.0.1:8000/blog/how-to-organize-provenance-records-private-art-collection/`
+- `http://127.0.0.1:8000/blog/how-to-photograph-artwork-for-private-records/`
+- `http://127.0.0.1:8000/blog/how-to-prepare-art-records-for-family-handoff/`
+- `http://127.0.0.1:8000/blog/how-to-prepare-artwork-records-before-a-move/`
+- `http://127.0.0.1:8000/blog/how-to-record-artwork-labels-and-inscriptions/`
+- `http://127.0.0.1:8000/blog/what-to-record-after-buying-artwork/`
 
 ## Firebase Hosting config
 
@@ -160,11 +196,18 @@ Repo-side Firebase Hosting is intentionally minimal:
 Firebase Hosting headers in `firebase.json` use this policy:
 
 - `/`, `/privacy/`, `/support/`, `/pricing/`, `/beta/`, `/blog/`,
+  `/blog/annual-art-collection-record-review-checklist/`,
+  `/blog/art-inventory-template-private-collectors/`,
+  `/blog/artwork-condition-report-checklist-private-collectors/`,
+  `/blog/artwork-location-inventory-for-private-collections/`,
   `/blog/collector-records-that-age-well/`,
-  `/blog/how-to-organize-provenance-records-private-art-collection/`,
   `/blog/how-to-document-artwork-for-insurance-conversations/`,
-  `/blog/art-inventory-template-private-collectors/`, and
-  `/blog/artwork-condition-report-checklist-private-collectors/` send
+  `/blog/how-to-organize-provenance-records-private-art-collection/`,
+  `/blog/how-to-photograph-artwork-for-private-records/`,
+  `/blog/how-to-prepare-art-records-for-family-handoff/`,
+  `/blog/how-to-prepare-artwork-records-before-a-move/`,
+  `/blog/how-to-record-artwork-labels-and-inscriptions/`, and
+  `/blog/what-to-record-after-buying-artwork/` send
   `Cache-Control: public, max-age=0, s-maxage=0, must-revalidate`.
 - Direct HTML file requests matching `/**/*.html` send the same revalidation
   header so route documents do not persist stale HTML after deploy.
@@ -192,13 +235,25 @@ python3 -m json.tool firebase.json
 
 ### Static site validation
 
-Validate static HTML shape, inline JSON-LD parsing, local `href`/`src`
-resolution, first-party local script references, trust-copy guardrails for
-structured data, disallowed external assets, and expected route smoke coverage
-from the repository root:
+The validator enforces exactly 18 routes, globally unique normalized canonical
+URLs, exact Open Graph and Twitter fields, primary-schema alignment, PNG bytes
+and dimensions, sitemap equality, and the frozen first-party script/body-resource
+inventory. It also rejects hidden unsafe claims, external assets, added scripts,
+pixels, preloads, frames, cookies, and form-action expansion.
+
+Run the focused fixtures and full validator from the repository root:
 
 ```sh
+python3 -m unittest discover -s test -p 'validate_static_site_test.py'
 python3 scripts/validate_static_site.py
+python3 -m py_compile scripts/validate_static_site.py test/validate_static_site_test.py
+```
+
+Confirm that the checked-in sitemap is exactly what the deterministic generator
+would produce without writing a file:
+
+```sh
+python3 -c 'from scripts import generate_sitemap as s; routes=sorted(s.route_for_html(p) for p in s.SITE_ROOT.glob("**/*.html")); routes.remove("/"); routes.insert(0, "/"); expected=s.sitemap_xml(routes); actual=s.SITEMAP_PATH.read_text(encoding="utf-8"); assert actual == expected, "site/sitemap.xml is stale"'
 ```
 
 ### Ad hoc local hosting preview
@@ -216,6 +271,19 @@ Then open the local URL printed by the emulator and confirm the same public rout
 - `/support/`
 - `/pricing/`
 - `/beta/`
+- `/blog/`
+- `/blog/annual-art-collection-record-review-checklist/`
+- `/blog/art-inventory-template-private-collectors/`
+- `/blog/artwork-condition-report-checklist-private-collectors/`
+- `/blog/artwork-location-inventory-for-private-collections/`
+- `/blog/collector-records-that-age-well/`
+- `/blog/how-to-document-artwork-for-insurance-conversations/`
+- `/blog/how-to-organize-provenance-records-private-art-collection/`
+- `/blog/how-to-photograph-artwork-for-private-records/`
+- `/blog/how-to-prepare-art-records-for-family-handoff/`
+- `/blog/how-to-prepare-artwork-records-before-a-move/`
+- `/blog/how-to-record-artwork-labels-and-inscriptions/`
+- `/blog/what-to-record-after-buying-artwork/`
 
 For a full beta signup emulator path, the `backend/forms` Functions package
 must also be built, given a durable queue implementation, and wired into a
@@ -244,8 +312,15 @@ match the policy above:
 - `https://archivale.app/pricing/`
 - `https://archivale.app/beta/`
 - `https://archivale.app/blog/`
-- `https://archivale.app/blog/collector-records-that-age-well/`
-- `https://archivale.app/blog/how-to-organize-provenance-records-private-art-collection/`
-- `https://archivale.app/blog/how-to-document-artwork-for-insurance-conversations/`
+- `https://archivale.app/blog/annual-art-collection-record-review-checklist/`
 - `https://archivale.app/blog/art-inventory-template-private-collectors/`
 - `https://archivale.app/blog/artwork-condition-report-checklist-private-collectors/`
+- `https://archivale.app/blog/artwork-location-inventory-for-private-collections/`
+- `https://archivale.app/blog/collector-records-that-age-well/`
+- `https://archivale.app/blog/how-to-document-artwork-for-insurance-conversations/`
+- `https://archivale.app/blog/how-to-organize-provenance-records-private-art-collection/`
+- `https://archivale.app/blog/how-to-photograph-artwork-for-private-records/`
+- `https://archivale.app/blog/how-to-prepare-art-records-for-family-handoff/`
+- `https://archivale.app/blog/how-to-prepare-artwork-records-before-a-move/`
+- `https://archivale.app/blog/how-to-record-artwork-labels-and-inscriptions/`
+- `https://archivale.app/blog/what-to-record-after-buying-artwork/`

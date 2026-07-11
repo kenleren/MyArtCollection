@@ -213,7 +213,14 @@ jobs:
         with:
           python-version: 3.12.13
       - name: Validate static site
-        run: python3 scripts/validate_static_site.py
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s test -p 'validate_static_site_test.py'
+          python3 scripts/validate_static_site.py
+          python3 -m py_compile scripts/validate_static_site.py test/validate_static_site_test.py
+          jq . firebase.json
+          python3 -c 'from scripts import generate_sitemap as s; routes=sorted(s.route_for_html(p) for p in s.SITE_ROOT.glob("**/*.html")); routes.remove("/"); routes.insert(0, "/"); expected=s.sitemap_xml(routes); actual=s.SITEMAP_PATH.read_text(encoding="utf-8"); assert actual == expected, "site/sitemap.xml is stale"'
 
   mobile-broker-bypass-guard:
     name: Mobile broker bypass guard
