@@ -271,7 +271,7 @@ void main() {
   );
 
   test(
-    'repeated disclosure, recovery, and pending events retain one bounded unresolved recovery budget',
+    'recovery exhaustion bounds disclosure, restore, and verification across repeated recovery events',
     () async {
       await preparePurchase();
       store.emit(
@@ -314,7 +314,37 @@ void main() {
       expect(store.restoreCalls, 2);
       expect(
         (await service.currentState()).presentation,
-        EntitlementPresentation.playPending,
+        EntitlementPresentation.recoveryExhausted,
+      );
+
+      // The budget is exhausted for this identity and unresolved operation.
+      // Further disclosure, Restore, Refresh, and duplicate pending events
+      // must not reach the verifier or Play store.
+      expect(await service.canRecover(), isFalse);
+      expect(
+        (await service.currentState()).presentation,
+        EntitlementPresentation.recoveryExhausted,
+      );
+      for (var attempt = 0; attempt < 3; attempt++) {
+        expect(await service.acceptBillingDisclosure(), isFalse);
+        await service.restore();
+        await service.refreshForForeground();
+        store.emit(
+          purchase(
+            EntitlementPlans.starter,
+            state: PlayPurchaseState.pending,
+            token: 'unresolved-purchase',
+          ),
+        );
+        await tick();
+      }
+
+      expect(verifier.accepts, hasLength(2));
+      expect(store.restoreCalls, 2);
+      expect(verifier.requests, isEmpty);
+      expect(
+        (await service.currentState()).presentation,
+        EntitlementPresentation.recoveryExhausted,
       );
     },
   );

@@ -75,6 +75,7 @@ abstract interface class BillingManagementService
   /// purchase, identity, verifier, or expiry details.
   Stream<EntitlementState> get stateChanges;
   Future<List<PlayProduct>> products();
+  Future<bool> canRecover();
   Future<bool> acceptBillingDisclosure();
   Future<bool> purchase(EntitlementPlan plan);
   Future<void> restore();
@@ -533,12 +534,24 @@ class PlayBillingEntitlementService implements BillingManagementService {
         .toList(growable: false);
   }
 
+  @override
+  Future<bool> canRecover() async {
+    if (_disposed || _recovering) return false;
+    if (_isRecoveryExhausted) {
+      _presentRecoveryExhausted();
+      return false;
+    }
+    return true;
+  }
+
   /// The caller invokes this only after displaying the billing disclosure.
   @override
   Future<bool> acceptBillingDisclosure() async {
+    if (!await canRecover()) return false;
     final entryFence = _captureFence();
     final uid = await _ensureBillingIdentity();
     if (!_isFenceCurrent(entryFence) || uid == null) return false;
+    if (!await canRecover()) return false;
     final retainUnresolvedRecovery =
         _currentUid == uid && _isUnresolved(_presentation);
     _observeUid(uid);
@@ -627,9 +640,11 @@ class PlayBillingEntitlementService implements BillingManagementService {
   Future<void> _recover(EntitlementPresentation recoveryPresentation) async {
     final fallbackPresentation = _presentation;
     final retainUnresolved = _isUnresolved(fallbackPresentation);
-    if (_recovering ||
-        (retainUnresolved &&
-            _unresolvedRecoveryAttempts >= _maxUnresolvedRecoveryAttempts)) {
+    if (_recovering) {
+      return;
+    }
+    if (_isRecoveryExhausted) {
+      _presentRecoveryExhausted();
       return;
     }
     if (!_disclosureAccepted || _currentUid == null) {
@@ -712,6 +727,10 @@ class PlayBillingEntitlementService implements BillingManagementService {
     _recoveryFallbackPresentation = null;
     switch (purchase.state) {
       case PlayPurchaseState.pending:
+        if (_isRecoveryExhausted) {
+          _presentRecoveryExhausted();
+          return;
+        }
         _transitionFree(
           presentation: EntitlementPresentation.playPending,
           preserveRecoveryAttempts: retainUnresolvedRecovery,
@@ -886,7 +905,22 @@ class PlayBillingEntitlementService implements BillingManagementService {
       presentation == EntitlementPresentation.inFlight ||
       presentation == EntitlementPresentation.playPending ||
       presentation == EntitlementPresentation.delayedVerification ||
-      presentation == EntitlementPresentation.acknowledgementRecovery;
+      presentation == EntitlementPresentation.acknowledgementRecovery ||
+      presentation == EntitlementPresentation.recoveryExhausted;
+
+  bool get _isRecoveryExhausted =>
+      _currentUid != null &&
+      _isUnresolved(_presentation) &&
+      _unresolvedRecoveryAttempts >= _maxUnresolvedRecoveryAttempts;
+
+  void _presentRecoveryExhausted() {
+    if (!_isRecoveryExhausted ||
+        _presentation == EntitlementPresentation.recoveryExhausted) {
+      return;
+    }
+    _presentation = EntitlementPresentation.recoveryExhausted;
+    _publish();
+  }
 
   void _resetRecoveryAttempts() {
     _recovering = false;

@@ -82,8 +82,16 @@ class _BillingPlanScreenState extends State<BillingPlanScreen> {
   Future<void> _restore() async {
     final service = _service;
     if (service == null) return;
+    if (!await service.canRecover()) {
+      await _load(service);
+      return;
+    }
     final acceptedByUser = await _showDisclosure();
     if (!acceptedByUser) return;
+    if (!await service.canRecover()) {
+      await _load(service);
+      return;
+    }
     setState(() => _action = _BillingAction.restoring);
     final accepted = await service.acceptBillingDisclosure();
     if (accepted) await service.restore();
@@ -361,18 +369,19 @@ String _lifecycleCopy(EntitlementState state) => switch (state.lifecycle) {
         : 'You are using Free access. Your existing archive stays available.',
 };
 
-_BillingAction _presentationAction(EntitlementPresentation presentation) =>
-    switch (presentation) {
-      EntitlementPresentation.idle => _BillingAction.idle,
-      EntitlementPresentation.verificationPending ||
-      EntitlementPresentation.inFlight ||
-      EntitlementPresentation.delayedVerification => _BillingAction.verifying,
-      EntitlementPresentation.playPending => _BillingAction.pending,
-      EntitlementPresentation.acknowledgementRecovery =>
-        _BillingAction.recovering,
-      EntitlementPresentation.restoring => _BillingAction.restoring,
-      EntitlementPresentation.refreshing => _BillingAction.refreshing,
-    };
+_BillingAction _presentationAction(
+  EntitlementPresentation presentation,
+) => switch (presentation) {
+  EntitlementPresentation.idle => _BillingAction.idle,
+  EntitlementPresentation.verificationPending ||
+  EntitlementPresentation.inFlight ||
+  EntitlementPresentation.delayedVerification => _BillingAction.verifying,
+  EntitlementPresentation.playPending => _BillingAction.pending,
+  EntitlementPresentation.acknowledgementRecovery => _BillingAction.recovering,
+  EntitlementPresentation.recoveryExhausted => _BillingAction.recoveryExhausted,
+  EntitlementPresentation.restoring => _BillingAction.restoring,
+  EntitlementPresentation.refreshing => _BillingAction.refreshing,
+};
 
 enum _BillingAction {
   idle,
@@ -381,12 +390,13 @@ enum _BillingAction {
   pending,
   verifying,
   recovering,
+  recoveryExhausted,
   unavailable;
 
   IconData get icon => switch (this) {
     idle => Icons.info_outline,
     refreshing || restoring => Icons.refresh_outlined,
-    pending || recovering => Icons.hourglass_top_outlined,
+    pending || recovering || recoveryExhausted => Icons.hourglass_top_outlined,
     verifying => Icons.verified_outlined,
     unavailable => Icons.error_outline,
   };
@@ -398,6 +408,7 @@ enum _BillingAction {
     pending => 'Purchase pending',
     verifying => 'Verifying subscription',
     recovering => 'Recovering subscription verification',
+    recoveryExhausted => 'Subscription recovery is paused',
     unavailable => 'Plan change unavailable',
   };
 
@@ -411,6 +422,8 @@ enum _BillingAction {
       'Archivale is confirming this subscription. Access changes only after verification succeeds.',
     recovering =>
       'Archivale is recovering subscription confirmation. Access changes only after verification succeeds.',
+    recoveryExhausted =>
+      'Subscription recovery is paused for this unresolved purchase. Archivale remains on Free access.',
     unavailable =>
       'Play billing or subscription verification is unavailable right now. Archivale remains on Free access.',
   };

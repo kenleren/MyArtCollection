@@ -1624,6 +1624,18 @@ void main() {
     },
   );
 
+  testWidgets('captures recovery exhausted billing state', (tester) async {
+    await _captureIssue193BillingState(
+      tester,
+      const EntitlementState(
+        plan: EntitlementPlans.free,
+        billingStatus: EntitlementBillingStatus.available,
+        presentation: EntitlementPresentation.recoveryExhausted,
+      ),
+      'issue-193-13-recovery-exhausted-mobile.png',
+    );
+  });
+
   testWidgets('collection shell localizes supported mobile locales', (
     WidgetTester tester,
   ) async {
@@ -5215,6 +5227,9 @@ class _FakeBillingManagementService implements BillingManagementService {
 
   @override
   Stream<EntitlementState> get stateChanges => _stateChanges.stream;
+
+  @override
+  Future<bool> canRecover() async => true;
 
   void publish(EntitlementState next) {
     state = next;

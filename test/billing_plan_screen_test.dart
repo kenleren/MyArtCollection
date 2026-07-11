@@ -254,6 +254,7 @@ void main() {
         EntitlementPresentation.inFlight,
         EntitlementPresentation.delayedVerification,
         EntitlementPresentation.acknowledgementRecovery,
+        EntitlementPresentation.recoveryExhausted,
       ]) {
         fixture.service.publish(
           EntitlementState(
@@ -273,6 +274,31 @@ void main() {
           isNull,
         );
       }
+
+      fixture.service.publish(
+        const EntitlementState(
+          plan: EntitlementPlans.free,
+          billingStatus: EntitlementBillingStatus.available,
+          presentation: EntitlementPresentation.recoveryExhausted,
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(
+        tester
+            .widget<OutlinedButton>(
+              find.widgetWithText(OutlinedButton, 'Restore purchases'),
+            )
+            .onPressed,
+        isNull,
+      );
+      expect(
+        tester
+            .widget<OutlinedButton>(
+              find.widgetWithText(OutlinedButton, 'Refresh plan status'),
+            )
+            .onPressed,
+        isNull,
+      );
     },
   );
 
@@ -320,6 +346,27 @@ void main() {
           .onPressed,
       isNull,
     );
+  });
+
+  testWidgets('recovery exhaustion checks before showing disclosure', (
+    tester,
+  ) async {
+    fixture.service.state = const EntitlementState(
+      plan: EntitlementPlans.free,
+      billingStatus: EntitlementBillingStatus.available,
+      presentation: EntitlementPresentation.playPending,
+    );
+    fixture.service.canRecoverValue = false;
+    await _pump(tester, fixture);
+    await tester.scrollUntilVisible(find.text('Restore purchases'), 300);
+
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Restore purchases'));
+    await tester.pumpAndSettle();
+
+    expect(fixture.service.recoveryChecks, 1);
+    expect(fixture.service.disclosureCalls, 0);
+    expect(fixture.service.restoreCalls, 0);
+    expect(find.text('Confirm subscription verification'), findsNothing);
   });
 
   testWidgets('stale async billing load cannot overwrite a Free fallback', (
@@ -409,6 +456,8 @@ class _FakeBillingService implements BillingManagementService {
   int restoreCalls = 0;
   int foregroundRefreshes = 0;
   int productReads = 0;
+  int recoveryChecks = 0;
+  bool canRecoverValue = true;
   FutureOr<List<PlayProduct>> Function()? productsNext;
   final List<String> purchases = [];
   final StreamController<EntitlementState> _stateChanges =
@@ -416,6 +465,12 @@ class _FakeBillingService implements BillingManagementService {
 
   @override
   Stream<EntitlementState> get stateChanges => _stateChanges.stream;
+
+  @override
+  Future<bool> canRecover() async {
+    recoveryChecks++;
+    return canRecoverValue;
+  }
 
   void publish(EntitlementState next) {
     state = next;

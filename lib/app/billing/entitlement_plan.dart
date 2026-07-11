@@ -123,6 +123,7 @@ enum EntitlementPresentation {
   playPending,
   delayedVerification,
   acknowledgementRecovery,
+  recoveryExhausted,
   restoring,
   refreshing;
 
