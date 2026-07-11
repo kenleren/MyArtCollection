@@ -126,8 +126,13 @@ class FileBrokerRetryStore implements BrokerRetryStore {
 
   @override
   Future<void> save(FrozenBrokerRequest request) async {
+    final retainedAt = _now().toUtc();
+    final maximumExpiry = retainedAt.add(retentionDuration);
+    final requestedExpiry = request.retentionExpiresAt?.toUtc();
     final expiresAt =
-        request.retentionExpiresAt ?? _now().toUtc().add(retentionDuration);
+        requestedExpiry == null || requestedExpiry.isAfter(maximumExpiry)
+        ? maximumExpiry
+        : requestedExpiry;
     final destination = _fileFor(request.requestId);
     final temporary = File('${destination.path}.tmp');
     await temporary.writeAsString(
@@ -137,6 +142,7 @@ class FileBrokerRetryStore implements BrokerRetryStore {
         'body': request.body,
         'consent_scope': request.consent.scope.wireValue,
         'consent_copy_version': request.consent.copyVersion,
+        'retention_started_at': retainedAt.toIso8601String(),
         'retention_expires_at': expiresAt.toIso8601String(),
       }),
       flush: true,
@@ -161,14 +167,23 @@ class FileBrokerRetryStore implements BrokerRetryStore {
           decoded['body'] is! String ||
           decoded['consent_scope'] is! String ||
           decoded['consent_copy_version'] is! String ||
+          decoded['retention_started_at'] is! String ||
           decoded['retention_expires_at'] is! String) {
         await _deleteIfPresent(file);
         return null;
       }
-      final expiresAt = DateTime.tryParse(
+      final retainedAt = _strictUtcTimestamp(
+        decoded['retention_started_at']! as String,
+      );
+      final expiresAt = _strictUtcTimestamp(
         decoded['retention_expires_at']! as String,
-      )?.toUtc();
-      if (expiresAt == null || !expiresAt.isAfter(_now().toUtc())) {
+      );
+      final now = _now().toUtc();
+      if (retainedAt == null ||
+          expiresAt == null ||
+          retainedAt.isAfter(now) ||
+          !expiresAt.isAfter(now) ||
+          expiresAt.isAfter(retainedAt.add(retentionDuration))) {
         await _deleteIfPresent(file);
         return null;
       }
@@ -250,25 +265,15 @@ const _frozenStorageKeys = <String>{
   'body',
   'consent_scope',
   'consent_copy_version',
+  'retention_started_at',
   'retention_expires_at',
 };
 
-class BrokerResearchAuthorization {
-  const BrokerResearchAuthorization._(this._owner);
-
-  final Object _owner;
-}
-
-class BrokerResearchGateResult {
-  const BrokerResearchGateResult.authorized(this.authorization)
-    : failure = null;
-
-  const BrokerResearchGateResult.failure(this.failure) : authorization = null;
-
-  final BrokerResearchAuthorization? authorization;
-  final BrokerClientFailure? failure;
-
-  bool get isAuthorized => authorization != null;
+DateTime? _strictUtcTimestamp(String value) {
+  if (!RegExp(r'(?:Z|[+-][0-9]{2}:[0-9]{2})$').hasMatch(value)) {
+    return null;
+  }
+  return DateTime.tryParse(value)?.toUtc();
 }
 
 class BrokerClientFailure {
@@ -321,136 +326,120 @@ class BrokerHttpClient {
   final BrokerHttpTransport transport;
   final BrokerConnectivity connectivity;
   final BrokerRetryStore retryStore;
-  final Object _authorizationOwner = Object();
+  final Set<String> _activeRequestIds = <String>{};
 
-  Future<BrokerResearchGateResult> authorizeAfterConsent() async {
+  Future<BrokerClientFailure?> _gateAfterConsent() async {
     if (!featureFlags.isConfiguredBrokerEndpoint(endpoint)) {
-      return const BrokerResearchGateResult.failure(
-        BrokerClientFailure(
-          code: 'endpoint_unavailable',
-          message: 'Research is unavailable.',
-        ),
+      return const BrokerClientFailure(
+        code: 'endpoint_unavailable',
+        message: 'Research is unavailable.',
       );
     }
     if (!featureFlags.localResearchCapabilityEnabled) {
-      return const BrokerResearchGateResult.failure(
-        BrokerClientFailure(
-          code: 'research_disabled',
-          message: 'Research is unavailable.',
-        ),
+      return const BrokerClientFailure(
+        code: 'research_disabled',
+        message: 'Research is unavailable.',
       );
     }
-    final flags = await featureFlags.loadAfterConsent();
+    AppFeatureFlags flags;
+    try {
+      flags = await featureFlags.loadAfterConsent();
+    } on Object {
+      return const BrokerClientFailure(
+        code: 'research_disabled',
+        message: 'Research is unavailable.',
+      );
+    }
     if (!flags.onlineResearchEnabled) {
-      return const BrokerResearchGateResult.failure(
-        BrokerClientFailure(
-          code: 'research_disabled',
-          message: 'Research is unavailable.',
-        ),
+      return const BrokerClientFailure(
+        code: 'research_disabled',
+        message: 'Research is unavailable.',
       );
     }
-    return BrokerResearchGateResult.authorized(
-      BrokerResearchAuthorization._(_authorizationOwner),
-    );
+    return null;
   }
 
-  Future<BrokerClientResult> submit(BrokerRequestPayload payload) async {
-    final gate = await authorizeAfterConsent();
-    if (!gate.isAuthorized) {
-      return BrokerClientResult.failure(gate.failure!);
-    }
-    return submitAuthorized(payload, gate.authorization!);
-  }
-
-  Future<BrokerClientResult> submitAuthorized(
-    BrokerRequestPayload payload,
-    BrokerResearchAuthorization authorization,
-  ) async {
-    if (!identical(authorization._owner, _authorizationOwner)) {
+  /// Runs one consent-bound submission. Payload preparation happens only after
+  /// both gates pass, so no artwork/file/derivative operation can reuse a
+  /// preauthorization decision.
+  Future<BrokerClientResult> submitAfterConsent({
+    required String requestId,
+    required BrokerResearchConsent consent,
+    required Future<BrokerRequestPayload?> Function() preparePayload,
+  }) async {
+    if (!_beginOperation(requestId)) return _inFlightFailure();
+    try {
+      final gateFailure = await _gateAfterConsent();
+      if (gateFailure != null) return BrokerClientResult.failure(gateFailure);
+      final payload = await preparePayload();
+      if (payload == null) {
+        return const BrokerClientResult.failure(
+          BrokerClientFailure(
+            code: 'image_unavailable',
+            message: 'The selected image could not be prepared for research.',
+          ),
+        );
+      }
+      if (payload.requestId != requestId ||
+          !_matchesConsent(payload.consent, consent)) {
+        return const BrokerClientResult.failure(
+          BrokerClientFailure(
+            code: 'consent_required',
+            message: 'Research consent must be confirmed again.',
+          ),
+        );
+      }
+      final request = payload.toRequest();
+      final frozen = FrozenBrokerRequest(
+        requestId: requestId,
+        payloadHash: request['payload_hash']! as String,
+        body: jsonEncode(<String, Object?>{'data': request}),
+        consent: consent,
+      );
+      return _submitFrozen(frozen, saveBeforeSend: true);
+    } on Object {
       return const BrokerClientResult.failure(
         BrokerClientFailure(
-          code: 'research_disabled',
-          message: 'Research is unavailable.',
+          code: 'image_unavailable',
+          message: 'The selected image could not be prepared for research.',
         ),
       );
+    } finally {
+      _endOperation(requestId);
     }
-    final request = payload.toRequest();
-    final frozen = FrozenBrokerRequest(
-      requestId: payload.requestId,
-      payloadHash: request['payload_hash']! as String,
-      body: jsonEncode(<String, Object?>{'data': request}),
-      consent: payload.consent,
-    );
-    return _submitAuthorizedFrozen(frozen, saveBeforeSend: true);
   }
 
-  Future<BrokerClientResult> retry(
+  /// Replays only a retained, byte-identical request after fresh consent and
+  /// both current gates pass. A request ID has at most one active operation.
+  Future<BrokerClientResult> retryAfterConsent(
     String requestId, {
     required BrokerResearchConsent consent,
   }) async {
-    final frozen = await retryStore.read(requestId);
-    if (frozen == null || !_matchesFrozenRequest(frozen)) {
-      return const BrokerClientResult.failure(
-        BrokerClientFailure(
-          code: 'retry_not_available',
-          message: 'No saved research request is available.',
-        ),
-      );
+    if (!_beginOperation(requestId)) return _inFlightFailure();
+    try {
+      final gateFailure = await _gateAfterConsent();
+      if (gateFailure != null) return BrokerClientResult.failure(gateFailure);
+      final frozen = await retryStore.read(requestId);
+      if (frozen == null || !_matchesFrozenRequest(frozen)) {
+        return const BrokerClientResult.failure(
+          BrokerClientFailure(
+            code: 'retry_not_available',
+            message: 'No saved research request is available.',
+          ),
+        );
+      }
+      if (!frozen.matchesConsent(consent)) {
+        return const BrokerClientResult.failure(
+          BrokerClientFailure(
+            code: 'consent_required',
+            message: 'Research consent must be confirmed again.',
+          ),
+        );
+      }
+      return _submitFrozen(frozen, saveBeforeSend: false);
+    } finally {
+      _endOperation(requestId);
     }
-    if (!frozen.matchesConsent(consent)) {
-      return const BrokerClientResult.failure(
-        BrokerClientFailure(
-          code: 'consent_required',
-          message: 'Research consent must be confirmed again.',
-        ),
-      );
-    }
-    final gate = await authorizeAfterConsent();
-    if (!gate.isAuthorized) {
-      return BrokerClientResult.failure(gate.failure!);
-    }
-    return _submitAuthorizedFrozen(frozen, saveBeforeSend: false);
-  }
-
-  Future<BrokerClientResult> retryAuthorized(
-    String requestId, {
-    required BrokerResearchConsent consent,
-    required BrokerResearchAuthorization authorization,
-  }) async {
-    if (!identical(authorization._owner, _authorizationOwner)) {
-      return const BrokerClientResult.failure(
-        BrokerClientFailure(
-          code: 'research_disabled',
-          message: 'Research is unavailable.',
-        ),
-      );
-    }
-    final frozen = await retryStore.read(requestId);
-    if (frozen == null) {
-      return const BrokerClientResult.failure(
-        BrokerClientFailure(
-          code: 'retry_not_available',
-          message: 'No saved research request is available.',
-        ),
-      );
-    }
-    if (!frozen.matchesConsent(consent)) {
-      return const BrokerClientResult.failure(
-        BrokerClientFailure(
-          code: 'consent_required',
-          message: 'Research consent must be confirmed again.',
-        ),
-      );
-    }
-    if (!_matchesFrozenRequest(frozen)) {
-      return const BrokerClientResult.failure(
-        BrokerClientFailure(
-          code: 'retry_not_available',
-          message: 'No saved research request is available.',
-        ),
-      );
-    }
-    return _submitAuthorizedFrozen(frozen, saveBeforeSend: false);
   }
 
   Future<BrokerClientResult> cancel(String requestId) async {
@@ -463,7 +452,19 @@ class BrokerHttpClient {
     );
   }
 
-  Future<BrokerClientResult> _submitAuthorizedFrozen(
+  bool _beginOperation(String requestId) => _activeRequestIds.add(requestId);
+
+  void _endOperation(String requestId) => _activeRequestIds.remove(requestId);
+
+  BrokerClientResult _inFlightFailure() => const BrokerClientResult.failure(
+    BrokerClientFailure(
+      code: 'request_in_flight',
+      message: 'Research is already in progress.',
+      retryable: true,
+    ),
+  );
+
+  Future<BrokerClientResult> _submitFrozen(
     FrozenBrokerRequest frozen, {
     required bool saveBeforeSend,
   }) async {
@@ -684,6 +685,11 @@ bool _matchesFrozenRequest(FrozenBrokerRequest frozen) {
     consent: frozen.consent,
   );
 }
+
+bool _matchesConsent(
+  BrokerResearchConsent first,
+  BrokerResearchConsent second,
+) => first.scope == second.scope && first.copyVersion == second.copyVersion;
 
 class _BrokerErrorTuple {
   const _BrokerErrorTuple(

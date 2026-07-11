@@ -12,61 +12,68 @@ import 'package:my_art_collection/app/research/image_derivative_service.dart';
 
 void main() {
   test(
-    'does not read or derive a source image before current typed consent',
+    'missing consent resolves no source, derivative, identity, or network',
     () async {
       final derivative = _RecordingDerivativeCreator();
-      final client = _client();
+      final runtime = _RecordingRuntime();
+      var sourceReads = 0;
       final coordinator = BrokerResearchCoordinator(
-        consentProvider: const _FixedConsentProvider(null),
         derivativeCreator: derivative,
-        client: client,
+        client: _client(runtime),
       );
 
       final result = await coordinator.submitSource(
-        source: File('/definitely-not-read-without-consent.jpg'),
-        authorization: await _authorization(client),
+        consent: null,
+        resolveSource: () async {
+          sourceReads += 1;
+          return File('/must-not-be-resolved.jpg');
+        },
       );
 
       expect(result.failure!.code, 'consent_required');
+      expect(sourceReads, 0);
       expect(derivative.sources, isEmpty);
+      expect(runtime.calls, isEmpty);
     },
   );
 
-  test('fails closed without image access when consent lookup fails', () async {
+  test('runtime gate failure resolves no source or derivative', () async {
     final derivative = _RecordingDerivativeCreator();
-    final client = _client();
+    final runtime = _RecordingRuntime(onlineEnabled: false);
+    var sourceReads = 0;
     final coordinator = BrokerResearchCoordinator(
-      consentProvider: const _ThrowingConsentProvider(),
       derivativeCreator: derivative,
-      client: client,
+      client: _client(runtime),
     );
 
     final result = await coordinator.submitSource(
-      source: File('/definitely-not-read-on-consent-error.jpg'),
-      authorization: await _authorization(client),
+      consent: _consent,
+      requestId: _requestId,
+      resolveSource: () async {
+        sourceReads += 1;
+        return File('/must-not-be-resolved.jpg');
+      },
     );
 
-    expect(result.failure!.code, 'consent_required');
+    expect(result.failure!.code, 'research_disabled');
+    expect(sourceReads, 0);
     expect(derivative.sources, isEmpty);
+    expect(runtime.calls, <String>['firebase', 'remote-config']);
   });
 
-  test('derives only after current typed consent is approved', () async {
+  test('derives only after consent and both gates pass', () async {
     final derivative = _RecordingDerivativeCreator();
-    final client = _client();
+    final runtime = _RecordingRuntime();
     final coordinator = BrokerResearchCoordinator(
-      consentProvider: const _FixedConsentProvider(
-        BrokerResearchConsent.approved(
-          scope: BrokerConsentScope.imageOnly,
-          copyVersion: 'research-consent-v1',
-        ),
-      ),
       derivativeCreator: derivative,
-      client: client,
+      client: _client(runtime),
     );
 
     final result = await coordinator.submitSource(
-      source: File('/current-consent-permits-derivative.jpg'),
-      authorization: await _authorization(client),
+      consent: _consent,
+      requestId: _requestId,
+      resolveSource: () async =>
+          File('/current-consent-permits-derivative.jpg'),
     );
 
     expect(
@@ -77,22 +84,11 @@ void main() {
   });
 }
 
-class _FixedConsentProvider implements BrokerResearchConsentProvider {
-  const _FixedConsentProvider(this.value);
-
-  final BrokerResearchConsent? value;
-
-  @override
-  Future<BrokerResearchConsent?> currentApprovedConsent() async => value;
-}
-
-class _ThrowingConsentProvider implements BrokerResearchConsentProvider {
-  const _ThrowingConsentProvider();
-
-  @override
-  Future<BrokerResearchConsent?> currentApprovedConsent() =>
-      throw StateError('consent storage unavailable');
-}
+const _requestId = '11111111-1111-4111-8111-111111111111';
+const _consent = BrokerResearchConsent.approved(
+  scope: BrokerConsentScope.imageOnly,
+  copyVersion: 'research-consent-v1',
+);
 
 class _RecordingDerivativeCreator implements ResearchImageDerivativeCreator {
   final sources = <File>[];
@@ -107,10 +103,10 @@ class _RecordingDerivativeCreator implements ResearchImageDerivativeCreator {
   }
 }
 
-BrokerHttpClient _client() => BrokerHttpClient(
+BrokerHttpClient _client(_RecordingRuntime runtime) => BrokerHttpClient(
   endpoint: Uri.parse('https://broker.example.test/research'),
-  featureFlags: const AppFeatureFlagService(
-    runtime: _NoopRuntime(),
+  featureFlags: AppFeatureFlagService(
+    runtime: runtime,
     isReleaseMode: true,
     targetPlatform: TargetPlatform.android,
     brokerClientEnabled: true,
@@ -118,21 +114,17 @@ BrokerHttpClient _client() => BrokerHttpClient(
     remoteConfigEnabled: true,
     brokerEndpoint: 'https://broker.example.test/research',
   ),
-  firebaseRuntime: const _NoopRuntime(),
+  firebaseRuntime: runtime,
   transport: const _NoopTransport(),
   connectivity: const _NoopConnectivity(),
   retryStore: const _NoopRetryStore(),
 );
 
-Future<BrokerResearchAuthorization> _authorization(
-  BrokerHttpClient client,
-) async {
-  final gate = await client.authorizeAfterConsent();
-  return gate.authorization!;
-}
+class _RecordingRuntime implements FirebaseResearchRuntime {
+  _RecordingRuntime({this.onlineEnabled = true});
 
-class _NoopRuntime implements FirebaseResearchRuntime {
-  const _NoopRuntime();
+  final bool onlineEnabled;
+  final calls = <String>[];
 
   @override
   String? currentUserId() => null;
@@ -141,20 +133,23 @@ class _NoopRuntime implements FirebaseResearchRuntime {
   Future<String?> authToken({required bool forceRefresh}) async => null;
 
   @override
-  Future<bool> fetchOnlineResearchEnabled() async => true;
+  Future<bool> fetchOnlineResearchEnabled() async {
+    calls.add('remote-config');
+    return onlineEnabled;
+  }
 
   @override
-  Future<void> initializeAppCheck() async {}
+  Future<void> initializeAppCheck() async => calls.add('app-check');
 
   @override
-  Future<void> initializeFirebase() async {}
+  Future<void> initializeFirebase() async => calls.add('firebase');
 
   @override
   Future<String?> limitedUseAppCheckToken({required bool forceRefresh}) async =>
       null;
 
   @override
-  Future<void> signInAnonymously() async {}
+  Future<void> signInAnonymously() async => calls.add('anonymous-auth');
 }
 
 class _NoopTransport implements BrokerHttpTransport {
@@ -165,7 +160,7 @@ class _NoopTransport implements BrokerHttpTransport {
     required Uri endpoint,
     required Map<String, String> headers,
     required String body,
-  }) => throw UnimplementedError();
+  }) => throw StateError('transport must not run');
 }
 
 class _NoopConnectivity implements BrokerConnectivity {

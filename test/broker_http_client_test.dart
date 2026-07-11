@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
@@ -9,6 +10,20 @@ import 'package:my_art_collection/app/config/app_feature_flags.dart';
 import 'package:my_art_collection/app/research/broker_http_client.dart';
 import 'package:my_art_collection/app/research/broker_payload.dart';
 import 'package:my_art_collection/app/research/firebase_research_runtime.dart';
+
+extension _BrokerHttpClientTestCalls on BrokerHttpClient {
+  Future<BrokerClientResult> submit(BrokerRequestPayload payload) =>
+      submitAfterConsent(
+        requestId: payload.requestId,
+        consent: payload.consent,
+        preparePayload: () async => payload,
+      );
+
+  Future<BrokerClientResult> retry(
+    String requestId, {
+    required BrokerResearchConsent consent,
+  }) => retryAfterConsent(requestId, consent: consent);
+}
 
 void main() {
   const endpoint = 'https://broker.example.test/research';
@@ -188,7 +203,73 @@ void main() {
   );
 
   test(
-    'requires matching current typed consent before retry Firebase or network work',
+    'one orchestrated submission rejects mismatched consent or request bindings before identity work',
+    () async {
+      final request = _payload();
+      final runtime = _RecordingRuntime();
+      final transport = _RecordingTransport();
+      final client = _client(runtime: runtime, transport: transport);
+      const differentConsent = BrokerResearchConsent.approved(
+        scope: BrokerConsentScope.imagePlusDraftHints,
+        copyVersion: 'research-consent-v1',
+      );
+
+      final consentMismatch = await client.submitAfterConsent(
+        requestId: request.requestId,
+        consent: differentConsent,
+        preparePayload: () async => request,
+      );
+      expect(consentMismatch.failure!.code, 'consent_required');
+      expect(runtime.calls, <String>['firebase', 'remote-config']);
+      expect(transport.requests, isEmpty);
+
+      final requestMismatch = await client.submitAfterConsent(
+        requestId: '22222222-2222-4222-8222-222222222222',
+        consent: request.consent,
+        preparePayload: () async => request,
+      );
+      expect(requestMismatch.failure!.code, 'consent_required');
+      expect(transport.requests, isEmpty);
+    },
+  );
+
+  test(
+    'concurrent duplicate request operations consume only one operation',
+    () async {
+      final request = _payload();
+      final runtime = _RecordingRuntime();
+      final client = _client(
+        runtime: runtime,
+        transport: _RecordingTransport(),
+        connectivity: const _FixedConnectivity(false),
+      );
+      final prepared = Completer<void>();
+      final first = client.submitAfterConsent(
+        requestId: request.requestId,
+        consent: request.consent,
+        preparePayload: () async {
+          await prepared.future;
+          return request;
+        },
+      );
+      await Future<void>.delayed(Duration.zero);
+
+      final second = await client.submitAfterConsent(
+        requestId: request.requestId,
+        consent: request.consent,
+        preparePayload: () async => request,
+      );
+      expect(second.failure!.code, 'request_in_flight');
+      expect(runtime.calls, <String>['firebase', 'remote-config']);
+
+      prepared.complete();
+      final firstResult = await first;
+      expect(firstResult.failure!.code, 'offline');
+    },
+  );
+
+  test(
+    'requires matching current typed consent before retry identity or network work',
     () async {
       final request = _payload();
       final store = _MemoryRetryStore();
@@ -217,13 +298,13 @@ void main() {
           );
 
       expect(result.failure!.code, 'consent_required');
-      expect(runtime.calls, isEmpty);
+      expect(runtime.calls, <String>['firebase', 'remote-config']);
       expect(transport.requests, isEmpty);
     },
   );
 
   test(
-    'rejects a frozen retry whose embedded consent differs before Firebase work',
+    'rejects a frozen retry whose embedded consent differs before identity work',
     () async {
       final request = _payload();
       final requestBody = request.toRequest()
@@ -247,13 +328,13 @@ void main() {
       ).retry(request.requestId, consent: request.consent);
 
       expect(result.failure!.code, 'retry_not_available');
-      expect(runtime.calls, isEmpty);
+      expect(runtime.calls, <String>['firebase', 'remote-config']);
       expect(transport.requests, isEmpty);
     },
   );
 
   test(
-    'strictly rejects tampered frozen requests before Firebase or transport work',
+    'strictly rejects tampered frozen requests before identity or transport work',
     () async {
       final request = _payload();
       final original = request.toRequest();
@@ -293,14 +374,14 @@ void main() {
         ).retry(request.requestId, consent: request.consent);
 
         expect(result.failure!.code, 'retry_not_available');
-        expect(runtime.calls, isEmpty);
+        expect(runtime.calls, <String>['firebase', 'remote-config']);
         expect(transport.requests, isEmpty);
       }
     },
   );
 
   test(
-    'rejects present null frozen draft hint keys before Firebase or transport work',
+    'rejects present null frozen draft hint keys before identity or transport work',
     () async {
       final request = BrokerRequestPayload(
         requestId: '11111111-1111-4111-8111-111111111111',
@@ -351,7 +432,10 @@ void main() {
         ).retry(request.requestId, consent: request.consent);
 
         expect(result.failure!.code, 'retry_not_available', reason: key);
-        expect(runtime.calls, isEmpty, reason: key);
+        expect(runtime.calls, <String>[
+          'firebase',
+          'remote-config',
+        ], reason: key);
         expect(transport.requests, isEmpty, reason: key);
       }
     },
@@ -731,6 +815,59 @@ void main() {
     await client.cancel(request.requestId);
     expect(await store.read(request.requestId), isNull);
   });
+
+  test(
+    'file retry storage enforces a strict 24-hour maximum on save and restore',
+    () async {
+      final root = await Directory.systemTemp.createTemp(
+        'broker-retry-maximum-',
+      );
+      addTearDown(() => root.delete(recursive: true));
+      const requestId = '11111111-1111-4111-8111-111111111111';
+      final now = DateTime.utc(2026, 7, 11, 12);
+      final store = await FileBrokerRetryStore.openAt(root, now: () => now);
+      final request = FrozenBrokerRequest(
+        requestId: requestId,
+        payloadHash:
+            'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        body: '{"data":{}}',
+        consent: const BrokerResearchConsent.approved(
+          scope: BrokerConsentScope.imageOnly,
+          copyVersion: 'research-consent-v1',
+        ),
+        retentionExpiresAt: now.add(const Duration(hours: 24, microseconds: 1)),
+      );
+
+      await store.save(request);
+      final file = File('${root.path}/$requestId.json');
+      final persisted =
+          jsonDecode(await file.readAsString()) as Map<String, Object?>;
+      final maximum = now.add(FileBrokerRetryStore.retentionDuration);
+      expect(persisted['retention_expires_at'], maximum.toIso8601String());
+      expect((await store.read(requestId))!.retentionExpiresAt, maximum);
+
+      final farFuture = Map<String, Object?>.from(persisted)
+        ..['retention_expires_at'] = now
+            .add(const Duration(hours: 48))
+            .toIso8601String();
+      await file.writeAsString(jsonEncode(farFuture));
+      expect(await store.read(requestId), isNull);
+      expect(await file.exists(), isFalse);
+
+      final malformedTimezone = Map<String, Object?>.from(persisted)
+        ..['retention_started_at'] = '2026-07-11T12:00:00';
+      await file.writeAsString(jsonEncode(malformedTimezone));
+      expect(await store.read(requestId), isNull);
+      expect(await file.exists(), isFalse);
+
+      await store.save(request);
+      final atBoundary = await FileBrokerRetryStore.openAt(
+        root,
+        now: () => maximum,
+      );
+      expect(await atBoundary.read(requestId), isNull);
+    },
+  );
 }
 
 String _canonicalPayloadHash(Map<String, Object?> request) => sha256

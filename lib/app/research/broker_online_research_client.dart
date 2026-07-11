@@ -6,7 +6,6 @@ import '../storage/artwork_record.dart';
 import '../storage/local_artwork_repository.dart';
 import '../storage/local_attachment_store.dart';
 import 'broker_http_client.dart';
-import 'broker_payload.dart' as broker;
 import 'broker_research_coordinator.dart';
 import 'image_derivative_service.dart';
 import 'online_research_service.dart';
@@ -78,8 +77,8 @@ class LocalBrokerResearchImageSource implements BrokerResearchImageSource {
 
 /// Bridges the typed #188 broker client into the existing persisted research UI.
 /// It has no fixture fallback and only accepts a typed consent supplied after UI
-/// confirmation. Resolving an attachment returns a path; image bytes are read by
-/// [BrokerResearchCoordinator] only after that consent is checked.
+/// confirmation. The coordinator resolves the attachment only after the
+/// consent-bound client operation passes both gates.
 class BrokerOnlineResearchClient implements RetryableOnlineResearchClient {
   BrokerOnlineResearchClient({
     required this.imageSource,
@@ -104,28 +103,14 @@ class BrokerOnlineResearchClient implements RetryableOnlineResearchClient {
         ),
       );
     }
-    final gate = await httpClient.authorizeAfterConsent();
-    if (!gate.isAuthorized) {
-      throw BrokerResearchFailureException.fromFailure(gate.failure!);
-    }
-    final source = await imageSource.primaryImage(request.artworkId);
-    if (source == null) {
-      throw BrokerResearchFailureException.fromFailure(
-        const BrokerClientFailure(
-          code: 'image_unavailable',
-          message: 'The selected image is unavailable.',
-        ),
-      );
-    }
     final requestId = _newRequestId();
     final result =
         await BrokerResearchCoordinator(
-          consentProvider: _FixedConsentProvider(consent),
           derivativeCreator: derivativeCreator,
           client: httpClient,
         ).submitSource(
-          source: source,
-          authorization: gate.authorization!,
+          resolveSource: () => imageSource.primaryImage(request.artworkId),
+          consent: consent,
           requestId: requestId,
           draftHints: request.brokerDraftHints,
         );
@@ -146,15 +131,10 @@ class BrokerOnlineResearchClient implements RetryableOnlineResearchClient {
         ),
       );
     }
-    final gate = await httpClient.authorizeAfterConsent();
-    if (!gate.isAuthorized) {
-      throw BrokerResearchFailureException.fromFailure(gate.failure!);
-    }
     final result = await BrokerResearchCoordinator(
-      consentProvider: _FixedConsentProvider(consent),
       derivativeCreator: derivativeCreator,
       client: httpClient,
-    ).retry(requestId, authorization: gate.authorization!);
+    ).retry(requestId, consent: consent);
     return _jobFromResult(request, result, requestId);
   }
 
@@ -361,14 +341,6 @@ _BrokerFailurePresentation _presentationForFailure(
       BrokerResearchFailureAction.none,
     ),
   };
-}
-
-class _FixedConsentProvider implements BrokerResearchConsentProvider {
-  const _FixedConsentProvider(this.consent);
-  final broker.BrokerResearchConsent consent;
-  @override
-  Future<broker.BrokerResearchConsent?> currentApprovedConsent() async =>
-      consent;
 }
 
 ResearchConfidence _confidence(String value) => switch (value) {
