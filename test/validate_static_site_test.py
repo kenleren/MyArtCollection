@@ -421,6 +421,94 @@ class StaticSiteValidatorTest(unittest.TestCase):
                 path = self.write_page(route, title="Archivale", headline="Archivale")
                 self.assertEqual([], self.errors_for(path))
 
+    def test_link_rel_tokens_require_one_exact_normalized_relation(self) -> None:
+        mixed_rel_values = (
+            "canonical prefetch",
+            "PREFETCH CANONICAL",
+            "canonical\tpreload",
+            "canonical&#x20;prefetch",
+            "canonical canonical",
+            "stylesheet preconnect",
+            "stylesheet\ncanonical",
+        )
+        for rel in mixed_rel_values:
+            with self.subTest(rel=rel):
+                path = self.write_page()
+                if "stylesheet" in rel.lower():
+                    old = '<link rel="stylesheet" href="/styles.css">'
+                    href = "/styles.css"
+                else:
+                    old = '<link rel="canonical" href="https://archivale.app/">'
+                    href = "https://archivale.app/"
+                self.mutate(path, old, f'<link rel="{rel}" href="{href}">')
+                self.assert_error(self.errors_for(path), "unexpected link resource")
+
+        exact_form_mutations = (
+            (
+                '<link rel="canonical" href="https://archivale.app/">',
+                '<link rel="canonical" href="https://archivale.app/" media="all">',
+                "link attributes differ",
+            ),
+            (
+                '<link rel="stylesheet" href="/styles.css">',
+                '</head><body><link rel="stylesheet" href="/styles.css">',
+                "link resources must be in head",
+            ),
+        )
+        for old, new, expected in exact_form_mutations:
+            with self.subTest(expected=expected):
+                path = self.write_page()
+                self.mutate(path, old, new)
+                self.assert_error(self.errors_for(path), expected)
+
+        normalized_rel_values = (
+            ("canonical", "  CaNoNiCaL\t"),
+            ("stylesheet", "\n STYLEsheet  "),
+        )
+        for original, normalized in normalized_rel_values:
+            with self.subTest(rel=normalized):
+                path = self.write_page()
+                if original == "canonical":
+                    old = '<link rel="canonical" href="https://archivale.app/">'
+                    href = "https://archivale.app/"
+                else:
+                    old = '<link rel="stylesheet" href="/styles.css">'
+                    href = "/styles.css"
+                self.mutate(path, old, f'<link rel="{normalized}" href="{href}">')
+                self.assertEqual([], self.errors_for(path))
+
+    def test_css_url_request_surfaces_fail_after_normalization(self) -> None:
+        attributes = (
+            'fill="url(https://tracker.example/paint.svg#x)"',
+            'FILTER=" URL(  &#x68;ttps://tracker.example/filter.svg#x  ) "',
+            'mask="u\\72l(//tracker.example/mask.svg#x)"',
+            'clip-path="url( /assets/shapes.svg#clip )"',
+            'cursor="url(data:image/svg+xml,tracker)"',
+            'marker-start="\\75 \\72 \\6c (https://tracker.example/marker.svg#x)"',
+            'background="url(https%3A%2F%2Ftracker.example%2Fpixel.png)"',
+            'fill="u\\72l\\28 https://tracker.example/paint.svg#x\\29"',
+            'style="fill: u/**/rl(https://tracker.example/paint.svg#x)"',
+        )
+        for attribute in attributes:
+            with self.subTest(attribute=attribute):
+                path = self.write_page()
+                self.mutate(path, "</body>", f"<svg><rect {attribute}></rect></svg></body>")
+                self.assert_error(self.errors_for(path), "request-bearing CSS url()")
+
+    def test_harmless_svg_presentation_values_and_local_fragments_pass(self) -> None:
+        path = self.write_page()
+        svg = (
+            '<svg aria-hidden="true">'
+            '<defs><filter id="soft"></filter><mask id="fade"></mask>'
+            '<marker id="dot"></marker></defs>'
+            '<rect fill="#123456" stroke="none" filter="url( #soft )" '
+            'mask="url(&quot;#fade&quot;)" marker-end="url(#dot)" '
+            'clip-path="none" cursor="default"></rect>'
+            "</svg>"
+        )
+        self.mutate(path, "</body>", f"{svg}</body>")
+        self.assertEqual([], self.errors_for(path))
+
     def test_unsafe_hidden_social_and_nested_schema_copy_fail(self) -> None:
         path = self.write_page()
         self.mutate(path, "Careful records for", "Authenticity confirmed for")

@@ -153,6 +153,11 @@ UNSAFE_METADATA_PATTERNS = [
     r"\bcertified provenance\b",
 ]
 
+CSS_COMMENT_PATTERN = re.compile(r"/\*.*?\*/", re.DOTALL)
+CSS_ESCAPE_PATTERN = re.compile(r"\\([0-9a-fA-F]{1,6})(?:[\t\n\f\r ]|$)?|\\(.)", re.DOTALL)
+CSS_URL_PATTERN = re.compile(r"url[\t\n\f\r ]*\((.*?)\)", re.IGNORECASE | re.DOTALL)
+LOCAL_CSS_FRAGMENT_PATTERN = re.compile(r"#[A-Za-z_][A-Za-z0-9_.:-]*")
+
 SUPPORT_COPY_BANNED_PATTERNS = [
     r"\bbackend\b",
     r"\bbeta\b",
@@ -292,6 +297,38 @@ class SiteParser(HTMLParser):
 
     def error(self, message: str) -> None:
         self.errors.append(message)
+
+
+def rel_tokens(value: str | None) -> tuple[str, ...]:
+    """Normalize an HTML space-separated rel value without hiding duplicates."""
+    return tuple((value or "").lower().split())
+
+
+def normalized_css_value(value: str) -> str:
+    """Remove CSS comments and decode escapes before scanning URL functions."""
+    without_comments = CSS_COMMENT_PATTERN.sub("", value)
+
+    def replace_escape(match: re.Match[str]) -> str:
+        hex_value = match.group(1)
+        if hex_value is not None:
+            codepoint = int(hex_value, 16)
+            return "\ufffd" if codepoint == 0 or codepoint > 0x10FFFF else chr(codepoint)
+        return match.group(2) or ""
+
+    return CSS_ESCAPE_PATTERN.sub(replace_escape, without_comments)
+
+
+def request_bearing_css_urls(value: str) -> list[str]:
+    """Return CSS URL values that may resolve beyond the current document."""
+    normalized = normalized_css_value(value)
+    requests: list[str] = []
+    for match in CSS_URL_PATTERN.finditer(normalized):
+        target = match.group(1).strip()
+        if len(target) >= 2 and target[0] == target[-1] and target[0] in {'"', "'"}:
+            target = target[1:-1].strip()
+        if not LOCAL_CSS_FRAGMENT_PATTERN.fullmatch(target):
+            requests.append(target)
+    return requests
 
 
 def route_for_html(path: Path, site_root: Path = SITE_ROOT) -> str:
@@ -499,7 +536,7 @@ def validate_metadata(
     canonical_tags = [
         (attrs.get("href") or "", section)
         for tag, attrs, section in parser.tags
-        if tag == "link" and "canonical" in (attrs.get("rel") or "").lower().split()
+        if tag == "link" and "canonical" in rel_tokens(attrs.get("rel"))
     ]
     if len(canonical_tags) != 1:
         errors.append(f"{route}: expected one canonical link, found {len(canonical_tags)}")
@@ -598,7 +635,7 @@ def validate_resources(path: Path, parser: SiteParser, site_root: Path) -> list[
     for tag, attrs, section in parser.tags:
         if tag == "style" or "style" in attrs:
             errors.append(f"{route}: inline style/resource expansion is forbidden")
-        for attribute in attrs:
+        for attribute, value in attrs.items():
             if attribute.startswith("on"):
                 errors.append(
                     f"{route}: inline event handler {attribute} is forbidden"
@@ -606,6 +643,10 @@ def validate_resources(path: Path, parser: SiteParser, site_root: Path) -> list[
             elif attribute in FORBIDDEN_REQUEST_ATTRIBUTES:
                 errors.append(
                     f"{route}: request-bearing attribute {attribute} is forbidden"
+                )
+            if value is not None and request_bearing_css_urls(value):
+                errors.append(
+                    f"{route}: request-bearing CSS url() in {attribute} is forbidden"
                 )
         if "src" in attrs and tag not in {"img", "script"}:
             errors.append(f"{route}: unexpected src resource on <{tag}>")
@@ -622,10 +663,14 @@ def validate_resources(path: Path, parser: SiteParser, site_root: Path) -> list[
             elif script_type != "application/ld+json":
                 errors.append(f"{route}: inline executable script is forbidden")
         elif tag == "link":
-            rel = set((attrs.get("rel") or "").lower().split())
-            if "stylesheet" in rel:
+            rel = rel_tokens(attrs.get("rel"))
+            if section != "head":
+                errors.append(f"{route}: link resources must be in head")
+            if set(attrs) != {"href", "rel"}:
+                errors.append(f"{route}: link attributes differ from the frozen allowlist")
+            if rel == ("stylesheet",):
                 stylesheets.append(attrs.get("href") or "")
-            elif "canonical" not in rel:
+            elif rel != ("canonical",):
                 errors.append(f"{route}: unexpected link resource")
         elif tag == "img":
             if section != "body":
