@@ -18,6 +18,7 @@ import 'package:my_art_collection/app/config/app_feature_flags.dart';
 import 'package:my_art_collection/app/research/online_research_service.dart';
 import 'package:my_art_collection/app/import/csv_import_file_picker.dart';
 import 'package:my_art_collection/app/intake/artwork_image_picker.dart';
+import 'package:my_art_collection/app/screens/billing_plan_screen.dart';
 import 'package:my_art_collection/app/screens/prototype_flow.dart';
 import 'package:my_art_collection/app/startup_route.dart';
 import 'package:my_art_collection/app/storage/ai_research_record.dart';
@@ -1445,12 +1446,13 @@ void main() {
     Future<void> captureState({
       required EntitlementState state,
       required String fileName,
+      bool resetAfterCapture = true,
     }) async {
       billing.state = state;
       final boundaryKey = GlobalKey();
       await _configureMobileViewport(tester);
       await tester.pumpWidget(const SizedBox.shrink());
-      await tester.pump();
+      await tester.pumpAndSettle();
       await tester.pumpWidget(
         RepaintBoundary(
           key: boundaryKey,
@@ -1465,16 +1467,22 @@ void main() {
         ),
       );
       await pumpLiveData(tester);
-      tester
-          .state<ScrollableState>(find.byType(Scrollable).first)
-          .position
-          .jumpTo(0);
-      await tester.pump();
+      final billingScrollable = find.descendant(
+        of: find.byKey(const ValueKey('billing-plan-scrollable')),
+        matching: find.byType(Scrollable),
+      );
+      expect(billingScrollable, findsOneWidget);
+      tester.state<ScrollableState>(billingScrollable).position.jumpTo(0);
+      await tester.pumpAndSettle();
+      expect(
+        tester.state<ScrollableState>(billingScrollable).position.pixels,
+        0,
+      );
       await captureBoundaryToArtifacts(
         tester,
         boundaryKey,
         fileName,
-        resetAfterCapture: false,
+        resetAfterCapture: resetAfterCapture,
       );
     }
 
@@ -1484,6 +1492,7 @@ void main() {
         billingStatus: EntitlementBillingStatus.available,
       ),
       fileName: 'issue-193-01-plan-localized-price-mobile.png',
+      resetAfterCapture: false,
     );
     await tester.scrollUntilVisible(find.text('Choose plan'), 300);
     await tester.tap(find.widgetWithText(FilledButton, 'Choose plan'));
@@ -1538,56 +1547,63 @@ void main() {
         ),
         'issue-193-05-expired-unavailable-mobile.png',
       ),
-      (
-        const EntitlementState(
-          plan: EntitlementPlans.free,
-          billingStatus: EntitlementBillingStatus.available,
-          presentation: EntitlementPresentation.playPending,
-        ),
-        'issue-193-06-pending-mobile.png',
-      ),
-      (
-        const EntitlementState(
-          plan: EntitlementPlans.free,
-          billingStatus: EntitlementBillingStatus.available,
-          presentation: EntitlementPresentation.verificationPending,
-        ),
-        'issue-193-07-verifying-mobile.png',
-      ),
-      (
-        const EntitlementState(
-          plan: EntitlementPlans.free,
-          billingStatus: EntitlementBillingStatus.available,
-          presentation: EntitlementPresentation.restoring,
-        ),
-        'issue-193-08-restoring-mobile.png',
-      ),
-      (
-        const EntitlementState(
-          plan: EntitlementPlans.free,
-          billingStatus: EntitlementBillingStatus.available,
-          presentation: EntitlementPresentation.refreshing,
-        ),
-        'issue-193-09-refreshing-mobile.png',
-      ),
-      (
-        const EntitlementState(
-          plan: EntitlementPlans.free,
-          billingStatus: EntitlementBillingStatus.unavailable,
-        ),
-        'issue-193-10-account-change-fallback-mobile.png',
-      ),
-      (
-        const EntitlementState(
-          plan: EntitlementPlans.free,
-          billingStatus: EntitlementBillingStatus.available,
-        ),
-        'issue-193-11-restart-foreground-fallback-mobile.png',
-      ),
     ]) {
       await captureState(state: entry.$1, fileName: entry.$2);
     }
   });
+
+  for (final entry in <(EntitlementState, String)>[
+    (
+      const EntitlementState(
+        plan: EntitlementPlans.free,
+        billingStatus: EntitlementBillingStatus.available,
+        presentation: EntitlementPresentation.playPending,
+      ),
+      'issue-193-06-pending-mobile.png',
+    ),
+    (
+      const EntitlementState(
+        plan: EntitlementPlans.free,
+        billingStatus: EntitlementBillingStatus.available,
+        presentation: EntitlementPresentation.verificationPending,
+      ),
+      'issue-193-07-verifying-mobile.png',
+    ),
+    (
+      const EntitlementState(
+        plan: EntitlementPlans.free,
+        billingStatus: EntitlementBillingStatus.available,
+        presentation: EntitlementPresentation.restoring,
+      ),
+      'issue-193-08-restoring-mobile.png',
+    ),
+    (
+      const EntitlementState(
+        plan: EntitlementPlans.free,
+        billingStatus: EntitlementBillingStatus.available,
+        presentation: EntitlementPresentation.refreshing,
+      ),
+      'issue-193-09-refreshing-mobile.png',
+    ),
+    (
+      const EntitlementState(
+        plan: EntitlementPlans.free,
+        billingStatus: EntitlementBillingStatus.unavailable,
+      ),
+      'issue-193-10-account-change-fallback-mobile.png',
+    ),
+    (
+      const EntitlementState(
+        plan: EntitlementPlans.free,
+        billingStatus: EntitlementBillingStatus.available,
+      ),
+      'issue-193-11-restart-foreground-fallback-mobile.png',
+    ),
+  ]) {
+    testWidgets('captures ${entry.$2}', (tester) async {
+      await _captureIssue193BillingState(tester, entry.$1, entry.$2);
+    });
+  }
 
   testWidgets('collection shell localizes supported mobile locales', (
     WidgetTester tester,
@@ -4505,6 +4521,72 @@ Future<void> captureVisualEvidence(
   await tester.pump();
 }
 
+Future<void> _captureIssue193BillingState(
+  WidgetTester tester,
+  EntitlementState state,
+  String fileName,
+) async {
+  final fixture = await tester.runAsync(_LiveDependencyFixture.create);
+  final testFixture = fixture!;
+  addTearDown(() async => tester.runAsync(testFixture.dispose));
+  final billing = _FakeBillingManagementService(
+    productsValue: const [
+      PlayProduct(
+        id: 'archivale_starter_monthly',
+        title: 'Starter monthly',
+        description: 'Up to 50 active artworks',
+        price: 'NOK 35.00',
+      ),
+    ],
+  );
+  final boundaryKey = GlobalKey();
+  await _configureMobileViewport(tester);
+  await tester.pumpWidget(
+    ArchivaleApp(
+      initialRoute: AppRoutes.billing,
+      dependencies: testFixture.dependenciesWithFlags(
+        entitlementService: billing,
+        billingManagementService: billing,
+      ),
+    ),
+  );
+  await tester.pump();
+  final theme = tester.widget<MaterialApp>(find.byType(MaterialApp)).theme;
+  await tester.pumpWidget(
+    RepaintBoundary(
+      key: boundaryKey,
+      child: AppDependencyScope(
+        dependencies: testFixture.dependenciesWithFlags(
+          entitlementService: billing,
+          billingManagementService: billing,
+        ),
+        child: MaterialApp(
+          title: 'Archivale',
+          theme: theme,
+          home: const BillingPlanScreen(),
+        ),
+      ),
+    ),
+  );
+  await pumpLiveData(tester);
+  billing.publish(state);
+  await tester.pumpAndSettle();
+  final billingScrollable = find.descendant(
+    of: find.byKey(const ValueKey('billing-plan-scrollable')),
+    matching: find.byType(Scrollable),
+  );
+  expect(billingScrollable, findsOneWidget);
+  tester.state<ScrollableState>(billingScrollable).position.jumpTo(0);
+  await tester.pumpAndSettle();
+  expect(tester.state<ScrollableState>(billingScrollable).position.pixels, 0);
+  final surface = tester.renderObject<RenderRepaintBoundary>(
+    find.byKey(const ValueKey('billing-plan-surface')),
+  );
+  await captureRenderedBoundaryToArtifacts(tester, surface, fileName);
+  await tester.pumpWidget(const SizedBox.shrink());
+  await tester.pump();
+}
+
 Future<void> captureArtifactForApp(
   WidgetTester tester, {
   required String routeName,
@@ -4848,6 +4930,21 @@ Future<void> captureBoundaryToArtifacts(
 }) async {
   final boundary =
       boundaryKey.currentContext!.findRenderObject()! as RenderRepaintBoundary;
+  await captureRenderedBoundaryToArtifacts(tester, boundary, fileName);
+
+  if (resetAfterCapture) {
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+  }
+}
+
+Future<void> captureRenderedBoundaryToArtifacts(
+  WidgetTester tester,
+  RenderRepaintBoundary boundary,
+  String fileName,
+) async {
+  boundary.markNeedsPaint();
+  await tester.pump();
   final bytes = await tester.runAsync<Uint8List>(() async {
     final image = await boundary.toImage(pixelRatio: 2);
     final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
@@ -4859,11 +4956,6 @@ Future<void> captureBoundaryToArtifacts(
   outputDirectory.createSync(recursive: true);
   final screenshotFile = File(p.join(outputDirectory.path, fileName));
   screenshotFile.writeAsBytesSync(bytes!);
-
-  if (resetAfterCapture) {
-    await tester.pumpWidget(const SizedBox.shrink());
-    await tester.pump();
-  }
 }
 
 Future<void> _captureIssue136OnDeviceAiImportState(
@@ -5096,6 +5188,11 @@ class _FakeBillingManagementService implements BillingManagementService {
 
   @override
   Stream<EntitlementState> get stateChanges => _stateChanges.stream;
+
+  void publish(EntitlementState next) {
+    state = next;
+    _stateChanges.add(next);
+  }
 
   @override
   Future<bool> acceptBillingDisclosure() async => true;

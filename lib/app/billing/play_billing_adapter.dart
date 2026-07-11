@@ -19,6 +19,7 @@ const _maxLease = Duration(minutes: 15);
 const _maxVerifiedAtFutureSkew = Duration(hours: 24);
 const _functionsRegion = 'us-central1';
 const _callableTimeout = Duration(seconds: 60);
+const _maxUnresolvedRecoveryAttempts = 2;
 
 enum PlayPurchaseState { pending, purchased, restored, canceled, error }
 
@@ -206,6 +207,12 @@ abstract interface class PlayBillingVerifier {
   });
 }
 
+/// Optional sanitized identity-change signal. It carries no account details
+/// and lets the entitlement coordinator clear its memory-only lease promptly.
+abstract interface class PlayBillingIdentityObserver {
+  Stream<void> get billingIdentityChanges;
+}
+
 /// A narrow callable boundary keeps Functions resolution out of startup and
 /// lets tests inspect every callable contract without a Firebase app.
 abstract interface class PlayBillingCallable {
@@ -262,7 +269,8 @@ class _FirebasePlayBillingCallable implements PlayBillingCallable {
       (await _callable.call(data)).data;
 }
 
-class FirebasePlayBillingVerifier implements PlayBillingVerifier {
+class FirebasePlayBillingVerifier
+    implements PlayBillingVerifier, PlayBillingIdentityObserver {
   FirebasePlayBillingVerifier(
     this._runtime, {
     this._callableFactory = const FirebasePlayBillingCallableFactory(),
@@ -272,7 +280,14 @@ class FirebasePlayBillingVerifier implements PlayBillingVerifier {
   final FirebaseResearchRuntime _runtime;
   final PlayBillingCallableFactory _callableFactory;
   final DateTime Function() _now;
+  final StreamController<void> _billingIdentityChanges =
+      StreamController<void>.broadcast();
   bool _identityInitialized = false;
+  StreamSubscription<String?>? _identitySubscription;
+  String? _observedUserId;
+
+  @override
+  Stream<void> get billingIdentityChanges => _billingIdentityChanges.stream;
 
   @override
   Future<String?> ensureBillingIdentity() async {
@@ -282,11 +297,28 @@ class FirebasePlayBillingVerifier implements PlayBillingVerifier {
       await _runtime.signInAnonymously();
       final uid = _runtime.currentUserId();
       _identityInitialized = uid != null;
+      _observeIdentityChanges(uid);
       return uid;
     } catch (_) {
       _identityInitialized = false;
       return null;
     }
+  }
+
+  void _observeIdentityChanges(String? initialUid) {
+    _observedUserId = initialUid;
+    if (_runtime is! FirebaseResearchIdentityObserver ||
+        _identitySubscription != null) {
+      return;
+    }
+    final observer = _runtime as FirebaseResearchIdentityObserver;
+    _identitySubscription = observer.userIdChanges.listen((uid) {
+      if (uid == _observedUserId) return;
+      _observedUserId = uid;
+      if (!_billingIdentityChanges.isClosed) {
+        _billingIdentityChanges.add(null);
+      }
+    });
   }
 
   @override
@@ -424,6 +456,11 @@ class PlayBillingEntitlementService implements BillingManagementService {
     PlayBillingClock? clock,
   }) : _clock = clock ?? SystemPlayBillingClock() {
     _purchaseSubscription = _store.purchaseStream.listen(_onPurchase);
+    if (_verifier case PlayBillingIdentityObserver observer) {
+      _identitySubscription = observer.billingIdentityChanges.listen((_) {
+        handleAccountChange();
+      });
+    }
   }
 
   final PlayBillingStore _store;
@@ -433,6 +470,7 @@ class PlayBillingEntitlementService implements BillingManagementService {
   final StreamController<EntitlementState> _stateChanges =
       StreamController<EntitlementState>.broadcast();
   late final StreamSubscription<PlayPurchase> _purchaseSubscription;
+  StreamSubscription<void>? _identitySubscription;
 
   _Lease? _lease;
   Timer? _leaseExpiryTimer;
@@ -442,6 +480,9 @@ class PlayBillingEntitlementService implements BillingManagementService {
   bool _disposed = false;
   bool _disclosureAccepted = false;
   EntitlementPresentation _presentation = EntitlementPresentation.idle;
+  EntitlementPresentation? _recoveryFallbackPresentation;
+  int _unresolvedRecoveryAttempts = 0;
+  bool _recovering = false;
 
   @override
   Stream<EntitlementState> get stateChanges => _stateChanges.stream;
@@ -566,70 +607,85 @@ class PlayBillingEntitlementService implements BillingManagementService {
 
   @override
   Future<void> restore() async {
-    if (!_disclosureAccepted) {
-      _transitionFree();
-      return;
-    }
-    final entryFence = _beginPreflight(
-      presentation: EntitlementPresentation.restoring,
-    );
-    if (!await _storeAvailable() ||
-        !_isFenceCurrent(entryFence, requireIdentity: true)) {
-      _failPreflight(entryFence);
-      return;
-    }
-    final uid = await _ensureBillingIdentity();
-    if (!_isFenceCurrent(entryFence, requireIdentity: true) || uid == null) {
-      _failPreflight(entryFence);
-      return;
-    }
-    _observeUid(uid);
-    if (!_disclosureAccepted || _currentUid != uid) return;
-    final fence = _beginOperation(uid);
-    try {
-      await _store.restorePurchases();
-    } catch (_) {
-      if (_isFenceCurrent(fence, requireIdentity: true)) {
-        _transitionFree();
-      }
-      return;
-    }
-    if (_isFenceCurrent(fence, requireIdentity: true)) {
-      _transitionFree();
-    }
+    await _recover(EntitlementPresentation.restoring);
   }
 
   @override
   Future<void> refreshForForeground() => _refresh();
   Future<void> refreshForGatedAction() => _refresh();
 
-  Future<void> _refresh() async {
-    final uid = _currentUid;
-    if (!_disclosureAccepted || uid == null) {
+  Future<void> _refresh() => _recover(EntitlementPresentation.refreshing);
+
+  Future<void> _recover(EntitlementPresentation recoveryPresentation) async {
+    final fallbackPresentation = _presentation;
+    final retainUnresolved = _isUnresolved(fallbackPresentation);
+    if (_recovering ||
+        (retainUnresolved &&
+            _unresolvedRecoveryAttempts >= _maxUnresolvedRecoveryAttempts)) {
+      return;
+    }
+    if (!_disclosureAccepted || _currentUid == null) {
       _transitionFree();
       return;
     }
-    final entryFence = _beginPreflight(
-      presentation: EntitlementPresentation.refreshing,
+
+    _beginRecovery(
+      recoveryPresentation,
+      fallbackPresentation,
+      retainUnresolved,
     );
-    if (!_isFenceCurrent(entryFence, requireIdentity: true) ||
-        !await _storeAvailable() ||
-        !_isFenceCurrent(entryFence, requireIdentity: true)) {
-      _failPreflight(entryFence);
+    final fence = _captureFence();
+    if (!_isFenceCurrent(fence, requireIdentity: true)) return;
+    final available = await _storeAvailable();
+    if (!available || !_isFenceCurrent(fence, requireIdentity: true)) {
+      _completeRecovery(fence, unavailable: !available);
       return;
     }
-    final fence = _beginOperation(uid);
     try {
       await _store.restorePurchases();
     } catch (_) {
-      if (_isFenceCurrent(fence, requireIdentity: true)) {
-        _transitionFree();
-      }
+      _completeRecovery(fence);
       return;
     }
-    if (_isFenceCurrent(fence, requireIdentity: true)) {
-      _transitionFree();
+    _completeRecovery(fence);
+  }
+
+  void _beginRecovery(
+    EntitlementPresentation recoveryPresentation,
+    EntitlementPresentation fallbackPresentation,
+    bool retainUnresolved,
+  ) {
+    _recovering = true;
+    _recoveryFallbackPresentation = retainUnresolved
+        ? fallbackPresentation
+        : null;
+    if (retainUnresolved) {
+      _unresolvedRecoveryAttempts++;
+    } else {
+      _generation++;
+      _lease = null;
+      _leaseExpiryTimer?.cancel();
+      _currentRequestId = null;
     }
+    _presentation = recoveryPresentation;
+    _publish();
+  }
+
+  void _completeRecovery(_OperationFence fence, {bool unavailable = false}) {
+    if (!_isFenceCurrent(fence, requireIdentity: true)) return;
+    _recovering = false;
+    final fallbackPresentation = _recoveryFallbackPresentation;
+    _recoveryFallbackPresentation = null;
+    if (fallbackPresentation != null) {
+      _presentation = fallbackPresentation;
+      _publish();
+      return;
+    }
+    _transitionFree(
+      status: unavailable
+          ? EntitlementBillingStatus.unavailable
+          : EntitlementBillingStatus.available,
+    );
   }
 
   @override
@@ -639,6 +695,8 @@ class PlayBillingEntitlementService implements BillingManagementService {
     if (_disposed) return;
     final uid = _currentUid;
     final eventFence = _captureFence();
+    _recovering = false;
+    _recoveryFallbackPresentation = null;
     switch (purchase.state) {
       case PlayPurchaseState.pending:
         _transitionFree(presentation: EntitlementPresentation.playPending);
@@ -722,6 +780,7 @@ class PlayBillingEntitlementService implements BillingManagementService {
     _lease = null;
     _currentRequestId = null;
     _leaseExpiryTimer?.cancel();
+    _resetRecoveryAttempts();
     _presentation = presentation;
     _publish();
     return _captureFence();
@@ -738,6 +797,7 @@ class PlayBillingEntitlementService implements BillingManagementService {
     _lease = null;
     _currentUid = uid;
     _currentRequestId = _newRequestId();
+    _resetRecoveryAttempts();
     return _captureFence();
   }
 
@@ -786,11 +846,25 @@ class PlayBillingEntitlementService implements BillingManagementService {
     _leaseExpiryTimer?.cancel();
     _currentRequestId = null;
     _presentation = presentation;
+    _resetRecoveryAttempts();
     if (clearPurchase) {
       _currentUid = null;
       _disclosureAccepted = false;
     }
     _publish(status: status);
+  }
+
+  bool _isUnresolved(EntitlementPresentation presentation) =>
+      presentation == EntitlementPresentation.verificationPending ||
+      presentation == EntitlementPresentation.inFlight ||
+      presentation == EntitlementPresentation.playPending ||
+      presentation == EntitlementPresentation.delayedVerification ||
+      presentation == EntitlementPresentation.acknowledgementRecovery;
+
+  void _resetRecoveryAttempts() {
+    _recovering = false;
+    _recoveryFallbackPresentation = null;
+    _unresolvedRecoveryAttempts = 0;
   }
 
   Future<bool> _storeAvailable() async {
@@ -863,6 +937,7 @@ class PlayBillingEntitlementService implements BillingManagementService {
   Future<void> dispose() async {
     _disposed = true;
     _transitionFree(clearPurchase: true);
+    await _identitySubscription?.cancel();
     await _purchaseSubscription.cancel();
     await _stateChanges.close();
   }

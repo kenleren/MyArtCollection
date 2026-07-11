@@ -275,6 +275,84 @@ void main() {
       }
     },
   );
+
+  testWidgets('no-result recovery keeps unresolved purchase choices disabled', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(800, 1200);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(() {
+      tester.view.resetPhysicalSize();
+      tester.view.resetDevicePixelRatio();
+    });
+    fixture.service.state = const EntitlementState(
+      plan: EntitlementPlans.free,
+      billingStatus: EntitlementBillingStatus.available,
+      presentation: EntitlementPresentation.playPending,
+    );
+    fixture.service.productsValue = const <PlayProduct>[
+      PlayProduct(
+        id: 'archivale_starter_monthly',
+        title: 'Starter monthly',
+        description: 'Up to 50 active artworks',
+        price: 'NOK 35.00',
+      ),
+    ];
+    await _pump(tester, fixture);
+    await tester.scrollUntilVisible(find.text('Restore purchases'), 300);
+
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Restore purchases'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Continue'));
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.widgetWithText(OutlinedButton, 'Refresh plan status'),
+    );
+    await tester.pumpAndSettle();
+
+    expect(fixture.service.restoreCalls, 1);
+    expect(fixture.service.foregroundRefreshes, greaterThanOrEqualTo(2));
+    expect(
+      tester
+          .widget<FilledButton>(
+            find.widgetWithText(FilledButton, 'Choose plan'),
+          )
+          .onPressed,
+      isNull,
+    );
+  });
+
+  testWidgets('stale async billing load cannot overwrite a Free fallback', (
+    tester,
+  ) async {
+    fixture.service.state = const EntitlementState(
+      plan: EntitlementPlans.starter,
+      billingStatus: EntitlementBillingStatus.available,
+      lifecycle: EntitlementLifecycle.active,
+    );
+    final products = Completer<List<PlayProduct>>();
+    fixture.service.productsNext = () => products.future;
+    await tester.pumpWidget(
+      ArchivaleApp(
+        initialRoute: AppRoutes.billing,
+        dependencies: fixture.dependencies,
+      ),
+    );
+    await tester.pump();
+
+    fixture.service.publish(
+      const EntitlementState(
+        plan: EntitlementPlans.free,
+        billingStatus: EntitlementBillingStatus.unavailable,
+      ),
+    );
+    await tester.pump();
+    products.complete(const <PlayProduct>[]);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Free plan', skipOffstage: false), findsOneWidget);
+    expect(find.textContaining('Play billing is unavailable'), findsOneWidget);
+  });
 }
 
 Future<void> _pump(WidgetTester tester, _BillingFixture fixture) async {
@@ -331,6 +409,7 @@ class _FakeBillingService implements BillingManagementService {
   int restoreCalls = 0;
   int foregroundRefreshes = 0;
   int productReads = 0;
+  FutureOr<List<PlayProduct>> Function()? productsNext;
   final List<String> purchases = [];
   final StreamController<EntitlementState> _stateChanges =
       StreamController<EntitlementState>.broadcast();
@@ -366,7 +445,7 @@ class _FakeBillingService implements BillingManagementService {
   @override
   Future<List<PlayProduct>> products() async {
     productReads++;
-    return productsValue;
+    return await (productsNext?.call() ?? productsValue);
   }
 
   @override

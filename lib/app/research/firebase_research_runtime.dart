@@ -25,7 +25,14 @@ abstract interface class FirebaseResearchRuntime {
   Future<String?> limitedUseAppCheckToken({required bool forceRefresh});
 }
 
-class FlutterFirebaseResearchRuntime implements FirebaseResearchRuntime {
+/// Optional identity notifications for consumers that need to discard
+/// in-memory authority as soon as Firebase Auth changes.
+abstract interface class FirebaseResearchIdentityObserver {
+  Stream<String?> get userIdChanges;
+}
+
+class FlutterFirebaseResearchRuntime
+    implements FirebaseResearchRuntime, FirebaseResearchIdentityObserver {
   FlutterFirebaseResearchRuntime({
     FirebaseAuth? auth,
     FirebaseAppCheck? appCheck,
@@ -96,6 +103,10 @@ class FlutterFirebaseResearchRuntime implements FirebaseResearchRuntime {
 
   @override
   String? currentUserId() => _auth.currentUser?.uid;
+
+  @override
+  Stream<String?> get userIdChanges =>
+      _auth.userChanges().map((user) => user?.uid).distinct();
 
   @override
   Future<String?> authToken({required bool forceRefresh}) async {

@@ -20,6 +20,8 @@ class _BillingPlanScreenState extends State<BillingPlanScreen> {
   _BillingAction _action = _BillingAction.idle;
   BillingManagementService? _observedService;
   StreamSubscription<EntitlementState>? _stateSubscription;
+  int _loadGeneration = 0;
+  final ScrollController _scrollController = ScrollController();
 
   BillingManagementService? get _service =>
       AppDependencyScope.of(context).billingManagementService;
@@ -31,6 +33,7 @@ class _BillingPlanScreenState extends State<BillingPlanScreen> {
     if (_observedService != service) {
       _stateSubscription?.cancel();
       _observedService = service;
+      _loadGeneration++;
       _stateSubscription = service?.stateChanges.listen(_onStateChange);
     }
     _refresh();
@@ -39,12 +42,14 @@ class _BillingPlanScreenState extends State<BillingPlanScreen> {
   @override
   void dispose() {
     _stateSubscription?.cancel();
+    _scrollController.dispose();
     super.dispose();
   }
 
   void _onStateChange(EntitlementState state) {
     if (!mounted) return;
     setState(() {
+      _loadGeneration++;
       _state = state;
       _action = _BillingAction.idle;
     });
@@ -59,11 +64,14 @@ class _BillingPlanScreenState extends State<BillingPlanScreen> {
   }
 
   Future<void> _load(BillingManagementService service) async {
+    final loadGeneration = ++_loadGeneration;
     final values = await Future.wait<Object>([
       service.currentState(),
       service.products(),
     ]);
-    if (!mounted) return;
+    if (!mounted || service != _service || loadGeneration != _loadGeneration) {
+      return;
+    }
     setState(() {
       _state = values[0] as EntitlementState;
       _products = values[1] as List<PlayProduct>;
@@ -133,76 +141,81 @@ class _BillingPlanScreenState extends State<BillingPlanScreen> {
     final displayedAction = presentationAction == _BillingAction.idle
         ? _action
         : presentationAction;
-    return Scaffold(
-      appBar: AppBar(title: const Text('Plan and billing')),
-      body: SafeArea(
-        child: ListView(
-          padding: const EdgeInsets.all(20),
-          children: [
-            _BillingPanel(
-              icon: Icons.workspace_premium_outlined,
-              title: '${_state.plan.name} plan',
-              body: _lifecycleCopy(_state),
-            ),
-            const SizedBox(height: 12),
-            if (displayedAction != _BillingAction.idle)
+    return RepaintBoundary(
+      key: const ValueKey('billing-plan-surface'),
+      child: Scaffold(
+        appBar: AppBar(title: const Text('Plan and billing')),
+        body: SafeArea(
+          child: ListView(
+            key: const ValueKey('billing-plan-scrollable'),
+            controller: _scrollController,
+            padding: const EdgeInsets.all(20),
+            children: [
               _BillingPanel(
-                icon: displayedAction.icon,
-                title: displayedAction.title,
-                body: displayedAction.body,
+                icon: Icons.workspace_premium_outlined,
+                title: '${_state.plan.name} plan',
+                body: _lifecycleCopy(_state),
               ),
-            if (displayedAction != _BillingAction.idle)
               const SizedBox(height: 12),
-            if (service == null)
-              const _BillingPanel(
-                icon: Icons.info_outline,
-                title: 'Plan changes unavailable',
-                body:
-                    'This app session cannot connect to Play billing. Your existing artwork records remain available.',
-              )
-            else ...[
-              SizedBox(
-                width: double.infinity,
-                child: OutlinedButton.icon(
-                  onPressed: _canRecover ? _restore : null,
-                  icon: const Icon(Icons.restore_outlined),
-                  label: const Text('Restore purchases'),
+              if (displayedAction != _BillingAction.idle)
+                _BillingPanel(
+                  icon: displayedAction.icon,
+                  title: displayedAction.title,
+                  body: displayedAction.body,
                 ),
-              ),
-              const SizedBox(height: 12),
-              SizedBox(
-                width: double.infinity,
-                child: OutlinedButton.icon(
-                  onPressed: _canRecover ? _refresh : null,
-                  icon: const Icon(Icons.refresh_outlined),
-                  label: const Text('Refresh plan status'),
-                ),
-              ),
-              const SizedBox(height: 12),
-              const _BillingPanel(
-                icon: Icons.lock_outline,
-                title: 'Your existing archive stays available',
-                body:
-                    'A canceled, expired, paused, or unavailable plan does not remove existing artwork records, edits, reports, exports, or supporting documents.',
-              ),
-              const SizedBox(height: 16),
-              Text(
-                'Available plans',
-                style: Theme.of(context).textTheme.titleMedium,
-              ),
-              const SizedBox(height: 8),
-              for (final plan in EntitlementPlans.all) ...[
-                _PlanOffer(
-                  plan: plan,
-                  product: _productFor(plan),
-                  currentPlanId: _state.plan.id,
-                  isBusy: _purchaseBlocked,
-                  onPurchase: () => _purchase(plan),
+              if (displayedAction != _BillingAction.idle)
+                const SizedBox(height: 12),
+              if (service == null)
+                const _BillingPanel(
+                  icon: Icons.info_outline,
+                  title: 'Plan changes unavailable',
+                  body:
+                      'This app session cannot connect to Play billing. Your existing artwork records remain available.',
+                )
+              else ...[
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    onPressed: _canRecover ? _restore : null,
+                    icon: const Icon(Icons.restore_outlined),
+                    label: const Text('Restore purchases'),
+                  ),
                 ),
                 const SizedBox(height: 12),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    onPressed: _canRecover ? _refresh : null,
+                    icon: const Icon(Icons.refresh_outlined),
+                    label: const Text('Refresh plan status'),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                const _BillingPanel(
+                  icon: Icons.lock_outline,
+                  title: 'Your existing archive stays available',
+                  body:
+                      'A canceled, expired, paused, or unavailable plan does not remove existing artwork records, edits, reports, exports, or supporting documents.',
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  'Available plans',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+                const SizedBox(height: 8),
+                for (final plan in EntitlementPlans.all) ...[
+                  _PlanOffer(
+                    plan: plan,
+                    product: _productFor(plan),
+                    currentPlanId: _state.plan.id,
+                    isBusy: _purchaseBlocked,
+                    onPurchase: () => _purchase(plan),
+                  ),
+                  const SizedBox(height: 12),
+                ],
               ],
             ],
-          ],
+          ),
         ),
       ),
     );

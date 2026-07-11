@@ -270,6 +270,39 @@ void main() {
     },
   );
 
+  test(
+    'no-result recovery retains unresolved purchase blocking and is bounded',
+    () async {
+      await preparePurchase();
+      store.emit(
+        purchase(
+          EntitlementPlans.starter,
+          state: PlayPurchaseState.pending,
+          token: 'unresolved-purchase',
+        ),
+      );
+      await tick();
+
+      await service.restore();
+      expect(
+        (await service.currentState()).presentation,
+        EntitlementPresentation.playPending,
+      );
+      await service.refreshForForeground();
+      expect(
+        (await service.currentState()).presentation,
+        EntitlementPresentation.playPending,
+      );
+
+      await service.restore();
+      expect(store.restoreCalls, 2);
+      expect(
+        (await service.currentState()).presentation,
+        EntitlementPresentation.playPending,
+      );
+    },
+  );
+
   test('account switches discard delayed paid verification results', () async {
     await preparePurchase();
     final delayed = Completer<PlayBillingVerification>();
@@ -284,6 +317,21 @@ void main() {
     await tick();
     expect((await service.currentState()).plan, EntitlementPlans.free);
   });
+
+  test(
+    'auth identity notifications immediately clear an active paid lease',
+    () async {
+      await preparePurchase();
+      store.emit(purchase(EntitlementPlans.starter));
+      await tick();
+      expect((await service.currentState()).plan, EntitlementPlans.starter);
+
+      verifier.notifyIdentityChange(null);
+      await tick();
+
+      expect((await service.currentState()).plan, EntitlementPlans.free);
+    },
+  );
 
   test('unavailable store and failed refresh clear a valid lease', () async {
     await preparePurchase();
@@ -807,12 +855,22 @@ class FakeStore implements PlayBillingStore {
   void emit(PlayPurchase purchase) => _purchases.add(purchase);
 }
 
-class FakeVerifier implements PlayBillingVerifier {
+class FakeVerifier implements PlayBillingVerifier, PlayBillingIdentityObserver {
   String? uid = 'uid-a';
   final List<String> accepts = <String>[];
   final List<String> requests = <String>[];
   FutureOr<String?> Function()? identityNext;
   FutureOr<PlayBillingVerification> Function(String request)? next;
+  final StreamController<void> _identityChanges =
+      StreamController<void>.broadcast();
+
+  @override
+  Stream<void> get billingIdentityChanges => _identityChanges.stream;
+
+  void notifyIdentityChange(String? nextUid) {
+    uid = nextUid;
+    _identityChanges.add(null);
+  }
 
   @override
   Future<bool> acceptDisclosure(String requestId) async {
