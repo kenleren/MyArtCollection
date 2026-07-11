@@ -32,6 +32,22 @@ void main() {
     expect(config.forceTestCrashOnStartup, isFalse);
   });
 
+  test(
+    'broker-capable artifacts keep Crashlytics disabled independently of consent',
+    () {
+      final config = CrashTelemetryConfig.fromEnvironment(
+        isReleaseMode: true,
+        targetPlatform: TargetPlatform.android,
+        firebaseAndroid: true,
+        brokerClientEnabled: true,
+        internalBetaCrashlytics: true,
+      );
+
+      expect(config.collectionEnabled, isFalse);
+      expect(config.initializeFirebase, isFalse);
+    },
+  );
+
   test('Crashlytics stays Android-only even with the beta define', () {
     final config = CrashTelemetryConfig.fromEnvironment(
       isReleaseMode: true,

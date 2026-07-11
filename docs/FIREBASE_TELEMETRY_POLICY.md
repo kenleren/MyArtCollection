@@ -129,6 +129,9 @@ Current Android implementation:
   running on Android with both
   `--dart-define=MY_ART_COLLECTION_FIREBASE_ANDROID=true` and
   `--dart-define=MY_ART_COLLECTION_INTERNAL_BETA_CRASHLYTICS=true` present.
+- A broker-capable Android artifact (`MY_ART_COLLECTION_BROKER_CLIENT=true`)
+  rejects the Crashlytics define and does not apply the Crashlytics Gradle
+  plugin. This keeps telemetry configuration independent from research consent.
 - Android manifest defaults set Crashlytics collection to `false`.
 - Firebase initialization is skipped when collection is off, so local/debug
   builds do not require `google-services.json`.
@@ -160,6 +163,11 @@ Runtime fetches are disabled unless the app is an Android release build with
 both `--dart-define=MY_ART_COLLECTION_FIREBASE_ANDROID=true` and
 `--dart-define=MY_ART_COLLECTION_REMOTE_CONFIG=true` present. Otherwise the app
 uses local defaults only.
+
+For online research, the local capability gate is non-Firebase and defaults to
+`false`. Firebase initialization and the `online_research_enabled` Remote
+Config fetch occur only after the collector has supplied typed approved research
+consent. A failed or unavailable post-consent fetch remains disabled.
 
 Current allowlist:
 

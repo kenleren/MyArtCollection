@@ -48,6 +48,9 @@ dependencies:
   firebase_core: ^4.11.0
   firebase_crashlytics: ^5.2.4
   firebase_remote_config: ^6.5.3
+  firebase_auth: ^6.5.4
+  firebase_app_check: ^0.4.5
+  image: ^4.9.1
 
 dev_dependencies:
   flutter_test:

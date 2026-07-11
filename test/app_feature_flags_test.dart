@@ -1,144 +1,186 @@
-import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:my_art_collection/app/config/app_feature_flags.dart';
+import 'package:my_art_collection/app/research/firebase_research_runtime.dart';
 
 void main() {
-  test('online research feature flag defaults to disabled', () {
-    const flags = AppFeatureFlags();
-
-    expect(flags.onlineResearchEnabled, isFalse);
-    expect(
-      AppFeatureFlagKeys.allowlist,
-      containsAll(<String>[AppFeatureFlagKeys.onlineResearchEnabled]),
-    );
-    expect(AppFeatureFlagKeys.allowlist, hasLength(1));
-    expect(
-      AppFeatureFlagDefaults.values[AppFeatureFlagKeys.onlineResearchEnabled],
-      isFalse,
-    );
-  });
-
-  test('online research feature flag can be injected enabled', () {
-    const flags = AppFeatureFlags(onlineResearchEnabled: true);
-
-    expect(flags.onlineResearchEnabled, isTrue);
-  });
-
   test(
-    'feature flag service falls back to defaults when backend fails',
-    () async {
-      final service = AppFeatureFlagService(
-        backend: _ThrowingFeatureFlagBackend(),
+    'local research capability defaults to disabled without Firebase work',
+    () {
+      const service = AppFeatureFlagService(
         isReleaseMode: true,
         targetPlatform: TargetPlatform.android,
+      );
+
+      expect(service.localResearchCapabilityEnabled, isFalse);
+      expect(service.localFlags().localResearchCapabilityEnabled, isFalse);
+      expect(service.localFlags().onlineResearchEnabled, isFalse);
+    },
+  );
+
+  test(
+    'post-consent flag evaluation initializes Firebase before Remote Config',
+    () async {
+      final runtime = _RecordingRuntime(remoteConfigEnabled: true);
+      final service = AppFeatureFlagService(
+        runtime: runtime,
+        isReleaseMode: true,
+        targetPlatform: TargetPlatform.android,
+        brokerClientEnabled: true,
         firebaseAndroid: true,
         remoteConfigEnabled: true,
+        brokerEndpoint: 'https://broker.example.test/research',
       );
 
-      final flags = await service.load();
+      expect(
+        runtime.calls,
+        isEmpty,
+        reason: 'Startup must not touch Firebase.',
+      );
 
-      expect(flags.onlineResearchEnabled, isFalse);
+      final flags = await service.loadAfterConsent();
+
+      expect(flags.localResearchCapabilityEnabled, isTrue);
+      expect(flags.onlineResearchEnabled, isTrue);
+      expect(runtime.calls, ['firebase', 'remote-config']);
     },
   );
 
-  test('feature flag service returns backend value when enabled', () async {
-    final service = AppFeatureFlagService(
-      backend: _EnabledFeatureFlagBackend(),
-      isReleaseMode: true,
-      targetPlatform: TargetPlatform.android,
-      firebaseAndroid: true,
-      remoteConfigEnabled: true,
-    );
+  test(
+    'attacker HTTPS broker endpoint keeps Android local capability disabled',
+    () async {
+      final runtime = _RecordingRuntime(remoteConfigEnabled: true);
+      final service = AppFeatureFlagService(
+        runtime: runtime,
+        isReleaseMode: true,
+        targetPlatform: TargetPlatform.android,
+        brokerClientEnabled: true,
+        firebaseAndroid: true,
+        remoteConfigEnabled: true,
+        brokerEndpoint: 'https://attacker.example/research',
+      );
 
-    final flags = await service.load();
+      expect(service.localResearchCapabilityEnabled, isFalse);
+      expect(
+        service.isConfiguredBrokerEndpoint(
+          Uri.parse('https://attacker.example/research'),
+        ),
+        isFalse,
+      );
 
-    expect(flags.onlineResearchEnabled, isTrue);
+      final flags = await service.loadAfterConsent();
+
+      expect(flags.localResearchCapabilityEnabled, isFalse);
+      expect(flags.onlineResearchEnabled, isFalse);
+      expect(runtime.calls, isEmpty);
+    },
+  );
+
+  test('broker endpoint allowlist requires an exact URI', () {
+    for (final endpoint in <String>[
+      'https://broker.example.test:443/research',
+      'https://broker.example.test/research/',
+      'https://broker.example.test/research?debug=true',
+    ]) {
+      final service = AppFeatureFlagService(
+        runtime: _RecordingRuntime(remoteConfigEnabled: true),
+        isReleaseMode: true,
+        targetPlatform: TargetPlatform.android,
+        brokerClientEnabled: true,
+        firebaseAndroid: true,
+        remoteConfigEnabled: true,
+        brokerEndpoint: endpoint,
+      );
+
+      expect(service.localResearchCapabilityEnabled, isFalse, reason: endpoint);
+      expect(
+        service.isConfiguredBrokerEndpoint(Uri.parse(endpoint)),
+        isFalse,
+        reason: endpoint,
+      );
+    }
   });
 
-  test('feature flag service stays off in non-release builds', () async {
+  test('Remote Config errors fail closed after consent', () async {
+    final runtime = _RecordingRuntime(throwOnRemoteConfig: true);
     final service = AppFeatureFlagService(
-      backend: _EnabledFeatureFlagBackend(),
-      isReleaseMode: false,
-      targetPlatform: TargetPlatform.android,
-      firebaseAndroid: true,
-      remoteConfigEnabled: true,
-    );
-
-    final flags = await service.load();
-
-    expect(flags.onlineResearchEnabled, isFalse);
-  });
-
-  test('feature flag service stays off outside Android', () async {
-    final backend = _CountingEnabledFeatureFlagBackend();
-    final service = AppFeatureFlagService(
-      backend: backend,
+      runtime: runtime,
       isReleaseMode: true,
-      targetPlatform: TargetPlatform.iOS,
+      targetPlatform: TargetPlatform.android,
+      brokerClientEnabled: true,
       firebaseAndroid: true,
       remoteConfigEnabled: true,
+      brokerEndpoint: 'https://broker.example.test/research',
     );
 
-    final flags = await service.load();
+    final flags = await service.loadAfterConsent();
 
+    expect(flags.localResearchCapabilityEnabled, isTrue);
     expect(flags.onlineResearchEnabled, isFalse);
-    expect(backend.calls, 0);
+    expect(runtime.calls, ['firebase', 'remote-config']);
   });
 
   test(
-    'feature flag service requires paired Firebase Android define',
+    'missing compile-time gate does not initialize Firebase after consent',
     () async {
-      final backend = _CountingEnabledFeatureFlagBackend();
+      final runtime = _RecordingRuntime(remoteConfigEnabled: true);
       final service = AppFeatureFlagService(
-        backend: backend,
+        runtime: runtime,
         isReleaseMode: true,
         targetPlatform: TargetPlatform.android,
-        firebaseAndroid: false,
+        brokerClientEnabled: false,
+        firebaseAndroid: true,
         remoteConfigEnabled: true,
+        brokerEndpoint: 'https://broker.example.test/research',
       );
 
-      final flags = await service.load();
+      final flags = await service.loadAfterConsent();
 
+      expect(flags.localResearchCapabilityEnabled, isFalse);
       expect(flags.onlineResearchEnabled, isFalse);
-      expect(backend.calls, 0);
+      expect(runtime.calls, isEmpty);
     },
   );
+}
 
-  test('feature flag service requires explicit Remote Config define', () async {
-    final backend = _CountingEnabledFeatureFlagBackend();
-    final service = AppFeatureFlagService(
-      backend: backend,
-      isReleaseMode: true,
-      targetPlatform: TargetPlatform.android,
-      firebaseAndroid: true,
-      remoteConfigEnabled: false,
-    );
-
-    final flags = await service.load();
-
-    expect(flags.onlineResearchEnabled, isFalse);
-    expect(backend.calls, 0);
+class _RecordingRuntime implements FirebaseResearchRuntime {
+  _RecordingRuntime({
+    this.remoteConfigEnabled = false,
+    this.throwOnRemoteConfig = false,
   });
-}
 
-class _ThrowingFeatureFlagBackend implements AppFeatureFlagBackend {
+  final bool remoteConfigEnabled;
+  final bool throwOnRemoteConfig;
+  final calls = <String>[];
+
   @override
-  Future<bool> onlineResearchEnabled() async {
-    throw StateError('backend unavailable');
+  Future<String?> authToken({required bool forceRefresh}) async => 'auth-token';
+
+  @override
+  Future<bool> fetchOnlineResearchEnabled() async {
+    calls.add('remote-config');
+    if (throwOnRemoteConfig) {
+      throw StateError('Remote Config unavailable');
+    }
+    return remoteConfigEnabled;
   }
-}
-
-class _EnabledFeatureFlagBackend implements AppFeatureFlagBackend {
-  @override
-  Future<bool> onlineResearchEnabled() async => true;
-}
-
-class _CountingEnabledFeatureFlagBackend implements AppFeatureFlagBackend {
-  int calls = 0;
 
   @override
-  Future<bool> onlineResearchEnabled() async {
-    calls += 1;
-    return true;
+  Future<void> initializeAppCheck() async {
+    calls.add('app-check');
+  }
+
+  @override
+  Future<void> initializeFirebase() async {
+    calls.add('firebase');
+  }
+
+  @override
+  Future<String?> limitedUseAppCheckToken({required bool forceRefresh}) async =>
+      'app-check-token';
+
+  @override
+  Future<void> signInAnonymously() async {
+    calls.add('anonymous-auth');
   }
 }

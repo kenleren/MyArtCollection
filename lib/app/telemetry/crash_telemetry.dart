@@ -10,6 +10,9 @@ const _internalBetaCrashlyticsDefine = bool.fromEnvironment(
 const _firebaseAndroidDefine = bool.fromEnvironment(
   'MY_ART_COLLECTION_FIREBASE_ANDROID',
 );
+const _brokerClientDefine = bool.fromEnvironment(
+  'MY_ART_COLLECTION_BROKER_CLIENT',
+);
 const _crashlyticsTestCrashDefine = bool.fromEnvironment(
   'MY_ART_COLLECTION_CRASHLYTICS_TEST_CRASH',
 );
@@ -25,6 +28,7 @@ class CrashTelemetryConfig {
     bool isReleaseMode = kReleaseMode,
     TargetPlatform? targetPlatform,
     bool firebaseAndroid = _firebaseAndroidDefine,
+    bool brokerClientEnabled = _brokerClientDefine,
     bool internalBetaCrashlytics = _internalBetaCrashlyticsDefine,
     bool crashlyticsTestCrash = _crashlyticsTestCrashDefine,
   }) {
@@ -33,6 +37,7 @@ class CrashTelemetryConfig {
         isReleaseMode &&
         effectiveTargetPlatform == TargetPlatform.android &&
         firebaseAndroid &&
+        !brokerClientEnabled &&
         internalBetaCrashlytics;
     return CrashTelemetryConfig(
       collectionEnabled: collectionEnabled,

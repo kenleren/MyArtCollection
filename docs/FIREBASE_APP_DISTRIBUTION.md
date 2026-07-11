@@ -18,6 +18,11 @@ Remote Config fetches are enabled only for Android release builds with both
 `MY_ART_COLLECTION_REMOTE_CONFIG=true` Dart defines, plus the matching Gradle
 environment gate.
 
+For the consent-gated research client, startup remains local-only: the app does
+not initialize Firebase or fetch Remote Config before typed research consent.
+Broker-capable artifacts cannot combine the internal-beta Crashlytics define;
+this is a privacy/build boundary, not a telemetry-consent substitute.
+
 ## Android App
 
 - Android package id: `app.archivale`

@@ -133,6 +133,20 @@ Tests use injected providers, token verifiers, clocks, faults, and Firestore
 fakes. They do not require Firebase emulators, service accounts, provider
 traffic, credentials, collector content, or account mutation.
 
+Demo-only emulator evidence must avoid Firebase `--debug` output and inherited
+credential-bearing environment values. Use a clean environment with a temporary
+home directory, explicit JDK 21, and no service-account, token, provider, or
+signing variables:
+
+```sh
+mkdir -p /tmp/archivale-firebase-emulator-home
+env -i \
+  HOME=/tmp/archivale-firebase-emulator-home \
+  PATH="/opt/homebrew/opt/openjdk@21/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin" \
+  JAVA_HOME=/opt/homebrew/opt/openjdk@21 \
+  npm --prefix backend/broker run test:emulator
+```
+
 ## Hard Boundaries
 
 - No provider key or SDK in mobile.

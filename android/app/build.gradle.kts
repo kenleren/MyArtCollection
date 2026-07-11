@@ -137,6 +137,7 @@ val enableFirebaseAndroid =
         .map { it.equals("true", ignoreCase = true) }
         .getOrElse(false)
 val firebaseAndroidDartDefineEnabled = dartDefineEnabled("MY_ART_COLLECTION_FIREBASE_ANDROID")
+val brokerClientDartDefineEnabled = dartDefineEnabled("MY_ART_COLLECTION_BROKER_CLIENT")
 val crashlyticsDartDefineEnabled =
     dartDefineEnabled("MY_ART_COLLECTION_INTERNAL_BETA_CRASHLYTICS")
 val remoteConfigDartDefineEnabled = dartDefineEnabled("MY_ART_COLLECTION_REMOTE_CONFIG")
@@ -152,6 +153,28 @@ if (crashlyticsDartDefineEnabled && !enableFirebaseAndroid) {
 if (crashlyticsDartDefineEnabled && !firebaseAndroidDartDefineEnabled) {
     throw GradleException(
         "MY_ART_COLLECTION_INTERNAL_BETA_CRASHLYTICS=true requires " +
+            "--dart-define=MY_ART_COLLECTION_FIREBASE_ANDROID=true",
+    )
+}
+
+if (brokerClientDartDefineEnabled && crashlyticsDartDefineEnabled) {
+    throw GradleException(
+        "MY_ART_COLLECTION_BROKER_CLIENT=true cannot be combined with " +
+            "MY_ART_COLLECTION_INTERNAL_BETA_CRASHLYTICS=true. " +
+            "Broker-capable artifacts disable startup Crashlytics independently of research consent.",
+    )
+}
+
+if (brokerClientDartDefineEnabled && !enableFirebaseAndroid) {
+    throw GradleException(
+        "MY_ART_COLLECTION_BROKER_CLIENT=true requires " +
+            "MY_ART_COLLECTION_FIREBASE_ANDROID=true in the Gradle environment",
+    )
+}
+
+if (brokerClientDartDefineEnabled && !firebaseAndroidDartDefineEnabled) {
+    throw GradleException(
+        "MY_ART_COLLECTION_BROKER_CLIENT=true requires " +
             "--dart-define=MY_ART_COLLECTION_FIREBASE_ANDROID=true",
     )
 }
@@ -175,7 +198,9 @@ if (enableFirebaseAndroid) {
         "MY_ART_COLLECTION_FIREBASE_ANDROID=true requires android/app/google-services.json"
     }
     apply(plugin = "com.google.gms.google-services")
-    apply(plugin = "com.google.firebase.crashlytics")
+    if (!brokerClientDartDefineEnabled) {
+        apply(plugin = "com.google.firebase.crashlytics")
+    }
 }
 
 android {
