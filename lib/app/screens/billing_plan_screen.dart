@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../app_dependencies.dart';
@@ -16,6 +18,8 @@ class _BillingPlanScreenState extends State<BillingPlanScreen> {
   EntitlementState _state = const EntitlementState(plan: EntitlementPlans.free);
   List<PlayProduct> _products = const [];
   _BillingAction _action = _BillingAction.idle;
+  BillingManagementService? _observedService;
+  StreamSubscription<EntitlementState>? _stateSubscription;
 
   BillingManagementService? get _service =>
       AppDependencyScope.of(context).billingManagementService;
@@ -23,7 +27,27 @@ class _BillingPlanScreenState extends State<BillingPlanScreen> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    final service = _service;
+    if (_observedService != service) {
+      _stateSubscription?.cancel();
+      _observedService = service;
+      _stateSubscription = service?.stateChanges.listen(_onStateChange);
+    }
     _refresh();
+  }
+
+  @override
+  void dispose() {
+    _stateSubscription?.cancel();
+    super.dispose();
+  }
+
+  void _onStateChange(EntitlementState state) {
+    if (!mounted) return;
+    setState(() {
+      _state = state;
+      _action = _BillingAction.idle;
+    });
   }
 
   Future<void> _refresh() async {
@@ -31,6 +55,10 @@ class _BillingPlanScreenState extends State<BillingPlanScreen> {
     if (service == null) return;
     setState(() => _action = _BillingAction.refreshing);
     await service.refreshForForeground();
+    await _load(service);
+  }
+
+  Future<void> _load(BillingManagementService service) async {
     final values = await Future.wait<Object>([
       service.currentState(),
       service.products(),
@@ -52,7 +80,7 @@ class _BillingPlanScreenState extends State<BillingPlanScreen> {
     final accepted = await service.acceptBillingDisclosure();
     if (accepted) await service.restore();
     if (!mounted) return;
-    await _refresh();
+    await _load(service);
   }
 
   Future<void> _purchase(EntitlementPlan plan) async {
@@ -73,7 +101,6 @@ class _BillingPlanScreenState extends State<BillingPlanScreen> {
           ? _BillingAction.verifying
           : _BillingAction.unavailable,
     );
-    if (started) await _refresh();
   }
 
   Future<bool> _showDisclosure() async {
@@ -102,6 +129,10 @@ class _BillingPlanScreenState extends State<BillingPlanScreen> {
   @override
   Widget build(BuildContext context) {
     final service = _service;
+    final presentationAction = _presentationAction(_state.presentation);
+    final displayedAction = presentationAction == _BillingAction.idle
+        ? _action
+        : presentationAction;
     return Scaffold(
       appBar: AppBar(title: const Text('Plan and billing')),
       body: SafeArea(
@@ -114,13 +145,14 @@ class _BillingPlanScreenState extends State<BillingPlanScreen> {
               body: _lifecycleCopy(_state),
             ),
             const SizedBox(height: 12),
-            if (_action != _BillingAction.idle)
+            if (displayedAction != _BillingAction.idle)
               _BillingPanel(
-                icon: _action.icon,
-                title: _action.title,
-                body: _action.body,
+                icon: displayedAction.icon,
+                title: displayedAction.title,
+                body: displayedAction.body,
               ),
-            if (_action != _BillingAction.idle) const SizedBox(height: 12),
+            if (displayedAction != _BillingAction.idle)
+              const SizedBox(height: 12),
             if (service == null)
               const _BillingPanel(
                 icon: Icons.info_outline,
@@ -132,7 +164,7 @@ class _BillingPlanScreenState extends State<BillingPlanScreen> {
               SizedBox(
                 width: double.infinity,
                 child: OutlinedButton.icon(
-                  onPressed: _action == _BillingAction.idle ? _restore : null,
+                  onPressed: _canRecover ? _restore : null,
                   icon: const Icon(Icons.restore_outlined),
                   label: const Text('Restore purchases'),
                 ),
@@ -141,7 +173,7 @@ class _BillingPlanScreenState extends State<BillingPlanScreen> {
               SizedBox(
                 width: double.infinity,
                 child: OutlinedButton.icon(
-                  onPressed: _action == _BillingAction.idle ? _refresh : null,
+                  onPressed: _canRecover ? _refresh : null,
                   icon: const Icon(Icons.refresh_outlined),
                   label: const Text('Refresh plan status'),
                 ),
@@ -164,7 +196,7 @@ class _BillingPlanScreenState extends State<BillingPlanScreen> {
                   plan: plan,
                   product: _productFor(plan),
                   currentPlanId: _state.plan.id,
-                  isBusy: _action != _BillingAction.idle,
+                  isBusy: _purchaseBlocked,
                   onPurchase: () => _purchase(plan),
                 ),
                 const SizedBox(height: 12),
@@ -184,6 +216,19 @@ class _BillingPlanScreenState extends State<BillingPlanScreen> {
     }
     return null;
   }
+
+  bool get _purchaseBlocked =>
+      _action != _BillingAction.idle || _state.presentation.blocksPurchase;
+
+  bool get _canRecover =>
+      _action == _BillingAction.idle &&
+      (_state.presentation == EntitlementPresentation.idle ||
+          _state.presentation == EntitlementPresentation.verificationPending ||
+          _state.presentation == EntitlementPresentation.inFlight ||
+          _state.presentation == EntitlementPresentation.playPending ||
+          _state.presentation == EntitlementPresentation.delayedVerification ||
+          _state.presentation ==
+              EntitlementPresentation.acknowledgementRecovery);
 }
 
 class _PlanOffer extends StatelessWidget {
@@ -288,18 +333,32 @@ String _lifecycleCopy(EntitlementState state) => switch (state.lifecycle) {
         : 'You are using Free access. Your existing archive stays available.',
 };
 
+_BillingAction _presentationAction(EntitlementPresentation presentation) =>
+    switch (presentation) {
+      EntitlementPresentation.idle => _BillingAction.idle,
+      EntitlementPresentation.verificationPending ||
+      EntitlementPresentation.inFlight ||
+      EntitlementPresentation.delayedVerification => _BillingAction.verifying,
+      EntitlementPresentation.playPending => _BillingAction.pending,
+      EntitlementPresentation.acknowledgementRecovery =>
+        _BillingAction.recovering,
+      EntitlementPresentation.restoring => _BillingAction.restoring,
+      EntitlementPresentation.refreshing => _BillingAction.refreshing,
+    };
+
 enum _BillingAction {
   idle,
   refreshing,
   restoring,
   pending,
   verifying,
+  recovering,
   unavailable;
 
   IconData get icon => switch (this) {
     idle => Icons.info_outline,
     refreshing || restoring => Icons.refresh_outlined,
-    pending => Icons.hourglass_top_outlined,
+    pending || recovering => Icons.hourglass_top_outlined,
     verifying => Icons.verified_outlined,
     unavailable => Icons.error_outline,
   };
@@ -310,6 +369,7 @@ enum _BillingAction {
     restoring => 'Restoring purchases',
     pending => 'Purchase pending',
     verifying => 'Verifying subscription',
+    recovering => 'Recovering subscription verification',
     unavailable => 'Plan change unavailable',
   };
 
@@ -321,6 +381,8 @@ enum _BillingAction {
       'Play is still processing this purchase. Access changes only after verification succeeds.',
     verifying =>
       'Archivale is confirming this subscription. Access changes only after verification succeeds.',
+    recovering =>
+      'Archivale is recovering subscription confirmation. Access changes only after verification succeeds.',
     unavailable =>
       'Play billing or subscription verification is unavailable right now. Archivale remains on Free access.',
   };

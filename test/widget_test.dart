@@ -1449,10 +1449,13 @@ void main() {
       billing.state = state;
       final boundaryKey = GlobalKey();
       await _configureMobileViewport(tester);
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
       await tester.pumpWidget(
         RepaintBoundary(
           key: boundaryKey,
           child: ArchivaleApp(
+            key: ValueKey(fileName),
             initialRoute: AppRoutes.billing,
             dependencies: testFixture.dependenciesWithFlags(
               entitlementService: billing,
@@ -1462,6 +1465,11 @@ void main() {
         ),
       );
       await pumpLiveData(tester);
+      tester
+          .state<ScrollableState>(find.byType(Scrollable).first)
+          .position
+          .jumpTo(0);
+      await tester.pump();
       await captureBoundaryToArtifacts(
         tester,
         boundaryKey,
@@ -1529,6 +1537,52 @@ void main() {
           lifecycle: EntitlementLifecycle.expired,
         ),
         'issue-193-05-expired-unavailable-mobile.png',
+      ),
+      (
+        const EntitlementState(
+          plan: EntitlementPlans.free,
+          billingStatus: EntitlementBillingStatus.available,
+          presentation: EntitlementPresentation.playPending,
+        ),
+        'issue-193-06-pending-mobile.png',
+      ),
+      (
+        const EntitlementState(
+          plan: EntitlementPlans.free,
+          billingStatus: EntitlementBillingStatus.available,
+          presentation: EntitlementPresentation.verificationPending,
+        ),
+        'issue-193-07-verifying-mobile.png',
+      ),
+      (
+        const EntitlementState(
+          plan: EntitlementPlans.free,
+          billingStatus: EntitlementBillingStatus.available,
+          presentation: EntitlementPresentation.restoring,
+        ),
+        'issue-193-08-restoring-mobile.png',
+      ),
+      (
+        const EntitlementState(
+          plan: EntitlementPlans.free,
+          billingStatus: EntitlementBillingStatus.available,
+          presentation: EntitlementPresentation.refreshing,
+        ),
+        'issue-193-09-refreshing-mobile.png',
+      ),
+      (
+        const EntitlementState(
+          plan: EntitlementPlans.free,
+          billingStatus: EntitlementBillingStatus.unavailable,
+        ),
+        'issue-193-10-account-change-fallback-mobile.png',
+      ),
+      (
+        const EntitlementState(
+          plan: EntitlementPlans.free,
+          billingStatus: EntitlementBillingStatus.available,
+        ),
+        'issue-193-11-restart-foreground-fallback-mobile.png',
       ),
     ]) {
       await captureState(state: entry.$1, fileName: entry.$2);
@@ -5037,6 +5091,11 @@ class _FakeBillingManagementService implements BillingManagementService {
     billingStatus: EntitlementBillingStatus.available,
   );
   List<PlayProduct> productsValue;
+  final StreamController<EntitlementState> _stateChanges =
+      StreamController<EntitlementState>.broadcast();
+
+  @override
+  Stream<EntitlementState> get stateChanges => _stateChanges.stream;
 
   @override
   Future<bool> acceptBillingDisclosure() async => true;

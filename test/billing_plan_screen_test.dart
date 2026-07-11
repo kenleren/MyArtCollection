@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -111,6 +112,169 @@ void main() {
     await tester.pumpAndSettle();
     expect(fixture.service.foregroundRefreshes, greaterThanOrEqualTo(1));
   });
+
+  testWidgets('published fallback replaces mounted paid status', (
+    tester,
+  ) async {
+    fixture.service.state = const EntitlementState(
+      plan: EntitlementPlans.starter,
+      billingStatus: EntitlementBillingStatus.available,
+      lifecycle: EntitlementLifecycle.active,
+    );
+    await _pump(tester, fixture);
+    expect(find.text('Starter plan'), findsOneWidget);
+
+    fixture.service.publish(
+      const EntitlementState(
+        plan: EntitlementPlans.free,
+        billingStatus: EntitlementBillingStatus.unavailable,
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Free plan', skipOffstage: false), findsOneWidget);
+    expect(find.textContaining('Play billing is unavailable'), findsOneWidget);
+
+    fixture.service.publish(
+      const EntitlementState(
+        plan: EntitlementPlans.free,
+        billingStatus: EntitlementBillingStatus.available,
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Free plan', skipOffstage: false), findsOneWidget);
+    expect(find.textContaining('using Free access'), findsOneWidget);
+  });
+
+  testWidgets(
+    'deferred purchase verification updates the mounted screen and blocks duplicate purchases',
+    (tester) async {
+      tester.view.physicalSize = const Size(800, 1200);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(() {
+        tester.view.resetPhysicalSize();
+        tester.view.resetDevicePixelRatio();
+      });
+      fixture.service.productsValue = const <PlayProduct>[
+        PlayProduct(
+          id: 'archivale_starter_monthly',
+          title: 'Starter monthly',
+          description: 'Up to 50 active artworks',
+          price: 'NOK 35.00',
+        ),
+      ];
+      await _pump(tester, fixture);
+
+      await tester.scrollUntilVisible(find.text('Choose plan'), 300);
+      await tester.tap(find.widgetWithText(FilledButton, 'Choose plan'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, 'Continue'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Verifying subscription'), findsOneWidget);
+      expect(
+        tester
+            .widget<FilledButton>(
+              find.widgetWithText(FilledButton, 'Choose plan'),
+            )
+            .onPressed,
+        isNull,
+      );
+
+      fixture.service.publish(
+        const EntitlementState(
+          plan: EntitlementPlans.free,
+          billingStatus: EntitlementBillingStatus.available,
+          presentation: EntitlementPresentation.playPending,
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Purchase pending'), findsOneWidget);
+      expect(
+        tester
+            .widget<FilledButton>(
+              find.widgetWithText(FilledButton, 'Choose plan'),
+            )
+            .onPressed,
+        isNull,
+      );
+      expect(
+        tester
+            .widget<OutlinedButton>(
+              find.widgetWithText(OutlinedButton, 'Restore purchases'),
+            )
+            .onPressed,
+        isNotNull,
+      );
+
+      fixture.service.publish(
+        const EntitlementState(
+          plan: EntitlementPlans.starter,
+          billingStatus: EntitlementBillingStatus.available,
+          lifecycle: EntitlementLifecycle.active,
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Starter plan', skipOffstage: false), findsOneWidget);
+      expect(find.text('Verifying subscription'), findsNothing);
+
+      fixture.service.publish(
+        const EntitlementState(
+          plan: EntitlementPlans.free,
+          billingStatus: EntitlementBillingStatus.available,
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Free plan', skipOffstage: false), findsOneWidget);
+      expect(find.text('Verifying subscription'), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'sanitized recovery reasons retain Free authority and block purchase',
+    (tester) async {
+      tester.view.physicalSize = const Size(800, 1200);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(() {
+        tester.view.resetPhysicalSize();
+        tester.view.resetDevicePixelRatio();
+      });
+      fixture.service.productsValue = const <PlayProduct>[
+        PlayProduct(
+          id: 'archivale_starter_monthly',
+          title: 'Starter monthly',
+          description: 'Up to 50 active artworks',
+          price: 'NOK 35.00',
+        ),
+      ];
+      await _pump(tester, fixture);
+      await tester.scrollUntilVisible(find.text('Choose plan'), 300);
+
+      for (final presentation in <EntitlementPresentation>[
+        EntitlementPresentation.verificationPending,
+        EntitlementPresentation.inFlight,
+        EntitlementPresentation.delayedVerification,
+        EntitlementPresentation.acknowledgementRecovery,
+      ]) {
+        fixture.service.publish(
+          EntitlementState(
+            plan: EntitlementPlans.free,
+            billingStatus: EntitlementBillingStatus.available,
+            presentation: presentation,
+          ),
+        );
+        await tester.pumpAndSettle();
+        expect(find.text('Free plan', skipOffstage: false), findsOneWidget);
+        expect(
+          tester
+              .widget<FilledButton>(
+                find.widgetWithText(FilledButton, 'Choose plan'),
+              )
+              .onPressed,
+          isNull,
+        );
+      }
+    },
+  );
 }
 
 Future<void> _pump(WidgetTester tester, _BillingFixture fixture) async {
@@ -168,6 +332,16 @@ class _FakeBillingService implements BillingManagementService {
   int foregroundRefreshes = 0;
   int productReads = 0;
   final List<String> purchases = [];
+  final StreamController<EntitlementState> _stateChanges =
+      StreamController<EntitlementState>.broadcast();
+
+  @override
+  Stream<EntitlementState> get stateChanges => _stateChanges.stream;
+
+  void publish(EntitlementState next) {
+    state = next;
+    _stateChanges.add(next);
+  }
 
   @override
   Future<bool> acceptBillingDisclosure() async {

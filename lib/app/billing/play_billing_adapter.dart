@@ -70,6 +70,9 @@ abstract interface class PlayBillingStore {
 /// tokens, account IDs, verifier responses, or expiry details.
 abstract interface class BillingManagementService
     implements EntitlementService {
+  /// Sanitized state changes for mounted billing UI. This never carries
+  /// purchase, identity, verifier, or expiry details.
+  Stream<EntitlementState> get stateChanges;
   Future<List<PlayProduct>> products();
   Future<bool> acceptBillingDisclosure();
   Future<bool> purchase(EntitlementPlan plan);
@@ -152,13 +155,20 @@ class PlayBillingVerification {
   const PlayBillingVerification._({
     required this.requestId,
     required this.state,
+    this.presentation = EntitlementPresentation.idle,
     this.plan,
     this.productId,
     this.leaseDuration,
   });
 
-  factory PlayBillingVerification.free(String requestId) =>
-      PlayBillingVerification._(requestId: requestId, state: 'free');
+  factory PlayBillingVerification.free(
+    String requestId, {
+    EntitlementPresentation presentation = EntitlementPresentation.idle,
+  }) => PlayBillingVerification._(
+    requestId: requestId,
+    state: 'free',
+    presentation: presentation,
+  );
 
   factory PlayBillingVerification.paid({
     required String requestId,
@@ -179,6 +189,7 @@ class PlayBillingVerification {
   final EntitlementPlan? plan;
   final String? productId;
   final Duration? leaseDuration;
+  final EntitlementPresentation presentation;
 
   bool get isPaid => plan != null && leaseDuration != null;
 }
@@ -344,7 +355,10 @@ PlayBillingVerification _parseVerification(
     return PlayBillingVerification.free(requestId);
   }
   if (raw['state'] == 'free') {
-    return PlayBillingVerification.free(requestId);
+    return PlayBillingVerification.free(
+      requestId,
+      presentation: _presentationForFreeReason(raw['reason']),
+    );
   }
   final planId = raw['planId'];
   final productId = raw['productId'];
@@ -416,14 +430,21 @@ class PlayBillingEntitlementService implements BillingManagementService {
   final PlayBillingVerifier _verifier;
   final PlayBillingClock _clock;
   final Set<String> _inFlightTokens = <String>{};
+  final StreamController<EntitlementState> _stateChanges =
+      StreamController<EntitlementState>.broadcast();
   late final StreamSubscription<PlayPurchase> _purchaseSubscription;
 
   _Lease? _lease;
+  Timer? _leaseExpiryTimer;
   int _generation = 0;
   String? _currentRequestId;
   String? _currentUid;
   bool _disposed = false;
   bool _disclosureAccepted = false;
+  EntitlementPresentation _presentation = EntitlementPresentation.idle;
+
+  @override
+  Stream<EntitlementState> get stateChanges => _stateChanges.stream;
 
   @override
   Future<EntitlementState> currentState() async {
@@ -442,15 +463,11 @@ class PlayBillingEntitlementService implements BillingManagementService {
     }
     final lease = _lease;
     if (!available) {
-      _transitionFree();
+      _transitionFree(status: EntitlementBillingStatus.unavailable);
       return _free(EntitlementBillingStatus.unavailable);
     }
     if (lease != null && _clock.elapsed() < lease.expiresAtElapsed) {
-      return EntitlementState(
-        plan: lease.plan,
-        billingStatus: EntitlementBillingStatus.available,
-        lifecycle: lease.lifecycle,
-      );
+      return _paid(lease);
     }
     if (lease != null) {
       _transitionFree();
@@ -499,7 +516,9 @@ class PlayBillingEntitlementService implements BillingManagementService {
     if (productId == null || !_disclosureAccepted) {
       return false;
     }
-    final entryFence = _beginPreflight();
+    final entryFence = _beginPreflight(
+      presentation: EntitlementPresentation.inFlight,
+    );
     if (!await _storeAvailable() ||
         !_isFenceCurrent(entryFence, requireIdentity: true)) {
       _failPreflight(entryFence);
@@ -537,7 +556,12 @@ class PlayBillingEntitlementService implements BillingManagementService {
       }
       return false;
     }
-    return started && _isFenceCurrent(purchaseFence, requireIdentity: true);
+    if (started && _isFenceCurrent(purchaseFence, requireIdentity: true)) {
+      _presentation = EntitlementPresentation.inFlight;
+      _publish();
+      return true;
+    }
+    return false;
   }
 
   @override
@@ -546,7 +570,9 @@ class PlayBillingEntitlementService implements BillingManagementService {
       _transitionFree();
       return;
     }
-    final entryFence = _beginPreflight();
+    final entryFence = _beginPreflight(
+      presentation: EntitlementPresentation.restoring,
+    );
     if (!await _storeAvailable() ||
         !_isFenceCurrent(entryFence, requireIdentity: true)) {
       _failPreflight(entryFence);
@@ -568,7 +594,9 @@ class PlayBillingEntitlementService implements BillingManagementService {
       }
       return;
     }
-    _isFenceCurrent(fence, requireIdentity: true);
+    if (_isFenceCurrent(fence, requireIdentity: true)) {
+      _transitionFree();
+    }
   }
 
   @override
@@ -581,7 +609,9 @@ class PlayBillingEntitlementService implements BillingManagementService {
       _transitionFree();
       return;
     }
-    final entryFence = _beginPreflight();
+    final entryFence = _beginPreflight(
+      presentation: EntitlementPresentation.refreshing,
+    );
     if (!_isFenceCurrent(entryFence, requireIdentity: true) ||
         !await _storeAvailable() ||
         !_isFenceCurrent(entryFence, requireIdentity: true)) {
@@ -597,7 +627,9 @@ class PlayBillingEntitlementService implements BillingManagementService {
       }
       return;
     }
-    _isFenceCurrent(fence, requireIdentity: true);
+    if (_isFenceCurrent(fence, requireIdentity: true)) {
+      _transitionFree();
+    }
   }
 
   @override
@@ -609,7 +641,8 @@ class PlayBillingEntitlementService implements BillingManagementService {
     final eventFence = _captureFence();
     switch (purchase.state) {
       case PlayPurchaseState.pending:
-        _transitionFree();
+        _transitionFree(presentation: EntitlementPresentation.playPending);
+        return;
       case PlayPurchaseState.canceled:
       case PlayPurchaseState.error:
         _transitionFree(clearPurchase: true);
@@ -633,6 +666,8 @@ class PlayBillingEntitlementService implements BillingManagementService {
 
   Future<void> _verifyPurchase(PlayPurchase purchase, String uid) async {
     final fence = _beginOperation(uid);
+    _presentation = EntitlementPresentation.verificationPending;
+    _publish();
     final verificationStartedAt = _clock.elapsed();
     PlayBillingVerification result;
     try {
@@ -653,7 +688,7 @@ class PlayBillingEntitlementService implements BillingManagementService {
     if (!result.isPaid ||
         result.requestId != fence.requestId ||
         result.productId != purchase.productId) {
-      _transitionFree();
+      _transitionFree(presentation: result.presentation);
       return;
     }
     final duration = result.leaseDuration!;
@@ -675,12 +710,20 @@ class PlayBillingEntitlementService implements BillingManagementService {
           ? EntitlementLifecycle.canceledThroughExpiry
           : EntitlementLifecycle.active,
     );
+    _presentation = EntitlementPresentation.idle;
+    _scheduleLeaseExpiry(_lease!);
+    _publish();
   }
 
-  _OperationFence _beginPreflight() {
+  _OperationFence _beginPreflight({
+    EntitlementPresentation presentation = EntitlementPresentation.idle,
+  }) {
     _generation++;
     _lease = null;
     _currentRequestId = null;
+    _leaseExpiryTimer?.cancel();
+    _presentation = presentation;
+    _publish();
     return _captureFence();
   }
 
@@ -733,14 +776,21 @@ class PlayBillingEntitlementService implements BillingManagementService {
     _currentUid = uid;
   }
 
-  void _transitionFree({bool clearPurchase = false}) {
+  void _transitionFree({
+    bool clearPurchase = false,
+    EntitlementBillingStatus status = EntitlementBillingStatus.available,
+    EntitlementPresentation presentation = EntitlementPresentation.idle,
+  }) {
     _generation++;
     _lease = null;
+    _leaseExpiryTimer?.cancel();
     _currentRequestId = null;
+    _presentation = presentation;
     if (clearPurchase) {
       _currentUid = null;
       _disclosureAccepted = false;
     }
+    _publish(status: status);
   }
 
   Future<bool> _storeAvailable() async {
@@ -774,12 +824,47 @@ class PlayBillingEntitlementService implements BillingManagementService {
     plan: EntitlementPlans.free,
     billingStatus: status,
     lifecycle: EntitlementLifecycle.free,
+    presentation: _presentation,
   );
+
+  EntitlementState _paid(_Lease lease) => EntitlementState(
+    plan: lease.plan,
+    billingStatus: EntitlementBillingStatus.available,
+    lifecycle: lease.lifecycle,
+  );
+
+  void _publish({
+    EntitlementBillingStatus status = EntitlementBillingStatus.available,
+  }) {
+    if (_disposed || _stateChanges.isClosed) return;
+    final lease = _lease;
+    _stateChanges.add(
+      lease != null && _clock.elapsed() < lease.expiresAtElapsed
+          ? _paid(lease)
+          : _free(status),
+    );
+  }
+
+  void _scheduleLeaseExpiry(_Lease lease) {
+    _leaseExpiryTimer?.cancel();
+    final remaining = lease.expiresAtElapsed - _clock.elapsed();
+    if (remaining <= Duration.zero) {
+      _transitionFree();
+      return;
+    }
+    _leaseExpiryTimer = Timer(remaining, () {
+      if (identical(_lease, lease) &&
+          _clock.elapsed() >= lease.expiresAtElapsed) {
+        _transitionFree();
+      }
+    });
+  }
 
   Future<void> dispose() async {
     _disposed = true;
     _transitionFree(clearPurchase: true);
     await _purchaseSubscription.cancel();
+    await _stateChanges.close();
   }
 }
 
@@ -813,6 +898,16 @@ EntitlementPlan? _planForId(Object? id) {
   }
   return null;
 }
+
+EntitlementPresentation _presentationForFreeReason(Object? reason) =>
+    switch (reason) {
+      'verification_pending' => EntitlementPresentation.verificationPending,
+      'in_flight' => EntitlementPresentation.inFlight,
+      'delayed_verification' => EntitlementPresentation.delayedVerification,
+      'acknowledgement_recovery' =>
+        EntitlementPresentation.acknowledgementRecovery,
+      _ => EntitlementPresentation.idle,
+    };
 
 String _obfuscatedAccountId(String uid) => base64Url
     .encode(

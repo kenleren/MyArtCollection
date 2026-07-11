@@ -118,6 +118,82 @@ void main() {
     },
   );
 
+  test(
+    'pending and recovery outcomes retain Free authority and publish sanitized progress',
+    () async {
+      final states = <EntitlementState>[];
+      final subscription = service.stateChanges.listen(states.add);
+      addTearDown(subscription.cancel);
+      await preparePurchase();
+
+      store.emit(
+        purchase(
+          EntitlementPlans.starter,
+          state: PlayPurchaseState.pending,
+          token: 'play-pending',
+        ),
+      );
+      await tick();
+      expect((await service.currentState()).plan, EntitlementPlans.free);
+      expect(states.last.presentation, EntitlementPresentation.playPending);
+
+      for (final presentation in <EntitlementPresentation>[
+        EntitlementPresentation.verificationPending,
+        EntitlementPresentation.inFlight,
+        EntitlementPresentation.delayedVerification,
+        EntitlementPresentation.acknowledgementRecovery,
+      ]) {
+        verifier.next = (request) =>
+            PlayBillingVerification.free(request, presentation: presentation);
+        store.emit(
+          purchase(
+            EntitlementPlans.starter,
+            token: 'free-${presentation.name}',
+          ),
+        );
+        await tick();
+        final state = await service.currentState();
+        expect(state.plan, EntitlementPlans.free);
+        expect(state.presentation, presentation);
+        expect(states.last.plan, EntitlementPlans.free);
+        expect(states.last.presentation, presentation);
+      }
+    },
+  );
+
+  test(
+    'delayed verification publishes pending, verified paid, and verified Free states',
+    () async {
+      final states = <EntitlementState>[];
+      final subscription = service.stateChanges.listen(states.add);
+      addTearDown(subscription.cancel);
+      await preparePurchase();
+      final delayed = Completer<PlayBillingVerification>();
+      verifier.next = (_) => delayed.future;
+
+      store.emit(purchase(EntitlementPlans.starter, token: 'delayed-paid'));
+      await tick();
+      expect(states.last.plan, EntitlementPlans.free);
+      expect(
+        states.last.presentation,
+        EntitlementPresentation.verificationPending,
+      );
+
+      delayed.complete(
+        verifier.paidFor(EntitlementPlans.starter, verifier.requests.single),
+      );
+      await tick();
+      expect(states.last.plan, EntitlementPlans.starter);
+      expect(states.last.presentation, EntitlementPresentation.idle);
+
+      verifier.next = (request) => PlayBillingVerification.free(request);
+      store.emit(purchase(EntitlementPlans.starter, token: 'verified-free'));
+      await tick();
+      expect(states.last.plan, EntitlementPlans.free);
+      expect(states.last.presentation, EntitlementPresentation.idle);
+    },
+  );
+
   test('only a server-paid response can install a paid lease', () async {
     await preparePurchase();
     verifier.next = (request) => PlayBillingVerification.free(request);
@@ -224,6 +300,9 @@ void main() {
   });
 
   test('a verifier exception clears the in-memory lease', () async {
+    final states = <EntitlementState>[];
+    final subscription = service.stateChanges.listen(states.add);
+    addTearDown(subscription.cancel);
     await preparePurchase();
     verifier.next = (request) =>
         verifier.paidFor(EntitlementPlans.starter, request);
@@ -232,7 +311,43 @@ void main() {
     verifier.next = (_) => throw StateError('fake verifier unavailable');
     await service.refreshForGatedAction();
     expect((await service.currentState()).plan, EntitlementPlans.free);
+    await tick();
+    expect(states.last.plan, EntitlementPlans.free);
   });
+
+  test(
+    'foreground failure, account change, and lease expiry publish visible Free fallbacks',
+    () async {
+      final states = <EntitlementState>[];
+      final subscription = service.stateChanges.listen(states.add);
+      addTearDown(subscription.cancel);
+      await preparePurchase();
+      store.emit(purchase(EntitlementPlans.starter));
+      await tick();
+      expect(states.last.plan, EntitlementPlans.starter);
+
+      store.available = false;
+      await service.refreshForForeground();
+      expect(states.last.plan, EntitlementPlans.free);
+
+      store.available = true;
+      await preparePurchase();
+      store.emit(purchase(EntitlementPlans.starter, token: 'account-change'));
+      await tick();
+      service.handleAccountChange();
+      await tick();
+      expect(states.last.plan, EntitlementPlans.free);
+
+      await preparePurchase();
+      store.emit(purchase(EntitlementPlans.starter, token: 'lease-expiry'));
+      await tick();
+      expect(states.last.plan, EntitlementPlans.starter);
+      clock.advance(const Duration(minutes: 15));
+      expect((await service.currentState()).plan, EntitlementPlans.free);
+      await tick();
+      expect(states.last.plan, EntitlementPlans.free);
+    },
+  );
 
   test(
     'an unavailable refresh preflight clears a lease and fences older verification',
@@ -510,6 +625,40 @@ void main() {
       }
     },
   );
+
+  test('verifier allowlists only sanitized Free recovery reasons', () async {
+    for (final entry in <(String, EntitlementPresentation)>[
+      ('verification_pending', EntitlementPresentation.verificationPending),
+      ('in_flight', EntitlementPresentation.inFlight),
+      ('delayed_verification', EntitlementPresentation.delayedVerification),
+      (
+        'acknowledgement_recovery',
+        EntitlementPresentation.acknowledgementRecovery,
+      ),
+      ('unexpected_provider_detail', EntitlementPresentation.idle),
+    ]) {
+      final runtime = FakeFirebaseRuntime();
+      final verifier = FirebasePlayBillingVerifier(
+        runtime,
+        callableFactory: FakeCallableFactory(
+          onCall: (_, data) => <String, Object>{
+            'version': 'play-billing-v1',
+            'requestId': data['requestId']!,
+            'state': 'free',
+            'reason': entry.$1,
+          },
+        ),
+      );
+      expect(await verifier.ensureBillingIdentity(), isNotNull);
+      final result = await verifier.verify(
+        requestId: 'request-${entry.$1}',
+        productId: EntitlementPlans.starter.playProductId!,
+        purchaseToken: 'test-token',
+      );
+      expect(result.isPaid, isFalse);
+      expect(result.presentation, entry.$2);
+    }
+  });
 
   test(
     'verifier rejects malformed and materially future server timestamps',
