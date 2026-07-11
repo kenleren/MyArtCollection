@@ -39,6 +39,8 @@ abstract class OnlineResearchClient {
 abstract interface class RetryableOnlineResearchClient
     implements OnlineResearchClient {
   Future<ResearchJob> retry(OnlineResearchRequest request, String requestId);
+
+  Future<void> cancel(String requestId);
 }
 
 const brokerConsentCopyVersion = 'research-consent-v1';
@@ -423,6 +425,13 @@ class OnlineResearchService {
     ).sanitize();
     await _repository.upsertResearchJob(job);
     return job;
+  }
+
+  Future<void> cancelRetry(String requestId) async {
+    final client = _client;
+    if (client is RetryableOnlineResearchClient) {
+      await client.cancel(requestId);
+    }
   }
 
   void _requireApprovedResearchConsent(OnlineResearchRequest request) {

@@ -30,6 +30,7 @@ class BrokerResearchCoordinator {
 
   Future<BrokerClientResult> submitSource({
     required File source,
+    required BrokerResearchAuthorization authorization,
     BrokerDraftHints? draftHints,
     String? requestId,
   }) async {
@@ -53,17 +54,21 @@ class BrokerResearchCoordinator {
         ),
       );
     }
-    return client.submit(
+    return client.submitAuthorized(
       BrokerRequestPayload.create(
         consent: consent,
         derivative: derivative,
         draftHints: draftHints,
         requestId: requestId,
       ),
+      authorization,
     );
   }
 
-  Future<BrokerClientResult> retry(String requestId) async {
+  Future<BrokerClientResult> retry(
+    String requestId, {
+    required BrokerResearchAuthorization authorization,
+  }) async {
     final consent = await _currentConsent();
     if (consent == null) {
       return const BrokerClientResult.failure(
@@ -73,7 +78,11 @@ class BrokerResearchCoordinator {
         ),
       );
     }
-    return client.retry(requestId, consent: consent);
+    return client.retryAuthorized(
+      requestId,
+      consent: consent,
+      authorization: authorization,
+    );
   }
 
   Future<BrokerResearchConsent?> _currentConsent() async {

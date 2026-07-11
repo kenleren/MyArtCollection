@@ -11,13 +11,69 @@ import 'broker_research_coordinator.dart';
 import 'image_derivative_service.dart';
 import 'online_research_service.dart';
 
-/// A presentation-safe failure. Broker codes remain internal to this adapter
-/// so the UI can use fixed collector-facing states without rendering server text.
+enum BrokerResearchFailureAction {
+  none,
+  newAttempt,
+  retrySameRequest,
+  freshConsent,
+}
+
 class BrokerResearchFailureException implements Exception {
-  const BrokerResearchFailureException(this.code, {this.requestId});
+  const BrokerResearchFailureException._({
+    required this.code,
+    required this.collectorMessage,
+    required this.action,
+    required this.showManagePlan,
+    this.requestId,
+  });
 
   final String code;
+  final String collectorMessage;
+  final BrokerResearchFailureAction action;
+  final bool showManagePlan;
   final String? requestId;
+
+  factory BrokerResearchFailureException.fromFailure(
+    BrokerClientFailure failure, {
+    String? requestId,
+  }) {
+    final presentation = _presentationForFailure(failure);
+    return BrokerResearchFailureException._(
+      code: failure.code,
+      collectorMessage: presentation.message,
+      action: presentation.action,
+      showManagePlan: presentation.showManagePlan,
+      requestId:
+          presentation.action == BrokerResearchFailureAction.retrySameRequest
+          ? requestId
+          : null,
+    );
+  }
+}
+
+abstract interface class BrokerResearchImageSource {
+  Future<File?> primaryImage(String artworkId);
+}
+
+class LocalBrokerResearchImageSource implements BrokerResearchImageSource {
+  const LocalBrokerResearchImageSource({
+    required this.repository,
+    required this.attachmentStore,
+  });
+
+  final LocalArtworkRepository repository;
+  final LocalAttachmentStore attachmentStore;
+
+  @override
+  Future<File?> primaryImage(String artworkId) async {
+    final record = await repository.get(artworkId);
+    final attachmentId = record?.primaryImageAttachmentId;
+    if (attachmentId == null) return null;
+    final attachment = await repository.getAttachment(attachmentId);
+    if (attachment == null || !attachment.isPrimaryImageCandidate) return null;
+    final file = attachmentStore.fileFor(attachment);
+    return await file.exists() ? file : null;
+  }
 }
 
 /// Bridges the typed #188 broker client into the existing persisted research UI.
@@ -26,15 +82,13 @@ class BrokerResearchFailureException implements Exception {
 /// [BrokerResearchCoordinator] only after that consent is checked.
 class BrokerOnlineResearchClient implements RetryableOnlineResearchClient {
   BrokerOnlineResearchClient({
-    required this.repository,
-    required this.attachmentStore,
+    required this.imageSource,
     required this.httpClient,
     this.derivativeCreator = const ResearchImageDerivativeService(),
     DateTime Function()? now,
   }) : _now = now ?? DateTime.now;
 
-  final LocalArtworkRepository repository;
-  final LocalAttachmentStore attachmentStore;
+  final BrokerResearchImageSource imageSource;
   final BrokerHttpClient httpClient;
   final ResearchImageDerivativeCreator derivativeCreator;
   final DateTime Function() _now;
@@ -43,11 +97,25 @@ class BrokerOnlineResearchClient implements RetryableOnlineResearchClient {
   Future<ResearchJob> research(OnlineResearchRequest request) async {
     final consent = request.brokerConsent;
     if (consent == null) {
-      throw const BrokerResearchFailureException('consent_required');
+      throw BrokerResearchFailureException.fromFailure(
+        const BrokerClientFailure(
+          code: 'consent_required',
+          message: 'Research consent is required.',
+        ),
+      );
     }
-    final source = await _primaryImage(request.artworkId);
+    final gate = await httpClient.authorizeAfterConsent();
+    if (!gate.isAuthorized) {
+      throw BrokerResearchFailureException.fromFailure(gate.failure!);
+    }
+    final source = await imageSource.primaryImage(request.artworkId);
     if (source == null) {
-      throw const BrokerResearchFailureException('image_unavailable');
+      throw BrokerResearchFailureException.fromFailure(
+        const BrokerClientFailure(
+          code: 'image_unavailable',
+          message: 'The selected image is unavailable.',
+        ),
+      );
     }
     final requestId = _newRequestId();
     final result =
@@ -57,6 +125,7 @@ class BrokerOnlineResearchClient implements RetryableOnlineResearchClient {
           client: httpClient,
         ).submitSource(
           source: source,
+          authorization: gate.authorization!,
           requestId: requestId,
           draftHints: request.brokerDraftHints,
         );
@@ -70,24 +139,28 @@ class BrokerOnlineResearchClient implements RetryableOnlineResearchClient {
   ) async {
     final consent = request.brokerConsent;
     if (consent == null) {
-      throw const BrokerResearchFailureException('consent_required');
+      throw BrokerResearchFailureException.fromFailure(
+        const BrokerClientFailure(
+          code: 'consent_required',
+          message: 'Research consent is required.',
+        ),
+      );
+    }
+    final gate = await httpClient.authorizeAfterConsent();
+    if (!gate.isAuthorized) {
+      throw BrokerResearchFailureException.fromFailure(gate.failure!);
     }
     final result = await BrokerResearchCoordinator(
       consentProvider: _FixedConsentProvider(consent),
       derivativeCreator: derivativeCreator,
       client: httpClient,
-    ).retry(requestId);
+    ).retry(requestId, authorization: gate.authorization!);
     return _jobFromResult(request, result, requestId);
   }
 
-  Future<File?> _primaryImage(String artworkId) async {
-    final record = await repository.get(artworkId);
-    final attachmentId = record?.primaryImageAttachmentId;
-    if (attachmentId == null) return null;
-    final attachment = await repository.getAttachment(attachmentId);
-    if (attachment == null || !attachment.isPrimaryImageCandidate) return null;
-    final file = attachmentStore.fileFor(attachment);
-    return await file.exists() ? file : null;
+  @override
+  Future<void> cancel(String requestId) async {
+    await httpClient.cancel(requestId);
   }
 
   ResearchJob _jobFromResult(
@@ -97,8 +170,8 @@ class BrokerOnlineResearchClient implements RetryableOnlineResearchClient {
   ) {
     final response = result.response;
     if (response == null) {
-      throw BrokerResearchFailureException(
-        result.failure!.code,
+      throw BrokerResearchFailureException.fromFailure(
+        result.failure!,
         requestId: requestId,
       );
     }
@@ -183,6 +256,111 @@ class BrokerOnlineResearchClient implements RetryableOnlineResearchClient {
           .toList(growable: false),
     );
   }
+}
+
+class _BrokerFailurePresentation {
+  const _BrokerFailurePresentation(
+    this.message,
+    this.action, {
+    this.showManagePlan = false,
+  });
+
+  final String message;
+  final BrokerResearchFailureAction action;
+  final bool showManagePlan;
+}
+
+_BrokerFailurePresentation _presentationForFailure(
+  BrokerClientFailure failure,
+) {
+  return switch (failure.code) {
+    'consent_required' || 'consent_stale' => const _BrokerFailurePresentation(
+      'Research consent needs to be reviewed before Archivale can continue.',
+      BrokerResearchFailureAction.freshConsent,
+    ),
+    'offline' => const _BrokerFailurePresentation(
+      'Research needs a connection. Your draft stays on this device.',
+      BrokerResearchFailureAction.newAttempt,
+    ),
+    'identity_unavailable' ||
+    'token_unavailable' ||
+    'unauthorized' ||
+    'forbidden' => const _BrokerFailurePresentation(
+      'Research is unavailable because a private connection could not be established.',
+      BrokerResearchFailureAction.newAttempt,
+    ),
+    'not_entitled' => const _BrokerFailurePresentation(
+      'Online research is not included for this account. Your draft and records remain available.',
+      BrokerResearchFailureAction.none,
+      showManagePlan: true,
+    ),
+    'credits_exhausted' => const _BrokerFailurePresentation(
+      'Online research credits are unavailable. Your draft and records remain available.',
+      BrokerResearchFailureAction.none,
+      showManagePlan: true,
+    ),
+    'request_in_flight' => const _BrokerFailurePresentation(
+      'A research request is already in progress. Retry this same request shortly.',
+      BrokerResearchFailureAction.retrySameRequest,
+    ),
+    'transport_unavailable' => const _BrokerFailurePresentation(
+      'The connection ended before Archivale received the outcome. Retry this same request.',
+      BrokerResearchFailureAction.retrySameRequest,
+    ),
+    'rate_limited' => const _BrokerFailurePresentation(
+      'Research is busy right now. Start a new request later.',
+      BrokerResearchFailureAction.newAttempt,
+    ),
+    'idempotency_conflict' => const _BrokerFailurePresentation(
+      'This research request conflicts with an earlier request and cannot be retried.',
+      BrokerResearchFailureAction.none,
+    ),
+    'request_outcome_unknown' => const _BrokerFailurePresentation(
+      'The research outcome cannot be confirmed safely, so Archivale will not retry it.',
+      BrokerResearchFailureAction.none,
+    ),
+    'upstream_timeout' => const _BrokerFailurePresentation(
+      'Research took too long to finish. Start a new request later.',
+      BrokerResearchFailureAction.newAttempt,
+    ),
+    'temporarily_unavailable' when failure.retryable =>
+      const _BrokerFailurePresentation(
+        'Research is temporarily unavailable. Start a new request later.',
+        BrokerResearchFailureAction.newAttempt,
+      ),
+    'request_expired' => const _BrokerFailurePresentation(
+      'The earlier request expired before research began. Start a new request.',
+      BrokerResearchFailureAction.newAttempt,
+    ),
+    'invalid_broker_response' ||
+    'upstream_failure' ||
+    'upstream_invalid_output' ||
+    'upstream_refusal' => const _BrokerFailurePresentation(
+      'Archivale could not display a safe source-backed result. Start a new request later.',
+      BrokerResearchFailureAction.newAttempt,
+    ),
+    'research_disabled' ||
+    'endpoint_unavailable' => const _BrokerFailurePresentation(
+      'Archivale research is not available right now. Your local draft remains available.',
+      BrokerResearchFailureAction.none,
+    ),
+    'payload_invalid' ||
+    'payload_too_large' ||
+    'unsupported_media_type' ||
+    'method_not_allowed' ||
+    'retry_storage_unavailable' ||
+    'retry_not_available' ||
+    'image_unavailable' ||
+    'cancelled' ||
+    'temporarily_unavailable' => const _BrokerFailurePresentation(
+      'Archivale could not finish source-backed research safely.',
+      BrokerResearchFailureAction.none,
+    ),
+    _ => const _BrokerFailurePresentation(
+      'Archivale could not finish source-backed research safely.',
+      BrokerResearchFailureAction.none,
+    ),
+  };
 }
 
 class _FixedConsentProvider implements BrokerResearchConsentProvider {

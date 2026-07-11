@@ -15,14 +15,16 @@ void main() {
     'does not read or derive a source image before current typed consent',
     () async {
       final derivative = _RecordingDerivativeCreator();
+      final client = _client();
       final coordinator = BrokerResearchCoordinator(
         consentProvider: const _FixedConsentProvider(null),
         derivativeCreator: derivative,
-        client: _client(),
+        client: client,
       );
 
       final result = await coordinator.submitSource(
         source: File('/definitely-not-read-without-consent.jpg'),
+        authorization: await _authorization(client),
       );
 
       expect(result.failure!.code, 'consent_required');
@@ -32,14 +34,16 @@ void main() {
 
   test('fails closed without image access when consent lookup fails', () async {
     final derivative = _RecordingDerivativeCreator();
+    final client = _client();
     final coordinator = BrokerResearchCoordinator(
       consentProvider: const _ThrowingConsentProvider(),
       derivativeCreator: derivative,
-      client: _client(),
+      client: client,
     );
 
     final result = await coordinator.submitSource(
       source: File('/definitely-not-read-on-consent-error.jpg'),
+      authorization: await _authorization(client),
     );
 
     expect(result.failure!.code, 'consent_required');
@@ -48,6 +52,7 @@ void main() {
 
   test('derives only after current typed consent is approved', () async {
     final derivative = _RecordingDerivativeCreator();
+    final client = _client();
     final coordinator = BrokerResearchCoordinator(
       consentProvider: const _FixedConsentProvider(
         BrokerResearchConsent.approved(
@@ -56,18 +61,19 @@ void main() {
         ),
       ),
       derivativeCreator: derivative,
-      client: _client(),
+      client: client,
     );
 
     final result = await coordinator.submitSource(
       source: File('/current-consent-permits-derivative.jpg'),
+      authorization: await _authorization(client),
     );
 
     expect(
       derivative.sources.single.path,
       '/current-consent-permits-derivative.jpg',
     );
-    expect(result.failure!.code, 'research_disabled');
+    expect(result.failure!.code, 'offline');
   });
 }
 
@@ -104,9 +110,10 @@ class _RecordingDerivativeCreator implements ResearchImageDerivativeCreator {
 BrokerHttpClient _client() => BrokerHttpClient(
   endpoint: Uri.parse('https://broker.example.test/research'),
   featureFlags: const AppFeatureFlagService(
+    runtime: _NoopRuntime(),
     isReleaseMode: true,
     targetPlatform: TargetPlatform.android,
-    brokerClientEnabled: false,
+    brokerClientEnabled: true,
     firebaseAndroid: true,
     remoteConfigEnabled: true,
     brokerEndpoint: 'https://broker.example.test/research',
@@ -116,6 +123,13 @@ BrokerHttpClient _client() => BrokerHttpClient(
   connectivity: const _NoopConnectivity(),
   retryStore: const _NoopRetryStore(),
 );
+
+Future<BrokerResearchAuthorization> _authorization(
+  BrokerHttpClient client,
+) async {
+  final gate = await client.authorizeAfterConsent();
+  return gate.authorization!;
+}
 
 class _NoopRuntime implements FirebaseResearchRuntime {
   const _NoopRuntime();
@@ -127,7 +141,7 @@ class _NoopRuntime implements FirebaseResearchRuntime {
   Future<String?> authToken({required bool forceRefresh}) async => null;
 
   @override
-  Future<bool> fetchOnlineResearchEnabled() async => false;
+  Future<bool> fetchOnlineResearchEnabled() async => true;
 
   @override
   Future<void> initializeAppCheck() async {}

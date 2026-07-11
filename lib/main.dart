@@ -44,8 +44,10 @@ Future<void> main() async {
     final researchClient =
         featureFlags.localResearchCapabilityEnabled && brokerEndpoint != null
         ? BrokerOnlineResearchClient(
-            repository: artworkRepository,
-            attachmentStore: attachmentStore,
+            imageSource: LocalBrokerResearchImageSource(
+              repository: artworkRepository,
+              attachmentStore: attachmentStore,
+            ),
             httpClient: BrokerHttpClient(
               endpoint: brokerEndpoint,
               featureFlags: featureFlagService,

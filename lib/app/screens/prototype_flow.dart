@@ -1348,6 +1348,10 @@ class DraftReviewScreen extends StatefulWidget {
 class _DraftReviewScreenState extends State<DraftReviewScreen> {
   ResearchJob? _researchJob;
   String? _researchError;
+  BrokerResearchFailureAction _researchFailureAction =
+      BrokerResearchFailureAction.none;
+  bool _showResearchManagePlan = false;
+  broker.BrokerResearchConsent? _approvedResearchConsent;
   bool _showResearchConsent = false;
   bool _isResearchBusy = false;
   String? _retryResearchRequestId;
@@ -1368,6 +1372,9 @@ class _DraftReviewScreenState extends State<DraftReviewScreen> {
       _acceptedResearchFieldKeys.clear();
       _rejectedResearchFieldKeys.clear();
       _researchError = null;
+      _researchFailureAction = BrokerResearchFailureAction.none;
+      _showResearchManagePlan = false;
+      _approvedResearchConsent = null;
     }
   }
 
@@ -1397,6 +1404,7 @@ class _DraftReviewScreenState extends State<DraftReviewScreen> {
           _AiDraftStatusPanel(isBusy: false, draftJob: widget.aiDraftJob),
           const SizedBox(height: 16),
           _OnlineResearchPanel(
+            key: const ValueKey('online-research-panel'),
             artwork: widget.artwork,
             researchJob: _researchJob,
             showConsent: _showResearchConsent && _isOnlineResearchAvailable,
@@ -1405,12 +1413,13 @@ class _DraftReviewScreenState extends State<DraftReviewScreen> {
             isEnabled: _isOnlineResearchAvailable,
             acceptedFieldKeys: _acceptedResearchFieldKeys,
             rejectedFieldKeys: _rejectedResearchFieldKeys,
-            onStart: _isOnlineResearchAvailable
-                ? (_retryResearchRequestId == null
-                      ? () => setState(() => _showResearchConsent = true)
-                      : _retryOnlineResearch)
-                : null,
-            onCancelConsent: () => setState(() => _showResearchConsent = false),
+            onStart: _isOnlineResearchAvailable ? _researchAction : null,
+            researchActionLabel: _researchActionLabel,
+            showManagePlan: _showResearchManagePlan,
+            onCancelConsent: () => setState(() {
+              _showResearchConsent = false;
+              _approvedResearchConsent = null;
+            }),
             onConfirmConsent: _isOnlineResearchAvailable
                 ? _runOnlineResearch
                 : null,
@@ -1461,6 +1470,36 @@ class _DraftReviewScreenState extends State<DraftReviewScreen> {
     return dependencies?.featureFlags.localResearchCapabilityEnabled ?? false;
   }
 
+  VoidCallback? get _researchAction {
+    if (_researchError == null) {
+      return () => setState(() => _showResearchConsent = true);
+    }
+    return switch (_researchFailureAction) {
+      BrokerResearchFailureAction.retrySameRequest => _retryOnlineResearch,
+      BrokerResearchFailureAction.newAttempt => _startFreshConsent,
+      BrokerResearchFailureAction.freshConsent => _startFreshConsent,
+      BrokerResearchFailureAction.none => null,
+    };
+  }
+
+  String? get _researchActionLabel => switch (_researchFailureAction) {
+    BrokerResearchFailureAction.retrySameRequest => 'Retry same request',
+    BrokerResearchFailureAction.newAttempt => 'Try research again',
+    BrokerResearchFailureAction.freshConsent => 'Review research consent',
+    BrokerResearchFailureAction.none => null,
+  };
+
+  void _startFreshConsent() {
+    setState(() {
+      _approvedResearchConsent = null;
+      _retryResearchRequestId = null;
+      _researchError = null;
+      _researchFailureAction = BrokerResearchFailureAction.none;
+      _showResearchManagePlan = false;
+      _showResearchConsent = true;
+    });
+  }
+
   Future<void> _runOnlineResearch() async {
     if (!_isOnlineResearchAvailable) {
       return;
@@ -1469,9 +1508,16 @@ class _DraftReviewScreenState extends State<DraftReviewScreen> {
     setState(() {
       _isResearchBusy = true;
       _researchError = null;
+      _researchFailureAction = BrokerResearchFailureAction.none;
+      _showResearchManagePlan = false;
     });
 
     try {
+      const consent = broker.BrokerResearchConsent.approved(
+        scope: broker.BrokerConsentScope.imagePlusDraftHints,
+        copyVersion: 'research-consent-v1',
+      );
+      _approvedResearchConsent = consent;
       final dependencies = AppDependencyScope.of(context);
       final service = dependencies.createOnlineResearchService();
       final job = await service.runResearch(
@@ -1482,10 +1528,7 @@ class _DraftReviewScreenState extends State<DraftReviewScreen> {
           consentState: ResearchConsentState.approved,
           querySummary: _researchQuerySummary(widget.artwork),
           searchTerms: _researchSearchTerms(widget.artwork),
-          brokerConsent: const broker.BrokerResearchConsent.approved(
-            scope: broker.BrokerConsentScope.imagePlusDraftHints,
-            copyVersion: 'research-consent-v1',
-          ),
+          brokerConsent: consent,
           brokerDraftHints: broker.BrokerDraftHints(
             titleHint: widget.artwork.title.value,
             artistHint: widget.artwork.artist.value,
@@ -1506,20 +1549,17 @@ class _DraftReviewScreenState extends State<DraftReviewScreen> {
       if (!mounted) {
         return;
       }
-      setState(() {
-        _showResearchConsent = false;
-        _researchError = _researchFailureMessage(error);
-        _retryResearchRequestId = error is BrokerResearchFailureException
-            ? error.requestId
-            : null;
-        _isResearchBusy = false;
-      });
+      _handleResearchFailure(error);
     }
   }
 
   Future<void> _retryOnlineResearch() async {
     final requestId = _retryResearchRequestId;
-    if (requestId == null || !_isOnlineResearchAvailable) return;
+    final consent = _approvedResearchConsent;
+    if (requestId == null || consent == null || !_isOnlineResearchAvailable) {
+      _startFreshConsent();
+      return;
+    }
     setState(() {
       _isResearchBusy = true;
       _researchError = null;
@@ -1535,10 +1575,7 @@ class _DraftReviewScreenState extends State<DraftReviewScreen> {
               consentState: ResearchConsentState.approved,
               querySummary: _researchQuerySummary(widget.artwork),
               searchTerms: _researchSearchTerms(widget.artwork),
-              brokerConsent: const broker.BrokerResearchConsent.approved(
-                scope: broker.BrokerConsentScope.imagePlusDraftHints,
-                copyVersion: 'research-consent-v1',
-              ),
+              brokerConsent: consent,
             ),
             requestId,
           );
@@ -1550,14 +1587,41 @@ class _DraftReviewScreenState extends State<DraftReviewScreen> {
       });
     } catch (error) {
       if (!mounted) return;
+      _handleResearchFailure(error);
+    }
+  }
+
+  void _handleResearchFailure(Object error) {
+    if (error is BrokerResearchFailureException &&
+        error.action == BrokerResearchFailureAction.freshConsent) {
       setState(() {
-        _researchError = _researchFailureMessage(error);
-        _retryResearchRequestId = error is BrokerResearchFailureException
-            ? error.requestId
-            : null;
+        _approvedResearchConsent = null;
+        _retryResearchRequestId = null;
+        _researchError = null;
+        _researchFailureAction = BrokerResearchFailureAction.none;
+        _showResearchManagePlan = false;
+        _showResearchConsent = true;
         _isResearchBusy = false;
       });
+      return;
     }
+    setState(() {
+      _showResearchConsent = false;
+      _researchError = _researchFailureMessage(error);
+      _researchFailureAction = error is BrokerResearchFailureException
+          ? error.action
+          : BrokerResearchFailureAction.newAttempt;
+      _showResearchManagePlan =
+          error is BrokerResearchFailureException && error.showManagePlan;
+      _retryResearchRequestId = error is BrokerResearchFailureException
+          ? error.requestId
+          : null;
+      if (_researchFailureAction !=
+          BrokerResearchFailureAction.retrySameRequest) {
+        _approvedResearchConsent = null;
+      }
+      _isResearchBusy = false;
+    });
   }
 
   void _acceptResearchField(String fieldKey) {
@@ -2719,6 +2783,7 @@ class _EvidenceGuideItem extends StatelessWidget {
 
 class _OnlineResearchPanel extends StatelessWidget {
   const _OnlineResearchPanel({
+    super.key,
     required this.artwork,
     required this.researchJob,
     required this.showConsent,
@@ -2728,6 +2793,8 @@ class _OnlineResearchPanel extends StatelessWidget {
     required this.acceptedFieldKeys,
     required this.rejectedFieldKeys,
     required this.onStart,
+    required this.researchActionLabel,
+    required this.showManagePlan,
     required this.onCancelConsent,
     required this.onConfirmConsent,
     required this.onAcceptField,
@@ -2743,6 +2810,8 @@ class _OnlineResearchPanel extends StatelessWidget {
   final Set<String> acceptedFieldKeys;
   final Set<String> rejectedFieldKeys;
   final VoidCallback? onStart;
+  final String? researchActionLabel;
+  final bool showManagePlan;
   final VoidCallback onCancelConsent;
   final VoidCallback? onConfirmConsent;
   final ValueChanged<String> onAcceptField;
@@ -2800,11 +2869,21 @@ class _OnlineResearchPanel extends StatelessWidget {
             body: errorMessage,
           ),
           const SizedBox(height: 12),
-          _ActionButton(
-            icon: Icons.travel_explore,
-            label: 'Try research again',
-            onPressed: onStart,
-          ),
+          if (researchActionLabel != null) ...[
+            _ActionButton(
+              icon: Icons.travel_explore,
+              label: researchActionLabel!,
+              onPressed: onStart,
+            ),
+          ],
+          if (showManagePlan) ...[
+            const SizedBox(height: 12),
+            SecondaryActionButton(
+              icon: Icons.workspace_premium_outlined,
+              label: 'Manage plan',
+              routeName: AppRoutes.billing,
+            ),
+          ],
         ],
       );
     }
@@ -2849,27 +2928,7 @@ class _OnlineResearchPanel extends StatelessWidget {
 
 String _researchFailureMessage(Object error) {
   if (error is BrokerResearchFailureException) {
-    return switch (error.code) {
-      'offline' =>
-        'Research needs a connection. Your draft stays on this device.',
-      'identity_unavailable' || 'token_unavailable' =>
-        'Research is unavailable because a private connection could not be established.',
-      'not_entitled' =>
-        'Online research is not included for this account. Your draft and records remain available.',
-      'credits_exhausted' =>
-        'Online research credits are unavailable. Your draft and records remain available.',
-      'rate_limited' => 'Research is busy right now. Please try again later.',
-      'conflict' =>
-        'Research could not be completed because this request conflicts with an earlier one.',
-      'outcome_unknown' || 'transport_unavailable' =>
-        'Research may still be processing. Try again later with the same request.',
-      'timeout' =>
-        'Research took too long to finish. Try again later with the same request.',
-      'consent_required' || 'consent_stale' =>
-        'Research consent needs to be reviewed before Archivale can continue.',
-      _ =>
-        'Archivale could not finish source-backed research right now. Please try again.',
-    };
+    return error.collectorMessage;
   }
   if (error is ResearchConsentRequiredException) {
     return 'Research consent needs to be reviewed before Archivale can run source-backed research.';
@@ -2905,9 +2964,9 @@ class _ResearchConsentPanel extends StatelessWidget {
             style: Theme.of(context).textTheme.titleMedium,
           ),
           const SizedBox(height: 8),
-          const Text(
-            'If you continue, Archivale may use the selected artwork image or thumbnail, the draft details on this screen, your notes, and a short private summary to look for museum, archive, and auction references. Your full collection stays private.',
-          ),
+          const Text(researchConsentPayloadDisclosure),
+          const SizedBox(height: 10),
+          const Text(researchConsentExternalServiceDisclosure),
           const SizedBox(height: 12),
           const _Notice(
             icon: Icons.fact_check_outlined,
@@ -2932,6 +2991,12 @@ class _ResearchConsentPanel extends StatelessWidget {
     );
   }
 }
+
+const researchConsentPayloadDisclosure =
+    'If you continue, Archivale sends an EXIF-free derivative of the selected image and may send the shown title, artist, and search hints. It does not send notes, private summaries, artwork IDs, filenames, paths, values, locations, or documents.';
+
+const researchConsentExternalServiceDisclosure =
+    'Online research uses an approved external AI service and professional third-party web sources. Those web/source services may have their own retention policies. Archivale keeps the reviewed citations and source-backed suggestions with this local record.';
 
 class _ResearchResultsPanel extends StatelessWidget {
   const _ResearchResultsPanel({

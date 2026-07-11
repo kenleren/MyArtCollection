@@ -397,6 +397,88 @@ void main() {
   );
 
   test(
+    'retains only same-request replay outcomes and reuses exact request bytes',
+    () async {
+      final request = _payload();
+      final store = _MemoryRetryStore();
+      final inFlight = _authoritativeErrorCase('quota_subject_in_flight');
+      final firstTransport = _RecordingTransport(
+        responses: _errorResponsesForCase(inFlight),
+      );
+
+      final first = await _client(
+        runtime: _RecordingRuntime(),
+        transport: firstTransport,
+        store: store,
+      ).submit(request);
+      final frozen = await store.read(request.requestId);
+
+      expect(first.failure!.code, 'request_in_flight');
+      expect(first.failure!.retryable, isTrue);
+      expect(frozen, isNotNull);
+
+      final retryTransport = _RecordingTransport(
+        responses: <Object>[
+          BrokerTransportResponse(
+            statusCode: 200,
+            body: jsonEncode(_successBody(request.requestId)),
+          ),
+        ],
+      );
+      final retried = await _client(
+        runtime: _RecordingRuntime(),
+        transport: retryTransport,
+        store: store,
+      ).retry(request.requestId, consent: request.consent);
+
+      expect(retried.isSuccess, isTrue);
+      expect(retryTransport.requests.single.body, frozen!.body);
+      expect(
+        retryTransport.requests.single.body,
+        firstTransport.requests.single.body,
+      );
+      expect(await store.read(request.requestId), isNull);
+    },
+  );
+
+  test(
+    'terminal and no-retry broker outcomes delete frozen payloads',
+    () async {
+      for (final condition in <String>[
+        'provider_rate_limited',
+        'provider_timeout',
+        'idempotency_conflict',
+        'dispatch_outcome_unknown',
+        'stale_consent',
+      ]) {
+        final request = _payload();
+        final store = _MemoryRetryStore();
+        final result = await _client(
+          runtime: _RecordingRuntime(),
+          transport: _RecordingTransport(
+            responses: _errorResponsesForCase(
+              _authoritativeErrorCase(condition),
+            ),
+          ),
+          store: store,
+        ).submit(request);
+
+        expect(result.isSuccess, isFalse, reason: condition);
+        expect(await store.read(request.requestId), isNull, reason: condition);
+
+        final retryTransport = _RecordingTransport();
+        final retry = await _client(
+          runtime: _RecordingRuntime(),
+          transport: retryTransport,
+          store: store,
+        ).retry(request.requestId, consent: request.consent);
+        expect(retry.failure!.code, 'retry_not_available', reason: condition);
+        expect(retryTransport.requests, isEmpty, reason: condition);
+      }
+    },
+  );
+
+  test(
     'maps typed allowlisted success responses and never returns raw backend data',
     () async {
       final result = await _client(
@@ -552,7 +634,8 @@ void main() {
       final root = await Directory.systemTemp.createTemp('broker-retry-store-');
       addTearDown(() => root.delete(recursive: true));
       const requestId = '11111111-1111-4111-8111-111111111111';
-      final first = await FileBrokerRetryStore.openAt(root);
+      final now = DateTime.utc(2026, 7, 11, 12);
+      final first = await FileBrokerRetryStore.openAt(root, now: () => now);
       await first.save(
         const FrozenBrokerRequest(
           requestId: requestId,
@@ -566,7 +649,7 @@ void main() {
         ),
       );
 
-      final second = await FileBrokerRetryStore.openAt(root);
+      final second = await FileBrokerRetryStore.openAt(root, now: () => now);
       final restored = await second.read(requestId);
       expect(restored!.payloadHash, hasLength(64));
       expect(restored.body, '{"data":{}}');
@@ -574,6 +657,80 @@ void main() {
       expect(() => second.read('not-a-uuid'), throwsArgumentError);
     },
   );
+
+  test(
+    'file retry storage expires, cleans malformed data, and deletes restart orphans',
+    () async {
+      final root = await Directory.systemTemp.createTemp(
+        'broker-retry-retention-',
+      );
+      addTearDown(() => root.delete(recursive: true));
+      const requestId = '11111111-1111-4111-8111-111111111111';
+      final now = DateTime.utc(2026, 7, 11, 12);
+      final store = await FileBrokerRetryStore.openAt(root, now: () => now);
+      await store.save(
+        const FrozenBrokerRequest(
+          requestId: requestId,
+          payloadHash:
+              'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+          body: '{"data":{}}',
+          consent: BrokerResearchConsent.approved(
+            scope: BrokerConsentScope.imageOnly,
+            copyVersion: 'research-consent-v1',
+          ),
+        ),
+      );
+
+      final expired = await FileBrokerRetryStore.openAt(
+        root,
+        now: () => now.add(const Duration(hours: 25)),
+      );
+      expect(await expired.read(requestId), isNull);
+      expect(root.listSync(), isEmpty);
+
+      await File('${root.path}/malformed.json').writeAsString('not-json');
+      await FileBrokerRetryStore.openAt(root, now: () => now);
+      expect(root.listSync(), isEmpty);
+
+      await store.save(
+        const FrozenBrokerRequest(
+          requestId: requestId,
+          payloadHash:
+              'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+          body: '{"data":{}}',
+          consent: BrokerResearchConsent.approved(
+            scope: BrokerConsentScope.imageOnly,
+            copyVersion: 'research-consent-v1',
+          ),
+        ),
+      );
+      final restarted = await FileBrokerRetryStore.openAt(
+        root,
+        now: () => now,
+        deleteOrphansOnOpen: true,
+      );
+      expect(await restarted.read(requestId), isNull);
+      expect(root.listSync(), isEmpty);
+    },
+  );
+
+  test('explicit cancellation deletes a retained transport payload', () async {
+    final request = _payload();
+    final store = _MemoryRetryStore();
+    final client = _client(
+      runtime: _RecordingRuntime(),
+      transport: _RecordingTransport(
+        responses: <Object>[const SocketException('down')],
+      ),
+      store: store,
+    );
+    final result = await client.submit(request);
+    expect(result.failure!.code, 'transport_unavailable');
+    expect(await store.read(request.requestId), isNotNull);
+
+    await client.cancel(request.requestId);
+    expect(await store.read(request.requestId), isNull);
+  });
 }
 
 String _canonicalPayloadHash(Map<String, Object?> request) => sha256
@@ -641,6 +798,30 @@ Map<String, Object?> _successBody(String requestId) => <String, Object?>{
 Map<String, Object?> _validResponseFixture() =>
     jsonDecode(File('test/fixtures/broker-response-v1.json').readAsStringSync())
         as Map<String, Object?>;
+
+Map<String, Object?> _authoritativeErrorCase(String condition) {
+  final fixture =
+      jsonDecode(
+            File(
+              'backend/broker/fixtures/broker-error-v1.json',
+            ).readAsStringSync(),
+          )
+          as Map<String, Object?>;
+  return (fixture['cases']! as List<Object?>)
+      .cast<Map<String, Object?>>()
+      .singleWhere((entry) => entry['condition'] == condition);
+}
+
+List<Object> _errorResponsesForCase(Map<String, Object?> errorCase) {
+  final code = errorCase['code']! as String;
+  return _errorResponses(errorCase, <String, Object?>{
+    'code': code,
+    'message': errorCase['message'],
+    'retryable': errorCase['retryable'],
+    if (errorCase.containsKey('retry_after_seconds'))
+      'retry_after_seconds': errorCase['retry_after_seconds'],
+  }, code);
+}
 
 bool _isConflictCode(String code) =>
     code == 'idempotency_conflict' ||
