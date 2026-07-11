@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'app_routes.dart';
 import 'prototype/prototype_artwork.dart';
 import 'screens/app_shell.dart';
+import 'screens/billing_plan_screen.dart';
 import 'screens/csv_import_screen.dart';
 import 'screens/prototype_flow.dart';
 
@@ -59,6 +60,8 @@ class AppRouter {
         );
       case AppRoutes.settingsBackup:
         return _page(settings: settings, child: const SettingsBackupScreen());
+      case AppRoutes.billing:
+        return _page(settings: settings, child: const BillingPlanScreen());
       default:
         final artworkScreen = _artworkRoute(name, settings);
         if (artworkScreen != null) {

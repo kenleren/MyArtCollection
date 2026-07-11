@@ -463,6 +463,42 @@ void main() {
   });
 
   test(
+    'normalized entitlement denial is the only failed job marked for plan UI',
+    () async {
+      final endpoint = _RecordingFakeBrokerEndpoint(
+        const FakeBrokerAdapterErrorEnvelope(
+          status: 403,
+          body: BrokerErrorBody(
+            status: 'rejected',
+            provider: 'fake-provider',
+            error: BrokerErrorDetail(
+              code: 'entitlement_or_credit_denied',
+              message: 'private provider denial detail',
+              stage: 'quota',
+            ),
+          ),
+        ),
+      );
+      final service = OnlineResearchService(
+        repository: repository,
+        client: BrokerResearchClient(endpoint: endpoint),
+      );
+
+      final job = await service.runResearch(_brokerRequest());
+      final persisted = await repository.getResearchJob(job.id);
+
+      expect(job.status, ResearchJobStatus.failed);
+      expect(job.entitlementOrCreditDenied, isTrue);
+      expect(
+        job.errorMessage,
+        'Archivale research is not available right now.',
+      );
+      // The UI signal is intentionally transient rather than durable authority.
+      expect(persisted!.entitlementOrCreditDenied, isFalse);
+    },
+  );
+
+  test(
     'broker error mapping keeps offline fallback aligned with Archivale framing',
     () async {
       final endpoint = _RecordingFakeBrokerEndpoint(

@@ -90,13 +90,45 @@ class EntitlementState {
   const EntitlementState({
     required this.plan,
     this.billingStatus = EntitlementBillingStatus.notConfigured,
+    this.lifecycle = EntitlementLifecycle.free,
+    this.presentation = EntitlementPresentation.idle,
   });
 
   final EntitlementPlan plan;
   final EntitlementBillingStatus billingStatus;
+  final EntitlementLifecycle lifecycle;
+  final EntitlementPresentation presentation;
 }
 
 enum EntitlementBillingStatus { notConfigured, unavailable, available }
+
+/// Sanitized subscription state for presentation only. This never carries
+/// Play, identity, verification, or expiry data.
+enum EntitlementLifecycle {
+  active,
+  grace,
+  canceledThroughExpiry,
+  hold,
+  paused,
+  expired,
+  free,
+}
+
+/// Sanitized, memory-only progress for a billing operation. These values do
+/// not change entitlement authority and intentionally omit provider details.
+enum EntitlementPresentation {
+  idle,
+  verificationPending,
+  inFlight,
+  playPending,
+  delayedVerification,
+  acknowledgementRecovery,
+  recoveryExhausted,
+  restoring,
+  refreshing;
+
+  bool get blocksPurchase => this != idle;
+}
 
 abstract class EntitlementService {
   Future<EntitlementState> currentState();

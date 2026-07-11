@@ -19,6 +19,7 @@ class AppRoutes {
   static const settingsStorage = '/settings/storage';
   static const settingsExport = '/settings/export';
   static const settingsBackup = '/settings/backup';
+  static const billing = '/billing';
 
   static String artwork(String artworkId) => '/artwork/$artworkId';
   static String artworkDraft(String artworkId) => '${artwork(artworkId)}/draft';
