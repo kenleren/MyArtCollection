@@ -1,7 +1,7 @@
 import { getApp, getApps, initializeApp, type App } from 'firebase-admin/app';
 import { getAuth, type Auth } from 'firebase-admin/auth';
 import { getFirestore } from 'firebase-admin/firestore';
-import { defineSecret } from 'firebase-functions/params';
+import { defineSecret, defineString } from 'firebase-functions/params';
 import {
   onCall,
   type CallableRequest,
@@ -15,14 +15,19 @@ import type { BillingIdentity } from './contracts.js';
 import { createBillingIdentifiers, CryptoNonceSource } from './crypto.js';
 import { FirestoreBillingDatabase } from './firestore_store.js';
 import { createConfiguredPlaySubscriptionsAdapter } from './play_adapter.js';
+import { matchesApprovedAppId, resolveApprovedAppId } from './runtime_config.js';
 import { BillingRepository } from './store.js';
 import { PlayBillingService } from './verifier.js';
 
 const fingerprintKey = defineSecret('PLAY_BILLING_FINGERPRINT_KEY');
+const approvedAppIdParameter = defineString('PLAY_BILLING_APPROVED_APP_ID');
 const callableOptions = {
   region: 'us-central1' as const,
   timeoutSeconds: 60,
   memory: '512MiB' as const,
+  minInstances: 0,
+  maxInstances: 1,
+  concurrency: 10,
   serviceAccount: BILLING_VERIFIER_SERVICE_ACCOUNT,
   enforceAppCheck: true,
   consumeAppCheckToken: true,
@@ -86,13 +91,11 @@ async function verifyCallableIdentity(
   request: CallableRequest<unknown>,
   auth: Auth,
 ): Promise<BillingIdentity | undefined> {
-  const approvedAppId = process.env.PLAY_BILLING_APPROVED_APP_ID;
+  const approvedAppId = resolveApprovedAppId(approvedAppIdParameter);
   if (
     request.auth === undefined ||
     request.app === undefined ||
-    typeof approvedAppId !== 'string' ||
-    approvedAppId.length === 0 ||
-    request.app.appId !== approvedAppId
+    !matchesApprovedAppId(approvedAppId, request.app.appId)
   ) {
     return undefined;
   }

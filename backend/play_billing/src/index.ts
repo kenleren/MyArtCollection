@@ -42,6 +42,11 @@ export {
 } from './store.js';
 export { PlayBillingService, type PlayBillingDependencies } from './verifier.js';
 export {
+  matchesApprovedAppId,
+  resolveApprovedAppId,
+  type StringParameter,
+} from './runtime_config.js';
+export {
   acceptPlayBillingDisclosure,
   revokePlayBillingDisclosure,
   verifyPlaySubscription,
