@@ -731,10 +731,13 @@ lease or a `brokerDurableEntitlements` payment grant.
   timestamps, and 24-hour retention expiry only.
 - `playBillingTokenOperations`: token/request fingerprints, optional verified
   account subject only after exact Play binding, server attempt
-  generation/nonce CAS fields, phase, lease/cooldown, acknowledgement-attempt
-  counters, fixed outcome, timestamps, and 24-hour TTL.
-- `playBillingRateLimits`: account subject, rolling-window start, fixed get
-  count, timestamps, and 24-hour TTL.
+  generation/nonce CAS fields, phase, lease/cooldown, `lastGetStartedAt`, a
+  bounded `acknowledgementStartedAt` timestamp history of at most 3 entries
+  pruned to the rolling 15-minute window, fixed outcome, timestamps, and
+  24-hour TTL.
+- `playBillingRateLimits`: account subject, a bounded `getStartedAt` timestamp
+  history of at most 6 entries pruned to the rolling 15-minute window,
+  timestamps, and 24-hour TTL.
 
 Operational records bound calls and recover concurrency; they never grant a
 lease. Malformed records fail to Free rather than being treated as absent.
