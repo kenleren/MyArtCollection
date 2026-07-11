@@ -19,7 +19,7 @@ class AppDependencies {
     required this.imagePicker,
     this.csvImportFilePicker = const SystemCsvImportFilePicker(),
     this.featureFlags = const AppFeatureFlags(),
-    this.entitlementService = const FixedEntitlementService(),
+    this.entitlementService = const StaticEntitlementService(),
     this.onDeviceAiDraftProvider = const DisabledOnDeviceAiDraftProvider(),
     this.onlineResearchClient,
   });
