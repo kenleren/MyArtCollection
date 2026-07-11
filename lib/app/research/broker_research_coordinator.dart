@@ -31,6 +31,7 @@ class BrokerResearchCoordinator {
   Future<BrokerClientResult> submitSource({
     required File source,
     BrokerDraftHints? draftHints,
+    String? requestId,
   }) async {
     final consent = await _currentConsent();
     if (consent == null) {
@@ -57,6 +58,7 @@ class BrokerResearchCoordinator {
         consent: consent,
         derivative: derivative,
         draftHints: draftHints,
+        requestId: requestId,
       ),
     );
   }

@@ -16,6 +16,7 @@ import 'package:my_art_collection/app/billing/entitlement_plan.dart';
 import 'package:my_art_collection/app/billing/play_billing_adapter.dart';
 import 'package:my_art_collection/app/config/app_feature_flags.dart';
 import 'package:my_art_collection/app/research/online_research_service.dart';
+import 'package:my_art_collection/app/research/broker_online_research_client.dart';
 import 'package:my_art_collection/app/import/csv_import_file_picker.dart';
 import 'package:my_art_collection/app/intake/artwork_image_picker.dart';
 import 'package:my_art_collection/app/screens/prototype_flow.dart';
@@ -3460,7 +3461,9 @@ void main() {
         child: ArchivaleApp(
           initialRoute: AppRoutes.artworkDraft('research-draft'),
           dependencies: fixture.dependenciesWithFlags(
-            featureFlags: const AppFeatureFlags(onlineResearchEnabled: true),
+            featureFlags: const AppFeatureFlags(
+              localResearchCapabilityEnabled: true,
+            ),
           ),
         ),
       ),
@@ -3583,7 +3586,9 @@ void main() {
         child: ArchivaleApp(
           initialRoute: AppRoutes.artworkDraft('research-failure-draft'),
           dependencies: fixture.dependenciesWithFlags(
-            featureFlags: const AppFeatureFlags(onlineResearchEnabled: true),
+            featureFlags: const AppFeatureFlags(
+              localResearchCapabilityEnabled: true,
+            ),
             onlineResearchClient: _ThrowingResearchClient(
               ResearchConsentRequiredException(ResearchConsentState.declined),
             ),
@@ -3615,6 +3620,136 @@ void main() {
       boundaryKey,
       'issue-168-ai-research-failure-mobile.png',
       resetAfterCapture: false,
+    );
+  });
+
+  testWidgets('issue 189 captures consent-gated broker research states', (
+    WidgetTester tester,
+  ) async {
+    final fixture = await tester.runAsync(_LiveDependencyFixture.create);
+    final testFixture = fixture!;
+    addTearDown(() async {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.runAsync(testFixture.dispose);
+    });
+    await _configureMobileViewport(tester);
+
+    Future<void> captureState({
+      required String id,
+      required String fileName,
+      required AppFeatureFlags flags,
+      OnlineResearchClient? client,
+      bool openConsent = false,
+      bool startResearch = false,
+      ThemeMode themeMode = ThemeMode.light,
+    }) async {
+      await tester.runAsync(
+        () => testFixture.repository.upsert(
+          _artworkRecord(
+            id: id,
+            title: 'Issue 189 research draft',
+            state: ArtworkRecordState.needsReview,
+          ),
+        ),
+      );
+      final key = GlobalKey();
+      await tester.pumpWidget(
+        RepaintBoundary(
+          key: key,
+          child: ArchivaleApp(
+            initialRoute: AppRoutes.artworkDraft(id),
+            themeMode: themeMode,
+            dependencies: testFixture.dependenciesWithFlags(
+              featureFlags: flags,
+              onlineResearchClient: client,
+            ),
+          ),
+        ),
+      );
+      await pumpLiveData(tester);
+      if (openConsent || startResearch) {
+        await tapVisible(tester, find.text('Research this draft'));
+      }
+      if (startResearch) {
+        await tapVisible(tester, find.text('Start source-backed research'));
+        await tester.pump();
+      }
+      await captureBoundaryToArtifacts(
+        tester,
+        key,
+        fileName,
+        resetAfterCapture: false,
+      );
+    }
+
+    const enabled = AppFeatureFlags(localResearchCapabilityEnabled: true);
+    await captureState(
+      id: 'issue189-gated',
+      fileName: 'issue-189-gated-unavailable-light.png',
+      flags: const AppFeatureFlags(),
+    );
+    expect(find.text('Research unavailable'), findsOneWidget);
+    await captureState(
+      id: 'issue189-consent',
+      fileName: 'issue-189-consent-light.png',
+      flags: enabled,
+      client: FixtureProfessionalSourceResearchClient(),
+      openConsent: true,
+    );
+    expect(find.text('Research consent'), findsOneWidget);
+    await captureState(
+      id: 'issue189-loading',
+      fileName: 'issue-189-loading-light.png',
+      flags: enabled,
+      client: _PendingResearchClient(),
+      startResearch: true,
+    );
+    expect(find.text('Researching...'), findsOneWidget);
+    for (final entry in <(String, String, String)>[
+      ('offline', 'offline', 'Research needs a connection.'),
+      ('identity_unavailable', 'identity', 'private connection'),
+      ('rate_limited', 'rate-limit', 'Research is busy right now.'),
+      ('not_entitled', 'not-entitled', 'not included for this account'),
+      ('credits_exhausted', 'credits-exhausted', 'credits are unavailable'),
+      ('conflict', 'conflict', 'conflicts with an earlier one'),
+      ('outcome_unknown', 'outcome-unknown', 'may still be processing'),
+      ('timeout', 'timeout', 'took too long to finish'),
+      ('invalid_broker_response', 'invalid-response', 'could not finish'),
+    ]) {
+      await captureState(
+        id: 'issue189-${entry.$1}',
+        fileName: 'issue-189-${entry.$2}-light.png',
+        flags: enabled,
+        client: _ThrowingResearchClient(
+          BrokerResearchFailureException(entry.$1),
+        ),
+        startResearch: true,
+      );
+      expect(find.textContaining(entry.$3), findsOneWidget);
+    }
+    await captureState(
+      id: 'issue189-results',
+      fileName: 'issue-189-cited-results-light.png',
+      flags: enabled,
+      client: FixtureProfessionalSourceResearchClient(),
+      startResearch: true,
+    );
+    expect(find.text('Source-backed candidates'), findsOneWidget);
+    expect(find.text('AI-suggested'), findsWidgets);
+    await tester.pump(const Duration(milliseconds: 200));
+    await captureState(
+      id: 'issue189-dark-gated',
+      fileName: 'issue-189-gated-unavailable-dark.png',
+      flags: const AppFeatureFlags(),
+      themeMode: ThemeMode.dark,
+    );
+    await captureState(
+      id: 'issue189-dark-results',
+      fileName: 'issue-189-cited-results-dark.png',
+      flags: enabled,
+      client: FixtureProfessionalSourceResearchClient(),
+      startResearch: true,
+      themeMode: ThemeMode.dark,
     );
   });
 
@@ -5083,7 +5218,11 @@ class _LiveDependencyFixture {
       entitlementService: entitlementService,
       billingManagementService: billingManagementService,
       onDeviceAiDraftProvider: onDeviceAiDraftProvider,
-      onlineResearchClient: onlineResearchClient,
+      onlineResearchClient:
+          onlineResearchClient ??
+          (featureFlags.localResearchCapabilityEnabled
+              ? FixtureProfessionalSourceResearchClient()
+              : null),
     );
   }
 
@@ -5276,6 +5415,12 @@ class _ThrowingResearchClient implements OnlineResearchClient {
   Future<ResearchJob> research(OnlineResearchRequest request) async {
     throw _error;
   }
+}
+
+class _PendingResearchClient implements OnlineResearchClient {
+  @override
+  Future<ResearchJob> research(OnlineResearchRequest request) =>
+      Completer<ResearchJob>().future;
 }
 
 class _SingleCsvPicker implements CsvImportFilePicker {

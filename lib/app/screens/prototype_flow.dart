@@ -12,6 +12,8 @@ import '../intake/supporting_attachment_service.dart';
 import '../localization/app_currency_formatter.dart';
 import '../prototype/prototype_artwork.dart';
 import '../research/online_research_service.dart';
+import '../research/broker_online_research_client.dart';
+import '../research/broker_payload.dart' as broker;
 import '../storage/ai_research_record.dart';
 import '../storage/attachment_record.dart';
 import '../storage/artwork_record.dart';
@@ -1348,6 +1350,7 @@ class _DraftReviewScreenState extends State<DraftReviewScreen> {
   String? _researchError;
   bool _showResearchConsent = false;
   bool _isResearchBusy = false;
+  String? _retryResearchRequestId;
   final Set<String> _acceptedResearchFieldKeys = {};
   final Set<String> _rejectedResearchFieldKeys = {};
 
@@ -1396,17 +1399,19 @@ class _DraftReviewScreenState extends State<DraftReviewScreen> {
           _OnlineResearchPanel(
             artwork: widget.artwork,
             researchJob: _researchJob,
-            showConsent: _showResearchConsent && _isOnlineResearchEnabled,
+            showConsent: _showResearchConsent && _isOnlineResearchAvailable,
             isBusy: _isResearchBusy,
             error: _researchError,
-            isEnabled: _isOnlineResearchEnabled,
+            isEnabled: _isOnlineResearchAvailable,
             acceptedFieldKeys: _acceptedResearchFieldKeys,
             rejectedFieldKeys: _rejectedResearchFieldKeys,
-            onStart: _isOnlineResearchEnabled
-                ? () => setState(() => _showResearchConsent = true)
+            onStart: _isOnlineResearchAvailable
+                ? (_retryResearchRequestId == null
+                      ? () => setState(() => _showResearchConsent = true)
+                      : _retryOnlineResearch)
                 : null,
             onCancelConsent: () => setState(() => _showResearchConsent = false),
-            onConfirmConsent: _isOnlineResearchEnabled
+            onConfirmConsent: _isOnlineResearchAvailable
                 ? _runOnlineResearch
                 : null,
             onAcceptField: _acceptResearchField,
@@ -1451,13 +1456,13 @@ class _DraftReviewScreenState extends State<DraftReviewScreen> {
     );
   }
 
-  bool get _isOnlineResearchEnabled {
+  bool get _isOnlineResearchAvailable {
     final dependencies = _maybeDependencies(context);
-    return dependencies?.featureFlags.onlineResearchEnabled ?? false;
+    return dependencies?.featureFlags.localResearchCapabilityEnabled ?? false;
   }
 
   Future<void> _runOnlineResearch() async {
-    if (!_isOnlineResearchEnabled) {
+    if (!_isOnlineResearchAvailable) {
       return;
     }
 
@@ -1473,10 +1478,19 @@ class _DraftReviewScreenState extends State<DraftReviewScreen> {
         OnlineResearchRequest(
           artworkId: widget.artwork.id,
           consentSummary:
-              'User approved the selected artwork image, draft details, and notes for Archivale research help.',
+              'User approved the selected artwork image and shown draft hints for Archivale research help.',
           consentState: ResearchConsentState.approved,
           querySummary: _researchQuerySummary(widget.artwork),
           searchTerms: _researchSearchTerms(widget.artwork),
+          brokerConsent: const broker.BrokerResearchConsent.approved(
+            scope: broker.BrokerConsentScope.imagePlusDraftHints,
+            copyVersion: 'research-consent-v1',
+          ),
+          brokerDraftHints: broker.BrokerDraftHints(
+            titleHint: widget.artwork.title.value,
+            artistHint: widget.artwork.artist.value,
+            searchTerms: _researchSearchTerms(widget.artwork),
+          ),
         ),
       );
       if (!mounted) {
@@ -1484,6 +1498,7 @@ class _DraftReviewScreenState extends State<DraftReviewScreen> {
       }
       setState(() {
         _researchJob = job;
+        _retryResearchRequestId = null;
         _showResearchConsent = false;
         _isResearchBusy = false;
       });
@@ -1494,6 +1509,52 @@ class _DraftReviewScreenState extends State<DraftReviewScreen> {
       setState(() {
         _showResearchConsent = false;
         _researchError = _researchFailureMessage(error);
+        _retryResearchRequestId = error is BrokerResearchFailureException
+            ? error.requestId
+            : null;
+        _isResearchBusy = false;
+      });
+    }
+  }
+
+  Future<void> _retryOnlineResearch() async {
+    final requestId = _retryResearchRequestId;
+    if (requestId == null || !_isOnlineResearchAvailable) return;
+    setState(() {
+      _isResearchBusy = true;
+      _researchError = null;
+    });
+    try {
+      final job = await AppDependencyScope.of(context)
+          .createOnlineResearchService()
+          .retryResearch(
+            OnlineResearchRequest(
+              artworkId: widget.artwork.id,
+              consentSummary:
+                  'User approved the selected artwork image and shown draft hints for Archivale research help.',
+              consentState: ResearchConsentState.approved,
+              querySummary: _researchQuerySummary(widget.artwork),
+              searchTerms: _researchSearchTerms(widget.artwork),
+              brokerConsent: const broker.BrokerResearchConsent.approved(
+                scope: broker.BrokerConsentScope.imagePlusDraftHints,
+                copyVersion: 'research-consent-v1',
+              ),
+            ),
+            requestId,
+          );
+      if (!mounted) return;
+      setState(() {
+        _researchJob = job;
+        _retryResearchRequestId = null;
+        _isResearchBusy = false;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _researchError = _researchFailureMessage(error);
+        _retryResearchRequestId = error is BrokerResearchFailureException
+            ? error.requestId
+            : null;
         _isResearchBusy = false;
       });
     }
@@ -2787,6 +2848,29 @@ class _OnlineResearchPanel extends StatelessWidget {
 }
 
 String _researchFailureMessage(Object error) {
+  if (error is BrokerResearchFailureException) {
+    return switch (error.code) {
+      'offline' =>
+        'Research needs a connection. Your draft stays on this device.',
+      'identity_unavailable' || 'token_unavailable' =>
+        'Research is unavailable because a private connection could not be established.',
+      'not_entitled' =>
+        'Online research is not included for this account. Your draft and records remain available.',
+      'credits_exhausted' =>
+        'Online research credits are unavailable. Your draft and records remain available.',
+      'rate_limited' => 'Research is busy right now. Please try again later.',
+      'conflict' =>
+        'Research could not be completed because this request conflicts with an earlier one.',
+      'outcome_unknown' || 'transport_unavailable' =>
+        'Research may still be processing. Try again later with the same request.',
+      'timeout' =>
+        'Research took too long to finish. Try again later with the same request.',
+      'consent_required' || 'consent_stale' =>
+        'Research consent needs to be reviewed before Archivale can continue.',
+      _ =>
+        'Archivale could not finish source-backed research right now. Please try again.',
+    };
+  }
   if (error is ResearchConsentRequiredException) {
     return 'Research consent needs to be reviewed before Archivale can run source-backed research.';
   }

@@ -88,6 +88,8 @@ class AppFeatureFlagService {
     return endpoint;
   }
 
+  Uri? get configuredBrokerEndpoint => _configuredBrokerEndpoint;
+
   bool get localResearchCapabilityEnabled {
     final endpoint = _configuredBrokerEndpoint;
     final effectiveTargetPlatform = targetPlatform ?? defaultTargetPlatform;

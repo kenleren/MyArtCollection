@@ -10,6 +10,8 @@ import 'app/billing/play_billing_adapter.dart';
 import 'app/config/app_feature_flags.dart';
 import 'app/intake/artwork_image_picker.dart';
 import 'app/research/firebase_research_runtime.dart';
+import 'app/research/broker_http_client.dart';
+import 'app/research/broker_online_research_client.dart';
 import 'app/startup_route.dart';
 import 'app/storage/local_artwork_repository.dart';
 import 'app/storage/local_attachment_store.dart';
@@ -32,21 +34,41 @@ Future<void> main() async {
     SystemArtworkImagePicker.configurePlatformPicker();
 
     final artworkRepository = await LocalArtworkRepository.open();
+    final attachmentStore = await LocalAttachmentStore.open();
     // Firebase-backed feature evaluation is intentionally not part of startup.
     // Consent-gated research initializes it only after confirmed consent.
-    final featureFlags = const AppFeatureFlagService().localFlags();
+    final researchRuntime = FlutterFirebaseResearchRuntime();
+    final featureFlagService = AppFeatureFlagService(runtime: researchRuntime);
+    final featureFlags = featureFlagService.localFlags();
+    final brokerEndpoint = featureFlagService.configuredBrokerEndpoint;
+    final researchClient =
+        featureFlags.localResearchCapabilityEnabled && brokerEndpoint != null
+        ? BrokerOnlineResearchClient(
+            repository: artworkRepository,
+            attachmentStore: attachmentStore,
+            httpClient: BrokerHttpClient(
+              endpoint: brokerEndpoint,
+              featureFlags: featureFlagService,
+              firebaseRuntime: researchRuntime,
+              transport: DartIoBrokerHttpTransport(),
+              connectivity: const EndpointDnsBrokerConnectivity(),
+              retryStore: await FileBrokerRetryStore.open(),
+            ),
+          )
+        : null;
     final billingService = PlayBillingEntitlementService(
       InAppPurchasePlayBillingStore(),
       FirebasePlayBillingVerifier(FlutterFirebaseResearchRuntime()),
     );
     final dependencies = AppDependencies(
       artworkRepository: artworkRepository,
-      attachmentStore: await LocalAttachmentStore.open(),
+      attachmentStore: attachmentStore,
       imagePicker: SystemArtworkImagePicker(),
       featureFlags: featureFlags,
       entitlementService: billingService,
       billingManagementService: billingService,
       onDeviceAiDraftProvider: MethodChannelOnDeviceAiDraftProvider(),
+      onlineResearchClient: researchClient,
     );
 
     runApp(
