@@ -227,10 +227,21 @@ android {
             "MY_ART_ON_DEVICE_AI_ENABLED",
             dartDefineEnabled("MY_ART_ON_DEVICE_AI_ENABLED").toString(),
         )
+        externalNativeBuild {
+            cmake {
+                cppFlags += listOf("-std=c++20", "-Wall", "-Wextra", "-Werror")
+            }
+        }
     }
 
     buildFeatures {
         buildConfig = true
+    }
+
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+        }
     }
 
     signingConfigs {

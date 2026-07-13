@@ -29,6 +29,21 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 
+private object AttachmentCustodyNative {
+    init {
+        System.loadLibrary("attachment_custody")
+    }
+
+    external fun execute(
+        flutterRoot: String,
+        operation: String,
+        sourcePath: String,
+        artworkId: String,
+        attachmentId: String,
+        canonicalName: String,
+    ): String
+}
+
 class MainActivity : FlutterActivity() {
     private val onDeviceAiScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var onDeviceAiProvider: MlKitPromptOnDeviceAiProvider? = null
@@ -121,6 +136,48 @@ class MainActivity : FlutterActivity() {
             result.success(
                 uri != null && mimeType != null && openSupportingAttachment(uri, mimeType),
             )
+        }
+
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            "app.archivale/attachment_custody_v1",
+        ).setMethodCallHandler { call, result ->
+            val arguments = call.arguments as? Map<*, *> ?: emptyMap<Any?, Any?>()
+            val response = try {
+                AttachmentCustodyNative.execute(
+                    getDir("flutter", Context.MODE_PRIVATE).absolutePath,
+                    call.method,
+                    arguments["sourcePath"] as? String ?: "",
+                    arguments["artworkId"] as? String ?: arguments["operationId"] as? String ?: "",
+                    arguments["attachmentId"] as? String ?: "",
+                    arguments["canonicalName"] as? String ?: "",
+                )
+            } catch (_: UnsatisfiedLinkError) {
+                "{\"outcome\":\"unsupported\",\"detail\":\"Native attachment custody is unavailable.\"}"
+            } catch (_: Exception) {
+                "{\"outcome\":\"ioFailure\",\"detail\":\"Native attachment custody failed.\"}"
+            }
+            try {
+                val json = JSONObject(response)
+                val map = mutableMapOf<String, Any?>(
+                    "outcome" to json.optString("outcome", "ioFailure"),
+                )
+                if (json.has("detail")) map["detail"] = json.optString("detail")
+                if (json.has("entries")) {
+                    val entries = json.getJSONArray("entries")
+                    map["entries"] = List(entries.length()) { index ->
+                        val entry = entries.getJSONObject(index)
+                        mapOf(
+                            "artworkId" to entry.getString("artworkId"),
+                            "attachmentId" to entry.getString("attachmentId"),
+                            "canonicalName" to entry.getString("canonicalName"),
+                        )
+                    }
+                }
+                result.success(map)
+            } catch (_: Exception) {
+                result.success(mapOf("outcome" to "ioFailure", "detail" to "Invalid native custody response."))
+            }
         }
     }
 
