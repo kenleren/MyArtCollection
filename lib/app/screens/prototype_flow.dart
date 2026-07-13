@@ -7,6 +7,7 @@ import '../ai/on_device_ai_draft_service.dart';
 import '../app_dependencies.dart';
 import '../app_routes.dart';
 import '../billing/entitlement_plan.dart';
+import '../external_references/external_references_panel.dart';
 import '../intake/artwork_intake_service.dart';
 import '../intake/supporting_attachment_service.dart';
 import '../localization/app_currency_formatter.dart';
@@ -2654,8 +2655,10 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
                 _LiveSupportingPhotoTile(attachment: attachment),
                 const SizedBox(height: 10),
               ],
+              ExternalReferencesPanel(artworkId: widget.artwork.id),
               const SizedBox(height: 16),
               DropdownButtonFormField<AttachmentType>(
+                isExpanded: true,
                 initialValue: _selectedType,
                 decoration: const InputDecoration(labelText: 'Document type'),
                 items: const [
@@ -4714,8 +4717,10 @@ class _ProgressStrip extends StatelessWidget {
             ),
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
+              child: Wrap(
+                spacing: 6,
+                runSpacing: 2,
+                crossAxisAlignment: WrapCrossAlignment.center,
                 children: [
                   Text(
                     '${index + 1}',
@@ -4726,7 +4731,6 @@ class _ProgressStrip extends StatelessWidget {
                       fontWeight: FontWeight.w900,
                     ),
                   ),
-                  const SizedBox(width: 6),
                   Text(
                     _steps[index],
                     style: Theme.of(context).textTheme.labelMedium?.copyWith(
