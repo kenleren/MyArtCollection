@@ -10,6 +10,7 @@ import 'package:my_art_collection/app/app.dart';
 import 'package:my_art_collection/app/app_dependencies.dart';
 import 'package:my_art_collection/app/app_routes.dart';
 import 'package:my_art_collection/app/external_references/external_reference_launch_gateway.dart';
+import 'package:my_art_collection/app/external_references/external_references_panel.dart';
 import 'package:my_art_collection/app/intake/artwork_image_picker.dart';
 import 'package:my_art_collection/app/storage/artwork_record.dart';
 import 'package:my_art_collection/app/storage/external_reference.dart';
@@ -195,6 +196,23 @@ void main() {
         isNull,
       );
       expect(tester.takeException(), isNull);
+      final addFinder = find.widgetWithText(
+        FilledButton,
+        'Add external reference',
+      );
+      await tester.drag(find.byType(Scrollable).first, const Offset(0, -120));
+      await tester.pumpAndSettle();
+      expect(
+        tester.getRect(find.text('External references couldn’t be read')).top,
+        greaterThanOrEqualTo(56),
+      );
+      expect(
+        tester
+            .getRect(find.byKey(const ValueKey('retry-external-references')))
+            .bottom,
+        lessThanOrEqualTo(844),
+      );
+      expect(tester.getRect(addFinder).bottom, lessThanOrEqualTo(844));
       await _capture(
         tester,
         boundaryKey,
@@ -235,6 +253,131 @@ void main() {
       expect(tester.takeException(), isNull);
     },
   );
+
+  testWidgets(
+    'post-save read failure is consumed and stays locked through recovery',
+    (tester) async {
+      final fixture = (await tester.runAsync(_UiFixture.create))!;
+      addTearDown(() async => tester.runAsync(fixture.dispose));
+      await _pumpDocuments(tester, fixture);
+      await tester.runAsync(fixture.enablePostSaveReadFailure);
+
+      await tester.tap(
+        find.widgetWithText(FilledButton, 'Add external reference'),
+      );
+      await _pumpLiveData(tester);
+      await tester.enterText(
+        find.byKey(const ValueKey('external-reference-url-field')),
+        'https://gallery.example/post-save',
+      );
+      await tester.tap(find.widgetWithText(FilledButton, 'Save'));
+      await _pumpLiveData(tester);
+      await _scrollToPanel(tester);
+
+      expect(find.text('External references couldn’t be read'), findsOneWidget);
+      expect(find.text('No external references yet.'), findsNothing);
+      expect(find.byTooltip('Edit external reference'), findsNothing);
+      expect(
+        tester
+            .widget<FilledButton>(
+              find.widgetWithText(FilledButton, 'Add external reference'),
+            )
+            .onPressed,
+        isNull,
+      );
+      expect(tester.takeException(), isNull);
+
+      await tester.runAsync(fixture.repairPostSaveReadFailure);
+      await tester.tap(find.byKey(const ValueKey('retry-external-references')));
+      await _pumpLiveData(tester);
+      await _scrollToPanel(tester);
+
+      expect(find.text('External references couldn’t be read'), findsNothing);
+      expect(find.text('gallery.example'), findsOneWidget);
+      expect(find.byTooltip('Edit external reference'), findsOneWidget);
+      expect(
+        tester
+            .widget<FilledButton>(
+              find.widgetWithText(FilledButton, 'Add external reference'),
+            )
+            .onPressed,
+        isNotNull,
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('artwork id change read failure is consumed and retry recovers', (
+    tester,
+  ) async {
+    const secondArtworkId = 'external-reference-artwork-two';
+    final fixture = (await tester.runAsync(_UiFixture.create))!;
+    addTearDown(() async => tester.runAsync(fixture.dispose));
+    await tester.runAsync(() async {
+      await fixture.createArtwork(secondArtworkId);
+      await fixture.addManual(
+        'artwork-change',
+        label: 'Changed artwork reference',
+        targetArtworkId: secondArtworkId,
+      );
+      await fixture.corruptReference('artwork-change');
+    });
+
+    await _pumpExternalReferencesPanel(
+      tester,
+      fixture,
+      artworkId: _UiFixture.artworkId,
+    );
+    expect(find.text('No external references yet.'), findsOneWidget);
+    expect(
+      tester
+          .widget<FilledButton>(
+            find.widgetWithText(FilledButton, 'Add external reference'),
+          )
+          .onPressed,
+      isNotNull,
+    );
+
+    await _pumpExternalReferencesPanel(
+      tester,
+      fixture,
+      artworkId: secondArtworkId,
+    );
+    expect(find.text('External references couldn’t be read'), findsOneWidget);
+    expect(find.text('No external references yet.'), findsNothing);
+    expect(find.byTooltip('Edit external reference'), findsNothing);
+    expect(
+      tester
+          .widget<FilledButton>(
+            find.widgetWithText(FilledButton, 'Add external reference'),
+          )
+          .onPressed,
+      isNull,
+    );
+    expect(tester.takeException(), isNull);
+
+    await tester.runAsync(
+      () => fixture.repairReference(
+        'artwork-change',
+        DateTime.utc(2026, 7, 13, 8, 'artwork-change'.length),
+      ),
+    );
+    await tester.tap(find.byKey(const ValueKey('retry-external-references')));
+    await _pumpLiveData(tester);
+
+    expect(find.text('External references couldn’t be read'), findsNothing);
+    expect(find.text('Changed artwork reference'), findsOneWidget);
+    expect(find.byTooltip('Edit external reference'), findsOneWidget);
+    expect(
+      tester
+          .widget<FilledButton>(
+            find.widgetWithText(FilledButton, 'Add external reference'),
+          )
+          .onPressed,
+      isNotNull,
+    );
+    expect(tester.takeException(), isNull);
+  });
 
   testWidgets(
     'suggestion semantics, confirmation and reorder controls are deterministic',
@@ -640,6 +783,29 @@ Future<GlobalKey> _pumpDocuments(
   return boundaryKey;
 }
 
+Future<void> _pumpExternalReferencesPanel(
+  WidgetTester tester,
+  _UiFixture fixture, {
+  required String artworkId,
+}) async {
+  await tester.pumpWidget(
+    AppDependencyScope(
+      dependencies: fixture.dependencies(),
+      child: MaterialApp(
+        home: Scaffold(
+          body: SingleChildScrollView(
+            child: ExternalReferencesPanel(
+              key: const ValueKey('artwork-change-panel'),
+              artworkId: artworkId,
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+  await _pumpLiveData(tester);
+}
+
 Future<void> _scrollToPanel(WidgetTester tester) async {
   final panel = find.byKey(const ValueKey('external-references-panel'));
   for (var attempt = 0; attempt < 30 && panel.evaluate().isEmpty; attempt++) {
@@ -766,16 +932,64 @@ class _UiFixture {
         externalReferenceLaunchGateway: gateway,
       );
 
-  Future<void> addManual(String id, {required String? label}) async {
+  Future<void> addManual(
+    String id, {
+    required String? label,
+    String? targetArtworkId,
+  }) async {
     await repository.addManualExternalReference(
       referenceId: id,
-      artworkId: artworkId,
+      artworkId: targetArtworkId ?? artworkId,
       type: ExternalReferenceType.galleryOrArtist,
       label: label,
       url: 'https://example.com/$id',
       transactionTime: DateTime.utc(2026, 7, 13, 8, id.length),
     );
   }
+
+  Future<void> createArtwork(String id) => repository.create(
+    ArtworkRecord(
+      id: id,
+      recordState: ArtworkRecordState.verifiedByYou,
+      createdAt: DateTime.utc(2026, 7, 13),
+      updatedAt: DateTime.utc(2026, 7, 13),
+      fields: const {},
+    ),
+  );
+
+  Future<void> enablePostSaveReadFailure() => database.execute('''
+    CREATE TRIGGER issue_224_corrupt_external_reference_after_insert
+    AFTER INSERT ON external_references
+    BEGIN
+      UPDATE external_references
+      SET updated_at = '2026-02-30T00:00:00.000Z'
+      WHERE reference_id = NEW.reference_id;
+    END
+  ''');
+
+  Future<void> repairPostSaveReadFailure() async {
+    await database.execute(
+      'DROP TRIGGER issue_224_corrupt_external_reference_after_insert',
+    );
+    await database.execute(
+      'UPDATE external_references SET updated_at = created_at',
+    );
+  }
+
+  Future<void> corruptReference(String id) => database.update(
+    'external_references',
+    {'updated_at': '2026-02-30T00:00:00.000Z'},
+    where: 'reference_id = ?',
+    whereArgs: [id],
+  );
+
+  Future<void> repairReference(String id, DateTime updatedAt) =>
+      database.update(
+        'external_references',
+        {'updated_at': updatedAt.toIso8601String()},
+        where: 'reference_id = ?',
+        whereArgs: [id],
+      );
 
   Future<void> addSuggestion(String id, {required String? label}) async {
     await repository.saveExternalReferenceSuggestion(

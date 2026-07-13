@@ -51,7 +51,14 @@ class _ExternalReferencesPanelState extends State<ExternalReferencesPanel> {
 
   Future<void> _reload({FocusNode? restoreFocus}) async {
     final future = _startRead();
-    await future;
+    try {
+      await future;
+    } catch (_) {
+      // FutureBuilder owns the visible read-integrity error state. Consume the
+      // companion await so ignored lifecycle and post-save reloads do not
+      // surface the same failure as an unhandled asynchronous exception.
+      return;
+    }
     if (mounted && restoreFocus != null) {
       _restoreFocusWhenReady(restoreFocus);
     }
@@ -375,7 +382,7 @@ class _ExternalReferenceReadError extends StatelessWidget {
           borderRadius: BorderRadius.circular(12),
         ),
         child: Padding(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
