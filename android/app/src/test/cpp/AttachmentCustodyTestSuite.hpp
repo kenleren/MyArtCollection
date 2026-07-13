@@ -478,7 +478,7 @@ inline std::string fail_closed_capability_test() {
   const auto failed = call(root, "selfTest");
   custody::test_reset_hooks();
   if (failed.outcome != "unsupported") return "capability probe did not fail closed";
-  for (const std::string& point : {"selfTest.noReplaceCollision", "selfTest.directoryRmdir"}) {
+  for (const std::string point : {"selfTest.noReplaceCollision", "selfTest.directoryRmdir"}) {
     custody::test_fail_at(point);
     const auto negative = call(root, "selfTest");
     custody::test_reset_hooks();
