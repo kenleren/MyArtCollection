@@ -86,7 +86,7 @@ class AppDependencies {
 
   ExternalReferenceLaunchService createExternalReferenceLaunchService() {
     return ExternalReferenceLaunchService(
-      repository: artworkRepository,
+      referenceLoader: artworkRepository.getExternalReference,
       gateway:
           externalReferenceLaunchGateway ??
           createSystemExternalReferenceLaunchGateway(),

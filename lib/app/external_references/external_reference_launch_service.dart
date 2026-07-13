@@ -1,7 +1,9 @@
-import '../storage/local_artwork_repository.dart';
 import '../storage/external_reference.dart';
 import 'external_reference_launch_gateway.dart';
 import 'external_reference_url_codec.dart';
+
+typedef ExternalReferenceLoader =
+    Future<ExternalReferenceRecord?> Function(String referenceId);
 
 enum ExternalReferenceLaunchFailure { staleOrInvalid, openFailed }
 
@@ -12,12 +14,12 @@ class ExternalReferenceLaunchException implements Exception {
 
 class ExternalReferenceLaunchService {
   const ExternalReferenceLaunchService({
-    required this.repository,
+    required this.referenceLoader,
     required this.gateway,
     this.urlCodec = const ExternalReferenceUrlCodec(),
   });
 
-  final LocalArtworkRepository repository;
+  final ExternalReferenceLoader referenceLoader;
   final ExternalReferenceLaunchGateway gateway;
   final ExternalReferenceUrlCodec urlCodec;
 
@@ -84,7 +86,7 @@ class ExternalReferenceLaunchService {
 
   Future<ExternalReferenceRecord?> _reload(String referenceId) async {
     try {
-      return await repository.getExternalReference(referenceId);
+      return await referenceLoader(referenceId);
     } catch (_) {
       throw const ExternalReferenceLaunchException(
         ExternalReferenceLaunchFailure.staleOrInvalid,

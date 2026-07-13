@@ -125,7 +125,7 @@ void main() {
       );
       gateway = _RecordingGateway();
       service = ExternalReferenceLaunchService(
-        repository: repository,
+        referenceLoader: repository.getExternalReference,
         gateway: gateway,
       );
     });
@@ -151,7 +151,7 @@ void main() {
         reservation: reservation,
       );
       service = ExternalReferenceLaunchService(
-        repository: repository,
+        referenceLoader: repository.getExternalReference,
         gateway: gateway,
       );
 
@@ -214,7 +214,7 @@ void main() {
         for (final throws in [false, true]) {
           gateway = _RecordingGateway(result: false, throws: throws);
           service = ExternalReferenceLaunchService(
-            repository: repository,
+            referenceLoader: repository.getExternalReference,
             gateway: gateway,
           );
 
@@ -249,7 +249,7 @@ void main() {
             reservation: reservation,
           );
           service = ExternalReferenceLaunchService(
-            repository: repository,
+            referenceLoader: repository.getExternalReference,
             gateway: gateway,
           );
           if (scenario == 'invalid') {
