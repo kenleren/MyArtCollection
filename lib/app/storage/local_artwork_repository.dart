@@ -45,7 +45,7 @@ class LocalArtworkRepository {
   final ArtworkCollectionSnapshotObserver? collectionSnapshotObserver;
 
   static const _databaseName = 'my_art_collection.db';
-  static const _schemaVersion = 7;
+  static const _schemaVersion = 8;
 
   static Future<LocalArtworkRepository> open() async {
     final directory = await getApplicationDocumentsDirectory();
@@ -138,6 +138,17 @@ class LocalArtworkRepository {
         'ALTER TABLE attachments ADD COLUMN transform_summary TEXT',
       );
     }
+    if (oldVersion >= 2 && oldVersion < 8) {
+      await db.execute(
+        "ALTER TABLE attachments ADD COLUMN lifecycle_status TEXT NOT NULL DEFAULT 'active'",
+      );
+      await db.execute(
+        'ALTER TABLE attachments ADD COLUMN lifecycle_updated_at TEXT',
+      );
+      await db.execute(
+        'ALTER TABLE attachments ADD COLUMN superseded_by_attachment_id TEXT',
+      );
+    }
   }
 
   static Future<void> _createAttachmentsSchema(Database db) async {
@@ -155,6 +166,9 @@ class LocalArtworkRepository {
         source_state TEXT NOT NULL,
         relative_path TEXT NOT NULL,
         checksum TEXT NOT NULL,
+        lifecycle_status TEXT NOT NULL DEFAULT 'active',
+        lifecycle_updated_at TEXT,
+        superseded_by_attachment_id TEXT,
         derived_from_attachment_id TEXT,
         transform_summary TEXT,
         extraction_summary TEXT,
@@ -557,12 +571,73 @@ class LocalArtworkRepository {
   Future<List<AttachmentRecord>> attachmentsForArtwork(String artworkId) async {
     final rows = await _database.query(
       'attachments',
-      where: 'artwork_id = ?',
+      where: "artwork_id = ? AND lifecycle_status IN ('active', 'unavailable')",
       whereArgs: [artworkId],
       orderBy: 'imported_at DESC',
     );
 
     return rows.map(_attachmentFromRow).toList();
+  }
+
+  Future<List<AttachmentRecord>> allAttachmentsForArtwork(
+    String artworkId,
+  ) async {
+    final rows = await _database.query(
+      'attachments',
+      where: 'artwork_id = ?',
+      whereArgs: [artworkId],
+      orderBy: 'imported_at DESC',
+    );
+    return rows.map(_attachmentFromRow).toList();
+  }
+
+  Future<void> updateAttachmentLifecycle({
+    required String attachmentId,
+    required AttachmentLifecycleStatus lifecycleStatus,
+    required DateTime updatedAt,
+    String? supersededByAttachmentId,
+  }) async {
+    await _database.update(
+      'attachments',
+      {
+        'lifecycle_status': lifecycleStatus.storageValue,
+        'lifecycle_updated_at': updatedAt.toUtc().toIso8601String(),
+        'superseded_by_attachment_id': supersededByAttachmentId,
+      },
+      where: 'attachment_id = ?',
+      whereArgs: [attachmentId],
+    );
+  }
+
+  Future<void> replaceAttachment({
+    required String previousAttachmentId,
+    required AttachmentRecord replacement,
+    required DateTime replacedAt,
+  }) async {
+    await _database.transaction((txn) async {
+      final previousRows = await txn.query(
+        'attachments',
+        where: 'attachment_id = ?',
+        whereArgs: [previousAttachmentId],
+        limit: 1,
+      );
+      if (previousRows.isEmpty ||
+          previousRows.single['artwork_id'] != replacement.artworkId) {
+        throw StateError('The supporting attachment is no longer available.');
+      }
+      await _validateAttachmentLineage(txn, replacement);
+      await txn.insert('attachments', _attachmentRow(replacement));
+      await txn.update(
+        'attachments',
+        {
+          'lifecycle_status': AttachmentLifecycleStatus.superseded.storageValue,
+          'lifecycle_updated_at': replacedAt.toUtc().toIso8601String(),
+          'superseded_by_attachment_id': replacement.id,
+        },
+        where: 'attachment_id = ?',
+        whereArgs: [previousAttachmentId],
+      );
+    });
   }
 
   Future<AttachmentRecord?> getAttachment(String attachmentId) async {
@@ -719,6 +794,11 @@ class LocalArtworkRepository {
       'source_state': attachment.source.label,
       'relative_path': attachment.relativePath,
       'checksum': attachment.checksum,
+      'lifecycle_status': attachment.lifecycleStatus.storageValue,
+      'lifecycle_updated_at': attachment.lifecycleUpdatedAt
+          ?.toUtc()
+          .toIso8601String(),
+      'superseded_by_attachment_id': attachment.supersededByAttachmentId,
       'extraction_summary': attachment.extractionSummary,
       'notes': attachment.notes,
     };
@@ -914,6 +994,11 @@ class LocalArtworkRepository {
       source: ArtworkFieldSource.fromStorage(row['source_state'] as String),
       relativePath: row['relative_path'] as String,
       checksum: row['checksum'] as String,
+      lifecycleStatus: AttachmentLifecycleStatus.fromStorage(
+        row['lifecycle_status'] as String?,
+      ),
+      lifecycleUpdatedAt: _parseDate(row['lifecycle_updated_at'] as String?),
+      supersededByAttachmentId: row['superseded_by_attachment_id'] as String?,
       extractionSummary: row['extraction_summary'] as String?,
       notes: row['notes'] as String?,
     );

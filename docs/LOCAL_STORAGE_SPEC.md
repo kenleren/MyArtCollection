@@ -66,6 +66,8 @@ Suggested fields:
 - local storage key or relative path
 - extracted text or extraction summary when present
 - warning flags for over-limit or generated content
+- attachment lifecycle: `active`, `unavailable`, `superseded`, or `removed`
+- optional lifecycle timestamp and `superseded_by_attachment_id`
 
 ### `ai_jobs`
 
@@ -143,6 +145,12 @@ Logical path pattern:
 
 The actual on-device path can differ by platform. The important rule is that the app owns the location and the files are not placed in a public user-facing library by default.
 
+On Android, `getApplicationDocumentsDirectory()` resolves through
+`Context.getDir("flutter", MODE_PRIVATE)`. The native attachment viewer and its
+non-exported `FileProvider` must therefore authorize only
+`<application documents>/attachments/artworks/`; `filesDir`, a public storage
+root, and a broader app-private root are not equivalent substitutes.
+
 ## Attachment Classes And Limits
 
 The prototype must accept the following imported attachment types:
@@ -166,6 +174,32 @@ Rules:
 - The attachment write path must reject derivative rows when the source
   attachment is missing or belongs to a different `artwork_id`.
 - A file that arrives with an unrecognized MIME type should be rejected for the prototype unless a later spec explicitly widens support.
+- The importer must check MIME, filename extension, and an allowed file
+  signature plus bounded structural checks before committing bytes. PDFs require
+  a `%PDF-` header, a valid `startxref` value, and a `%%EOF` trailer; JPEG and
+  PNG require bounded complete marker/chunk structure; HEIC and HEIF require
+  complete ISO base-media metadata, image dimensions, media data, and an
+  approved brand. Before raster decoding, image dimensions must fit a 64 MiB
+  RGBA-equivalent pixel budget and a 16,384-pixel per-axis limit. The native
+  descriptor and decoded frame must remain inside the same budget. Header-only,
+  truncated, malformed, dimension-bomb, and MIME-mismatched files are rejected.
+- Import writes stage-copy, validate, checksum, reopen, then returns metadata
+  for the database commit. Failed writes clean staging and uncommitted bytes.
+
+## Attachment Lifecycle
+
+Attachments default to `active`. A file that cannot be reopened or whose
+checksum no longer matches is `unavailable`; its metadata remains so the
+collector can replace it. Replacing an attachment makes the prior record
+`superseded`; removing one makes it `removed`. Both are soft-removal states in
+this prototype: metadata and app-private bytes remain until a future explicit
+purge/data-erasure task.
+
+Only `active` and `unavailable` rows appear in the active UI. `superseded` and
+`removed` rows are excluded from active UI, archive payloads, and future backup
+inputs. Archive handling follows
+[Supporting Record Attachment Export Contract v1](SUPPORTING_RECORD_ATTACHMENT_EXPORT_CONTRACT_V1.md)
+and must never use local paths or claim attachment completeness.
 
 Generated PDFs and ZIP exports are not user imports.
 

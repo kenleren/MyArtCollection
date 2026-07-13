@@ -138,12 +138,21 @@ class ArtworkIntakeService {
       );
     } on AttachmentImportException catch (error) {
       throw ArtworkIntakeException(switch (error.failure) {
+        AttachmentImportFailure.invalidIdentifier =>
+          ArtworkIntakeFailure.pickerUnavailable,
         AttachmentImportFailure.sourceMissing =>
           ArtworkIntakeFailure.sourceUnavailable,
         AttachmentImportFailure.unsupportedMimeType =>
           ArtworkIntakeFailure.unsupportedFile,
+        AttachmentImportFailure.mimeTypeMismatch ||
+        AttachmentImportFailure.malformedFile =>
+          ArtworkIntakeFailure.unsupportedFile,
+        AttachmentImportFailure.unreadableSource =>
+          ArtworkIntakeFailure.sourceUnavailable,
         AttachmentImportFailure.fileTooLarge =>
           ArtworkIntakeFailure.fileTooLarge,
+        AttachmentImportFailure.storageFailure =>
+          ArtworkIntakeFailure.pickerUnavailable,
       }, error.message);
     } on Exception catch (error) {
       throw ArtworkIntakeException(

@@ -253,6 +253,10 @@ android {
     }
 }
 
+dependencies {
+    testImplementation("junit:junit:4.13.2")
+}
+
 gradle.taskGraph.whenReady {
     if (allTasks.any { isReleaseArtifactOrSigningTask(it.name) }) {
         ensureReleaseSigningReady()

@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -161,9 +162,18 @@ void main() {
 
 Future<File> _imageFile(Directory tempDir, String fileName) async {
   final file = File(p.join(tempDir.path, fileName));
-  await file.writeAsBytes([1, 2, 3, 4]);
+  await file.writeAsBytes(
+    fileName.toLowerCase().endsWith('.png') ? _pngBytes : _jpegBytes,
+  );
   return file;
 }
+
+final _pngBytes = base64Decode(
+  'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAACXBIWXMAAAABAAAAAQBPJcTWAAAADklEQVR4nGNkAAMWCAUAADgABkRoBWYAAAAASUVORK5CYII=',
+);
+final _jpegBytes = base64Decode(
+  '/9j/4AAQSkZJRgABAgAAAQABAAD//gAQTGF2YzYyLjI4LjEwMQD/2wBDAAgEBAQEBAUFBQUFBQYGBgYGBgYGBgYGBgYHBwcICAgHBwcGBgcHCAgICAkJCQgICAgJCQoKCgwMCwsODg4RERT/xABLAAEBAAAAAAAAAAAAAAAAAAAACAEBAAAAAAAAAAAAAAAAAAAAABABAAAAAAAAAAAAAAAAAAAAABEBAAAAAAAAAAAAAAAAAAAAAP/AABEIAAIAAgMBIgACEQADEQD/2gAMAwEAAhEDEQA/AJ/AB//Z',
+);
 
 class _FakeArtworkImagePicker implements ArtworkImagePicker {
   final galleryResults = <XFile?>[];
