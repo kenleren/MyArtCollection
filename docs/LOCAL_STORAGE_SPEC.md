@@ -145,6 +145,12 @@ Logical path pattern:
 
 The actual on-device path can differ by platform. The important rule is that the app owns the location and the files are not placed in a public user-facing library by default.
 
+On Android, `getApplicationDocumentsDirectory()` resolves through
+`Context.getDir("flutter", MODE_PRIVATE)`. The native attachment viewer and its
+non-exported `FileProvider` must therefore authorize only
+`<application documents>/attachments/artworks/`; `filesDir`, a public storage
+root, and a broader app-private root are not equivalent substitutes.
+
 ## Attachment Classes And Limits
 
 The prototype must accept the following imported attachment types:

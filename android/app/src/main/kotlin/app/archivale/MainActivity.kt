@@ -1,5 +1,6 @@
 package app.archivale
 
+import android.content.Context
 import android.content.Intent
 import android.graphics.BitmapFactory
 import android.net.Uri
@@ -169,14 +170,11 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun isSupportingAttachmentPayload(sourceFile: File): Boolean {
-        return try {
-            val attachmentRoot = File(filesDir, "attachments/artworks").canonicalFile
-            val candidate = sourceFile.canonicalFile
-            candidate.isFile &&
-                candidate.path.startsWith(attachmentRoot.path + File.separator)
-        } catch (_: Exception) {
-            false
-        }
+        val applicationDocumentsDirectory = getDir("flutter", Context.MODE_PRIVATE)
+        return AttachmentViewerPolicy.isSupportingAttachmentPayload(
+            sourceFile,
+            applicationDocumentsDirectory,
+        )
     }
 }
 
