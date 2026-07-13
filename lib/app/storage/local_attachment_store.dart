@@ -51,6 +51,9 @@ class LocalAttachmentStore {
   static const _decodedBytesPerPixel = 4;
   static const _maxImagePixels = _maxDecodedImageBytes ~/ _decodedBytesPerPixel;
   static const _maxImageDimension = 16 * 1024;
+  static const _maxIsoBoxes = 4096;
+  static const _maxIsoBoxesPerContainer = 1024;
+  static const _maxIsoBoxDepth = 16;
   static const _validationTimeout = Duration(seconds: 2);
 
   static Future<LocalAttachmentStore> open() async {
@@ -543,7 +546,14 @@ class LocalAttachmentStore {
       'mif1',
       'msf1',
     };
-    final topLevelBoxes = _readIsoBoxes(bytes, 0, bytes.length);
+    final parseBudget = _IsoParseBudget(_maxIsoBoxes);
+    final topLevelBoxes = _readIsoBoxes(
+      bytes,
+      0,
+      bytes.length,
+      budget: parseBudget,
+      depth: 0,
+    );
     if (topLevelBoxes == null || topLevelBoxes.isEmpty) {
       return null;
     }
@@ -574,14 +584,17 @@ class LocalAttachmentStore {
           bytes,
           box.payloadStart + 4,
           box.payloadEnd,
+          budget: parseBudget,
+          depth: 1,
         );
         if (metadataBoxes == null) {
           return null;
         }
         final metadataDimensions = _readIsoImageDimensions(
           bytes,
-          box.payloadStart + 4,
-          box.payloadEnd,
+          metadataBoxes,
+          budget: parseBudget,
+          depth: 1,
         );
         if (metadataDimensions == null) {
           return null;
@@ -620,11 +633,11 @@ class LocalAttachmentStore {
 
   static List<_ImageDimensions>? _readIsoImageDimensions(
     List<int> bytes,
-    int start,
-    int end,
-  ) {
-    final boxes = _readIsoBoxes(bytes, start, end);
-    if (boxes == null) {
+    List<_IsoBox> boxes, {
+    required _IsoParseBudget budget,
+    required int depth,
+  }) {
+    if (depth > _maxIsoBoxDepth) {
       return null;
     }
     final dimensions = <_ImageDimensions>[];
@@ -640,10 +653,21 @@ class LocalAttachmentStore {
           ),
         );
       } else if (box.type == 'iprp' || box.type == 'ipco') {
-        final nested = _readIsoImageDimensions(
+        final nestedBoxes = _readIsoBoxes(
           bytes,
           box.payloadStart,
           box.payloadEnd,
+          budget: budget,
+          depth: depth + 1,
+        );
+        if (nestedBoxes == null) {
+          return null;
+        }
+        final nested = _readIsoImageDimensions(
+          bytes,
+          nestedBoxes,
+          budget: budget,
+          depth: depth + 1,
         );
         if (nested == null) {
           return null;
@@ -654,10 +678,25 @@ class LocalAttachmentStore {
     return dimensions;
   }
 
-  static List<_IsoBox>? _readIsoBoxes(List<int> bytes, int start, int end) {
+  static List<_IsoBox>? _readIsoBoxes(
+    List<int> bytes,
+    int start,
+    int end, {
+    required _IsoParseBudget budget,
+    required int depth,
+  }) {
+    if (depth > _maxIsoBoxDepth ||
+        start < 0 ||
+        end < start ||
+        end > bytes.length) {
+      return null;
+    }
     final boxes = <_IsoBox>[];
     var offset = start;
     while (offset < end) {
+      if (boxes.length >= _maxIsoBoxesPerContainer || !budget.consumeBox()) {
+        return null;
+      }
       if (end - offset < 8) {
         return null;
       }
@@ -733,6 +772,20 @@ class _IsoBox {
   final String type;
   final int payloadStart;
   final int payloadEnd;
+}
+
+class _IsoParseBudget {
+  _IsoParseBudget(this.remainingBoxes);
+
+  int remainingBoxes;
+
+  bool consumeBox() {
+    if (remainingBoxes <= 0) {
+      return false;
+    }
+    remainingBoxes -= 1;
+    return true;
+  }
 }
 
 enum AttachmentPayloadStatus { available, missing, checksumMismatch }

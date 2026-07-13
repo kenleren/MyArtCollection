@@ -549,6 +549,54 @@ void main() {
     );
   });
 
+  test('rejects ISO box count and nesting bombs before commit', () async {
+    final bombCases = <({String name, List<int> bytes})>[
+      (
+        name: 'excessive-sibling-boxes.heic',
+        bytes: _heicWithExcessiveSiblingBoxes(),
+      ),
+      (name: 'excessive-nesting.heic', bytes: _heicWithExcessiveNesting()),
+      (
+        name: 'excessive-total-boxes.heic',
+        bytes: _heicWithExcessiveTotalBoxes(),
+      ),
+    ];
+
+    for (var index = 0; index < bombCases.length; index += 1) {
+      final fixture = bombCases[index];
+      final source = File(p.join(tempDir.path, fixture.name));
+      await source.writeAsBytes(fixture.bytes);
+
+      await expectLater(
+        store.saveImportedAttachment(
+          artworkId: 'artwork-001',
+          attachmentId: 'attachment-iso-parser-bomb-$index',
+          sourceFile: source,
+          originalFileName: fixture.name,
+          mimeType: 'image/heic',
+          type: AttachmentType.photo,
+          source: ArtworkFieldSource.userConfirmed,
+          importedAt: DateTime.utc(2026, 7, 4, 12),
+        ),
+        throwsA(
+          isA<AttachmentImportException>().having(
+            (error) => error.failure,
+            'failure',
+            AttachmentImportFailure.malformedFile,
+          ),
+        ),
+      );
+    }
+
+    expect(await repository.allAttachmentsForArtwork('artwork-001'), isEmpty);
+    expect(
+      await Directory(
+        p.join(store.storageRoot.path, '.staging'),
+      ).list().toList(),
+      isEmpty,
+    );
+  });
+
   test(
     'rejects marker-shaped corrupt PDF PNG and JPEG payloads without commits',
     () async {
@@ -819,6 +867,93 @@ List<int> _heicWithDimensions(
     }
   }
   throw StateError('Synthetic HEIC fixture is missing an ispe box.');
+}
+
+List<int> _heicWithExcessiveSiblingBoxes() {
+  final boxes = BytesBuilder(copy: false)
+    ..add(
+      _isoBox('ftyp', <int>[
+        ...ascii.encode('heic'),
+        0,
+        0,
+        0,
+        0,
+        ...ascii.encode('heic'),
+      ]),
+    );
+  for (var index = 0; index < 1025; index += 1) {
+    boxes.add(_isoBox('free', const []));
+  }
+  boxes
+    ..add(_minimalHeicMeta(_isoImagePropertyBox()))
+    ..add(_isoBox('mdat', const [1]));
+  return boxes.takeBytes();
+}
+
+List<int> _heicWithExcessiveNesting() {
+  List<int> nested = _isoImagePropertyBox();
+  for (var depth = 0; depth < 17; depth += 1) {
+    nested = _isoBox(depth.isEven ? 'ipco' : 'iprp', nested);
+  }
+  return <int>[
+    ..._isoBox('ftyp', <int>[
+      ...ascii.encode('heic'),
+      0,
+      0,
+      0,
+      0,
+      ...ascii.encode('heic'),
+    ]),
+    ..._minimalHeicMeta(nested),
+    ..._isoBox('mdat', const [1]),
+  ];
+}
+
+List<int> _heicWithExcessiveTotalBoxes() {
+  List<int> nested = _isoImagePropertyBox();
+  for (var depth = 0; depth < 9; depth += 1) {
+    final container = BytesBuilder(copy: false);
+    for (var index = 0; index < 512; index += 1) {
+      container.add(_isoBox('free', const []));
+    }
+    container.add(nested);
+    nested = _isoBox(depth.isEven ? 'ipco' : 'iprp', container.takeBytes());
+  }
+  return <int>[
+    ..._isoBox('ftyp', <int>[
+      ...ascii.encode('heic'),
+      0,
+      0,
+      0,
+      0,
+      ...ascii.encode('heic'),
+    ]),
+    ..._minimalHeicMeta(nested),
+    ..._isoBox('mdat', const [1]),
+  ];
+}
+
+List<int> _minimalHeicMeta(List<int> imageProperties) {
+  return _isoBox('meta', <int>[
+    0,
+    0,
+    0,
+    0,
+    ...imageProperties,
+    ..._isoBox('idat', const [1]),
+  ]);
+}
+
+List<int> _isoImagePropertyBox() {
+  final dimensions = ByteData(12)
+    ..setUint32(4, 2)
+    ..setUint32(8, 2);
+  return _isoBox('ispe', dimensions.buffer.asUint8List());
+}
+
+List<int> _isoBox(String type, List<int> payload) {
+  final size = ByteData(4)..setUint32(0, payload.length + 8);
+  return <int>[...size.buffer.asUint8List(), ...ascii.encode(type), ...payload];
 }
 
 List<int> _jpegWithDimensions(
