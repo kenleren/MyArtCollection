@@ -4220,6 +4220,7 @@ void main() {
     await tapVisible(tester, find.text('Research this draft'));
     await tapVisible(tester, find.text('Start source-backed research'));
     await pumpLiveData(tester);
+    await waitForFinder(tester, find.text('Source-backed candidates'));
     await tester.ensureVisible(find.text('Source-backed candidates'));
     await tester.pump();
     await captureBoundaryToArtifacts(

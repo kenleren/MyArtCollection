@@ -88,6 +88,7 @@ void main() {
       await tester.tap(find.widgetWithText(FilledButton, 'Save'));
       await _pumpLiveData(tester);
       await _scrollToPanel(tester);
+      await _waitForFinder(tester, find.text('gallery.example'));
       expect(find.text('gallery.example'), findsOneWidget);
       expect(addButton.focusNode!.hasFocus, isTrue);
       await _capture(tester, boundaryKey, 'issue-213-added-android.png');
