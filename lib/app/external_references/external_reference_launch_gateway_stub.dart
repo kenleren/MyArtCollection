@@ -12,5 +12,11 @@ class _UnsupportedExternalReferenceLaunchGateway
       ExternalReferenceLaunchTarget.native;
 
   @override
+  bool get requiresSynchronousReservation => false;
+
+  @override
+  ExternalReferenceLaunchReservation? reserveExternalLaunch() => null;
+
+  @override
   Future<bool> launchExternal(Uri uri) async => false;
 }

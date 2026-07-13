@@ -182,6 +182,15 @@ void main() {
           'Gallery or artist, Suggested source, AI suggestion, Suggested, position 1 of 2',
         ),
       );
+      expect(
+        find.byKey(const ValueKey('external-reference-url-suggested')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('external-reference-trust-state-suggested')),
+        findsOneWidget,
+      );
+      expect(find.text('AI suggestion'), findsOneWidget);
       for (final label in [
         'Open external reference',
         'Edit external reference',
@@ -228,6 +237,11 @@ void main() {
       expect(confirmed!.origin, ExternalReferenceOrigin.aiSuggestion);
       expect(confirmed.reviewState, ExternalReferenceReviewState.confirmed);
       expect(find.byTooltip('Confirm external reference'), findsNothing);
+      expect(find.text('Confirmed by you'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('external-reference-url-suggested')),
+        findsOneWidget,
+      );
       await _capture(tester, boundaryKey, 'issue-213-ai-origin-confirmed.png');
 
       final moveDown = tester.widget<IconButton>(
@@ -256,6 +270,80 @@ void main() {
       );
       expect(order!.map((row) => row.id), ['confirmed', 'suggested']);
       semantics.dispose();
+    },
+  );
+
+  testWidgets(
+    'large mobile text keeps row trust state and duplicate feedback visible',
+    (tester) async {
+      final fixture = (await tester.runAsync(_UiFixture.create))!;
+      addTearDown(() async => tester.runAsync(fixture.dispose));
+      await tester.runAsync(
+        () => fixture.addSuggestion('suggested', label: 'Suggested source'),
+      );
+      final boundaryKey = await _pumpDocuments(
+        tester,
+        fixture,
+        size: const Size(390, 844),
+        textScale: 2,
+      );
+
+      expect(find.text('https://example.com/suggested'), findsOneWidget);
+      expect(find.text('AI suggestion'), findsOneWidget);
+      await _capture(
+        tester,
+        boundaryKey,
+        'issue-213-suggested-390x844-scale2.0.png',
+      );
+
+      await tester.tap(find.byTooltip('Confirm external reference'));
+      await _pumpLiveData(tester);
+      await _scrollToPanel(tester);
+      expect(find.text('Confirmed by you'), findsOneWidget);
+      expect(find.text('https://example.com/suggested'), findsOneWidget);
+      await _capture(
+        tester,
+        boundaryKey,
+        'issue-213-confirmed-390x844-scale2.0.png',
+      );
+
+      await tester.tap(
+        find.widgetWithText(FilledButton, 'Add external reference'),
+      );
+      await _pumpLiveData(tester);
+      await tester.enterText(
+        find.byKey(const ValueKey('external-reference-url-field')),
+        'https://example.com/suggested',
+      );
+      var announcements = 0;
+      tester.binding.defaultBinaryMessenger.setMockMessageHandler(
+        SystemChannels.accessibility.name,
+        (message) async {
+          if (_isAnnouncement(message)) announcements++;
+          return null;
+        },
+      );
+      await tester.tap(find.widgetWithText(FilledButton, 'Save'));
+      await _pumpLiveData(tester);
+      expect(
+        find.text('This reference is already saved for the artwork.'),
+        findsOneWidget,
+      );
+      final urlField = tester.widget<TextField>(
+        find.byKey(const ValueKey('external-reference-url-field')),
+      );
+      expect(urlField.decoration!.errorMaxLines, 3);
+      expect(urlField.focusNode!.hasFocus, isTrue);
+      expect(announcements, 1);
+      await _capture(
+        tester,
+        boundaryKey,
+        'issue-213-duplicate-390x844-scale2.0.png',
+      );
+      tester.binding.defaultBinaryMessenger.setMockMessageHandler(
+        SystemChannels.accessibility.name,
+        null,
+      );
     },
   );
 
@@ -536,6 +624,7 @@ Future<void> _capture(
       boundaryKey.currentContext!.findRenderObject()! as RenderRepaintBoundary;
   boundary.markNeedsPaint();
   await tester.pump();
+  await tester.pump(const Duration(milliseconds: 100));
   final bytes = await tester.runAsync<Uint8List>(() async {
     final image = await boundary.toImage(pixelRatio: 1);
     final data = await image.toByteData(format: ui.ImageByteFormat.png);
@@ -637,6 +726,12 @@ class _UiGateway implements ExternalReferenceLaunchGateway {
   final bool result;
   final bool throws;
   final List<Uri> uris = [];
+
+  @override
+  bool get requiresSynchronousReservation => false;
+
+  @override
+  ExternalReferenceLaunchReservation? reserveExternalLaunch() => null;
 
   @override
   Future<bool> launchExternal(Uri uri) async {

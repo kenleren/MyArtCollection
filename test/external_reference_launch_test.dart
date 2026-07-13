@@ -61,28 +61,41 @@ void main() {
     });
   });
 
-  group('web gateway opens synchronously and never falls back', () {
+  group('web gateway reserves synchronously and never falls back', () {
     test(
-      'false and exception each call only the _blank policy opener once',
+      'false and exception each create only one isolated reservation',
       () async {
         for (final throws in [false, true]) {
           var calls = 0;
-          final gateway = WebExternalReferenceLaunchGateway((uri) {
+          final reservation = _RecordingReservation(
+            result: false,
+            throws: throws,
+          );
+          final gateway = WebExternalReferenceLaunchGateway(() {
             calls++;
-            if (throws) throw StateError('popup blocked');
-            return false;
+            return reservation;
           });
 
-          final future = gateway.launchExternal(
-            Uri.parse('https://example.com'),
-          );
+          final reserved = gateway.reserveExternalLaunch();
           expect(
             calls,
             1,
             reason: 'the popup attempt must occur in the gesture stack',
           );
-          expect(await future, isFalse);
+          expect(gateway.requiresSynchronousReservation, isTrue);
+          if (throws) {
+            await expectLater(
+              reserved!.launch(Uri.parse('https://example.com')),
+              throwsA(isA<StateError>()),
+            );
+          } else {
+            expect(
+              await reserved!.launch(Uri.parse('https://example.com')),
+              isFalse,
+            );
+          }
           expect(calls, 1);
+          expect(reservation.launchCalls, 1);
         }
       },
     );
@@ -129,6 +142,28 @@ void main() {
       );
 
       expect(gateway.uris, [Uri.parse('https://example.com/object')]);
+    });
+
+    test('web reservation is made before the asynchronous reload', () async {
+      final reservation = _RecordingReservation();
+      gateway = _RecordingGateway(
+        target: ExternalReferenceLaunchTarget.web,
+        reservation: reservation,
+      );
+      service = ExternalReferenceLaunchService(
+        repository: repository,
+        gateway: gateway,
+      );
+
+      final open = service.open(
+        referenceId: 'reference-1',
+        expectedUrl: 'https://example.com/object',
+      );
+      expect(gateway.reservationCalls, 1);
+      expect(reservation.launchCalls, 0);
+      await open;
+      expect(reservation.uris, [Uri.parse('https://example.com/object')]);
+      expect(reservation.closeCalls, 0);
     });
 
     test('missing and stale rows fail locally without gateway calls', () async {
@@ -200,6 +235,59 @@ void main() {
         }
       },
     );
+
+    test(
+      'web reservation closes for stale, invalid, false and exception paths',
+      () async {
+        for (final scenario in ['stale', 'invalid', 'false', 'exception']) {
+          final reservation = _RecordingReservation(
+            result: scenario != 'false',
+            throws: scenario == 'exception',
+          );
+          gateway = _RecordingGateway(
+            target: ExternalReferenceLaunchTarget.web,
+            reservation: reservation,
+          );
+          service = ExternalReferenceLaunchService(
+            repository: repository,
+            gateway: gateway,
+          );
+          if (scenario == 'invalid') {
+            await database.update(
+              'external_references',
+              {'url': 'http://example.com'},
+              where: 'reference_id = ?',
+              whereArgs: ['reference-1'],
+            );
+          }
+          await expectLater(
+            service.open(
+              referenceId: 'reference-1',
+              expectedUrl: scenario == 'stale'
+                  ? 'https://example.com/stale'
+                  : scenario == 'invalid'
+                  ? 'http://example.com'
+                  : 'https://example.com/object',
+            ),
+            throwsA(isA<ExternalReferenceLaunchException>()),
+          );
+          expect(gateway.reservationCalls, 1, reason: scenario);
+          expect(reservation.closeCalls, 1, reason: scenario);
+          expect(
+            reservation.launchCalls,
+            scenario == 'stale' || scenario == 'invalid' ? 0 : 1,
+          );
+          if (scenario == 'invalid') {
+            await database.update(
+              'external_references',
+              {'url': 'https://example.com/object'},
+              where: 'reference_id = ?',
+              whereArgs: ['reference-1'],
+            );
+          }
+        }
+      },
+    );
   });
 }
 
@@ -234,15 +322,30 @@ class _FakeNativeLauncher implements NativeExternalLauncher {
 }
 
 class _RecordingGateway implements ExternalReferenceLaunchGateway {
-  _RecordingGateway({this.result = true, this.throws = false});
-
-  final bool result;
-  final bool throws;
-  final List<Uri> uris = [];
+  _RecordingGateway({
+    this.target = ExternalReferenceLaunchTarget.native,
+    this.result = true,
+    this.throws = false,
+    this.reservation,
+  });
 
   @override
-  ExternalReferenceLaunchTarget get target =>
-      ExternalReferenceLaunchTarget.native;
+  final ExternalReferenceLaunchTarget target;
+  final bool result;
+  final bool throws;
+  final _RecordingReservation? reservation;
+  final List<Uri> uris = [];
+  int reservationCalls = 0;
+
+  @override
+  bool get requiresSynchronousReservation =>
+      target == ExternalReferenceLaunchTarget.web;
+
+  @override
+  ExternalReferenceLaunchReservation? reserveExternalLaunch() {
+    reservationCalls++;
+    return reservation;
+  }
 
   @override
   Future<bool> launchExternal(Uri uri) async {
@@ -250,6 +353,27 @@ class _RecordingGateway implements ExternalReferenceLaunchGateway {
     if (throws) throw StateError('launch failed');
     return result;
   }
+}
+
+class _RecordingReservation implements ExternalReferenceLaunchReservation {
+  _RecordingReservation({this.result = true, this.throws = false});
+
+  final bool result;
+  final bool throws;
+  final List<Uri> uris = [];
+  int launchCalls = 0;
+  int closeCalls = 0;
+
+  @override
+  Future<bool> launch(Uri uri) async {
+    launchCalls++;
+    uris.add(uri);
+    if (throws) throw StateError('launch failed');
+    return result;
+  }
+
+  @override
+  void close() => closeCalls++;
 }
 
 ArtworkRecord _artwork(String id) => ArtworkRecord(

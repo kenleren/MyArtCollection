@@ -380,6 +380,11 @@ class _ExternalReferenceRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final host = Uri.parse(reference.url).host;
     final display = reference.label ?? host;
+    final trustState = reference.origin == ExternalReferenceOrigin.aiSuggestion
+        ? reference.reviewState == ExternalReferenceReviewState.suggested
+              ? 'AI suggestion'
+              : 'Confirmed by you'
+        : 'Added by you';
     final summary =
         '${reference.type.label}, $display, '
         '${reference.origin.label}, ${reference.reviewState.label}, '
@@ -397,6 +402,20 @@ class _ExternalReferenceRow extends StatelessWidget {
           ),
           const SizedBox(height: 3),
           ExcludeSemantics(child: Text(reference.type.label)),
+          const SizedBox(height: 3),
+          ExcludeSemantics(
+            child: Text(
+              reference.url,
+              key: ValueKey('external-reference-url-${reference.id}'),
+            ),
+          ),
+          const SizedBox(height: 3),
+          ExcludeSemantics(
+            child: Text(
+              trustState,
+              key: ValueKey('external-reference-trust-state-${reference.id}'),
+            ),
+          ),
           const SizedBox(height: 8),
           Wrap(
             spacing: 4,
@@ -521,14 +540,20 @@ class _ExternalReferenceEditorDialogState
         _ => 'Couldn’t save this external reference. Try again.',
       };
       setState(() => _error = message);
-      _urlFocus.requestFocus();
       await SemanticsService.sendAnnouncement(
         View.of(context),
         message,
         Directionality.of(context),
       );
     } finally {
-      if (mounted) setState(() => _saving = false);
+      if (mounted) {
+        setState(() => _saving = false);
+        if (_error != null) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted && _error != null) _urlFocus.requestFocus();
+          });
+        }
+      }
     }
   }
 
@@ -574,6 +599,7 @@ class _ExternalReferenceEditorDialogState
               decoration: InputDecoration(
                 labelText: 'HTTPS address',
                 errorText: _error,
+                errorMaxLines: 3,
               ),
             ),
           ],

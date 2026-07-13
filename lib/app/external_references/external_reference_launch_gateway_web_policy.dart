@@ -1,22 +1,29 @@
 import 'external_reference_launch_gateway_base.dart';
 
-typedef ExternalReferenceSynchronousOpener = bool Function(Uri uri);
+typedef ExternalReferenceSynchronousReservationFactory =
+    ExternalReferenceLaunchReservation? Function();
 
 class WebExternalReferenceLaunchGateway
     implements ExternalReferenceLaunchGateway {
-  const WebExternalReferenceLaunchGateway(this.opener);
+  const WebExternalReferenceLaunchGateway(this.reservationFactory);
 
-  final ExternalReferenceSynchronousOpener opener;
+  final ExternalReferenceSynchronousReservationFactory reservationFactory;
 
   @override
   ExternalReferenceLaunchTarget get target => ExternalReferenceLaunchTarget.web;
 
   @override
-  Future<bool> launchExternal(Uri uri) {
+  bool get requiresSynchronousReservation => true;
+
+  @override
+  ExternalReferenceLaunchReservation? reserveExternalLaunch() {
     try {
-      return Future<bool>.value(opener(uri));
+      return reservationFactory();
     } catch (_) {
-      return Future<bool>.value(false);
+      return null;
     }
   }
+
+  @override
+  Future<bool> launchExternal(Uri uri) async => false;
 }
