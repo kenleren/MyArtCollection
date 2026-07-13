@@ -10,8 +10,9 @@ ruleset handoff described below; this change does not mutate repository rules.
 
 - actionlint, installed from actionlint 1.7.12 after checksum verification;
 - Flutter 3.44.4 / Dart 3.12.2 formatting, analysis, and tests;
-- a debug-only Android APK build with Temurin 17.0.19+10 after protected-input
-  and checksum-pinned Gradle wrapper validation;
+- a debug-only Android APK build with Temurin 17.0.19+10 after protected-input,
+  checksum-pinned Gradle wrapper, native attachment policy, and focused Android
+  JVM boundary validation;
 - broker and forms dependency installs, builds, tests, a clean forms audit, and
   the broker audit policy;
 - static-site validation with Python 3.12.13;

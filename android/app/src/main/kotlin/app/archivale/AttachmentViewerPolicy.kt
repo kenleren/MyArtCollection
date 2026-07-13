@@ -17,4 +17,20 @@ internal object AttachmentViewerPolicy {
             false
         }
     }
+
+    fun launchSupportingAttachment(
+        launch: () -> Unit,
+        isActivityNotFound: (Throwable) -> Boolean,
+    ): Boolean {
+        return try {
+            launch()
+            true
+        } catch (error: Throwable) {
+            if (isActivityNotFound(error)) {
+                false
+            } else {
+                throw error
+            }
+        }
+    }
 }

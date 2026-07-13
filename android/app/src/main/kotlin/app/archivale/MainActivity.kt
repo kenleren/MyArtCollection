@@ -1,5 +1,6 @@
 package app.archivale
 
+import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
 import android.graphics.BitmapFactory
@@ -162,11 +163,10 @@ class MainActivity : FlutterActivity() {
             setDataAndType(scopedUri, mimeType)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
-        if (openIntent.resolveActivity(packageManager) == null) {
-            return false
-        }
-        startActivity(Intent.createChooser(openIntent, null))
-        return true
+        return AttachmentViewerPolicy.launchSupportingAttachment(
+            launch = { startActivity(openIntent) },
+            isActivityNotFound = { error -> error is ActivityNotFoundException },
+        )
     }
 
     private fun isSupportingAttachmentPayload(sourceFile: File): Boolean {

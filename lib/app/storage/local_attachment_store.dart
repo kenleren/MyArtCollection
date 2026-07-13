@@ -47,7 +47,10 @@ class LocalAttachmentStore {
   static final RegExp _opaquePathComponent = RegExp(
     r'^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$',
   );
-  static const _maxImagePixels = 100 * 1000 * 1000;
+  static const _maxDecodedImageBytes = 64 * 1024 * 1024;
+  static const _decodedBytesPerPixel = 4;
+  static const _maxImagePixels = _maxDecodedImageBytes ~/ _decodedBytesPerPixel;
+  static const _maxImageDimension = 16 * 1024;
   static const _validationTimeout = Duration(seconds: 2);
 
   static Future<LocalAttachmentStore> open() async {
@@ -312,37 +315,74 @@ class LocalAttachmentStore {
   }
 
   static Future<void> _validatePayload(List<int> bytes, String mimeType) async {
-    final isValid = switch (mimeType) {
-      'application/pdf' => await _hasParseablePdf(bytes),
-      'image/jpeg' => _hasJpegStructure(bytes),
-      'image/png' => _hasPngStructure(bytes),
-      'image/heic' || 'image/heif' => _hasIsoBaseMediaFileStructure(bytes),
-      _ => false,
-    };
-    if (!isValid) {
+    if (mimeType == 'application/pdf') {
+      if (await _hasParseablePdf(bytes)) {
+        return;
+      }
       throw const AttachmentImportException(
         AttachmentImportFailure.malformedFile,
         'The selected file is malformed or does not match its declared type.',
       );
     }
 
-    if (mimeType.startsWith('image/')) {
+    final dimensions = switch (mimeType) {
+      'image/jpeg' => _jpegDimensions(bytes),
+      'image/png' => _pngDimensions(bytes),
+      'image/heic' || 'image/heif' => _isoBaseMediaDimensions(bytes),
+      _ => null,
+    };
+    if (dimensions == null ||
+        !_hasSafeImageDimensions(dimensions.width, dimensions.height)) {
+      throw const AttachmentImportException(
+        AttachmentImportFailure.malformedFile,
+        'The selected file is malformed or does not match its declared type.',
+      );
+    }
+
+    if ((mimeType == 'image/heic' || mimeType == 'image/heif') &&
+        !(Platform.isAndroid || Platform.isIOS || Platform.isMacOS)) {
+      return;
+    }
+
+    try {
+      final buffer = await ui.ImmutableBuffer.fromUint8List(
+        Uint8List.fromList(bytes),
+      );
       try {
-        final codec = await ui
-            .instantiateImageCodec(Uint8List.fromList(bytes))
-            .timeout(_validationTimeout);
+        final descriptor = await ui.ImageDescriptor.encoded(buffer);
         try {
-          final frame = await codec.getNextFrame().timeout(_validationTimeout);
-          frame.image.dispose();
+          if (!_hasSafeImageDescriptor(descriptor)) {
+            throw const FormatException('Decoded image dimensions are unsafe.');
+          }
+          final codec = await descriptor.instantiateCodec();
+          try {
+            final frame = await codec.getNextFrame();
+            try {
+              if (!_hasSafeImageDimensions(
+                frame.image.width,
+                frame.image.height,
+              )) {
+                throw const FormatException(
+                  'Decoded image dimensions are unsafe.',
+                );
+              }
+            } finally {
+              frame.image.dispose();
+            }
+          } finally {
+            codec.dispose();
+          }
         } finally {
-          codec.dispose();
+          descriptor.dispose();
         }
-      } catch (_) {
-        throw const AttachmentImportException(
-          AttachmentImportFailure.malformedFile,
-          'The selected file is malformed or does not match its declared type.',
-        );
+      } finally {
+        buffer.dispose();
       }
+    } catch (_) {
+      throw const AttachmentImportException(
+        AttachmentImportFailure.malformedFile,
+        'The selected file is malformed or does not match its declared type.',
+      );
     }
   }
 
@@ -374,12 +414,12 @@ class LocalAttachmentStore {
     return true;
   }
 
-  static bool _hasJpegStructure(List<int> bytes) {
+  static _ImageDimensions? _jpegDimensions(List<int> bytes) {
     if (bytes.length < 24 || !_startsWith(bytes, const [0xff, 0xd8])) {
-      return false;
+      return null;
     }
     var index = 2;
-    var hasFrame = false;
+    _ImageDimensions? dimensions;
     var hasScan = false;
     while (index + 1 < bytes.length) {
       if (bytes[index] != 0xff) {
@@ -387,17 +427,19 @@ class LocalAttachmentStore {
           index += 1;
           continue;
         }
-        return false;
+        return null;
       }
       while (index < bytes.length && bytes[index] == 0xff) {
         index += 1;
       }
       if (index >= bytes.length) {
-        return false;
+        return null;
       }
       final marker = bytes[index++];
       if (marker == 0xd9) {
-        return hasFrame && hasScan && index == bytes.length;
+        return dimensions != null && hasScan && index == bytes.length
+            ? dimensions
+            : null;
       }
       if (marker == 0x00 ||
           marker == 0xd8 ||
@@ -406,35 +448,34 @@ class LocalAttachmentStore {
         continue;
       }
       if (index + 1 >= bytes.length) {
-        return false;
+        return null;
       }
       final segmentLength = (bytes[index] << 8) | bytes[index + 1];
       if (segmentLength < 2 || index + segmentLength > bytes.length) {
-        return false;
+        return null;
       }
       if (marker >= 0xc0 &&
           marker <= 0xcf &&
           marker != 0xc4 &&
           marker != 0xc8 &&
           marker != 0xcc) {
-        if (segmentLength < 8 ||
-            !_hasSafeImageDimensions(
-              (bytes[index + 3] << 8) | bytes[index + 4],
-              (bytes[index + 5] << 8) | bytes[index + 6],
-            )) {
-          return false;
+        if (segmentLength < 8 || dimensions != null) {
+          return null;
         }
-        hasFrame = true;
+        dimensions = _ImageDimensions(
+          width: (bytes[index + 5] << 8) | bytes[index + 6],
+          height: (bytes[index + 3] << 8) | bytes[index + 4],
+        );
       }
       if (marker == 0xda && segmentLength >= 8) {
         hasScan = true;
       }
       index += segmentLength;
     }
-    return false;
+    return null;
   }
 
-  static bool _hasPngStructure(List<int> bytes) {
+  static _ImageDimensions? _pngDimensions(List<int> bytes) {
     if (bytes.length < 45 ||
         !_startsWith(bytes, const [
           0x89,
@@ -446,15 +487,17 @@ class LocalAttachmentStore {
           0x1a,
           0x0a,
         ])) {
-      return false;
+      return null;
     }
     var index = 8;
     var firstChunk = true;
+    var hasImageData = false;
     var hasIend = false;
+    _ImageDimensions? dimensions;
     while (index + 12 <= bytes.length) {
       final length = _readUint32(bytes, index);
       if (length < 0 || length > bytes.length - index - 12) {
-        return false;
+        return null;
       }
       final typeStart = index + 4;
       final type = String.fromCharCodes(
@@ -464,13 +507,21 @@ class LocalAttachmentStore {
       if (firstChunk) {
         if (type != 'IHDR' ||
             length != 13 ||
-            !_hasSafeImageDimensions(
-              _readUint32(bytes, dataStart),
-              _readUint32(bytes, dataStart + 4),
-            )) {
-          return false;
+            bytes[dataStart + 10] != 0 ||
+            bytes[dataStart + 11] != 0 ||
+            bytes[dataStart + 12] > 1) {
+          return null;
         }
+        dimensions = _ImageDimensions(
+          width: _readUint32(bytes, dataStart),
+          height: _readUint32(bytes, dataStart + 4),
+        );
         firstChunk = false;
+      } else if (type == 'IHDR') {
+        return null;
+      }
+      if (type == 'IDAT' && length > 0) {
+        hasImageData = true;
       }
       index += 12 + length;
       if (type == 'IEND') {
@@ -478,16 +529,10 @@ class LocalAttachmentStore {
         break;
       }
     }
-    return !firstChunk && hasIend;
+    return !firstChunk && hasImageData && hasIend ? dimensions : null;
   }
 
-  static bool _hasIsoBaseMediaFileStructure(List<int> bytes) {
-    if (bytes.length < 20 ||
-        _readUint32(bytes, 0) < 16 ||
-        _readUint32(bytes, 0) > bytes.length ||
-        String.fromCharCodes(bytes.sublist(4, 8)) != 'ftyp') {
-      return false;
-    }
+  static _ImageDimensions? _isoBaseMediaDimensions(List<int> bytes) {
     const brands = {
       'heic',
       'heix',
@@ -498,22 +543,166 @@ class LocalAttachmentStore {
       'mif1',
       'msf1',
     };
-    final ftypSize = _readUint32(bytes, 0);
-    for (var index = 8; index + 3 < ftypSize; index += 4) {
-      final brand = String.fromCharCodes(bytes.sublist(index, index + 4));
-      if (brands.contains(brand)) {
-        return true;
+    final topLevelBoxes = _readIsoBoxes(bytes, 0, bytes.length);
+    if (topLevelBoxes == null || topLevelBoxes.isEmpty) {
+      return null;
+    }
+
+    var hasApprovedBrand = false;
+    var hasMetadata = false;
+    var hasMediaData = false;
+    final dimensions = <_ImageDimensions>[];
+    for (final box in topLevelBoxes) {
+      if (box.type == 'ftyp') {
+        final payloadLength = box.payloadEnd - box.payloadStart;
+        if (payloadLength < 8 || (payloadLength - 8) % 4 != 0) {
+          return null;
+        }
+        for (
+          var index = box.payloadStart;
+          index + 3 < box.payloadEnd;
+          index += index == box.payloadStart ? 8 : 4
+        ) {
+          final brand = String.fromCharCodes(bytes.sublist(index, index + 4));
+          hasApprovedBrand = hasApprovedBrand || brands.contains(brand);
+        }
+      } else if (box.type == 'meta') {
+        if (box.payloadEnd - box.payloadStart < 4) {
+          return null;
+        }
+        final metadataBoxes = _readIsoBoxes(
+          bytes,
+          box.payloadStart + 4,
+          box.payloadEnd,
+        );
+        if (metadataBoxes == null) {
+          return null;
+        }
+        final metadataDimensions = _readIsoImageDimensions(
+          bytes,
+          box.payloadStart + 4,
+          box.payloadEnd,
+        );
+        if (metadataDimensions == null) {
+          return null;
+        }
+        hasMetadata = true;
+        hasMediaData =
+            hasMediaData ||
+            metadataBoxes.any(
+              (metadataBox) =>
+                  metadataBox.type == 'idat' &&
+                  metadataBox.payloadEnd > metadataBox.payloadStart,
+            );
+        dimensions.addAll(metadataDimensions);
+      } else if (box.type == 'mdat') {
+        hasMediaData = box.payloadEnd > box.payloadStart;
       }
     }
-    return false;
+
+    if (!hasApprovedBrand ||
+        !hasMetadata ||
+        !hasMediaData ||
+        dimensions.isEmpty ||
+        dimensions.any(
+          (value) => !_hasSafeImageDimensions(value.width, value.height),
+        )) {
+      return null;
+    }
+
+    return dimensions.reduce(
+      (largest, value) =>
+          value.width * value.height > largest.width * largest.height
+          ? value
+          : largest,
+    );
+  }
+
+  static List<_ImageDimensions>? _readIsoImageDimensions(
+    List<int> bytes,
+    int start,
+    int end,
+  ) {
+    final boxes = _readIsoBoxes(bytes, start, end);
+    if (boxes == null) {
+      return null;
+    }
+    final dimensions = <_ImageDimensions>[];
+    for (final box in boxes) {
+      if (box.type == 'ispe') {
+        if (box.payloadEnd - box.payloadStart < 12) {
+          return null;
+        }
+        dimensions.add(
+          _ImageDimensions(
+            width: _readUint32(bytes, box.payloadStart + 4),
+            height: _readUint32(bytes, box.payloadStart + 8),
+          ),
+        );
+      } else if (box.type == 'iprp' || box.type == 'ipco') {
+        final nested = _readIsoImageDimensions(
+          bytes,
+          box.payloadStart,
+          box.payloadEnd,
+        );
+        if (nested == null) {
+          return null;
+        }
+        dimensions.addAll(nested);
+      }
+    }
+    return dimensions;
+  }
+
+  static List<_IsoBox>? _readIsoBoxes(List<int> bytes, int start, int end) {
+    final boxes = <_IsoBox>[];
+    var offset = start;
+    while (offset < end) {
+      if (end - offset < 8) {
+        return null;
+      }
+      final size32 = _readUint32(bytes, offset);
+      var headerSize = 8;
+      int boxSize;
+      if (size32 == 0) {
+        boxSize = end - offset;
+      } else if (size32 == 1) {
+        if (end - offset < 16 || _readUint32(bytes, offset + 8) != 0) {
+          return null;
+        }
+        headerSize = 16;
+        boxSize = _readUint32(bytes, offset + 12);
+      } else {
+        boxSize = size32;
+      }
+      if (boxSize < headerSize || boxSize > end - offset) {
+        return null;
+      }
+      boxes.add(
+        _IsoBox(
+          type: String.fromCharCodes(bytes.sublist(offset + 4, offset + 8)),
+          payloadStart: offset + headerSize,
+          payloadEnd: offset + boxSize,
+        ),
+      );
+      offset += boxSize;
+    }
+    return offset == end ? boxes : null;
   }
 
   static bool _hasSafeImageDimensions(int width, int height) {
     return width > 0 &&
         height > 0 &&
-        width <= _maxImagePixels &&
-        height <= _maxImagePixels &&
+        width <= _maxImageDimension &&
+        height <= _maxImageDimension &&
         width * height <= _maxImagePixels;
+  }
+
+  static bool _hasSafeImageDescriptor(ui.ImageDescriptor descriptor) {
+    return _hasSafeImageDimensions(descriptor.width, descriptor.height) &&
+        descriptor.bytesPerPixel > 0 &&
+        descriptor.width * descriptor.height * descriptor.bytesPerPixel <=
+            _maxDecodedImageBytes;
   }
 
   static int _readUint32(List<int> bytes, int offset) {
@@ -525,6 +714,25 @@ class LocalAttachmentStore {
         (bytes[offset + 2] << 8) |
         bytes[offset + 3];
   }
+}
+
+class _ImageDimensions {
+  const _ImageDimensions({required this.width, required this.height});
+
+  final int width;
+  final int height;
+}
+
+class _IsoBox {
+  const _IsoBox({
+    required this.type,
+    required this.payloadStart,
+    required this.payloadEnd,
+  });
+
+  final String type;
+  final int payloadStart;
+  final int payloadEnd;
 }
 
 enum AttachmentPayloadStatus { available, missing, checksumMismatch }

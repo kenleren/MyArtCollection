@@ -106,6 +106,8 @@ jobs:
           set -euo pipefail
           bash scripts/verify_gradle_wrapper.sh
           bash test/gradle_wrapper_validation_test.sh
+      - name: Validate native attachment viewer policy
+        run: bash test/attachment_native_viewer_policy_test.sh
       - name: Set up Temurin Java
         uses: actions/setup-java@0f481fcb613427c0f801b606911222b5b6f3083a
         with:
@@ -130,6 +132,14 @@ jobs:
         run: flutter pub get --enforce-lockfile
       - name: Build a secret-free debug APK
         run: flutter build apk --debug --no-pub
+      - name: Test Android attachment viewer policy
+        working-directory: android
+        run: >-
+          java -Dorg.gradle.appname=gradlew
+          -classpath gradle/wrapper/gradle-wrapper.jar
+          org.gradle.wrapper.GradleWrapperMain
+          :app:testDebugUnitTest
+          --tests app.archivale.AttachmentViewerPolicyTest
 
   backend-and-audit:
     name: Backend and audit policy

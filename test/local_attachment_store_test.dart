@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -14,10 +15,14 @@ void main() {
   late Directory tempDir;
   late LocalAttachmentStore store;
   late LocalArtworkRepository repository;
+  late List<int> syntheticHeicBytes;
 
-  setUpAll(() {
+  setUpAll(() async {
     sqfliteFfiInit();
     databaseFactory = databaseFactoryFfi;
+    syntheticHeicBytes = await File(
+      p.join('test', 'fixtures', 'synthetic-supporting-record.heic'),
+    ).readAsBytes();
   });
 
   setUp(() async {
@@ -486,6 +491,64 @@ void main() {
     }
   });
 
+  test('rejects allocation-bomb image dimensions before commit', () async {
+    final bombCases = <({String name, String mimeType, List<int> bytes})>[
+      (
+        name: 'twenty-megapixel.png',
+        mimeType: 'image/png',
+        bytes: _pngWithDimensions(width: 5000, height: 4000),
+      ),
+      (
+        name: 'twenty-megapixel.jpg',
+        mimeType: 'image/jpeg',
+        bytes: _jpegWithDimensions(_jpegBytes, width: 5000, height: 4000),
+      ),
+      (
+        name: 'oversized-metadata.heic',
+        mimeType: 'image/heic',
+        bytes: _heicWithDimensions(
+          syntheticHeicBytes,
+          width: 5000,
+          height: 4000,
+        ),
+      ),
+    ];
+
+    for (var index = 0; index < bombCases.length; index += 1) {
+      final fixture = bombCases[index];
+      final source = File(p.join(tempDir.path, fixture.name));
+      await source.writeAsBytes(fixture.bytes);
+
+      await expectLater(
+        store.saveImportedAttachment(
+          artworkId: 'artwork-001',
+          attachmentId: 'attachment-dimension-bomb-$index',
+          sourceFile: source,
+          originalFileName: fixture.name,
+          mimeType: fixture.mimeType,
+          type: AttachmentType.photo,
+          source: ArtworkFieldSource.userConfirmed,
+          importedAt: DateTime.utc(2026, 7, 4, 12),
+        ),
+        throwsA(
+          isA<AttachmentImportException>().having(
+            (error) => error.failure,
+            'failure',
+            AttachmentImportFailure.malformedFile,
+          ),
+        ),
+      );
+    }
+
+    expect(await repository.allAttachmentsForArtwork('artwork-001'), isEmpty);
+    expect(
+      await Directory(
+        p.join(store.storageRoot.path, '.staging'),
+      ).list().toList(),
+      isEmpty,
+    );
+  });
+
   test(
     'rejects marker-shaped corrupt PDF PNG and JPEG payloads without commits',
     () async {
@@ -621,11 +684,21 @@ void main() {
     },
   );
 
-  test('imports and reopens genuine PDF PNG and JPEG fixtures', () async {
+  test('imports and reopens genuine approved-format fixtures', () async {
     final fixtures = <({String name, String mimeType, List<int> bytes})>[
       (name: 'genuine.pdf', mimeType: 'application/pdf', bytes: _pdfBytes),
       (name: 'genuine.png', mimeType: 'image/png', bytes: _pngBytes),
       (name: 'genuine.jpg', mimeType: 'image/jpeg', bytes: _jpegBytes),
+      (
+        name: 'synthetic.heic',
+        mimeType: 'image/heic',
+        bytes: syntheticHeicBytes,
+      ),
+      (
+        name: 'synthetic.heif',
+        mimeType: 'image/heif',
+        bytes: syntheticHeicBytes,
+      ),
     ];
 
     for (var index = 0; index < fixtures.length; index += 1) {
@@ -679,6 +752,95 @@ List<int> _validPdfBytes() {
     ..write('trailer\n<< /Size 3 /Root 1 0 R >>\n')
     ..write('startxref\n$xrefOffset\n%%EOF\n');
   return latin1.encode(source.toString());
+}
+
+List<int> _pngWithDimensions({required int width, required int height}) {
+  final bytesPerRow = (width + 7) ~/ 8;
+  final rawPixels = Uint8List((bytesPerRow + 1) * height);
+  final header = ByteData(13)
+    ..setUint32(0, width)
+    ..setUint32(4, height)
+    ..setUint8(8, 1)
+    ..setUint8(9, 0)
+    ..setUint8(10, 0)
+    ..setUint8(11, 0)
+    ..setUint8(12, 0);
+  final result = BytesBuilder(copy: false)
+    ..add(const [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+    ..add(_pngChunk('IHDR', header.buffer.asUint8List()))
+    ..add(_pngChunk('IDAT', ZLibEncoder().convert(rawPixels)))
+    ..add(_pngChunk('IEND', const []));
+  return result.takeBytes();
+}
+
+List<int> _pngChunk(String type, List<int> payload) {
+  final typeBytes = ascii.encode(type);
+  final crcInput = BytesBuilder(copy: false)
+    ..add(typeBytes)
+    ..add(payload);
+  final length = ByteData(4)..setUint32(0, payload.length);
+  final crc = ByteData(4)..setUint32(0, _crc32(crcInput.takeBytes()));
+  return <int>[
+    ...length.buffer.asUint8List(),
+    ...typeBytes,
+    ...payload,
+    ...crc.buffer.asUint8List(),
+  ];
+}
+
+int _crc32(List<int> bytes) {
+  var crc = 0xffffffff;
+  for (final byte in bytes) {
+    crc ^= byte;
+    for (var bit = 0; bit < 8; bit += 1) {
+      crc = (crc & 1) == 1 ? (crc >> 1) ^ 0xedb88320 : crc >> 1;
+    }
+  }
+  return (crc ^ 0xffffffff) & 0xffffffff;
+}
+
+List<int> _heicWithDimensions(
+  List<int> source, {
+  required int width,
+  required int height,
+}) {
+  final bytes = Uint8List.fromList(source);
+  final ispe = ascii.encode('ispe');
+  for (var index = 0; index + 15 < bytes.length; index += 1) {
+    if (bytes[index] == ispe[0] &&
+        bytes[index + 1] == ispe[1] &&
+        bytes[index + 2] == ispe[2] &&
+        bytes[index + 3] == ispe[3]) {
+      final dimensions = ByteData.sublistView(bytes, index + 8, index + 16)
+        ..setUint32(0, width)
+        ..setUint32(4, height);
+      assert(dimensions.lengthInBytes == 8);
+      return bytes;
+    }
+  }
+  throw StateError('Synthetic HEIC fixture is missing an ispe box.');
+}
+
+List<int> _jpegWithDimensions(
+  List<int> source, {
+  required int width,
+  required int height,
+}) {
+  final bytes = Uint8List.fromList(source);
+  for (var index = 0; index + 8 < bytes.length; index += 1) {
+    if (bytes[index] == 0xff &&
+        bytes[index + 1] >= 0xc0 &&
+        bytes[index + 1] <= 0xcf &&
+        bytes[index + 1] != 0xc4 &&
+        bytes[index + 1] != 0xc8 &&
+        bytes[index + 1] != 0xcc) {
+      ByteData.sublistView(bytes, index + 5, index + 9)
+        ..setUint16(0, height)
+        ..setUint16(2, width);
+      return bytes;
+    }
+  }
+  throw StateError('Synthetic JPEG fixture is missing a frame marker.');
 }
 
 ArtworkRecord _record(String id, {String? primaryImageAttachmentId}) {

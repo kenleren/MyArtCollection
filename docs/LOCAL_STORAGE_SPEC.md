@@ -177,9 +177,12 @@ Rules:
 - The importer must check MIME, filename extension, and an allowed file
   signature plus bounded structural checks before committing bytes. PDFs require
   a `%PDF-` header, a valid `startxref` value, and a `%%EOF` trailer; JPEG and
-  PNG require bounded complete marker/chunk structure; HEIC and HEIF require a
-  complete ISO base-media `ftyp` box with an approved brand. Header-only,
-  truncated, malformed, and MIME-mismatched files are rejected.
+  PNG require bounded complete marker/chunk structure; HEIC and HEIF require
+  complete ISO base-media metadata, image dimensions, media data, and an
+  approved brand. Before raster decoding, image dimensions must fit a 64 MiB
+  RGBA-equivalent pixel budget and a 16,384-pixel per-axis limit. The native
+  descriptor and decoded frame must remain inside the same budget. Header-only,
+  truncated, malformed, dimension-bomb, and MIME-mismatched files are rejected.
 - Import writes stage-copy, validate, checksum, reopen, then returns metadata
   for the database commit. Failed writes clean staging and uncommitted bytes.
 
