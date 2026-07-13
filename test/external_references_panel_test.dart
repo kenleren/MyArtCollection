@@ -158,6 +158,85 @@ void main() {
   );
 
   testWidgets(
+    'read failures never look empty and retry stays locked until recovery',
+    (tester) async {
+      final fixture = (await tester.runAsync(_UiFixture.create))!;
+      addTearDown(() async => tester.runAsync(fixture.dispose));
+      await tester.runAsync(
+        () => fixture.addManual('integrity', label: 'Saved gallery record'),
+      );
+      await tester.runAsync(fixture.corruptIntegrityReference);
+
+      final boundaryKey = await _pumpDocuments(
+        tester,
+        fixture,
+        size: const Size(390, 844),
+        textScale: 2,
+      );
+
+      expect(find.text('External references couldn’t be read'), findsOneWidget);
+      expect(
+        find.text(
+          'This does not mean they were deleted. Try again to reload this saved information.',
+        ),
+        findsOneWidget,
+      );
+      expect(find.text('No external references yet.'), findsNothing);
+      expect(find.text('Saved gallery record'), findsNothing);
+      expect(find.byTooltip('Edit external reference'), findsNothing);
+      expect(find.byTooltip('Delete external reference'), findsNothing);
+      expect(find.byTooltip('Move external reference up'), findsNothing);
+      expect(
+        tester
+            .widget<FilledButton>(
+              find.widgetWithText(FilledButton, 'Add external reference'),
+            )
+            .onPressed,
+        isNull,
+      );
+      expect(tester.takeException(), isNull);
+      await _capture(
+        tester,
+        boundaryKey,
+        'issue-224-read-integrity-390x844-scale2.0.png',
+      );
+
+      await tester.tap(find.byKey(const ValueKey('retry-external-references')));
+      await _pumpLiveData(tester);
+      expect(find.text('External references couldn’t be read'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+      expect(
+        tester
+            .widget<FilledButton>(
+              find.widgetWithText(FilledButton, 'Add external reference'),
+            )
+            .onPressed,
+        isNull,
+      );
+
+      await tester.runAsync(fixture.repairIntegrityReference);
+      await tester.tap(find.byKey(const ValueKey('retry-external-references')));
+      await _pumpLiveData(tester);
+      await _scrollToPanel(tester);
+
+      expect(find.text('External references couldn’t be read'), findsNothing);
+      expect(find.text('No external references yet.'), findsNothing);
+      expect(find.text('Saved gallery record'), findsOneWidget);
+      expect(find.byTooltip('Edit external reference'), findsOneWidget);
+      expect(find.byTooltip('Delete external reference'), findsOneWidget);
+      expect(
+        tester
+            .widget<FilledButton>(
+              find.widgetWithText(FilledButton, 'Add external reference'),
+            )
+            .onPressed,
+        isNotNull,
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
     'suggestion semantics, confirmation and reorder controls are deterministic',
     (tester) async {
       final fixture = (await tester.runAsync(_UiFixture.create))!;
@@ -637,10 +716,16 @@ Future<void> _capture(
 }
 
 class _UiFixture {
-  _UiFixture(this.tempDirectory, this.repository, this.attachmentStore);
+  _UiFixture(
+    this.tempDirectory,
+    this.database,
+    this.repository,
+    this.attachmentStore,
+  );
 
   static const artworkId = 'external-reference-artwork';
   final Directory tempDirectory;
+  final Database database;
   final LocalArtworkRepository repository;
   final LocalAttachmentStore attachmentStore;
 
@@ -648,9 +733,10 @@ class _UiFixture {
     final temp = await Directory.systemTemp.createTemp(
       'external-reference-ui-',
     );
-    final repository = LocalArtworkRepository.forDatabase(
-      await LocalArtworkRepository.openAt(p.join(temp.path, 'records.db')),
+    final database = await LocalArtworkRepository.openAt(
+      p.join(temp.path, 'records.db'),
     );
+    final repository = LocalArtworkRepository.forDatabase(database);
     final store = await LocalAttachmentStore.openAt(
       Directory(p.join(temp.path, 'attachments')),
     );
@@ -669,7 +755,7 @@ class _UiFixture {
         },
       ),
     );
-    return _UiFixture(temp, repository, store);
+    return _UiFixture(temp, database, repository, store);
   }
 
   AppDependencies dependencies({ExternalReferenceLaunchGateway? gateway}) =>
@@ -701,6 +787,20 @@ class _UiFixture {
       transactionTime: DateTime.utc(2026, 7, 13, 8, id.length),
     );
   }
+
+  Future<void> corruptIntegrityReference() => database.update(
+    'external_references',
+    {'updated_at': '2026-02-30T00:00:00.000Z'},
+    where: 'reference_id = ?',
+    whereArgs: ['integrity'],
+  );
+
+  Future<void> repairIntegrityReference() => database.update(
+    'external_references',
+    {'updated_at': '2026-07-13T08:09:00.000Z'},
+    where: 'reference_id = ?',
+    whereArgs: ['integrity'],
+  );
 
   Future<void> dispose() async {
     await repository.close();
