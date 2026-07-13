@@ -243,6 +243,7 @@ enum AttachmentCustodyOutcome {
   removed,
   missing,
   erasureOwned,
+  erasurePending,
   erasureConflict,
   erasureUnsafe,
   erasureAbsent,

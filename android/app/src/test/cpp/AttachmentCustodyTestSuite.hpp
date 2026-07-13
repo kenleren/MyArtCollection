@@ -155,6 +155,22 @@ inline std::string publication_retry_and_concurrency_tests() {
     return "cleanup retry did not converge";
   }
   fs::remove_all(partial_root);
+
+  const fs::path ancestry_root = unique_path("archivale-ancestry-failure-");
+  fs::create_directories(ancestry_root);
+  const fs::path ancestry_source = ancestry_root / "source.pdf";
+  write_file(ancestry_source, "%PDF-1.4\nancestry\n%%EOF\n");
+  custody::test_fail_at("attachmentList.parentFsync");
+  const auto ancestry_failure = call(ancestry_root, "publish", ancestry_source.string(),
+                                     "intent-ancestry", "artwork-001", "attachment-001", "payload.pdf");
+  custody::test_reset_hooks();
+  if (ancestry_failure.outcome != "ioFailure") return "created-ancestry fsync failure was swallowed";
+  if (call(ancestry_root, "cleanupPublication", {}, "intent-ancestry", "artwork-001",
+           "attachment-001", "payload.pdf").outcome != "cleanupComplete") {
+    return "partial publication ancestry did not clean up";
+  }
+  if (fs::exists(ancestry_root / "attachments/artworks")) return "empty partial publication ancestry remained";
+  fs::remove_all(ancestry_root);
   fs::remove_all(root);
   return {};
 }
@@ -184,6 +200,21 @@ inline std::string erasure_control_tests() {
   if (call(root, "clearErasureControl", {}, "erase-foreign").outcome != "erasureConflict") return "foreign owner cleared erasure control";
   if (call(root, "clearErasureControl", {}, "erase-owner").outcome != "erasureAbsent") return "exact owner clear failed";
 
+  if (call(root, "writeErasureControl", {}, "erase-fsync").outcome != "erasureOwned") return "erasure fsync fixture write failed";
+  custody::test_fail_at("erasure.currentClearFsync");
+  const auto clear_failure = call(root, "clearErasureControl", {}, "erase-fsync");
+  custody::test_reset_hooks();
+  if (clear_failure.outcome != "ioFailure") return "erasure clear fsync failure was swallowed";
+  if (call(root, "clearErasureControl", {}, "erase-fsync").outcome != "erasureAbsent") return "erasure clear retry did not converge";
+
+  custody::test_crash_at("erasure.afterTempFsync");
+  call(root, "writeErasureControl", {}, "erase-pending");
+  custody::test_reset_hooks();
+  const auto pending = call(root, "readErasureControl", {}, "erase-pending");
+  if (pending.outcome != "erasurePending" || pending.owner != "erase-pending") return "partial erasure control was not reported as pending";
+  if (call(root, "readErasureControl", {}, "erase-foreign").outcome != "erasureConflict") return "foreign pending erasure owner was not distinguished";
+  if (call(root, "cleanupErasureControl", {}, "erase-pending").outcome != "erasureAbsent") return "pending erasure cleanup failed";
+
   const fs::path control = root / "erasure-control";
   fs::create_directories(control);
   write_file(control / "current.json", "{\"version\":1");
@@ -211,8 +242,10 @@ inline std::string fail_closed_capability_test() {
   custody::test_fail_at("selfTest.linkFsync");
   const auto failed = call(root, "selfTest");
   custody::test_reset_hooks();
+  const auto scan = call(root, "scan");
   fs::remove_all(root);
-  return require(failed.outcome == "unsupported", "capability probe did not fail closed");
+  if (failed.outcome != "unsupported") return "capability probe did not fail closed";
+  return require(scan.outcome == "scanComplete", "failed capability probe left unsafe nodes");
 }
 
 inline std::string race_tests(int repetitions = 40) {

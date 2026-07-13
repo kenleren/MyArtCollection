@@ -18,7 +18,8 @@ operations.
   Documents directory. Native code opens canonical descendants
   descriptor-relatively and with no-follow behavior.
 - `unsafeNode`, `unsupported`, `ioFailure`, `publicationConflict`,
-  `publicationPartial`, `erasureConflict`, and `erasureUnsafe` are blocked
+  `publicationPartial`, `erasurePending`, `erasureConflict`, and
+  `erasureUnsafe` are blocked
   work. Callers must not substitute Dart path traversal, deletion, or success.
 
 ## Publication Protocol
@@ -71,7 +72,8 @@ Native code fsyncs a deterministic owner staging file, publishes
 `current.json` with an exclusive hard link, fsyncs the directory, and removes
 the staging link. Status validates version, owner, phase, file type, link
 count, and the inode relationship in a two-link recovery window. Outcomes
-distinguish exact ownership, conflict, unsafe state, and absence. Only the
+distinguish exact ownership, recoverable pending staging, conflict, unsafe
+state, and absence. Only the
 exact owner may recover, clean staging, or clear `current.json`; clear also
 fsyncs and prunes empty control ancestry.
 

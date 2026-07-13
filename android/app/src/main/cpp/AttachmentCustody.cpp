@@ -162,7 +162,8 @@ Fd open_root(const std::string& path) {
 Fd open_dir_at(int parent, const std::string& name, bool create, const char* sync_point = "directory.parentFsync") {
   struct stat before {};
   if (fstatat(parent, name.c_str(), &before, AT_SYMLINK_NOFOLLOW) != 0) {
-    if (!create || errno != ENOENT || mkdirat(parent, name.c_str(), 0700) != 0) return Fd();
+    if (!create || errno != ENOENT) return Fd();
+    if (mkdirat(parent, name.c_str(), 0700) != 0 && errno != EEXIST) return Fd();
     if (!sync_fd(parent, sync_point) ||
         fstatat(parent, name.c_str(), &before, AT_SYMLINK_NOFOLLOW) != 0) {
       return Fd();
@@ -475,7 +476,7 @@ bool parse_publication(const std::string& json, PublicationState* value) {
          }) && value->phase == "staged";
 }
 
-bool read_regular_at(int parent, const std::string& name, size_t limit, int min_links, int max_links,
+bool read_regular_at(int parent, const std::string& name, size_t limit, nlink_t min_links, nlink_t max_links,
                      std::string* content, struct stat* status_out = nullptr) {
   struct stat named {};
   errno = 0;
@@ -588,6 +589,9 @@ Result validate_attachment_geometry(int fd, const PublicationState& descriptor, 
   return result("available");
 }
 
+Result remove_directory_if_empty(int parent, int child, const std::string& name,
+                                 const char* rmdir_point, const char* fsync_point);
+
 Result continue_publication(const std::string& platform_root, const PublicationState& descriptor,
                             bool recovered) {
   TargetDirs target;
@@ -668,6 +672,13 @@ Result continue_publication(const std::string& platform_root, const PublicationS
     }
   }
 
+  geometry = validate_attachment_geometry(target.attachment.get(), active, true);
+  if (geometry.outcome != "available") return geometry;
+  if (!inspect_payload_at(target.attachment.get(), active.canonical_name, active, &target_payload) ||
+      (has_staged_payload && !same_inode(staged_payload, target_payload))) {
+    return result("unsafeNode", "The canonical payload changed before publication commit.");
+  }
+
   if (!unlink_entry(target.attachment.get(), kPublicationClaim, 0, "publish.claimUnlink") ||
       !sync_fd(target.attachment.get(), "publish.commitDirectoryFsync")) {
     return result("ioFailure", "Could not durably commit the attachment publication.");
@@ -696,6 +707,9 @@ Result continue_publication(const std::string& platform_root, const PublicationS
   } else if (errno != ENOENT) {
     return unsafe_or_io("Could not inspect the temporary publication descriptor.");
   }
+  Result staging_cleanup = remove_directory_if_empty(
+      target.root.get(), staging.get(), kStaging, "cleanup.stagingRmdir", "cleanup.rootFsync");
+  if (staging_cleanup.outcome != "cleanupComplete") return staging_cleanup;
   if (!inspect_payload_at(target.attachment.get(), active.canonical_name, active, &target_payload) ||
       target_payload.st_nlink != 1) {
     return result("unsafeNode", "The recovered payload failed final size, checksum, or link verification.");
@@ -804,7 +818,7 @@ Result recover_publication(const std::string& platform_root, const std::string& 
   return continue_publication(platform_root, descriptor, true);
 }
 
-bool remove_if_present(int parent, const std::string& name, int max_links,
+bool remove_if_present(int parent, const std::string& name, nlink_t max_links,
                        const char* unlink_point, const char* fsync_point, Result* failure) {
   struct stat status {};
   if (fstatat(parent, name.c_str(), &status, AT_SYMLINK_NOFOLLOW) != 0) {
@@ -823,13 +837,90 @@ bool remove_if_present(int parent, const std::string& name, int max_links,
   return true;
 }
 
+Result remove_directory_if_empty(int parent, int child, const std::string& name,
+                                 const char* rmdir_point, const char* fsync_point) {
+  std::vector<std::string> names;
+  if (!list_names(child, &names)) return result("ioFailure", "Could not inspect cleanup ancestry.");
+  if (!names.empty()) return result("cleanupComplete");
+  if (!unlink_entry(parent, name, AT_REMOVEDIR, rmdir_point)) {
+    if (errno == ENOENT || errno == ENOTEMPTY || errno == EEXIST) return result("cleanupComplete");
+    return unsafe_or_io("Could not remove empty cleanup ancestry.");
+  }
+  if (!sync_fd(parent, fsync_point)) return result("ioFailure", "Could not sync cleanup ancestry.");
+  return result("cleanupComplete");
+}
+
+Result cleanup_staging(int root, const std::string& operation_id) {
+  Fd staging = open_dir_at(root, kStaging, false);
+  if (!staging.valid()) return errno == ENOENT ? result("cleanupComplete")
+                                               : unsafe_or_io("The publication staging directory is unsafe.");
+  Result failure;
+  if (!remove_if_present(staging.get(), publication_data_name(operation_id), 2,
+                         "rollback.dataUnlink", "rollback.dataFsync", &failure) ||
+      !remove_if_present(staging.get(), publication_intent_name(operation_id), 2,
+                         "rollback.intentUnlink", "rollback.intentFsync", &failure) ||
+      !remove_if_present(staging.get(), publication_temp_name(operation_id), 2,
+                         "rollback.tempUnlink", "rollback.tempFsync", &failure)) return failure;
+  return remove_directory_if_empty(root, staging.get(), kStaging,
+                                   "cleanup.stagingRmdir", "cleanup.rootFsync");
+}
+
+Result cleanup_empty_ancestry(const std::string& platform_root, const std::string& artwork_id,
+                              const std::string& attachment_id) {
+  Fd root;
+  Result opened = open_attachment_root(platform_root, false, &root);
+  if (opened.outcome != "available") return errno == ENOENT ? result("cleanupComplete") : opened;
+  Fd artworks = open_dir_at(root.get(), kArtworks, false);
+  if (!artworks.valid()) return errno == ENOENT ? result("cleanupComplete")
+                                                : unsafe_or_io("Artwork cleanup ancestry is unsafe.");
+  Fd artwork = open_dir_at(artworks.get(), artwork_id, false);
+  if (artwork.valid()) {
+    Fd attachments = open_dir_at(artwork.get(), "attachments", false);
+    if (attachments.valid()) {
+      Fd attachment = open_dir_at(attachments.get(), attachment_id, false);
+      if (attachment.valid()) {
+        Result pruned = remove_directory_if_empty(attachments.get(), attachment.get(), attachment_id,
+                                                  "cleanup.attachmentRmdir", "cleanup.attachmentsFsync");
+        if (pruned.outcome != "cleanupComplete") return pruned;
+      } else if (errno != ENOENT) {
+        return unsafe_or_io("Attachment cleanup ancestry is unsafe.");
+      }
+      Result pruned = remove_directory_if_empty(artwork.get(), attachments.get(), "attachments",
+                                                "cleanup.attachmentsRmdir", "cleanup.artworkFsync");
+      if (pruned.outcome != "cleanupComplete") return pruned;
+    } else if (errno != ENOENT) {
+      return unsafe_or_io("Attachments cleanup ancestry is unsafe.");
+    }
+    Result pruned = remove_directory_if_empty(artworks.get(), artwork.get(), artwork_id,
+                                              "cleanup.artworkRmdir", "cleanup.artworksFsync");
+    if (pruned.outcome != "cleanupComplete") return pruned;
+  } else if (errno != ENOENT) {
+    return unsafe_or_io("Artwork cleanup ancestry is unsafe.");
+  }
+  return remove_directory_if_empty(root.get(), artworks.get(), kArtworks,
+                                   "cleanup.artworksRmdir", "cleanup.rootFsync");
+}
+
 Result rollback_publication(const std::string& platform_root, const std::string& operation_id,
                             const std::string& artwork_id, const std::string& attachment_id,
                             const std::string& canonical, bool cleanup_only) {
   if (!target_valid(operation_id, artwork_id, attachment_id, canonical)) return result("invalidRequest");
   TargetDirs target;
   Result opened = open_target(platform_root, artwork_id, attachment_id, false, &target);
-  if (opened.outcome != "available") return errno == ENOENT ? result(cleanup_only ? "cleanupComplete" : "publicationRolledBack") : opened;
+  if (opened.outcome != "available") {
+    if (errno != ENOENT) return opened;
+    Fd root;
+    Result root_opened = open_attachment_root(platform_root, false, &root);
+    if (root_opened.outcome == "available") {
+      Result staged_cleanup = cleanup_staging(root.get(), operation_id);
+      if (staged_cleanup.outcome != "cleanupComplete") return staged_cleanup;
+    } else if (errno != ENOENT) {
+      return root_opened;
+    }
+    Result ancestry = cleanup_empty_ancestry(platform_root, artwork_id, attachment_id);
+    if (ancestry.outcome != "cleanupComplete") return ancestry;
+    return result(cleanup_only ? "cleanupComplete" : "publicationRolledBack");
+  }
   Fd staging = open_dir_at(target.root.get(), kStaging, false);
   PublicationState staged_descriptor;
   struct stat staged_intent {};
@@ -869,28 +960,10 @@ Result rollback_publication(const std::string& platform_root, const std::string&
       return result("ioFailure", "Could not roll back the publication claim.");
     }
   }
-  Result failure;
-  if (staging.valid()) {
-    if (!remove_if_present(staging.get(), publication_data_name(operation_id), 2,
-                           "rollback.dataUnlink", "rollback.dataFsync", &failure) ||
-        !remove_if_present(staging.get(), publication_intent_name(operation_id), 2,
-                           "rollback.intentUnlink", "rollback.intentFsync", &failure) ||
-        !remove_if_present(staging.get(), publication_temp_name(operation_id), 1,
-                           "rollback.tempUnlink", "rollback.tempFsync", &failure)) return failure;
-  }
-
-  if (empty_directory(target.attachment.get())) {
-    if (!unlink_entry(target.attachments.get(), attachment_id, AT_REMOVEDIR, "cleanup.attachmentRmdir") ||
-        !sync_fd(target.attachments.get(), "cleanup.attachmentsFsync")) return result("ioFailure", "Could not prune the empty attachment directory.");
-    if (empty_directory(target.attachments.get())) {
-      if (!unlink_entry(target.artwork.get(), "attachments", AT_REMOVEDIR, "cleanup.attachmentsRmdir") ||
-          !sync_fd(target.artwork.get(), "cleanup.artworkFsync")) return result("ioFailure", "Could not prune the empty attachments directory.");
-      if (empty_directory(target.artwork.get())) {
-        if (!unlink_entry(target.artworks.get(), artwork_id, AT_REMOVEDIR, "cleanup.artworkRmdir") ||
-            !sync_fd(target.artworks.get(), "cleanup.artworksFsync")) return result("ioFailure", "Could not prune the empty artwork directory.");
-      }
-    }
-  }
+  Result staged_cleanup = cleanup_staging(target.root.get(), operation_id);
+  if (staged_cleanup.outcome != "cleanupComplete") return staged_cleanup;
+  Result ancestry = cleanup_empty_ancestry(platform_root, artwork_id, attachment_id);
+  if (ancestry.outcome != "cleanupComplete") return ancestry;
   return result(cleanup_only ? "cleanupComplete" : "publicationRolledBack");
 }
 
@@ -1008,7 +1081,41 @@ Result erasure_status(const std::string& platform_root, const std::string& expec
   if (!root.valid()) return unsafe_or_io("The erasure-control parent is unsafe.");
   Fd control = open_dir_at(root.get(), kErasureControl, false);
   if (!control.valid()) return errno == ENOENT ? result("erasureAbsent") : result("erasureUnsafe");
-  return read_current_erasure(control.get(), expected_owner);
+  Result current = read_current_erasure(control.get(), expected_owner);
+  if (current.outcome == "erasureUnsafe") return current;
+  std::vector<std::string> names;
+  if (!list_names(control.get(), &names)) return result("ioFailure", "Could not inspect erasure-control state.");
+  if (current.outcome == "erasureOwned" || current.outcome == "erasureConflict") {
+    const std::string expected_temp = erasure_temp_name(current.owner);
+    for (const std::string& name : names) {
+      if (name != kErasureCurrent && name != expected_temp) {
+        return result("erasureUnsafe", "Erasure control contains an unexpected staging node.");
+      }
+    }
+    if (std::find(names.begin(), names.end(), expected_temp) != names.end()) {
+      struct stat current_status {};
+      struct stat temp_status {};
+      if (fstatat(control.get(), kErasureCurrent, &current_status, AT_SYMLINK_NOFOLLOW) != 0 ||
+          fstatat(control.get(), expected_temp.c_str(), &temp_status, AT_SYMLINK_NOFOLLOW) != 0 ||
+          current_status.st_nlink != 2 || !same_inode(current_status, temp_status)) {
+        return result("erasureUnsafe", "Erasure-control staging identity is invalid.");
+      }
+    }
+    return current;
+  }
+  if (current.outcome != "erasureAbsent") return current;
+  if (names.empty()) return current;
+  if (names.size() != 1 || names.front().rfind("current-", 0) != 0 ||
+      names.front().size() <= 12 || names.front().substr(names.front().size() - 4) != ".tmp") {
+    return result("erasureUnsafe", "Erasure control contains unexpected partial state.");
+  }
+  Result pending = read_erasure_at(control.get(), names.front(), expected_owner);
+  if (pending.outcome == "erasureOwned") pending.outcome = "erasurePending";
+  if (pending.outcome == "erasureConflict") return pending;
+  if (pending.outcome != "erasurePending" || names.front() != erasure_temp_name(pending.owner)) {
+    return result("erasureUnsafe", "Erasure-control staging is invalid.");
+  }
+  return pending;
 }
 
 Result write_erasure(const std::string& platform_root, const std::string& owner) {
@@ -1017,8 +1124,9 @@ Result write_erasure(const std::string& platform_root, const std::string& owner)
   if (!root.valid()) return unsafe_or_io("The erasure-control parent is unsafe.");
   Fd control = open_dir_at(root.get(), kErasureControl, true, "erasure.parentFsync");
   if (!control.valid()) return result("erasureUnsafe", "The erasure-control directory is unsafe.");
-  Result current = read_current_erasure(control.get(), owner);
+  Result current = erasure_status(platform_root, owner);
   if (current.outcome == "erasureOwned" || current.outcome == "erasureConflict" || current.outcome == "erasureUnsafe") return current;
+  if (current.outcome != "erasureAbsent" && current.outcome != "erasurePending") return current;
 
   const std::string temp = erasure_temp_name(owner);
   Fd file(openat(control.get(), temp.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0600));
@@ -1040,7 +1148,7 @@ Result write_erasure(const std::string& platform_root, const std::string& owner)
   if (!unlink_entry(control.get(), temp, 0, "erasure.tempUnlink") ||
       !sync_fd(control.get(), "erasure.tempCleanupFsync")) return result("ioFailure", "Could not clean erasure-control staging.");
   if (crash_at("erasure.afterTempCleanup")) return result("ioFailure", "Injected erasure crash.");
-  return read_current_erasure(control.get(), owner);
+  return erasure_status(platform_root, owner);
 }
 
 Result recover_erasure(const std::string& platform_root, const std::string& owner) {
@@ -1049,12 +1157,12 @@ Result recover_erasure(const std::string& platform_root, const std::string& owne
   if (!root.valid()) return unsafe_or_io("The erasure-control parent is unsafe.");
   Fd control = open_dir_at(root.get(), kErasureControl, false);
   if (!control.valid()) return errno == ENOENT ? result("erasureAbsent") : result("erasureUnsafe");
-  Result current = read_current_erasure(control.get(), owner);
+  Result current = erasure_status(platform_root, owner);
   const std::string temp = erasure_temp_name(owner);
   Result pending = read_erasure_at(control.get(), temp, owner);
   if (current.outcome == "erasureConflict" || current.outcome == "erasureUnsafe") return current;
   if (pending.outcome == "erasureUnsafe" || pending.outcome == "erasureConflict") return pending;
-  if (current.outcome == "erasureAbsent") {
+  if (current.outcome == "erasureAbsent" || current.outcome == "erasurePending") {
     if (pending.outcome != "erasureOwned") return current;
     if (linkat(control.get(), temp.c_str(), control.get(), kErasureCurrent, 0) != 0 ||
         !sync_fd(control.get(), "erasure.recoverCurrentFsync")) return result("ioFailure", "Could not recover erasure control.");
@@ -1068,7 +1176,7 @@ Result recover_erasure(const std::string& platform_root, const std::string& owne
   if (pending.outcome == "erasureOwned" &&
       (!unlink_entry(control.get(), temp, 0, "erasure.recoverTempUnlink") ||
        !sync_fd(control.get(), "erasure.recoverTempFsync"))) return result("ioFailure", "Could not clean recovered erasure control.");
-  return read_current_erasure(control.get(), owner);
+  return erasure_status(platform_root, owner);
 }
 
 Result clear_erasure(const std::string& platform_root, const std::string& owner, bool cleanup_only) {
@@ -1077,8 +1185,10 @@ Result clear_erasure(const std::string& platform_root, const std::string& owner,
   if (!root.valid()) return unsafe_or_io("The erasure-control parent is unsafe.");
   Fd control = open_dir_at(root.get(), kErasureControl, false);
   if (!control.valid()) return errno == ENOENT ? result("erasureAbsent") : result("erasureUnsafe");
-  Result current = read_current_erasure(control.get(), owner);
+  Result current = erasure_status(platform_root, owner);
   if (current.outcome == "erasureConflict" || current.outcome == "erasureUnsafe") return current;
+  if (current.outcome != "erasureOwned" && current.outcome != "erasurePending" &&
+      current.outcome != "erasureAbsent") return current;
   if (!cleanup_only && current.outcome == "erasureOwned" &&
       (!unlink_entry(control.get(), kErasureCurrent, 0, "erasure.currentUnlink") ||
        !sync_fd(control.get(), "erasure.currentClearFsync"))) return result("ioFailure", "Could not clear erasure control.");
@@ -1172,20 +1282,28 @@ Result self_test(const std::string& platform_root) {
   const std::string file_name = suffix + ".file";
   const std::string link_name = suffix + ".link";
   const std::string symlink_name = suffix + ".symlink";
+  const auto cleanup = [&]() {
+    bool ok = true;
+    for (const std::string* name : {&symlink_name, &link_name, &file_name}) {
+      if (unlinkat(root.get(), name->c_str(), 0) != 0 && errno != ENOENT) ok = false;
+    }
+    return fsync(root.get()) == 0 && ok;
+  };
+  const auto unavailable = [&](const char* detail) {
+    return cleanup() ? result("unsupported", detail)
+                     : result("ioFailure", "Capability-probe cleanup could not be confirmed.");
+  };
   Fd file(openat(root.get(), file_name.c_str(), O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0600));
   if (!file.valid() || !write_all(file.get(), "probe") || !sync_fd(file.get(), "selfTest.fileFsync") ||
       linkat(root.get(), file_name.c_str(), root.get(), link_name.c_str(), 0) != 0 ||
-      !sync_fd(root.get(), "selfTest.linkFsync")) return result("unsupported", "Required descriptor-relative durability primitives are unavailable.");
+      !sync_fd(root.get(), "selfTest.linkFsync")) return unavailable("Required descriptor-relative durability primitives are unavailable.");
   struct stat linked {};
   if (fstat(file.get(), &linked) != 0 || linked.st_nlink != 2 ||
-      symlinkat(".", root.get(), symlink_name.c_str()) != 0) return result("unsupported", "Required link primitives are unavailable.");
+      symlinkat(".", root.get(), symlink_name.c_str()) != 0) return unavailable("Required link primitives are unavailable.");
   Fd followed = open_dir_at(root.get(), symlink_name, false);
   const int nofollow_error = errno;
-  if (followed.valid() || nofollow_error != ELOOP) return result("unsupported", "No-follow traversal is unavailable.");
-  if (!unlink_entry(root.get(), symlink_name, 0, "selfTest.symlinkUnlink") ||
-      !unlink_entry(root.get(), link_name, 0, "selfTest.linkUnlink") ||
-      !unlink_entry(root.get(), file_name, 0, "selfTest.fileUnlink") ||
-      !sync_fd(root.get(), "selfTest.cleanupFsync")) return result("unsupported", "Required cleanup durability primitives are unavailable.");
+  if (followed.valid() || nofollow_error != ELOOP) return unavailable("No-follow traversal is unavailable.");
+  if (!cleanup()) return result("unsupported", "Required cleanup durability primitives are unavailable.");
   return result("available");
 }
 
