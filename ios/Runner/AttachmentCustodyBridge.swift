@@ -6,6 +6,7 @@ private func attachmentCustodyExecute(
   _ flutterRoot: UnsafePointer<CChar>,
   _ operation: UnsafePointer<CChar>,
   _ sourcePath: UnsafePointer<CChar>,
+  _ operationId: UnsafePointer<CChar>,
   _ artworkId: UnsafePointer<CChar>,
   _ attachmentId: UnsafePointer<CChar>,
   _ canonicalName: UnsafePointer<CChar>
@@ -23,12 +24,14 @@ enum AttachmentCustodyBridge {
     channel.setMethodCallHandler { call, result in
       let arguments = call.arguments as? [String: Any] ?? [:]
       let sourcePath = arguments["sourcePath"] as? String ?? ""
-      let artworkId = (arguments["artworkId"] as? String) ?? (arguments["operationId"] as? String) ?? ""
+      let operationId = arguments["operationId"] as? String ?? ""
+      let artworkId = arguments["artworkId"] as? String ?? ""
       let attachmentId = arguments["attachmentId"] as? String ?? ""
       let canonicalName = arguments["canonicalName"] as? String ?? ""
       result(invoke(
         operation: call.method,
         sourcePath: sourcePath,
+        operationId: operationId,
         artworkId: artworkId,
         attachmentId: attachmentId,
         canonicalName: canonicalName
@@ -39,6 +42,7 @@ enum AttachmentCustodyBridge {
   private static func invoke(
     operation: String,
     sourcePath: String,
+    operationId: String,
     artworkId: String,
     attachmentId: String,
     canonicalName: String
@@ -52,17 +56,19 @@ enum AttachmentCustodyBridge {
     return documentsDirectory.path.withCString { root in
       operation.withCString { operation in
         sourcePath.withCString { sourcePath in
-          artworkId.withCString { artworkId in
-            attachmentId.withCString { attachmentId in
-              canonicalName.withCString { canonicalName in
-                let response = String(cString: attachmentCustodyExecute(
-                  root, operation, sourcePath, artworkId, attachmentId, canonicalName
-                ))
-                guard let data = response.data(using: .utf8),
-                      let map = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-                  return ["outcome": "ioFailure", "detail": "Invalid native custody response."]
+          operationId.withCString { operationId in
+            artworkId.withCString { artworkId in
+              attachmentId.withCString { attachmentId in
+                canonicalName.withCString { canonicalName in
+                  let response = String(cString: attachmentCustodyExecute(
+                    root, operation, sourcePath, operationId, artworkId, attachmentId, canonicalName
+                  ))
+                  guard let data = response.data(using: .utf8),
+                        let map = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                    return ["outcome": "ioFailure", "detail": "Invalid native custody response."]
+                  }
+                  return map
                 }
-                return map
               }
             }
           }

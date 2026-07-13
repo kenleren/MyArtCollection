@@ -108,6 +108,8 @@ jobs:
           bash test/gradle_wrapper_validation_test.sh
       - name: Validate native attachment viewer policy
         run: bash test/attachment_native_viewer_policy_test.sh
+      - name: Test native attachment custody crash and race contracts
+        run: bash test/attachment_custody_native_test.sh
       - name: Set up Temurin Java
         uses: actions/setup-java@0f481fcb613427c0f801b606911222b5b6f3083a
         with:

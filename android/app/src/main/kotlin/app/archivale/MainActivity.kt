@@ -38,6 +38,7 @@ private object AttachmentCustodyNative {
         flutterRoot: String,
         operation: String,
         sourcePath: String,
+        operationId: String,
         artworkId: String,
         attachmentId: String,
         canonicalName: String,
@@ -148,7 +149,8 @@ class MainActivity : FlutterActivity() {
                     getDir("flutter", Context.MODE_PRIVATE).absolutePath,
                     call.method,
                     arguments["sourcePath"] as? String ?: "",
-                    arguments["artworkId"] as? String ?: arguments["operationId"] as? String ?: "",
+                    arguments["operationId"] as? String ?: "",
+                    arguments["artworkId"] as? String ?: "",
                     arguments["attachmentId"] as? String ?: "",
                     arguments["canonicalName"] as? String ?: "",
                 )
@@ -158,23 +160,7 @@ class MainActivity : FlutterActivity() {
                 "{\"outcome\":\"ioFailure\",\"detail\":\"Native attachment custody failed.\"}"
             }
             try {
-                val json = JSONObject(response)
-                val map = mutableMapOf<String, Any?>(
-                    "outcome" to json.optString("outcome", "ioFailure"),
-                )
-                if (json.has("detail")) map["detail"] = json.optString("detail")
-                if (json.has("entries")) {
-                    val entries = json.getJSONArray("entries")
-                    map["entries"] = List(entries.length()) { index ->
-                        val entry = entries.getJSONObject(index)
-                        mapOf(
-                            "artworkId" to entry.getString("artworkId"),
-                            "attachmentId" to entry.getString("attachmentId"),
-                            "canonicalName" to entry.getString("canonicalName"),
-                        )
-                    }
-                }
-                result.success(map)
+                result.success(JSONObject(response).toMethodChannelMap())
             } catch (_: Exception) {
                 result.success(mapOf("outcome" to "ioFailure", "detail" to "Invalid native custody response."))
             }
@@ -234,6 +220,17 @@ class MainActivity : FlutterActivity() {
         )
     }
 }
+
+private fun JSONObject.toMethodChannelMap(): Map<String, Any?> =
+    keys().asSequence().associateWith { key -> get(key).toMethodChannelValue() }
+
+private fun Any?.toMethodChannelValue(): Any? =
+    when (this) {
+        JSONObject.NULL -> null
+        is JSONObject -> toMethodChannelMap()
+        is JSONArray -> List(length()) { index -> get(index).toMethodChannelValue() }
+        else -> this
+    }
 
 private class MlKitPromptOnDeviceAiProvider(
     private val scope: CoroutineScope,

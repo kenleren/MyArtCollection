@@ -4,6 +4,7 @@ extern "C" const char* AttachmentCustodyExecute(
     const char* flutter_root,
     const char* operation,
     const char* source_path,
+    const char* operation_id,
     const char* artwork_id,
     const char* attachment_id,
     const char* canonical_name) {
@@ -12,6 +13,7 @@ extern "C" const char* AttachmentCustodyExecute(
       flutter_root == nullptr ? "" : flutter_root,
       operation == nullptr ? "" : operation,
       source_path == nullptr ? "" : source_path,
+      operation_id == nullptr ? "" : operation_id,
       artwork_id == nullptr ? "" : artwork_id,
       attachment_id == nullptr ? "" : attachment_id,
       canonical_name == nullptr ? "" : canonical_name));

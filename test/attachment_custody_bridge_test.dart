@@ -20,6 +20,7 @@ void main() {
     });
 
     final result = await AttachmentCustodyBridge(channel: channel).publish(
+      operationId: 'publish-001',
       artworkId: 'artwork-001',
       attachmentId: 'attachment-001',
       canonicalName: 'payload.pdf',
@@ -29,6 +30,7 @@ void main() {
     expect(result.outcome, AttachmentCustodyOutcome.published);
     expect(call!.method, 'publish');
     expect(call!.arguments, <String, Object?>{
+      'operationId': 'publish-001',
       'artworkId': 'artwork-001',
       'attachmentId': 'attachment-001',
       'canonicalName': 'payload.pdf',
@@ -36,9 +38,97 @@ void main() {
     });
   });
 
+  test('routes deterministic publication recovery operations', () async {
+    final methods = <String>[];
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      methods.add(call.method);
+      expect(call.arguments, <String, Object?>{
+        'operationId': 'publish-001',
+        'artworkId': 'artwork-001',
+        'attachmentId': 'attachment-001',
+        'canonicalName': 'payload.pdf',
+      });
+      return <String, Object?>{'outcome': 'publicationAbsent'};
+    });
+    final bridge = AttachmentCustodyBridge(channel: channel);
+
+    await bridge.publicationStatus(
+      operationId: 'publish-001',
+      artworkId: 'artwork-001',
+      attachmentId: 'attachment-001',
+      canonicalName: 'payload.pdf',
+    );
+    await bridge.recoverPublication(
+      operationId: 'publish-001',
+      artworkId: 'artwork-001',
+      attachmentId: 'attachment-001',
+      canonicalName: 'payload.pdf',
+    );
+    await bridge.rollbackPublication(
+      operationId: 'publish-001',
+      artworkId: 'artwork-001',
+      attachmentId: 'attachment-001',
+      canonicalName: 'payload.pdf',
+    );
+    await bridge.cleanupPublication(
+      operationId: 'publish-001',
+      artworkId: 'artwork-001',
+      attachmentId: 'attachment-001',
+      canonicalName: 'payload.pdf',
+    );
+
+    expect(methods, <String>[
+      'publicationStatus',
+      'recoverPublication',
+      'rollbackPublication',
+      'cleanupPublication',
+    ]);
+  });
+
+  test('parses publication and erasure-control state', () async {
+    messenger.setMockMethodCallHandler(channel, (_) async {
+      return <String, Object?>{
+        'outcome': 'erasureOwned',
+        'owner': 'erase-001',
+        'phase': 'erasing',
+        'publications': <Object?>[
+          <String, Object?>{
+            'operationId': 'publish-001',
+            'artworkId': 'artwork-001',
+            'attachmentId': 'attachment-001',
+            'canonicalName': 'payload.pdf',
+            'phase': 'staged',
+            'size': 42,
+            'sha256': 'a' * 64,
+          },
+        ],
+      };
+    });
+
+    final result = await AttachmentCustodyBridge(
+      channel: channel,
+    ).readErasureControl('erase-001');
+
+    expect(result.outcome, AttachmentCustodyOutcome.erasureOwned);
+    expect(result.owner, 'erase-001');
+    expect(result.phase, 'erasing');
+    expect(result.publications.single.operationId, 'publish-001');
+    expect(result.publications.single.size, 42);
+    expect(result.isSuccess, isTrue);
+  });
+
   test('rejects paths, dot segments, and unapproved payload names', () {
     final bridge = AttachmentCustodyBridge(channel: channel);
 
+    expect(
+      () => bridge.publicationStatus(
+        operationId: '../operation',
+        artworkId: 'artwork-001',
+        attachmentId: 'attachment-001',
+        canonicalName: 'payload.pdf',
+      ),
+      throwsArgumentError,
+    );
     expect(
       () => bridge.remove(
         artworkId: '../artwork',
