@@ -44,6 +44,9 @@ the attachment claim. Recovery reconciles the bounded two-link states by inode
 and re-verifies size and SHA-256 before success. Rollback removes only state
 owned by the exact operation and prunes empty canonical ancestry. Cleanup and
 all non-benign unlink, rmdir, and fsync failures are reported, never ignored.
+Status and recovery validate both exact-operation `.json` and `.tmp` metadata
+before target lookup, so malformed owned staging cannot be reported as
+absence even when target ancestry is missing.
 
 The operations are:
 
@@ -56,7 +59,11 @@ The operations are:
 - `scan`
 
 `scan` accepts committed single-link payloads and validated recoverable
-publication descriptors. Unexpected geometry, links, identifiers, or staging
+publication descriptors, including the descriptor `.tmp` crash window. It
+binds every descriptor filename to its operation ID and, once a descriptor
+exists, verifies the staged or canonical payload size and SHA-256. Attachment
+claims are bound to the exact canonical payload and staged descriptor/payload
+inodes. Unexpected geometry, links, identifiers, claim targets, or staging
 nodes fail closed.
 
 ## Erasure Control
@@ -75,7 +82,11 @@ count, and the inode relationship in a two-link recovery window. Outcomes
 distinguish exact ownership, recoverable pending staging, conflict, unsafe
 state, and absence. Only the
 exact owner may recover, clean staging, or clear `current.json`; clear also
-fsyncs and prunes empty control ancestry.
+fsyncs and prunes empty control ancestry. Native erasure operations serialize
+on the app-private root and retain one validated control-directory descriptor
+from status through mutation. Immediately before each owner-sensitive link,
+unlink, or directory removal, they revalidate the named directory and entry
+inodes through those descriptors and fail closed if identity changed.
 
 The operations are:
 
@@ -90,10 +101,12 @@ or remote data.
 
 ## Capability And Compatibility
 
-`capabilities` and `selfTest` probe secure randomness, descriptor-relative
-directory/file creation, no-follow traversal, exclusive hard links, link-count
-inspection, file and directory fsync, unlink, and cleanup. A failed required
-primitive returns `unsupported` or `ioFailure`; availability is never inferred.
+`capabilities` and `selfTest` probe secure randomness, advisory locking,
+descriptor-relative directory/file creation, no-follow traversal, exclusive
+hard links, no-replace collision behavior, link-count inspection, file and
+directory fsync, file unlink, descriptor-relative directory removal, and
+cleanup. A failed required primitive returns `unsupported` or `ioFailure`;
+availability is never inferred.
 
 v1 operation names, request fields, geometry, canonical phases, and outcomes
 are wire identifiers. Additive response fields are permitted. Renaming or

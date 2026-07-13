@@ -175,6 +175,142 @@ inline std::string publication_retry_and_concurrency_tests() {
   return {};
 }
 
+inline std::string publication_scan_negative_tests() {
+  for (const std::string& suffix : {std::string(".json"), std::string(".tmp")}) {
+    for (const bool target_present : {false, true}) {
+      const fs::path root = unique_path("archivale-malformed-staging-");
+      const fs::path target =
+          root / "attachments/artworks/artwork-001/attachments/attachment-001";
+      const fs::path staging = root / "attachments/.staging";
+      if (target_present) fs::create_directories(target);
+      fs::create_directories(staging);
+      write_file(staging / ("publication-intent-malformed" + suffix), "{\"version\":1");
+      const auto status = call(root, "publicationStatus", {}, "intent-malformed",
+                               "artwork-001", "attachment-001", "payload.pdf");
+      const auto recovery = call(root, "recoverPublication", {}, "intent-malformed",
+                                 "artwork-001", "attachment-001", "payload.pdf");
+      const std::string geometry = target_present ? " with target" : " without target";
+      if (status.outcome != "unsafeNode") {
+        return "malformed owned staging " + suffix + geometry +
+               " was not unsafe in status";
+      }
+      if (recovery.outcome != "unsafeNode") {
+        return "malformed owned staging " + suffix + geometry +
+               " was not unsafe in recovery";
+      }
+      if (call(root, "scan").outcome != "unsafeNode") {
+        return "malformed owned staging " + suffix + geometry +
+               " was not unsafe in scan";
+      }
+      fs::remove_all(root);
+    }
+  }
+
+  {
+    const fs::path root = unique_path("archivale-valid-temp-scan-");
+    fs::create_directories(root);
+    const fs::path source = root / "source.pdf";
+    write_file(source, "%PDF-1.4\nvalid temporary descriptor\n%%EOF\n");
+    custody::test_crash_at("publish.afterIntentFileFsync");
+    const auto interrupted = call(root, "publish", source.string(), "intent-temp", "artwork-001",
+                                  "attachment-001", "payload.pdf");
+    custody::test_reset_hooks();
+    if (interrupted.outcome != "ioFailure") return "temporary descriptor fixture did not interrupt";
+    const auto scanned = call(root, "scan");
+    if (scanned.outcome != "scanComplete" || scanned.publications.size() != 1 ||
+        scanned.publications.front().operation_id != "intent-temp") {
+      return "valid temporary descriptor was not fully exposed by scan";
+    }
+    fs::remove_all(root);
+  }
+
+  {
+    const fs::path root = unique_path("archivale-mismatched-temp-scan-");
+    fs::create_directories(root);
+    const fs::path source = root / "source.pdf";
+    write_file(source, "%PDF-1.4\nfilename mismatch\n%%EOF\n");
+    custody::test_crash_at("publish.afterIntentFileFsync");
+    call(root, "publish", source.string(), "intent-source", "artwork-001", "attachment-001", "payload.pdf");
+    custody::test_reset_hooks();
+    fs::rename(root / "attachments/.staging/publication-intent-source.tmp",
+               root / "attachments/.staging/publication-intent-other.tmp");
+    if (call(root, "scan").outcome != "unsafeNode") {
+      return "staging filename and descriptor operation mismatch was accepted";
+    }
+    fs::remove_all(root);
+  }
+
+  for (const std::string& point : {std::string("publish.afterClaim"),
+                                   std::string("publish.afterDataCleanup")}) {
+    const fs::path root = unique_path("archivale-recoverable-scan-");
+    fs::create_directories(root);
+    const fs::path source = root / "source.pdf";
+    write_file(source, "%PDF-1.4\nrecoverable scan geometry\n%%EOF\n");
+    custody::test_crash_at(point);
+    const auto interrupted = call(root, "publish", source.string(), "intent-recoverable",
+                                  "artwork-001", "attachment-001", "payload.pdf");
+    custody::test_reset_hooks();
+    if (interrupted.outcome != "ioFailure") {
+      return "recoverable scan fixture did not interrupt at " + point;
+    }
+    const auto scanned = call(root, "scan");
+    const size_t expected_entries = point == "publish.afterClaim" ? 0 : 1;
+    if (scanned.outcome != "scanComplete" || scanned.publications.size() != 1 ||
+        scanned.entries.size() != expected_entries ||
+        scanned.publications.front().operation_id != "intent-recoverable") {
+      return "recoverable scan geometry was rejected at " + point;
+    }
+    if (call(root, "recoverPublication", {}, "intent-recoverable", "artwork-001",
+             "attachment-001", "payload.pdf").outcome != "publicationRecovered") {
+      return "recoverable scan fixture did not converge at " + point;
+    }
+    fs::remove_all(root);
+  }
+
+  for (const bool add_second_payload : {false, true}) {
+    const fs::path root = unique_path(add_second_payload ? "archivale-multiple-claim-payload-"
+                                                         : "archivale-claim-name-mismatch-");
+    fs::create_directories(root);
+    const fs::path source = root / "source.pdf";
+    write_file(source, "%PDF-1.4\nclaimed payload geometry\n%%EOF\n");
+    custody::test_crash_at("publish.afterPayloadLink");
+    call(root, "publish", source.string(), "intent-claim", "artwork-001", "attachment-001", "payload.pdf");
+    custody::test_reset_hooks();
+    const fs::path attachment = root / "attachments/artworks/artwork-001/attachments/attachment-001";
+    if (add_second_payload) {
+      fs::create_hard_link(attachment / "payload.pdf", attachment / "payload.jpg");
+    } else {
+      fs::rename(attachment / "payload.pdf", attachment / "payload.jpg");
+    }
+    if (call(root, "scan").outcome != "unsafeNode") {
+      return add_second_payload ? "multiple claimed payloads were accepted"
+                                : "claim and payload canonical-name mismatch was accepted";
+    }
+    fs::remove_all(root);
+  }
+
+  {
+    const fs::path root = unique_path("archivale-claim-payload-identity-");
+    fs::create_directories(root);
+    const fs::path source = root / "source.pdf";
+    const std::string bytes = "%PDF-1.4\nclaimed payload identity\n%%EOF\n";
+    write_file(source, bytes);
+    custody::test_crash_at("publish.afterPayloadLink");
+    call(root, "publish", source.string(), "intent-claim", "artwork-001",
+         "attachment-001", "payload.pdf");
+    custody::test_reset_hooks();
+    const fs::path attachment =
+        root / "attachments/artworks/artwork-001/attachments/attachment-001";
+    fs::rename(attachment / "payload.pdf", attachment / "held-payload.pdf");
+    write_file(attachment / "payload.pdf", bytes);
+    if (call(root, "scan").outcome != "unsafeNode") {
+      return "claim and same-name payload inode mismatch was accepted";
+    }
+    fs::remove_all(root);
+  }
+  return {};
+}
+
 inline std::string erasure_control_tests() {
   const std::vector<std::string> points = {
       "erasure.afterTempFsync", "erasure.afterCurrentLink", "erasure.afterTempCleanup"};
@@ -199,6 +335,17 @@ inline std::string erasure_control_tests() {
   if (call(root, "readErasureControl", {}, "erase-foreign").outcome != "erasureConflict") return "foreign owner was not distinguished";
   if (call(root, "clearErasureControl", {}, "erase-foreign").outcome != "erasureConflict") return "foreign owner cleared erasure control";
   if (call(root, "clearErasureControl", {}, "erase-owner").outcome != "erasureAbsent") return "exact owner clear failed";
+
+  if (call(root, "writeErasureControl", {}, "erase-inspection").outcome != "erasureOwned") {
+    return "erasure inspection fixture write failed";
+  }
+  custody::test_fail_at("directory.emptyInspect");
+  const auto inspection_failure = call(root, "clearErasureControl", {}, "erase-inspection");
+  custody::test_reset_hooks();
+  if (inspection_failure.outcome != "ioFailure") return "erasure cleanup inspection failure was swallowed";
+  if (call(root, "clearErasureControl", {}, "erase-inspection").outcome != "erasureAbsent") {
+    return "erasure cleanup inspection retry did not converge";
+  }
 
   if (call(root, "writeErasureControl", {}, "erase-fsync").outcome != "erasureOwned") return "erasure fsync fixture write failed";
   custody::test_fail_at("erasure.currentClearFsync");
@@ -235,6 +382,94 @@ inline std::string erasure_control_tests() {
   return {};
 }
 
+inline std::string erasure_race_and_exclusivity_tests() {
+  {
+    const fs::path root = unique_path("archivale-erasure-concurrent-");
+    fs::create_directories(root);
+    custody::Result left;
+    custody::Result right;
+    std::thread first([&] { left = call(root, "writeErasureControl", {}, "erase-left"); });
+    std::thread second([&] { right = call(root, "writeErasureControl", {}, "erase-right"); });
+    first.join();
+    second.join();
+    const int owned = (left.outcome == "erasureOwned" ? 1 : 0) +
+                      (right.outcome == "erasureOwned" ? 1 : 0);
+    const int conflicts = (left.outcome == "erasureConflict" ? 1 : 0) +
+                          (right.outcome == "erasureConflict" ? 1 : 0);
+    if (owned != 1 || conflicts != 1) return "concurrent erasure owners were not serialized exactly";
+    fs::remove_all(root);
+  }
+
+  {
+    const fs::path root = unique_path("archivale-erasure-current-swap-");
+    fs::create_directories(root);
+    if (call(root, "writeErasureControl", {}, "erase-owner").outcome != "erasureOwned") {
+      return "erasure current-swap fixture write failed";
+    }
+    const fs::path control = root / "erasure-control";
+    const fs::path replacement = control / "current.json";
+    custody::test_at_boundary([&](const char* point) {
+      if (std::string(point) != "erasure.beforeCurrentUnlink") return;
+      fs::rename(replacement, control / "held-current.json");
+      write_file(replacement, custody::erasure_json("erase-foreign"));
+    });
+    const auto cleared = call(root, "clearErasureControl", {}, "erase-owner");
+    custody::test_reset_hooks();
+    if (cleared.outcome != "erasureUnsafe") return "current inode replacement was not rejected before clear";
+    if (fingerprint(replacement).bytes != custody::erasure_json("erase-foreign")) {
+      return "current inode replacement was mutated by exact-owner clear";
+    }
+    fs::remove_all(root);
+  }
+
+  {
+    const fs::path root = unique_path("archivale-erasure-directory-swap-");
+    fs::create_directories(root);
+    if (call(root, "writeErasureControl", {}, "erase-owner").outcome != "erasureOwned") {
+      return "erasure directory-swap fixture write failed";
+    }
+    const fs::path control = root / "erasure-control";
+    const fs::path held = root / "held-erasure-control";
+    custody::test_at_boundary([&](const char* point) {
+      if (std::string(point) != "erasure.beforeCurrentUnlink") return;
+      fs::rename(control, held);
+      fs::create_directories(control);
+      write_file(control / "current.json", custody::erasure_json("erase-foreign"));
+    });
+    const auto cleared = call(root, "clearErasureControl", {}, "erase-owner");
+    custody::test_reset_hooks();
+    if (cleared.outcome != "erasureUnsafe") return "control-directory replacement was not rejected before clear";
+    if (fingerprint(control / "current.json").bytes != custody::erasure_json("erase-foreign")) {
+      return "replacement control directory was mutated by exact-owner clear";
+    }
+    fs::remove_all(root);
+  }
+
+  {
+    const fs::path root = unique_path("archivale-erasure-temp-swap-");
+    fs::create_directories(root);
+    custody::test_crash_at("erasure.afterCurrentLink");
+    const auto interrupted = call(root, "writeErasureControl", {}, "erase-owner");
+    custody::test_reset_hooks();
+    if (interrupted.outcome != "ioFailure") return "erasure temp-swap fixture did not interrupt";
+    const fs::path control = root / "erasure-control";
+    const fs::path temp = control / "current-erase-owner.tmp";
+    custody::test_at_boundary([&](const char* point) {
+      if (std::string(point) != "erasure.beforeClearTempUnlink") return;
+      fs::rename(temp, control / "held-owner.tmp");
+      write_file(temp, custody::erasure_json("erase-foreign"));
+    });
+    const auto cleared = call(root, "clearErasureControl", {}, "erase-owner");
+    custody::test_reset_hooks();
+    if (cleared.outcome != "erasureUnsafe") return "temporary owner replacement was not rejected before cleanup";
+    if (fingerprint(temp).bytes != custody::erasure_json("erase-foreign")) {
+      return "replacement temporary owner was mutated by clear cleanup";
+    }
+    fs::remove_all(root);
+  }
+  return {};
+}
+
 inline std::string fail_closed_capability_test() {
   const fs::path root = unique_path("archivale-capability-");
   fs::create_directories(root);
@@ -242,9 +477,15 @@ inline std::string fail_closed_capability_test() {
   custody::test_fail_at("selfTest.linkFsync");
   const auto failed = call(root, "selfTest");
   custody::test_reset_hooks();
+  if (failed.outcome != "unsupported") return "capability probe did not fail closed";
+  for (const std::string& point : {"selfTest.noReplaceCollision", "selfTest.directoryRmdir"}) {
+    custody::test_fail_at(point);
+    const auto negative = call(root, "selfTest");
+    custody::test_reset_hooks();
+    if (negative.outcome != "unsupported") return "capability probe did not fail closed at " + point;
+  }
   const auto scan = call(root, "scan");
   fs::remove_all(root);
-  if (failed.outcome != "unsupported") return "capability probe did not fail closed";
   return require(scan.outcome == "scanComplete", "failed capability probe left unsafe nodes");
 }
 
@@ -333,7 +574,8 @@ inline std::string race_tests(int repetitions = 40) {
 
 inline std::string run_contract_suite() {
   for (const auto& test : {publication_crash_tests, publication_retry_and_concurrency_tests,
-                           erasure_control_tests, fail_closed_capability_test}) {
+                           publication_scan_negative_tests, erasure_control_tests,
+                           erasure_race_and_exclusivity_tests, fail_closed_capability_test}) {
     const std::string failure = test();
     if (!failure.empty()) return failure;
   }

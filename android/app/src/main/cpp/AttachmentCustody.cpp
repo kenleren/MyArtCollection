@@ -3,6 +3,7 @@
 #include <cstring>
 #include <dirent.h>
 #include <fcntl.h>
+#include <sys/file.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
 #include <sys/types.h>
@@ -12,6 +13,7 @@
 #include <array>
 #include <cctype>
 #include <cstdlib>
+#include <functional>
 #include <limits>
 #include <set>
 #include <sstream>
@@ -81,14 +83,31 @@ class Fd {
   int value_;
 };
 
+class FileLock {
+ public:
+  explicit FileLock(int fd) : fd_(fd), locked_(flock(fd_, LOCK_EX) == 0) {}
+  ~FileLock() {
+    if (locked_) flock(fd_, LOCK_UN);
+  }
+  FileLock(const FileLock&) = delete;
+  FileLock& operator=(const FileLock&) = delete;
+  bool valid() const { return locked_; }
+
+ private:
+  int fd_;
+  bool locked_;
+};
+
 #ifdef ATTACHMENT_CUSTODY_TESTING
 struct TestHooks {
   std::string crash_point;
   std::string failure_point;
+  std::function<void(const char*)> boundary;
 };
 thread_local TestHooks g_test_hooks;
 void test_crash_at(const std::string& point) { g_test_hooks.crash_point = point; }
 void test_fail_at(const std::string& point) { g_test_hooks.failure_point = point; }
+void test_at_boundary(std::function<void(const char*)> callback) { g_test_hooks.boundary = std::move(callback); }
 void test_reset_hooks() { g_test_hooks = {}; }
 bool crash_at(const char* point) {
   if (g_test_hooks.crash_point != point) return false;
@@ -101,9 +120,13 @@ bool fail_at(const char* point) {
   errno = EIO;
   return true;
 }
+void run_boundary(const char* point) {
+  if (g_test_hooks.boundary) g_test_hooks.boundary(point);
+}
 #else
 bool crash_at(const char*) { return false; }
 bool fail_at(const char*) { return false; }
+void run_boundary(const char*) {}
 #endif
 
 Result result(std::string outcome, std::string detail = {}) {
@@ -204,9 +227,26 @@ bool list_names(int fd, std::vector<std::string>* names) {
   return ok;
 }
 
-bool empty_directory(int fd) {
+bool inspect_empty_directory(int fd, bool* empty) {
+  if (fail_at("directory.emptyInspect")) return false;
   std::vector<std::string> names;
-  return list_names(fd, &names) && names.empty();
+  if (!list_names(fd, &names)) return false;
+  *empty = names.empty();
+  return true;
+}
+
+bool directory_identity_matches(int parent, const std::string& name, int opened) {
+  struct stat named_status {};
+  struct stat opened_status {};
+  return fstatat(parent, name.c_str(), &named_status, AT_SYMLINK_NOFOLLOW) == 0 &&
+         fstat(opened, &opened_status) == 0 && S_ISDIR(named_status.st_mode) &&
+         S_ISDIR(opened_status.st_mode) && same_inode(named_status, opened_status);
+}
+
+bool entry_identity_matches(int parent, const std::string& name, const struct stat& expected) {
+  struct stat current {};
+  return fstatat(parent, name.c_str(), &current, AT_SYMLINK_NOFOLLOW) == 0 &&
+         S_ISREG(current.st_mode) && same_inode(current, expected);
 }
 
 Result unsafe_or_io(const char* detail) {
@@ -770,18 +810,71 @@ Result publish(const std::string& platform_root, const std::string& source_path,
   return continue_publication(platform_root, requested, false);
 }
 
+Result validate_owned_publication_metadata(
+    const std::string& platform_root, const std::string& operation_id,
+    const std::string& artwork_id, const std::string& attachment_id,
+    const std::string& canonical) {
+  Fd root;
+  Result opened = open_attachment_root(platform_root, false, &root);
+  if (opened.outcome != "available") {
+    return errno == ENOENT ? result("available") : opened;
+  }
+  Fd staging = open_dir_at(root.get(), kStaging, false);
+  if (!staging.valid()) {
+    return errno == ENOENT
+        ? result("available")
+        : unsafe_or_io("The publication staging directory is unsafe.");
+  }
+
+  PublicationState intent_descriptor;
+  PublicationState temp_descriptor;
+  struct stat intent_status {};
+  struct stat temp_status {};
+  Result intent = read_publication_descriptor(
+      staging.get(), publication_intent_name(operation_id), &intent_descriptor,
+      &intent_status);
+  Result temp = read_publication_descriptor(
+      staging.get(), publication_temp_name(operation_id), &temp_descriptor,
+      &temp_status);
+  if (intent.outcome == "unsafeNode") return intent;
+  if (temp.outcome == "unsafeNode") return temp;
+  const bool has_intent = intent.outcome == "publicationPending";
+  const bool has_temp = temp.outcome == "publicationPending";
+  if ((has_intent &&
+       !descriptor_matches(intent_descriptor, operation_id, artwork_id,
+                           attachment_id, canonical)) ||
+      (has_temp &&
+       !descriptor_matches(temp_descriptor, operation_id, artwork_id,
+                           attachment_id, canonical))) {
+    return result("publicationConflict",
+                  "Operation-owned staging metadata identifies a different publication.");
+  }
+  if (has_intent && has_temp && !same_inode(intent_status, temp_status)) {
+    return result("unsafeNode",
+                  "Operation-owned staging descriptors do not share identity.");
+  }
+  return result("available");
+}
+
 Result recover_publication(const std::string& platform_root, const std::string& operation_id,
                            const std::string& artwork_id, const std::string& attachment_id,
                            const std::string& canonical) {
   if (!target_valid(operation_id, artwork_id, attachment_id, canonical)) return result("invalidRequest");
+  Result validated = validate_owned_publication_metadata(
+      platform_root, operation_id, artwork_id, attachment_id, canonical);
+  if (validated.outcome != "available") return validated;
   TargetDirs target;
   Result opened = open_target(platform_root, artwork_id, attachment_id, false, &target);
   if (opened.outcome != "available") return errno == ENOENT ? result("publicationAbsent") : opened;
   Fd staging = open_dir_at(target.root.get(), kStaging, false);
+  if (!staging.valid() && errno != ENOENT) {
+    return unsafe_or_io("The publication staging directory is unsafe.");
+  }
   PublicationState descriptor;
   Result state = staging.valid()
       ? read_publication_descriptor(staging.get(), publication_intent_name(operation_id), &descriptor)
       : result("publicationAbsent");
+  if (state.outcome == "unsafeNode") return state;
   if (state.outcome == "publicationAbsent" && staging.valid()) {
     struct stat temporary {};
     Result pending = read_publication_descriptor(
@@ -803,7 +896,8 @@ Result recover_publication(const std::string& platform_root, const std::string& 
       return pending;
     }
   }
-  if (state.outcome != "publicationPending") {
+  if (state.outcome == "unsafeNode") return state;
+  if (state.outcome == "publicationAbsent") {
     state = read_publication_descriptor(target.attachment.get(), kPublicationClaim, &descriptor);
   }
   if (state.outcome != "publicationPending") {
@@ -971,15 +1065,29 @@ Result publication_status(const std::string& platform_root, const std::string& o
                           const std::string& artwork_id, const std::string& attachment_id,
                           const std::string& canonical) {
   if (!target_valid(operation_id, artwork_id, attachment_id, canonical)) return result("invalidRequest");
+  Result validated = validate_owned_publication_metadata(
+      platform_root, operation_id, artwork_id, attachment_id, canonical);
+  if (validated.outcome != "available") return validated;
   TargetDirs target;
   Result opened = open_target(platform_root, artwork_id, attachment_id, false, &target);
   if (opened.outcome != "available") return errno == ENOENT ? result("publicationAbsent") : opened;
   Fd staging = open_dir_at(target.root.get(), kStaging, false);
+  if (!staging.valid() && errno != ENOENT) {
+    return unsafe_or_io("The publication staging directory is unsafe.");
+  }
   PublicationState descriptor;
   Result state = staging.valid()
       ? read_publication_descriptor(staging.get(), publication_intent_name(operation_id), &descriptor)
       : result("publicationAbsent");
-  if (state.outcome != "publicationPending") state = read_publication_descriptor(target.attachment.get(), kPublicationClaim, &descriptor);
+  if (state.outcome == "unsafeNode") return state;
+  if (state.outcome == "publicationAbsent" && staging.valid()) {
+    state = read_publication_descriptor(
+        staging.get(), publication_temp_name(operation_id), &descriptor);
+    if (state.outcome == "unsafeNode") return state;
+  }
+  if (state.outcome == "publicationAbsent") {
+    state = read_publication_descriptor(target.attachment.get(), kPublicationClaim, &descriptor);
+  }
   if (state.outcome == "publicationPending") {
     if (!descriptor_matches(descriptor, operation_id, artwork_id, attachment_id, canonical)) return result("publicationConflict");
     state.publications.push_back(descriptor);
@@ -1017,15 +1125,26 @@ Result remove_payload(const std::string& platform_root, const std::string& artwo
   if (!S_ISREG(status.st_mode) || status.st_nlink != 1) return result("unsafeNode", "The canonical payload is not a safe single-link file.");
   if (!unlink_entry(target.attachment.get(), name, 0, "remove.payloadUnlink") ||
       !sync_fd(target.attachment.get(), "remove.payloadFsync")) return result("ioFailure", "Could not durably remove the payload.");
-  if (!empty_directory(target.attachment.get())) return result("removed");
+  bool empty = false;
+  if (!inspect_empty_directory(target.attachment.get(), &empty)) {
+    return result("ioFailure", "Could not inspect the attachment directory after removal.");
+  }
+  if (!empty) return result("removed");
   if (!unlink_entry(target.attachments.get(), attachment_id, AT_REMOVEDIR, "remove.attachmentRmdir") ||
       !sync_fd(target.attachments.get(), "remove.attachmentsFsync")) return result("ioFailure", "Could not prune the attachment directory.");
-  if (empty_directory(target.attachments.get())) {
+  if (!inspect_empty_directory(target.attachments.get(), &empty)) {
+    return result("ioFailure", "Could not inspect attachment cleanup ancestry.");
+  }
+  if (empty) {
     if (!unlink_entry(target.artwork.get(), "attachments", AT_REMOVEDIR, "remove.attachmentsRmdir") ||
         !sync_fd(target.artwork.get(), "remove.artworkFsync")) return result("ioFailure", "Could not prune the attachments directory.");
-    if (empty_directory(target.artwork.get()) &&
-        (!unlink_entry(target.artworks.get(), artwork_id, AT_REMOVEDIR, "remove.artworkRmdir") ||
-         !sync_fd(target.artworks.get(), "remove.artworksFsync"))) return result("ioFailure", "Could not prune the artwork directory.");
+    if (!inspect_empty_directory(target.artwork.get(), &empty)) {
+      return result("ioFailure", "Could not inspect artwork cleanup ancestry.");
+    }
+    if (empty && (!unlink_entry(target.artworks.get(), artwork_id, AT_REMOVEDIR, "remove.artworkRmdir") ||
+                  !sync_fd(target.artworks.get(), "remove.artworksFsync"))) {
+      return result("ioFailure", "Could not prune the artwork directory.");
+    }
   }
   return result("removed");
 }
@@ -1060,11 +1179,18 @@ Result read_erasure_at(int control, const std::string& name, const std::string& 
   return output;
 }
 
-Result read_current_erasure(int control, const std::string& expected_owner) {
+Result read_current_erasure(int control, const std::string& expected_owner,
+                            struct stat* validated_status = nullptr) {
   struct stat current_status {};
   Result current = read_erasure_at(control, kErasureCurrent, expected_owner, &current_status);
   if ((current.outcome != "erasureOwned" && current.outcome != "erasureConflict") ||
-      current_status.st_nlink == 1) return current;
+      current_status.st_nlink == 1) {
+    if (validated_status != nullptr &&
+        (current.outcome == "erasureOwned" || current.outcome == "erasureConflict")) {
+      *validated_status = current_status;
+    }
+    return current;
+  }
   struct stat temp_status {};
   const std::string temp = erasure_temp_name(current.owner);
   if (current_status.st_nlink != 2 ||
@@ -1072,19 +1198,15 @@ Result read_current_erasure(int control, const std::string& expected_owner) {
       !S_ISREG(temp_status.st_mode) || !same_inode(current_status, temp_status)) {
     return result("erasureUnsafe", "Erasure control has an unowned hard link.");
   }
+  if (validated_status != nullptr) *validated_status = current_status;
   return current;
 }
 
-Result erasure_status(const std::string& platform_root, const std::string& expected_owner) {
-  if (!expected_owner.empty() && !opaque_id(expected_owner)) return result("invalidRequest");
-  Fd root = open_root(platform_root);
-  if (!root.valid()) return unsafe_or_io("The erasure-control parent is unsafe.");
-  Fd control = open_dir_at(root.get(), kErasureControl, false);
-  if (!control.valid()) return errno == ENOENT ? result("erasureAbsent") : result("erasureUnsafe");
-  Result current = read_current_erasure(control.get(), expected_owner);
+Result erasure_status_at(int control, const std::string& expected_owner) {
+  Result current = read_current_erasure(control, expected_owner);
   if (current.outcome == "erasureUnsafe") return current;
   std::vector<std::string> names;
-  if (!list_names(control.get(), &names)) return result("ioFailure", "Could not inspect erasure-control state.");
+  if (!list_names(control, &names)) return result("ioFailure", "Could not inspect erasure-control state.");
   if (current.outcome == "erasureOwned" || current.outcome == "erasureConflict") {
     const std::string expected_temp = erasure_temp_name(current.owner);
     for (const std::string& name : names) {
@@ -1095,8 +1217,8 @@ Result erasure_status(const std::string& platform_root, const std::string& expec
     if (std::find(names.begin(), names.end(), expected_temp) != names.end()) {
       struct stat current_status {};
       struct stat temp_status {};
-      if (fstatat(control.get(), kErasureCurrent, &current_status, AT_SYMLINK_NOFOLLOW) != 0 ||
-          fstatat(control.get(), expected_temp.c_str(), &temp_status, AT_SYMLINK_NOFOLLOW) != 0 ||
+      if (fstatat(control, kErasureCurrent, &current_status, AT_SYMLINK_NOFOLLOW) != 0 ||
+          fstatat(control, expected_temp.c_str(), &temp_status, AT_SYMLINK_NOFOLLOW) != 0 ||
           current_status.st_nlink != 2 || !same_inode(current_status, temp_status)) {
         return result("erasureUnsafe", "Erasure-control staging identity is invalid.");
       }
@@ -1109,7 +1231,7 @@ Result erasure_status(const std::string& platform_root, const std::string& expec
       names.front().size() <= 12 || names.front().substr(names.front().size() - 4) != ".tmp") {
     return result("erasureUnsafe", "Erasure control contains unexpected partial state.");
   }
-  Result pending = read_erasure_at(control.get(), names.front(), expected_owner);
+  Result pending = read_erasure_at(control, names.front(), expected_owner);
   if (pending.outcome == "erasureOwned") pending.outcome = "erasurePending";
   if (pending.outcome == "erasureConflict") return pending;
   if (pending.outcome != "erasurePending" || names.front() != erasure_temp_name(pending.owner)) {
@@ -1118,25 +1240,69 @@ Result erasure_status(const std::string& platform_root, const std::string& expec
   return pending;
 }
 
+Result erasure_status(const std::string& platform_root, const std::string& expected_owner) {
+  if (!expected_owner.empty() && !opaque_id(expected_owner)) return result("invalidRequest");
+  Fd root = open_root(platform_root);
+  if (!root.valid()) return unsafe_or_io("The erasure-control parent is unsafe.");
+  FileLock lock(root.get());
+  if (!lock.valid()) return result("unsupported", "Erasure-control locking is unavailable.");
+  Fd control = open_dir_at(root.get(), kErasureControl, false);
+  if (!control.valid()) return errno == ENOENT ? result("erasureAbsent") : result("erasureUnsafe");
+  if (!directory_identity_matches(root.get(), kErasureControl, control.get())) {
+    return result("erasureUnsafe", "Erasure-control directory identity changed.");
+  }
+  return erasure_status_at(control.get(), expected_owner);
+}
+
+Result remove_owned_erasure_temp(int root, int control, const std::string& owner) {
+  const std::string temp = erasure_temp_name(owner);
+  struct stat temp_status {};
+  Result pending = read_erasure_at(control, temp, owner, &temp_status);
+  if (pending.outcome == "erasureAbsent") return result("cleanupComplete");
+  if (pending.outcome != "erasureOwned") return pending;
+  run_boundary("erasure.beforeClearTempUnlink");
+  if (!directory_identity_matches(root, kErasureControl, control) ||
+      !entry_identity_matches(control, temp, temp_status)) {
+    return result("erasureUnsafe", "Erasure-control staging identity changed before clear cleanup.");
+  }
+  if (!unlink_entry(control, temp, 0, "erasure.cleanupTempUnlink") ||
+      !sync_fd(control, "erasure.cleanupTempFsync")) {
+    return result("ioFailure", "Could not durably remove erasure-control staging.");
+  }
+  return result("cleanupComplete");
+}
+
 Result write_erasure(const std::string& platform_root, const std::string& owner) {
   if (!opaque_id(owner)) return result("invalidRequest");
   Fd root = open_root(platform_root);
   if (!root.valid()) return unsafe_or_io("The erasure-control parent is unsafe.");
+  FileLock lock(root.get());
+  if (!lock.valid()) return result("unsupported", "Erasure-control locking is unavailable.");
   Fd control = open_dir_at(root.get(), kErasureControl, true, "erasure.parentFsync");
   if (!control.valid()) return result("erasureUnsafe", "The erasure-control directory is unsafe.");
-  Result current = erasure_status(platform_root, owner);
+  if (!directory_identity_matches(root.get(), kErasureControl, control.get())) {
+    return result("erasureUnsafe", "Erasure-control directory identity changed.");
+  }
+  Result current = erasure_status_at(control.get(), owner);
   if (current.outcome == "erasureOwned" || current.outcome == "erasureConflict" || current.outcome == "erasureUnsafe") return current;
   if (current.outcome != "erasureAbsent" && current.outcome != "erasurePending") return current;
 
   const std::string temp = erasure_temp_name(owner);
+  struct stat temp_status {};
   Fd file(openat(control.get(), temp.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0600));
   if (!file.valid()) {
-    Result pending = read_erasure_at(control.get(), temp, owner);
+    Result pending = read_erasure_at(control.get(), temp, owner, &temp_status);
     if (pending.outcome != "erasureOwned") return pending;
   } else {
     const std::string content = erasure_json(owner);
     if (!write_all(file.get(), content) || !sync_fd(file.get(), "erasure.tempFileFsync")) return result("ioFailure", "Could not write erasure control.");
+    if (fstat(file.get(), &temp_status) != 0) return result("ioFailure", "Could not validate erasure staging identity.");
     if (crash_at("erasure.afterTempFsync")) return result("ioFailure", "Injected erasure crash.");
+  }
+  run_boundary("erasure.beforeCurrentLink");
+  if (!directory_identity_matches(root.get(), kErasureControl, control.get()) ||
+      !entry_identity_matches(control.get(), temp, temp_status)) {
+    return result("erasureUnsafe", "Erasure-control staging identity changed before publication.");
   }
   if (linkat(control.get(), temp.c_str(), control.get(), kErasureCurrent, 0) != 0) {
     current = read_current_erasure(control.get(), owner);
@@ -1145,25 +1311,41 @@ Result write_erasure(const std::string& platform_root, const std::string& owner)
     if (!sync_fd(control.get(), "erasure.currentDirectoryFsync")) return result("ioFailure", "Could not sync erasure control.");
     if (crash_at("erasure.afterCurrentLink")) return result("ioFailure", "Injected erasure crash.");
   }
+  run_boundary("erasure.beforeTempUnlink");
+  if (!directory_identity_matches(root.get(), kErasureControl, control.get()) ||
+      !entry_identity_matches(control.get(), temp, temp_status)) {
+    return result("erasureUnsafe", "Erasure-control staging identity changed before cleanup.");
+  }
   if (!unlink_entry(control.get(), temp, 0, "erasure.tempUnlink") ||
       !sync_fd(control.get(), "erasure.tempCleanupFsync")) return result("ioFailure", "Could not clean erasure-control staging.");
   if (crash_at("erasure.afterTempCleanup")) return result("ioFailure", "Injected erasure crash.");
-  return erasure_status(platform_root, owner);
+  return erasure_status_at(control.get(), owner);
 }
 
 Result recover_erasure(const std::string& platform_root, const std::string& owner) {
   if (!opaque_id(owner)) return result("invalidRequest");
   Fd root = open_root(platform_root);
   if (!root.valid()) return unsafe_or_io("The erasure-control parent is unsafe.");
+  FileLock lock(root.get());
+  if (!lock.valid()) return result("unsupported", "Erasure-control locking is unavailable.");
   Fd control = open_dir_at(root.get(), kErasureControl, false);
   if (!control.valid()) return errno == ENOENT ? result("erasureAbsent") : result("erasureUnsafe");
-  Result current = erasure_status(platform_root, owner);
+  if (!directory_identity_matches(root.get(), kErasureControl, control.get())) {
+    return result("erasureUnsafe", "Erasure-control directory identity changed.");
+  }
+  Result current = erasure_status_at(control.get(), owner);
   const std::string temp = erasure_temp_name(owner);
-  Result pending = read_erasure_at(control.get(), temp, owner);
+  struct stat temp_status {};
+  Result pending = read_erasure_at(control.get(), temp, owner, &temp_status);
   if (current.outcome == "erasureConflict" || current.outcome == "erasureUnsafe") return current;
   if (pending.outcome == "erasureUnsafe" || pending.outcome == "erasureConflict") return pending;
   if (current.outcome == "erasureAbsent" || current.outcome == "erasurePending") {
     if (pending.outcome != "erasureOwned") return current;
+    run_boundary("erasure.beforeRecoverLink");
+    if (!directory_identity_matches(root.get(), kErasureControl, control.get()) ||
+        !entry_identity_matches(control.get(), temp, temp_status)) {
+      return result("erasureUnsafe", "Erasure-control staging identity changed before recovery.");
+    }
     if (linkat(control.get(), temp.c_str(), control.get(), kErasureCurrent, 0) != 0 ||
         !sync_fd(control.get(), "erasure.recoverCurrentFsync")) return result("ioFailure", "Could not recover erasure control.");
   } else if (pending.outcome == "erasureOwned") {
@@ -1173,33 +1355,164 @@ Result recover_erasure(const std::string& platform_root, const std::string& owne
         fstatat(control.get(), temp.c_str(), &temp_status, AT_SYMLINK_NOFOLLOW) != 0 ||
         !same_inode(current_status, temp_status)) return result("erasureConflict", "Erasure-control identities do not match.");
   }
-  if (pending.outcome == "erasureOwned" &&
-      (!unlink_entry(control.get(), temp, 0, "erasure.recoverTempUnlink") ||
-       !sync_fd(control.get(), "erasure.recoverTempFsync"))) return result("ioFailure", "Could not clean recovered erasure control.");
-  return erasure_status(platform_root, owner);
+  if (pending.outcome == "erasureOwned") {
+    run_boundary("erasure.beforeRecoverTempUnlink");
+    if (!directory_identity_matches(root.get(), kErasureControl, control.get()) ||
+        !entry_identity_matches(control.get(), temp, temp_status)) {
+      return result("erasureUnsafe", "Erasure-control staging identity changed before recovery cleanup.");
+    }
+    if (!unlink_entry(control.get(), temp, 0, "erasure.recoverTempUnlink") ||
+        !sync_fd(control.get(), "erasure.recoverTempFsync")) {
+      return result("ioFailure", "Could not clean recovered erasure control.");
+    }
+  }
+  return erasure_status_at(control.get(), owner);
 }
 
 Result clear_erasure(const std::string& platform_root, const std::string& owner, bool cleanup_only) {
   if (!opaque_id(owner)) return result("invalidRequest");
   Fd root = open_root(platform_root);
   if (!root.valid()) return unsafe_or_io("The erasure-control parent is unsafe.");
+  FileLock lock(root.get());
+  if (!lock.valid()) return result("unsupported", "Erasure-control locking is unavailable.");
   Fd control = open_dir_at(root.get(), kErasureControl, false);
   if (!control.valid()) return errno == ENOENT ? result("erasureAbsent") : result("erasureUnsafe");
-  Result current = erasure_status(platform_root, owner);
+  if (!directory_identity_matches(root.get(), kErasureControl, control.get())) {
+    return result("erasureUnsafe", "Erasure-control directory identity changed.");
+  }
+  Result current = erasure_status_at(control.get(), owner);
   if (current.outcome == "erasureConflict" || current.outcome == "erasureUnsafe") return current;
   if (current.outcome != "erasureOwned" && current.outcome != "erasurePending" &&
       current.outcome != "erasureAbsent") return current;
-  if (!cleanup_only && current.outcome == "erasureOwned" &&
-      (!unlink_entry(control.get(), kErasureCurrent, 0, "erasure.currentUnlink") ||
-       !sync_fd(control.get(), "erasure.currentClearFsync"))) return result("ioFailure", "Could not clear erasure control.");
-  Result failure;
-  if (!remove_if_present(control.get(), erasure_temp_name(owner), 2,
-                         "erasure.cleanupTempUnlink", "erasure.cleanupTempFsync", &failure)) return failure;
-  if (empty_directory(control.get())) {
+  if (!cleanup_only && current.outcome == "erasureOwned") {
+    struct stat current_status {};
+    Result validated = read_current_erasure(control.get(), owner, &current_status);
+    if (validated.outcome != "erasureOwned") return validated;
+    run_boundary("erasure.beforeCurrentUnlink");
+    if (!directory_identity_matches(root.get(), kErasureControl, control.get()) ||
+        !entry_identity_matches(control.get(), kErasureCurrent, current_status)) {
+      return result("erasureUnsafe", "Erasure-control identity changed before clear.");
+    }
+    if (!unlink_entry(control.get(), kErasureCurrent, 0, "erasure.currentUnlink") ||
+        !sync_fd(control.get(), "erasure.currentClearFsync")) {
+      return result("ioFailure", "Could not clear erasure control.");
+    }
+  }
+  Result temp_cleanup = remove_owned_erasure_temp(root.get(), control.get(), owner);
+  if (temp_cleanup.outcome != "cleanupComplete") return temp_cleanup;
+  bool empty = false;
+  if (!inspect_empty_directory(control.get(), &empty)) {
+    return result("ioFailure", "Could not inspect erasure-control cleanup state.");
+  }
+  if (empty) {
+    run_boundary("erasure.beforeControlRmdir");
+    if (!directory_identity_matches(root.get(), kErasureControl, control.get())) {
+      return result("erasureUnsafe", "Erasure-control directory identity changed before cleanup.");
+    }
     if (!unlink_entry(root.get(), kErasureControl, AT_REMOVEDIR, "erasure.controlRmdir") ||
         !sync_fd(root.get(), "erasure.rootFsync")) return result("ioFailure", "Could not prune erasure-control ancestry.");
   }
   return result(cleanup_only && current.outcome == "erasureOwned" ? "erasureOwned" : "erasureAbsent");
+}
+
+bool staged_operation(const std::string& name, const char* suffix, std::string* operation_id) {
+  constexpr char prefix[] = "publication-";
+  const size_t suffix_size = std::strlen(suffix);
+  if (name.rfind(prefix, 0) != 0 || name.size() <= sizeof(prefix) - 1 + suffix_size ||
+      name.substr(name.size() - suffix_size) != suffix) return false;
+  *operation_id = name.substr(sizeof(prefix) - 1, name.size() - (sizeof(prefix) - 1) - suffix_size);
+  return opaque_id(*operation_id);
+}
+
+bool inspect_descriptor_target_payload(int root, const PublicationState& descriptor,
+                                       struct stat* status) {
+  Fd artworks = open_dir_at(root, kArtworks, false);
+  if (!artworks.valid()) return false;
+  Fd artwork = open_dir_at(artworks.get(), descriptor.artwork_id, false);
+  if (!artwork.valid()) return false;
+  Fd attachments = open_dir_at(artwork.get(), "attachments", false);
+  if (!attachments.valid()) return false;
+  Fd attachment = open_dir_at(attachments.get(), descriptor.attachment_id, false);
+  if (!attachment.valid()) return false;
+  return inspect_payload_at(
+      attachment.get(), descriptor.canonical_name, descriptor, status);
+}
+
+Result validate_staging_for_scan(int root, int staging, Result* output) {
+  std::vector<std::string> stages;
+  if (!list_names(staging, &stages)) return result("ioFailure", "Could not scan staging.");
+  for (const std::string& stage : stages) {
+    std::string operation_id;
+    const bool is_data = staged_operation(stage, ".data", &operation_id);
+    const bool is_intent = !is_data && staged_operation(stage, ".json", &operation_id);
+    const bool is_temp = !is_data && !is_intent && staged_operation(stage, ".tmp", &operation_id);
+    if (!is_data && !is_intent && !is_temp) return result("unsafeNode", "Staging contains an unexpected node.");
+    struct stat status {};
+    if (fstatat(staging, stage.c_str(), &status, AT_SYMLINK_NOFOLLOW) != 0 ||
+        !S_ISREG(status.st_mode) || status.st_nlink < 1 || status.st_nlink > 2) {
+      return result("unsafeNode", "Staging contains an unsafe node.");
+    }
+
+    const std::string intent_name = publication_intent_name(operation_id);
+    const std::string temp_name = publication_temp_name(operation_id);
+    if (is_data) {
+      PublicationState descriptor;
+      Result descriptor_state = read_publication_descriptor(staging, intent_name, &descriptor);
+      if (descriptor_state.outcome == "publicationAbsent") {
+        descriptor_state = read_publication_descriptor(staging, temp_name, &descriptor);
+      }
+      if (descriptor_state.outcome == "publicationAbsent") {
+        if (status.st_nlink != 1) {
+          return result("unsafeNode", "Unowned staging payload has an invalid link count.");
+        }
+        continue;
+      }
+      if (descriptor_state.outcome != "publicationPending" || descriptor.operation_id != operation_id) {
+        return result("unsafeNode", "Staging payload does not match its operation descriptor.");
+      }
+      struct stat data_status {};
+      if (!inspect_payload_at(staging, stage, descriptor, &data_status) ||
+          !same_inode(status, data_status)) {
+        return result("unsafeNode", "Staging payload pathname or content does not match its descriptor.");
+      }
+      continue;
+    }
+
+    PublicationState descriptor;
+    struct stat descriptor_status {};
+    Result descriptor_state = read_publication_descriptor(
+        staging, stage, &descriptor, &descriptor_status);
+    if (descriptor_state.outcome != "publicationPending" ||
+        descriptor.operation_id != operation_id ||
+        !same_inode(status, descriptor_status)) {
+      return result("unsafeNode", "Staging descriptor identity does not match its filename.");
+    }
+    struct stat data_status {};
+    if (!inspect_payload_at(
+            staging, publication_data_name(operation_id), descriptor, &data_status)) {
+      if (errno != ENOENT ||
+          !inspect_descriptor_target_payload(root, descriptor, &data_status)) {
+        return result(
+            "unsafeNode",
+            "Staging descriptor has no safe payload matching its declared identity.");
+      }
+    }
+    if (is_temp) {
+      struct stat intent_status {};
+      if (fstatat(staging, intent_name.c_str(), &intent_status, AT_SYMLINK_NOFOLLOW) == 0) {
+        if (!same_inode(status, intent_status)) {
+          return result("unsafeNode", "Temporary and published staging descriptors do not share identity.");
+        }
+      } else if (errno != ENOENT) {
+        return unsafe_or_io("Could not inspect the published staging descriptor.");
+      } else {
+        output->publications.push_back(descriptor);
+      }
+    } else {
+      output->publications.push_back(descriptor);
+    }
+  }
+  return result("available");
 }
 
 Result scan(const std::string& platform_root) {
@@ -1209,26 +1522,15 @@ Result scan(const std::string& platform_root) {
   std::vector<std::string> root_names;
   if (!list_names(root.get(), &root_names)) return result("ioFailure", "Could not scan attachment root.");
   Result output = result("scanComplete");
+  Fd staging;
+  if (std::find(root_names.begin(), root_names.end(), kStaging) != root_names.end()) {
+    staging = open_dir_at(root.get(), kStaging, false);
+    if (!staging.valid()) return result("unsafeNode", "Staging is unsafe.");
+    Result staged = validate_staging_for_scan(root.get(), staging.get(), &output);
+    if (staged.outcome != "available") return staged;
+  }
   for (const std::string& root_name : root_names) {
-    if (root_name == kStaging) {
-      Fd staging = open_dir_at(root.get(), kStaging, false);
-      if (!staging.valid()) return result("unsafeNode", "Staging is unsafe.");
-      std::vector<std::string> stages;
-      if (!list_names(staging.get(), &stages)) return result("ioFailure", "Could not scan staging.");
-      for (const std::string& stage : stages) {
-        if (stage.rfind("publication-", 0) != 0) return result("unsafeNode", "Staging contains an unexpected node.");
-        struct stat status {};
-        if (fstatat(staging.get(), stage.c_str(), &status, AT_SYMLINK_NOFOLLOW) != 0 ||
-            !S_ISREG(status.st_mode) || status.st_nlink < 1 || status.st_nlink > 2) return result("unsafeNode", "Staging contains an unsafe node.");
-        if (stage.size() > 5 && stage.substr(stage.size() - 5) == ".json") {
-          PublicationState descriptor;
-          Result state = read_publication_descriptor(staging.get(), stage, &descriptor);
-          if (state.outcome != "publicationPending") return state;
-          output.publications.push_back(descriptor);
-        }
-      }
-      continue;
-    }
+    if (root_name == kStaging) continue;
     if (root_name != kArtworks) return result("unsafeNode", "Attachment root contains an unexpected node.");
     Fd artworks = open_dir_at(root.get(), kArtworks, false);
     if (!artworks.valid()) return result("unsafeNode", "Artworks is unsafe.");
@@ -1250,23 +1552,61 @@ Result scan(const std::string& platform_root) {
         if (!attachment.valid()) return result("unsafeNode", "Attachment directory is unsafe.");
         std::vector<std::string> payloads;
         if (!list_names(attachment.get(), &payloads)) return result("ioFailure", "Could not scan payloads.");
-        PublicationState claim;
-        bool has_claim = false;
-        for (const std::string& payload : payloads) {
-          if (payload == kPublicationClaim) {
-            Result state = read_publication_descriptor(attachment.get(), payload, &claim);
-            if (state.outcome != "publicationPending" || claim.artwork_id != artwork_id || claim.attachment_id != attachment_id) return result("unsafeNode", "Publication claim is invalid.");
-            output.publications.push_back(claim);
-            has_claim = true;
-            continue;
-          }
-          if (!canonical_name(payload)) return result("unsafeNode", "Attachment geometry is invalid.");
-          struct stat status {};
-          if (fstatat(attachment.get(), payload.c_str(), &status, AT_SYMLINK_NOFOLLOW) != 0 ||
-              !S_ISREG(status.st_mode) || status.st_nlink != (has_claim ? 2 : 1)) return result("unsafeNode", "Canonical payload is unsafe.");
-          output.entries.push_back({artwork_id, attachment_id, payload});
+        if (payloads.empty()) {
+          const size_t staged_targets = static_cast<size_t>(std::count_if(
+              output.publications.begin(), output.publications.end(),
+              [&](const PublicationState& publication) {
+                return publication.artwork_id == artwork_id && publication.attachment_id == attachment_id;
+              }));
+          if (staged_targets == 1) continue;
+          return result("unsafeNode", "Empty attachment directory is not owned by one staged publication.");
         }
-        if (!has_claim && payloads.size() != 1) return result("unsafeNode", "Attachment geometry is not canonical.");
+        const bool has_claim = std::find(payloads.begin(), payloads.end(), kPublicationClaim) != payloads.end();
+        if ((!has_claim && payloads.size() != 1) || (has_claim && payloads.size() > 2)) {
+          return result("unsafeNode", "Attachment geometry is not canonical.");
+        }
+        if (!has_claim) {
+          const std::string& payload = payloads.front();
+          struct stat status {};
+          if (!canonical_name(payload) || fstatat(attachment.get(), payload.c_str(), &status, AT_SYMLINK_NOFOLLOW) != 0 ||
+              !S_ISREG(status.st_mode) || status.st_nlink != 1) return result("unsafeNode", "Canonical payload is unsafe.");
+          output.entries.push_back({artwork_id, attachment_id, payload});
+          continue;
+        }
+
+        PublicationState claim;
+        struct stat claim_status {};
+        Result claim_state = read_publication_descriptor(attachment.get(), kPublicationClaim, &claim, &claim_status);
+        if (claim_state.outcome != "publicationPending" || claim.artwork_id != artwork_id ||
+            claim.attachment_id != attachment_id || !staging.valid()) return result("unsafeNode", "Publication claim is invalid.");
+        PublicationState staged_claim;
+        struct stat staged_claim_status {};
+        Result staged_state = read_publication_descriptor(
+            staging.get(), publication_intent_name(claim.operation_id), &staged_claim, &staged_claim_status);
+        if (staged_state.outcome != "publicationPending" || !same_inode(claim_status, staged_claim_status) ||
+            !descriptor_matches(staged_claim, claim.operation_id, artwork_id, attachment_id,
+                                claim.canonical_name)) {
+          return result("unsafeNode", "Publication claim does not match staged descriptor identity.");
+        }
+        struct stat staged_payload_status {};
+        if (!inspect_payload_at(staging.get(), publication_data_name(claim.operation_id),
+                                claim, &staged_payload_status)) {
+          return result("unsafeNode", "Publication claim has no matching staged payload.");
+        }
+        if (payloads.size() == 1) continue;
+        const std::string payload = payloads.front() == kPublicationClaim
+            ? payloads.back()
+            : payloads.front();
+        if (payload != claim.canonical_name) {
+          return result("unsafeNode", "Publication claim does not match canonical payload geometry.");
+        }
+        struct stat payload_status {};
+        if (!inspect_payload_at(attachment.get(), payload, claim, &payload_status) ||
+            payload_status.st_nlink != 2 ||
+            !same_inode(payload_status, staged_payload_status)) {
+          return result("unsafeNode", "Claimed payload does not match staged payload identity.");
+        }
+        output.entries.push_back({artwork_id, attachment_id, payload});
       }
     }
   }
@@ -1274,6 +1614,10 @@ Result scan(const std::string& platform_root) {
 }
 
 Result self_test(const std::string& platform_root) {
+  Fd platform = open_root(platform_root);
+  if (!platform.valid()) return unsafe_or_io("The app-private root is unsafe or unavailable.");
+  FileLock platform_lock(platform.get());
+  if (!platform_lock.valid()) return result("unsupported", "Required advisory locking is unavailable.");
   Fd root;
   Result opened = open_attachment_root(platform_root, true, &root);
   if (opened.outcome != "available") return opened;
@@ -1282,11 +1626,13 @@ Result self_test(const std::string& platform_root) {
   const std::string file_name = suffix + ".file";
   const std::string link_name = suffix + ".link";
   const std::string symlink_name = suffix + ".symlink";
+  const std::string directory_name = suffix + ".directory";
   const auto cleanup = [&]() {
     bool ok = true;
     for (const std::string* name : {&symlink_name, &link_name, &file_name}) {
       if (unlinkat(root.get(), name->c_str(), 0) != 0 && errno != ENOENT) ok = false;
     }
+    if (unlinkat(root.get(), directory_name.c_str(), AT_REMOVEDIR) != 0 && errno != ENOENT) ok = false;
     return fsync(root.get()) == 0 && ok;
   };
   const auto unavailable = [&](const char* detail) {
@@ -1297,12 +1643,26 @@ Result self_test(const std::string& platform_root) {
   if (!file.valid() || !write_all(file.get(), "probe") || !sync_fd(file.get(), "selfTest.fileFsync") ||
       linkat(root.get(), file_name.c_str(), root.get(), link_name.c_str(), 0) != 0 ||
       !sync_fd(root.get(), "selfTest.linkFsync")) return unavailable("Required descriptor-relative durability primitives are unavailable.");
+  if (fail_at("selfTest.noReplaceCollision") ||
+      linkat(root.get(), file_name.c_str(), root.get(), link_name.c_str(), 0) == 0 || errno != EEXIST) {
+    return unavailable("No-replace collision semantics are unavailable.");
+  }
   struct stat linked {};
   if (fstat(file.get(), &linked) != 0 || linked.st_nlink != 2 ||
       symlinkat(".", root.get(), symlink_name.c_str()) != 0) return unavailable("Required link primitives are unavailable.");
   Fd followed = open_dir_at(root.get(), symlink_name, false);
   const int nofollow_error = errno;
   if (followed.valid() || nofollow_error != ELOOP) return unavailable("No-follow traversal is unavailable.");
+  if (mkdirat(root.get(), directory_name.c_str(), 0700) != 0 ||
+      !sync_fd(root.get(), "selfTest.directoryCreateFsync")) {
+    return unavailable("Directory creation durability is unavailable.");
+  }
+  Fd directory = open_dir_at(root.get(), directory_name, false);
+  if (!directory.valid() ||
+      !unlink_entry(root.get(), directory_name, AT_REMOVEDIR, "selfTest.directoryRmdir") ||
+      !sync_fd(root.get(), "selfTest.directoryRemoveFsync")) {
+    return unavailable("Descriptor-relative directory removal semantics are unavailable.");
+  }
   if (!cleanup()) return result("unsupported", "Required cleanup durability primitives are unavailable.");
   return result("available");
 }
