@@ -8,6 +8,10 @@ import 'ai_research_record.dart';
 import 'attachment_record.dart';
 import 'artwork_collection_query.dart';
 import 'artwork_record.dart';
+import 'external_reference.dart';
+import '../external_references/external_reference_url_codec.dart';
+
+part 'external_reference_repository.dart';
 
 class LocalArtworkInsertConflictException implements Exception {
   LocalArtworkInsertConflictException(Iterable<String> artworkIds)
@@ -35,17 +39,22 @@ class AttachmentLineageException implements Exception {
 }
 
 class LocalArtworkRepository {
-  LocalArtworkRepository._(this._database) : collectionSnapshotObserver = null;
+  LocalArtworkRepository._(this._database)
+    : collectionSnapshotObserver = null,
+      externalReferenceTransactionObserver = null;
   LocalArtworkRepository.forDatabase(
     this._database, {
     this.collectionSnapshotObserver,
+    this.externalReferenceTransactionObserver,
   });
 
   final Database _database;
   final ArtworkCollectionSnapshotObserver? collectionSnapshotObserver;
+  final ExternalReferenceTransactionObserver?
+  externalReferenceTransactionObserver;
 
   static const _databaseName = 'my_art_collection.db';
-  static const _schemaVersion = 8;
+  static const _schemaVersion = 9;
 
   static Future<LocalArtworkRepository> open() async {
     final directory = await getApplicationDocumentsDirectory();
@@ -58,6 +67,13 @@ class LocalArtworkRepository {
     return openDatabase(
       path,
       version: _schemaVersion,
+      onConfigure: (db) async {
+        await db.execute('PRAGMA foreign_keys = ON');
+        final rows = await db.rawQuery('PRAGMA foreign_keys');
+        if (rows.single.values.single != 1) {
+          throw StateError('SQLite foreign keys could not be enabled.');
+        }
+      },
       onCreate: _createSchema,
       onUpgrade: _upgradeSchema,
     );
@@ -98,6 +114,7 @@ class LocalArtworkRepository {
 
     await _createAttachmentsSchema(db);
     await _createAiResearchSchema(db);
+    await _createExternalReferencesSchema(db);
   }
 
   static Future<void> _upgradeSchema(
@@ -148,6 +165,9 @@ class LocalArtworkRepository {
       await db.execute(
         'ALTER TABLE attachments ADD COLUMN superseded_by_attachment_id TEXT',
       );
+    }
+    if (oldVersion < 9) {
+      await _createExternalReferencesSchema(db);
     }
   }
 
@@ -353,11 +373,15 @@ class LocalArtworkRepository {
 
   Future<void> upsert(ArtworkRecord record) async {
     await _database.transaction((txn) async {
-      await txn.insert(
+      final updated = await txn.update(
         'artworks',
         _recordRow(record),
-        conflictAlgorithm: ConflictAlgorithm.replace,
+        where: 'artwork_id = ?',
+        whereArgs: [record.id],
       );
+      if (updated == 0) {
+        await txn.insert('artworks', _recordRow(record));
+      }
 
       await txn.delete(
         'artwork_fields',

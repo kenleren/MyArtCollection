@@ -13,12 +13,14 @@ class ArchivaleApp extends StatefulWidget {
     this.locale,
     this.dependencies,
     this.themeMode = ThemeMode.system,
+    this.platform,
   });
 
   final String initialRoute;
   final Locale? locale;
   final AppDependencies? dependencies;
   final ThemeMode themeMode;
+  final TargetPlatform? platform;
 
   @override
   State<ArchivaleApp> createState() => _ArchivaleAppState();
@@ -58,8 +60,12 @@ class _ArchivaleAppState extends State<ArchivaleApp>
       ],
       supportedLocales: AppLocalizations.supportedLocales,
       locale: widget.locale,
-      theme: _archivaleTheme(Brightness.light),
-      darkTheme: _archivaleTheme(Brightness.dark),
+      theme: _archivaleTheme(
+        Brightness.light,
+      ).copyWith(platform: widget.platform),
+      darkTheme: _archivaleTheme(
+        Brightness.dark,
+      ).copyWith(platform: widget.platform),
       themeMode: widget.themeMode,
       initialRoute: widget.initialRoute,
       onGenerateRoute: AppRouter.onGenerateRoute,

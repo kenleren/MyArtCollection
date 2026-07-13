@@ -11,6 +11,8 @@ import 'intake/attachment_viewer_gateway.dart';
 import 'intake/artwork_intake_service.dart';
 import 'intake/supporting_document_picker.dart';
 import 'intake/supporting_attachment_service.dart';
+import 'external_references/external_reference_launch_gateway.dart';
+import 'external_references/external_reference_launch_service.dart';
 import 'research/online_research_service.dart';
 import 'storage/local_artwork_repository.dart';
 import 'storage/local_attachment_store.dart';
@@ -29,6 +31,7 @@ class AppDependencies {
     this.billingManagementService,
     this.onDeviceAiDraftProvider = const DisabledOnDeviceAiDraftProvider(),
     this.onlineResearchClient,
+    this.externalReferenceLaunchGateway,
   });
 
   final LocalArtworkRepository artworkRepository;
@@ -42,6 +45,7 @@ class AppDependencies {
   final BillingManagementService? billingManagementService;
   final OnDeviceAiDraftProvider onDeviceAiDraftProvider;
   final OnlineResearchClient? onlineResearchClient;
+  final ExternalReferenceLaunchGateway? externalReferenceLaunchGateway;
 
   ArtworkIntakeService createIntakeService() {
     return ArtworkIntakeService(
@@ -78,6 +82,15 @@ class AppDependencies {
 
   CsvArtworkImportService createCsvArtworkImportService() {
     return CsvArtworkImportService();
+  }
+
+  ExternalReferenceLaunchService createExternalReferenceLaunchService() {
+    return ExternalReferenceLaunchService(
+      repository: artworkRepository,
+      gateway:
+          externalReferenceLaunchGateway ??
+          createSystemExternalReferenceLaunchGateway(),
+    );
   }
 }
 
