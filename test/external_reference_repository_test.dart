@@ -217,6 +217,32 @@ void main() {
     },
   );
 
+  test('corrupt rows fail closed and a repaired read recovers', () async {
+    await addReference('integrity', time: _time(0));
+    await database.update(
+      'external_references',
+      {'updated_at': '2026-02-30T00:00:00.000Z'},
+      where: 'reference_id = ?',
+      whereArgs: ['integrity'],
+    );
+
+    await expectLater(
+      repository.externalReferencesForArtwork('artwork-1'),
+      throwsA(isA<ExternalReferenceValidationException>()),
+    );
+
+    await database.update(
+      'external_references',
+      {'updated_at': _time(0).toIso8601String()},
+      where: 'reference_id = ?',
+      whereArgs: ['integrity'],
+    );
+    final recovered = await repository.externalReferencesForArtwork(
+      'artwork-1',
+    );
+    expect(recovered.map((row) => row.id), ['integrity']);
+  });
+
   test(
     'material suggestion edit confirms while duplicate and stale edits write nothing',
     () async {
