@@ -292,6 +292,248 @@ inline std::string exclusive_publication_state_table_tests() {
   return {};
 }
 
+inline std::string content_identity_boundary_tests() {
+  const auto paths = [](const fs::path& root, const std::string& operation) {
+    return std::array<fs::path, 5>{
+        root / ("attachments/.staging/publication-" + operation + ".data"),
+        root / ("attachments/.staging/publication-" + operation + ".tmp"),
+        root / ("attachments/.staging/publication-" + operation + ".json"),
+        root / "attachments/artworks/artwork-001/attachments/attachment-001/.publication.json",
+        root / "attachments/artworks/artwork-001/attachments/attachment-001/payload.pdf"};
+  };
+  const auto interrupt = [&](const fs::path& root, const std::string& operation,
+                             const std::string& point) {
+    fs::create_directories(root);
+    const fs::path source = root / "source.pdf";
+    write_file(source, "%PDF-1.4\ncontent-identity\n%%EOF\n");
+    custody::test_crash_at(point);
+    const auto output = call(root, "publish", source.string(), operation,
+                             "artwork-001", "attachment-001", "payload.pdf");
+    custody::test_reset_hooks();
+    return output.outcome == "ioFailure";
+  };
+
+  {
+    const fs::path root = unique_path("archivale-same-inode-descriptor-rename-");
+    const std::string operation = "rewrite-descriptor";
+    if (!interrupt(root, operation, "publish.afterIntentFileFsync")) {
+      return "descriptor rewrite fixture did not interrupt";
+    }
+    const auto state = paths(root, operation);
+    const ino_t inode_before = fingerprint(state[1]).inode;
+    custody::test_at_boundary([&](const char* point) {
+      if (std::string(point) != "publish.intentRename") return;
+      custody::PublicationState replacement{operation, "artwork-001", "attachment-001",
+                                            "payload.pdf", "staged",
+                                            std::string(64, '0'), 0};
+      write_file(state[1], custody::publication_json(replacement));
+    });
+    const auto recovered = call(root, "recoverPublication", {}, operation,
+                                "artwork-001", "attachment-001", "payload.pdf");
+    custody::test_reset_hooks();
+    if (recovered.outcome != "unsafeNode" || !fs::exists(state[1]) ||
+        fingerprint(state[1]).inode != inode_before) {
+      return "same-inode descriptor rewrite passed exclusive-rename validation";
+    }
+    fs::remove_all(root);
+  }
+
+  {
+    const fs::path root = unique_path("archivale-same-inode-payload-rename-");
+    const std::string operation = "rewrite-payload-rename";
+    if (!interrupt(root, operation, "publish.afterClaim")) {
+      return "payload rename rewrite fixture did not interrupt";
+    }
+    const auto state = paths(root, operation);
+    const ino_t inode_before = fingerprint(state[0]).inode;
+    custody::test_at_boundary([&](const char* point) {
+      if (std::string(point) == "publish.payloadRename") {
+        write_file(state[0], "%PDF-1.4\nrewritten-before-rename\n%%EOF\n");
+      }
+    });
+    const auto recovered = call(root, "recoverPublication", {}, operation,
+                                "artwork-001", "attachment-001", "payload.pdf");
+    custody::test_reset_hooks();
+    if (recovered.outcome != "unsafeNode" || !fs::exists(state[0]) ||
+        fs::exists(state[4]) || fingerprint(state[0]).inode != inode_before) {
+      return "same-inode payload rewrite passed exclusive-rename validation";
+    }
+    fs::remove_all(root);
+  }
+
+  {
+    const fs::path root = unique_path("archivale-same-inode-commit-");
+    const std::string operation = "rewrite-commit";
+    if (!interrupt(root, operation, "publish.afterPayloadLink")) {
+      return "commit rewrite fixture did not interrupt";
+    }
+    const auto state = paths(root, operation);
+    const ino_t inode_before = fingerprint(state[4]).inode;
+    custody::test_at_boundary([&](const char* point) {
+      if (std::string(point) == "publish.claimUnlink") {
+        write_file(state[4], "%PDF-1.4\nrewritten-before-commit\n%%EOF\n");
+      }
+    });
+    const auto recovered = call(root, "recoverPublication", {}, operation,
+                                "artwork-001", "attachment-001", "payload.pdf");
+    custody::test_reset_hooks();
+    if (recovered.outcome != "unsafeNode" || !fs::exists(state[3]) ||
+        fingerprint(state[4]).inode != inode_before) {
+      return "same-inode payload rewrite removed the commit claim";
+    }
+    fs::remove_all(root);
+  }
+
+  {
+    const fs::path root = unique_path("archivale-same-inode-rollback-");
+    const std::string operation = "rewrite-rollback";
+    if (!interrupt(root, operation, "publish.afterDataFsync")) {
+      return "rollback rewrite fixture did not interrupt";
+    }
+    const auto state = paths(root, operation);
+    const ino_t inode_before = fingerprint(state[0]).inode;
+    custody::test_at_boundary([&](const char* point) {
+      if (std::string(point) == "rollback.dataUnlink") {
+        write_file(state[0], "%PDF-1.4\nrewritten-before-rollback\n%%EOF\n");
+      }
+    });
+    const auto rolled_back = call(root, "rollbackPublication", {}, operation,
+                                  "artwork-001", "attachment-001", "payload.pdf");
+    custody::test_reset_hooks();
+    if (rolled_back.outcome != "unsafeNode" || !fs::exists(state[0]) ||
+        fingerprint(state[0]).inode != inode_before) {
+      return "same-inode payload rewrite was removed by rollback";
+    }
+    fs::remove_all(root);
+  }
+
+  for (const bool rewrite_descriptor : {false, true}) {
+    const fs::path root = unique_path("archivale-same-inode-post-commit-");
+    const std::string operation = rewrite_descriptor ? "rewrite-post-descriptor"
+                                                     : "rewrite-post-payload";
+    if (!interrupt(root, operation, "publish.afterIntentLink")) {
+      return "post-commit rewrite fixture did not interrupt";
+    }
+    const auto state = paths(root, operation);
+    fs::create_hard_link(state[0], state[4]);
+    fs::remove(state[0]);
+    const fs::path rewritten = rewrite_descriptor ? state[2] : state[4];
+    const ino_t inode_before = fingerprint(rewritten).inode;
+    custody::test_at_boundary([&](const char* point) {
+      if (std::string(point) != "recover.postCommitIntentUnlink") return;
+      if (rewrite_descriptor) {
+        custody::PublicationState replacement{operation, "artwork-001", "attachment-001",
+                                              "payload.pdf", "staged",
+                                              std::string(64, 'f'), 1};
+        write_file(state[2], custody::publication_json(replacement));
+      } else {
+        write_file(state[4], "%PDF-1.4\nrewritten-post-commit\n%%EOF\n");
+      }
+    });
+    const auto recovered = call(root, "recoverPublication", {}, operation,
+                                "artwork-001", "attachment-001", "payload.pdf");
+    custody::test_reset_hooks();
+    if (recovered.outcome != "unsafeNode" || !fs::exists(state[2]) ||
+        fingerprint(rewritten).inode != inode_before) {
+      return rewrite_descriptor
+          ? "same-inode post-commit descriptor rewrite was cleaned"
+          : "same-inode post-commit payload rewrite was accepted";
+    }
+    fs::remove_all(root);
+  }
+
+  for (const bool rename_boundary : {true, false}) {
+    const fs::path root = unique_path("archivale-same-inode-erasure-");
+    fs::create_directories(root);
+    if (rename_boundary) {
+      custody::test_crash_at("erasure.afterTempFsync");
+      call(root, "writeErasureControl", {}, "erase-owner");
+      custody::test_reset_hooks();
+    } else if (call(root, "writeErasureControl", {}, "erase-owner").outcome !=
+               "erasureOwned") {
+      return "erasure unlink rewrite fixture setup failed";
+    }
+    const fs::path marker = root / "erasure-control" /
+        (rename_boundary ? "current-erase-owner.tmp" : "current.json");
+    const ino_t inode_before = fingerprint(marker).inode;
+    custody::test_at_boundary([&](const char* point) {
+      const std::string expected = rename_boundary ? "erasure.currentRename"
+                                                   : "erasure.beforeCurrentUnlink";
+      if (point == expected) write_file(marker, custody::erasure_json("erase-foreign"));
+    });
+    const auto output = call(root,
+                             rename_boundary ? "recoverErasureControl"
+                                             : "clearErasureControl",
+                             {}, "erase-owner");
+    custody::test_reset_hooks();
+    if (output.outcome != "erasureUnsafe" || !fs::exists(marker) ||
+        fingerprint(marker).inode != inode_before) {
+      return rename_boundary
+          ? "same-inode erasure rewrite passed rename validation"
+          : "same-inode erasure rewrite was removed by clear";
+    }
+    fs::remove_all(root);
+  }
+  return {};
+}
+
+inline std::string locked_root_descriptor_tests() {
+  {
+    const fs::path root = unique_path("archivale-locked-publication-root-");
+    const fs::path held = root.string() + "-held";
+    fs::create_directories(root);
+    const fs::path source = root / "source.pdf";
+    write_file(source, "%PDF-1.4\nlocked-root\n%%EOF\n");
+    if (call(root, "publish", source.string(), "locked-root", "artwork-001",
+             "attachment-001", "payload.pdf").outcome != "published") {
+      return "locked publication root fixture setup failed";
+    }
+    custody::test_at_boundary([&](const char* point) {
+      if (std::string(point) != "operation.afterRootLock") return;
+      fs::rename(root, held);
+      fs::create_directories(root);
+      write_file(root / "replacement-sentinel", "replacement-root");
+    });
+    const auto removed = call(root, "remove", {}, {}, "artwork-001",
+                              "attachment-001", "payload.pdf");
+    custody::test_reset_hooks();
+    if (removed.outcome != "removed" ||
+        fs::exists(held / "attachments/artworks/artwork-001/attachments/attachment-001/payload.pdf") ||
+        fingerprint(root / "replacement-sentinel").bytes != "replacement-root") {
+      return "publication operation split across a replaced root pathname";
+    }
+    fs::remove_all(root);
+    fs::remove_all(held);
+  }
+
+  {
+    const fs::path root = unique_path("archivale-locked-erasure-root-");
+    const fs::path held = root.string() + "-held";
+    fs::create_directories(root);
+    if (call(root, "writeErasureControl", {}, "erase-owner").outcome !=
+        "erasureOwned") {
+      return "locked erasure root fixture setup failed";
+    }
+    custody::test_at_boundary([&](const char* point) {
+      if (std::string(point) != "operation.afterRootLock") return;
+      fs::rename(root, held);
+      fs::create_directories(root / "erasure-control");
+      write_file(root / "erasure-control/current.json",
+                 custody::erasure_json("erase-foreign"));
+    });
+    const auto read = call(root, "readErasureControl", {}, "erase-owner");
+    custody::test_reset_hooks();
+    if (read.outcome != "erasureOwned" || read.owner != "erase-owner" ||
+        fingerprint(root / "erasure-control/current.json").bytes !=
+            custody::erasure_json("erase-foreign")) {
+      return "serialized erasure read split across a replaced root pathname";
+    }
+    fs::remove_all(root);
+    fs::remove_all(held);
+  }
+  return {};
+}
+
 inline std::string exclusive_durability_retry_tests() {
   for (const std::string point : {"publish.claimSourceFsync",
                                    "publish.payloadSourceFsync",
@@ -738,6 +980,8 @@ inline std::string race_tests(int repetitions = 40) {
 inline std::string run_contract_suite() {
   for (const auto& test : {publication_crash_tests, publication_retry_and_concurrency_tests,
                            exclusive_publication_state_table_tests,
+                           content_identity_boundary_tests,
+                           locked_root_descriptor_tests,
                            exclusive_durability_retry_tests,
                            publication_scan_negative_tests, erasure_control_tests,
                            erasure_race_and_exclusivity_tests, fail_closed_capability_test}) {

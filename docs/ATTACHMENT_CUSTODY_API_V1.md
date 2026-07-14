@@ -43,6 +43,11 @@ hard-link fallback.
 Every rename, unlink, and directory prune performs anchored prevalidation,
 the mutation, immediate result validation, all required directory fsyncs, and
 a final anchored named-path validation before another mutation or success.
+The operation retains the same locked app-private-root descriptor for every
+snapshot, lookup, mutation, and final validation; it never reopens the root
+pathname mid-transaction. Mutation guards re-read exact descriptor bytes and
+re-hash payload size/SHA-256 at the named entry, so an inode match alone is not
+authorization to rename, unlink, or report success.
 Publication copies and verifies staged bytes and fsyncs every new directory
 entry and created ancestry level. Recovery accepts only the enumerated current
 rename states and exact two-link legacy states, then re-verifies descriptor
@@ -98,11 +103,13 @@ temp+current inode pair is accepted only as legacy recovery input. Outcomes
 distinguish exact ownership, recoverable pending staging, conflict, unsafe
 state, and absence. Only the
 exact owner may recover, clean staging, or clear `current.json`; clear also
-fsyncs and prunes empty control ancestry. Native erasure operations serialize
-on the app-private root and retain one validated control-directory descriptor
-from status through mutation. Immediately before each owner-sensitive rename,
-unlink, or directory removal, they revalidate the named directory and entry
-inodes through those descriptors and fail closed if identity changed.
+fsyncs and prunes empty control ancestry. All native erasure operations,
+including reads, serialize on one retained app-private-root descriptor and
+retain one validated control-directory descriptor from status through
+mutation. Immediately before each owner-sensitive rename, unlink, or directory
+removal, and again after the required fsync, they re-read the exact canonical
+owner bytes through those descriptors and fail closed if either content or
+identity changed.
 
 The operations are:
 

@@ -267,7 +267,7 @@ Result unsafe_or_io(const char* detail) {
 struct TargetDirs {
   std::string artwork_id;
   std::string attachment_id;
-  Fd platform;
+  int platform = -1;
   Fd root;
   Fd artworks;
   Fd artwork;
@@ -275,21 +275,20 @@ struct TargetDirs {
   Fd attachment;
 };
 
-Result open_attachment_root(const std::string& platform_root, bool create, Fd* root) {
-  Fd platform = open_root(platform_root);
-  if (!platform.valid()) return unsafe_or_io("The app-private root is unsafe or unavailable.");
-  *root = open_dir_at(platform.get(), kAttachments, create, "attachments.parentFsync");
+Result open_attachment_root(int platform_root, bool create, Fd* root) {
+  if (platform_root < 0) return result("unsafeNode", "The app-private root is unsafe or unavailable.");
+  *root = open_dir_at(platform_root, kAttachments, create, "attachments.parentFsync");
   return root->valid() ? result("available")
                        : unsafe_or_io("The app-private attachment root is unsafe or unavailable.");
 }
 
-Result open_target(const std::string& platform_root, const std::string& artwork_id,
+Result open_target(int platform_root, const std::string& artwork_id,
                    const std::string& attachment_id, bool create, TargetDirs* dirs) {
   dirs->artwork_id = artwork_id;
   dirs->attachment_id = attachment_id;
-  dirs->platform = open_root(platform_root);
-  if (!dirs->platform.valid()) return unsafe_or_io("The app-private root is unsafe or unavailable.");
-  dirs->root = open_dir_at(dirs->platform.get(), kAttachments, create, "attachments.parentFsync");
+  dirs->platform = platform_root;
+  if (dirs->platform < 0) return result("unsafeNode", "The app-private root is unsafe or unavailable.");
+  dirs->root = open_dir_at(dirs->platform, kAttachments, create, "attachments.parentFsync");
   if (!dirs->root.valid()) return unsafe_or_io("The app-private attachment root is unsafe or unavailable.");
   dirs->artworks = open_dir_at(dirs->root.get(), kArtworks, create, "artworks.parentFsync");
   if (!dirs->artworks.valid()) return unsafe_or_io("The canonical artworks directory is unsafe.");
@@ -303,9 +302,9 @@ Result open_target(const std::string& platform_root, const std::string& artwork_
 }
 
 bool target_chain_matches(const TargetDirs& dirs) {
-  return dirs.platform.valid() && dirs.root.valid() && dirs.artworks.valid() &&
+  return dirs.platform >= 0 && dirs.root.valid() && dirs.artworks.valid() &&
          dirs.artwork.valid() && dirs.attachments.valid() && dirs.attachment.valid() &&
-         directory_identity_matches(dirs.platform.get(), kAttachments, dirs.root.get()) &&
+         directory_identity_matches(dirs.platform, kAttachments, dirs.root.get()) &&
          directory_identity_matches(dirs.root.get(), kArtworks, dirs.artworks.get()) &&
          directory_identity_matches(dirs.artworks.get(), dirs.artwork_id, dirs.artwork.get()) &&
          directory_identity_matches(dirs.artwork.get(), "attachments", dirs.attachments.get()) &&
@@ -351,14 +350,22 @@ Result mutation_failure(const char* detail, const char* unsafe_outcome) {
   return result("ioFailure", detail);
 }
 
+using EntryValidator =
+    std::function<bool(int, const std::string&, const struct stat&)>;
+
 Result checked_exclusive_rename(
     int source_parent, const std::string& source, const struct stat& expected,
     int destination_parent, const std::string& destination,
     const std::function<bool()>& anchors, const char* rename_point,
     const char* source_fsync_point, const char* destination_fsync_point,
-    const char* unsafe_outcome = "unsafeNode") {
+    const char* unsafe_outcome = "unsafeNode",
+    const EntryValidator& entry_validator = {}) {
+  const auto entry_matches = [&](int parent, const std::string& name) {
+    return entry_validator ? entry_validator(parent, name, expected)
+                           : entry_identity_matches(parent, name, expected);
+  };
   run_boundary(rename_point);
-  if (!anchors() || !entry_identity_matches(source_parent, source, expected) ||
+  if (!anchors() || !entry_matches(source_parent, source) ||
       !entry_absent(destination_parent, destination)) {
     return result(unsafe_outcome, "Exclusive-rename prevalidation failed.");
   }
@@ -368,7 +375,7 @@ Result checked_exclusive_rename(
     return mutation_failure("Exclusive rename failed without fallback.", unsafe_outcome);
   }
   if (!entry_absent(source_parent, source) ||
-      !entry_identity_matches(destination_parent, destination, expected)) {
+      !entry_matches(destination_parent, destination)) {
     return result(unsafe_outcome, "Exclusive-rename immediate validation failed.");
   }
   if (!sync_fd(source_parent, source_fsync_point) ||
@@ -377,7 +384,7 @@ Result checked_exclusive_rename(
     return result("ioFailure", "Exclusive-rename directory durability failed.");
   }
   if (!anchors() || !entry_absent(source_parent, source) ||
-      !entry_identity_matches(destination_parent, destination, expected)) {
+      !entry_matches(destination_parent, destination)) {
     return result(unsafe_outcome, "Exclusive-rename final anchored validation failed.");
   }
   return result("available");
@@ -387,9 +394,12 @@ Result checked_unlink(int parent, const std::string& name,
                       const struct stat& expected,
                       const std::function<bool()>& anchors,
                       const char* unlink_point, const char* fsync_point,
-                      const char* unsafe_outcome = "unsafeNode") {
+                      const char* unsafe_outcome = "unsafeNode",
+                      const EntryValidator& entry_validator = {}) {
   run_boundary(unlink_point);
-  if (!anchors() || !entry_identity_matches(parent, name, expected)) {
+  if (!anchors() ||
+      !(entry_validator ? entry_validator(parent, name, expected)
+                        : entry_identity_matches(parent, name, expected))) {
     return result(unsafe_outcome, "Unlink prevalidation failed.");
   }
   if (!unlink_entry(parent, name, 0, unlink_point)) {
@@ -738,8 +748,10 @@ enum class PublicationGeometry {
 
 struct PublicationNode {
   bool exists = false;
+  bool is_descriptor = false;
   struct stat status {};
   PublicationState descriptor;
+  std::string content;
   uint64_t size = 0;
   std::string digest;
 };
@@ -754,7 +766,7 @@ struct PublicationSnapshot {
   PublicationNode intent;
   PublicationNode claim;
   PublicationNode payload;
-  Fd platform;
+  int platform = -1;
   Fd root;
   Fd staging;
   TargetDirs target;
@@ -771,6 +783,7 @@ bool same_descriptor(const PublicationState& left, const PublicationState& right
 Result inspect_publication_node(int parent, const std::string& name, bool descriptor,
                                 const PublicationState& requested, PublicationNode* node) {
   if (parent < 0) return result("available");
+  node->is_descriptor = descriptor;
   struct stat named {};
   if (fstatat(parent, name.c_str(), &named, AT_SYMLINK_NOFOLLOW) != 0) {
     return errno == ENOENT ? result("available")
@@ -787,18 +800,18 @@ Result inspect_publication_node(int parent, const std::string& name, bool descri
   }
   node->status = opened;
   if (descriptor) {
-    std::string content;
     if (opened.st_size < 0 || opened.st_size > 1024) {
       return result("unsafeNode", "Publication descriptor size is unsafe.");
     }
-    content.resize(static_cast<size_t>(opened.st_size));
+    node->content.resize(static_cast<size_t>(opened.st_size));
     size_t offset = 0;
-    while (offset < content.size()) {
-      const ssize_t count = read(file.get(), content.data() + offset, content.size() - offset);
+    while (offset < node->content.size()) {
+      const ssize_t count = read(file.get(), node->content.data() + offset,
+                                 node->content.size() - offset);
       if (count <= 0) return result("ioFailure", "Could not read publication descriptor.");
       offset += static_cast<size_t>(count);
     }
-    if (!parse_publication(content, &node->descriptor)) {
+    if (!parse_publication(node->content, &node->descriptor)) {
       return result("unsafeNode", "Publication descriptor is malformed.");
     }
     if (!descriptor_matches(node->descriptor, requested.operation_id, requested.artwork_id,
@@ -812,8 +825,8 @@ Result inspect_publication_node(int parent, const std::string& name, bool descri
 }
 
 bool publication_root_chain_matches(const PublicationSnapshot& snapshot) {
-  return snapshot.platform.valid() && snapshot.root.valid() &&
-         directory_identity_matches(snapshot.platform.get(), kAttachments, snapshot.root.get());
+  return snapshot.platform >= 0 && snapshot.root.valid() &&
+         directory_identity_matches(snapshot.platform, kAttachments, snapshot.root.get());
 }
 
 bool publication_staging_chain_matches(const PublicationSnapshot& snapshot) {
@@ -829,10 +842,51 @@ bool publication_all_chains_match(const PublicationSnapshot& snapshot) {
   return publication_staging_chain_matches(snapshot) && publication_target_chain_matches(snapshot);
 }
 
-bool publication_snapshot_entries_match(const PublicationSnapshot& snapshot) {
-  const auto matches = [](int parent, const std::string& name,
-                          const PublicationNode& node) {
-    return !node.exists || entry_identity_matches(parent, name, node.status);
+bool publication_node_matches(int parent, const std::string& name,
+                              const PublicationNode& node,
+                              bool require_link_count = false) {
+  if (!node.exists) return entry_absent(parent, name);
+  struct stat named {};
+  if (fstatat(parent, name.c_str(), &named, AT_SYMLINK_NOFOLLOW) != 0 ||
+      !S_ISREG(named.st_mode) || !same_inode(named, node.status) ||
+      (require_link_count && named.st_nlink != node.status.st_nlink)) {
+    return false;
+  }
+  Fd file(openat(parent, name.c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW));
+  struct stat opened {};
+  if (!file.valid() || fstat(file.get(), &opened) != 0 ||
+      !same_inode(named, opened) || !same_inode(opened, node.status)) {
+    return false;
+  }
+  if (node.is_descriptor) {
+    if (opened.st_size < 0 ||
+        static_cast<uint64_t>(opened.st_size) != node.content.size()) {
+      return false;
+    }
+    std::string content(node.content.size(), '\0');
+    size_t offset = 0;
+    while (offset < content.size()) {
+      const ssize_t count = read(file.get(), content.data() + offset,
+                                 content.size() - offset);
+      if (count <= 0) return false;
+      offset += static_cast<size_t>(count);
+    }
+    return content == node.content;
+  }
+  uint64_t size = 0;
+  std::string digest;
+  return hash_fd(file.get(), &size, &digest) && size == node.size &&
+         digest == node.digest;
+}
+
+bool publication_snapshot_entries_match(
+    const PublicationSnapshot& snapshot,
+    const PublicationNode* excluded_first = nullptr,
+    const PublicationNode* excluded_second = nullptr) {
+  const auto matches = [&](int parent, const std::string& name,
+                           const PublicationNode& node) {
+    if (&node == excluded_first || &node == excluded_second) return true;
+    return publication_node_matches(parent, name, node);
   };
   return (!snapshot.staging.valid() ||
           (matches(snapshot.staging.get(), publication_data_name(snapshot.requested.operation_id), snapshot.data) &&
@@ -936,13 +990,13 @@ void classify_publication_snapshot(PublicationSnapshot* snapshot) {
   }
 }
 
-Result build_publication_snapshot(const std::string& platform_root,
+Result build_publication_snapshot(int platform_root,
                                   const PublicationState& requested,
                                   PublicationSnapshot* snapshot) {
   snapshot->requested = requested;
-  snapshot->platform = open_root(platform_root);
-  if (!snapshot->platform.valid()) return unsafe_or_io("The app-private root is unsafe or unavailable.");
-  snapshot->root = open_dir_at(snapshot->platform.get(), kAttachments, false);
+  snapshot->platform = platform_root;
+  if (snapshot->platform < 0) return result("unsafeNode", "The app-private root is unsafe or unavailable.");
+  snapshot->root = open_dir_at(snapshot->platform, kAttachments, false);
   if (!snapshot->root.valid()) {
     if (errno == ENOENT) {
       snapshot->geometry = PublicationGeometry::kNone;
@@ -1002,7 +1056,7 @@ Result build_publication_snapshot(const std::string& platform_root,
           : result("available");
 }
 
-Result exclusive_publication_status(const std::string& platform_root,
+Result exclusive_publication_status(int platform_root,
                                     const std::string& operation_id,
                                     const std::string& artwork_id,
                                     const std::string& attachment_id,
@@ -1032,12 +1086,19 @@ Result remove_snapshot_node(PublicationSnapshot& snapshot, int parent,
                             bool needs_target, const char* point, const char* fsync_point) {
   const auto anchors = [&]() {
     if (!publication_staging_chain_matches(snapshot)) return false;
-    return !needs_target || publication_target_chain_matches(snapshot);
+    if (needs_target && !publication_target_chain_matches(snapshot)) return false;
+    return publication_snapshot_entries_match(snapshot, &node);
   };
-  return checked_unlink(parent, name, node.status, anchors, point, fsync_point);
+  const EntryValidator validator = [&](int candidate_parent,
+                                       const std::string& candidate_name,
+                                       const struct stat&) {
+    return publication_node_matches(candidate_parent, candidate_name, node, true);
+  };
+  return checked_unlink(parent, name, node.status, anchors, point, fsync_point,
+                        "unsafeNode", validator);
 }
 
-Result exclusive_recover_publication(const std::string& platform_root,
+Result exclusive_recover_publication(int platform_root,
                                      const PublicationState& requested,
                                      bool fresh_publish) {
   bool changed = false;
@@ -1059,13 +1120,21 @@ Result exclusive_recover_publication(const std::string& platform_root,
       case PublicationGeometry::kClaimOnly:
         return result("publicationPartial", "Publication state is incomplete and cannot commit.");
       case PublicationGeometry::kDataTemp: {
-        const auto anchors = [&]() { return publication_staging_chain_matches(snapshot); };
+        const auto anchors = [&]() {
+          return publication_staging_chain_matches(snapshot) &&
+                 publication_snapshot_entries_match(snapshot, &snapshot.temporary,
+                                                    &snapshot.intent);
+        };
+        const EntryValidator validator = [&](int parent, const std::string& name,
+                                             const struct stat&) {
+          return publication_node_matches(parent, name, snapshot.temporary, true);
+        };
         mutation = checked_exclusive_rename(
             snapshot.staging.get(), publication_temp_name(requested.operation_id),
             snapshot.temporary.status, snapshot.staging.get(),
             publication_intent_name(requested.operation_id), anchors,
             "publish.intentRename", "publish.intentDirectoryFsync",
-            "publish.intentDirectoryFsync");
+            "publish.intentDirectoryFsync", "unsafeNode", validator);
         if (mutation.outcome == "publicationConflict") continue;
         if (mutation.outcome != "available") return mutation;
         changed = true;
@@ -1089,12 +1158,20 @@ Result exclusive_recover_publication(const std::string& platform_root,
           changed = true;
           break;
         }
-        const auto anchors = [&]() { return publication_all_chains_match(snapshot); };
+        const auto anchors = [&]() {
+          return publication_all_chains_match(snapshot) &&
+                 publication_snapshot_entries_match(snapshot, &snapshot.intent,
+                                                    &snapshot.claim);
+        };
+        const EntryValidator validator = [&](int parent, const std::string& name,
+                                             const struct stat&) {
+          return publication_node_matches(parent, name, snapshot.intent, true);
+        };
         mutation = checked_exclusive_rename(
             snapshot.staging.get(), publication_intent_name(requested.operation_id),
             snapshot.intent.status, snapshot.target.attachment.get(), kPublicationClaim,
             anchors, "publish.claimRename", "publish.claimSourceFsync",
-            "publish.claimDirectoryFsync");
+            "publish.claimDirectoryFsync", "unsafeNode", validator);
         if (mutation.outcome == "publicationConflict") continue;
         if (mutation.outcome != "available") return mutation;
         changed = true;
@@ -1110,12 +1187,21 @@ Result exclusive_recover_publication(const std::string& platform_root,
         changed = true;
         break;
       case PublicationGeometry::kClaimData: {
-        const auto anchors = [&]() { return publication_all_chains_match(snapshot); };
+        const auto anchors = [&]() {
+          return publication_all_chains_match(snapshot) &&
+                 publication_snapshot_entries_match(snapshot, &snapshot.data,
+                                                    &snapshot.payload);
+        };
+        const EntryValidator validator = [&](int parent, const std::string& name,
+                                             const struct stat&) {
+          return publication_node_matches(parent, name, snapshot.data, true);
+        };
         mutation = checked_exclusive_rename(
             snapshot.staging.get(), publication_data_name(requested.operation_id),
             snapshot.data.status, snapshot.target.attachment.get(),
             requested.canonical_name, anchors, "publish.payloadRename",
-            "publish.payloadSourceFsync", "publish.payloadDirectoryFsync");
+            "publish.payloadSourceFsync", "publish.payloadDirectoryFsync",
+            "unsafeNode", validator);
         if (mutation.outcome == "publicationConflict") continue;
         if (mutation.outcome != "available") return mutation;
         changed = true;
@@ -1144,12 +1230,19 @@ Result exclusive_recover_publication(const std::string& platform_root,
         }
         const auto anchors = [&]() {
           return publication_all_chains_match(snapshot) &&
-                 entry_identity_matches(snapshot.target.attachment.get(),
-                                        requested.canonical_name, payload_status);
+                 publication_snapshot_entries_match(snapshot, &snapshot.claim) &&
+                 publication_node_matches(snapshot.target.attachment.get(),
+                                          requested.canonical_name,
+                                          snapshot.payload, true);
+        };
+        const EntryValidator validator = [&](int parent, const std::string& name,
+                                             const struct stat&) {
+          return publication_node_matches(parent, name, snapshot.claim, true);
         };
         mutation = checked_unlink(snapshot.target.attachment.get(), kPublicationClaim,
                                   snapshot.claim.status, anchors, "publish.claimUnlink",
-                                  "publish.commitDirectoryFsync");
+                                  "publish.commitDirectoryFsync", "unsafeNode",
+                                  validator);
         if (mutation.outcome != "available") return mutation;
         changed = true;
         if (crash_at("publish.afterCommit") || crash_at("publish.afterDataCleanup")) {
@@ -1182,9 +1275,9 @@ Result exclusive_recover_publication(const std::string& platform_root,
         if (!publication_target_chain_matches(snapshot) ||
             !sync_fd(snapshot.target.attachment.get(), "recover.committedDirectoryFsync") ||
             !publication_target_chain_matches(snapshot) ||
-            !entry_identity_matches(snapshot.target.attachment.get(),
-                                    requested.canonical_name,
-                                    snapshot.payload.status)) {
+            !publication_node_matches(snapshot.target.attachment.get(),
+                                      requested.canonical_name,
+                                      snapshot.payload, true)) {
           return result("ioFailure", "Committed publication durability could not be re-established.");
         }
         Result output = result(changed ? (fresh_publish ? "published" : "publicationRecovered")
@@ -1221,8 +1314,15 @@ Result create_staged_payload(int staging, const std::string& name, int source,
   std::string digest;
   if (fstat(staged.get(), &expected) != 0 || expected.st_nlink != 1 ||
       !hash_fd(staged.get(), &size, &digest) || size != descriptor->size ||
-      digest != descriptor->sha256 || !sync_fd(staging, "publish.dataDirectoryFsync") ||
-      !anchors() || !entry_identity_matches(staging, name, expected)) {
+      digest != descriptor->sha256 || !sync_fd(staging, "publish.dataDirectoryFsync")) {
+    return result("ioFailure", "Staged payload final validation or durability failed.");
+  }
+  PublicationNode expected_node;
+  expected_node.exists = true;
+  expected_node.status = expected;
+  expected_node.size = descriptor->size;
+  expected_node.digest = descriptor->sha256;
+  if (!anchors() || !publication_node_matches(staging, name, expected_node, true)) {
     return result("ioFailure", "Staged payload final validation or durability failed.");
   }
   if (crash_at("publish.afterDataFsync")) return result("ioFailure", "Injected publication crash.");
@@ -1257,7 +1357,7 @@ Result create_staged_descriptor(int staging, const std::string& name,
   return result("available");
 }
 
-Result exclusive_publish(const std::string& platform_root, const std::string& source_path,
+Result exclusive_publish(int platform_root, const std::string& source_path,
                          const std::string& operation_id, const std::string& artwork_id,
                          const std::string& attachment_id, const std::string& canonical) {
   if (!target_valid(operation_id, artwork_id, attachment_id, canonical) || source_path.empty()) {
@@ -1294,7 +1394,7 @@ Result exclusive_publish(const std::string& platform_root, const std::string& so
   return exclusive_recover_publication(platform_root, requested, true);
 }
 
-Result exclusive_recover(const std::string& platform_root, const std::string& operation_id,
+Result exclusive_recover(int platform_root, const std::string& operation_id,
                          const std::string& artwork_id, const std::string& attachment_id,
                          const std::string& canonical) {
   if (!target_valid(operation_id, artwork_id, attachment_id, canonical)) return result("invalidRequest");
@@ -1302,11 +1402,11 @@ Result exclusive_recover(const std::string& platform_root, const std::string& op
       platform_root, {operation_id, artwork_id, attachment_id, canonical, "staged", "", 0}, false);
 }
 
-Result exclusive_cleanup_empty_ancestry(const std::string& platform_root,
+Result exclusive_cleanup_empty_ancestry(int platform_root,
                                         const std::string& artwork_id,
                                         const std::string& attachment_id);
 
-Result exclusive_rollback(const std::string& platform_root, const std::string& operation_id,
+Result exclusive_rollback(int platform_root, const std::string& operation_id,
                           const std::string& artwork_id, const std::string& attachment_id,
                           const std::string& canonical, bool cleanup_only) {
   if (!target_valid(operation_id, artwork_id, attachment_id, canonical)) return result("invalidRequest");
@@ -1389,11 +1489,21 @@ Result exclusive_rollback(const std::string& platform_root, const std::string& o
                                         "rollback.dataFsync");
         break;
       case PublicationGeometry::kClaimOnly:
+        {
+        const EntryValidator validator = [&](int parent, const std::string& name,
+                                             const struct stat&) {
+          return publication_node_matches(parent, name, snapshot.claim, true);
+        };
         mutation = checked_unlink(
             snapshot.target.attachment.get(), kPublicationClaim, snapshot.claim.status,
-            [&]() { return publication_target_chain_matches(snapshot); },
-            "rollback.claimUnlink", "rollback.claimFsync");
+            [&]() {
+              return publication_target_chain_matches(snapshot) &&
+                     publication_snapshot_entries_match(snapshot, &snapshot.claim);
+            },
+            "rollback.claimUnlink", "rollback.claimFsync", "unsafeNode",
+            validator);
         break;
+        }
       case PublicationGeometry::kConflict:
         return result("publicationConflict");
       case PublicationGeometry::kUnsafe:
@@ -1404,7 +1514,7 @@ Result exclusive_rollback(const std::string& platform_root, const std::string& o
   return result("ioFailure", "Publication rollback did not converge within its bounded state table.");
 }
 
-Result exclusive_remove_payload(const std::string& platform_root,
+Result exclusive_remove_payload(int platform_root,
                                 const std::string& artwork_id,
                                 const std::string& attachment_id,
                                 const std::string& canonical) {
@@ -1420,34 +1530,46 @@ Result exclusive_remove_payload(const std::string& platform_root,
     return result("publicationPending", "An unfinished publication owns the attachment.");
   }
   if (errno != ENOENT) return unsafe_or_io("Could not inspect publication ownership.");
-  struct stat payload {};
-  if (fstatat(target.attachment.get(), canonical.c_str(), &payload, AT_SYMLINK_NOFOLLOW) != 0) {
+  PublicationNode payload;
+  const PublicationState requested{"remove", artwork_id, attachment_id,
+                                   canonical, "staged", "", 0};
+  Result inspected = inspect_publication_node(target.attachment.get(), canonical,
+                                              false, requested, &payload);
+  if (inspected.outcome != "available") return inspected;
+  if (!payload.exists) {
     if (errno != ENOENT) return unsafe_or_io("Could not inspect canonical payload.");
     if (!sync_fd(target.attachment.get(), "remove.missingDirectoryFsync") ||
-        !target_chain_matches(target) || !entry_absent(target.attachment.get(), canonical)) {
+        !target_chain_matches(target) || !entry_absent(target.attachment.get(), canonical) ||
+        !entry_absent(target.attachment.get(), kPublicationClaim)) {
       return result("ioFailure", "Payload absence durability could not be re-established.");
     }
     return result("missing");
   }
-  if (!S_ISREG(payload.st_mode) || payload.st_nlink != 1) {
+  if (payload.status.st_nlink != 1) {
     return result("unsafeNode", "Canonical payload is not a safe single-link file.");
   }
+  const EntryValidator validator = [&](int parent, const std::string& name,
+                                       const struct stat&) {
+    return publication_node_matches(parent, name, payload, true);
+  };
   Result removed = checked_unlink(
-      target.attachment.get(), canonical, payload,
-      [&]() { return target_chain_matches(target); },
-      "remove.payloadUnlink", "remove.payloadFsync");
+      target.attachment.get(), canonical, payload.status,
+      [&]() {
+        return target_chain_matches(target) &&
+               entry_absent(target.attachment.get(), kPublicationClaim);
+      },
+      "remove.payloadUnlink", "remove.payloadFsync", "unsafeNode", validator);
   return removed.outcome == "available" ? result("removed") : removed;
 }
 
-Result exclusive_cleanup_empty_ancestry(const std::string& platform_root,
+Result exclusive_cleanup_empty_ancestry(int platform_root,
                                         const std::string& artwork_id,
                                         const std::string& attachment_id) {
-  Fd platform = open_root(platform_root);
-  if (!platform.valid()) return unsafe_or_io("Cleanup root is unsafe.");
-  Fd root = open_dir_at(platform.get(), kAttachments, false);
+  if (platform_root < 0) return result("unsafeNode", "Cleanup root is unsafe.");
+  Fd root = open_dir_at(platform_root, kAttachments, false);
   if (!root.valid()) return errno == ENOENT ? result("cleanupComplete") : result("unsafeNode");
   const auto root_chain = [&]() {
-    return directory_identity_matches(platform.get(), kAttachments, root.get());
+    return directory_identity_matches(platform_root, kAttachments, root.get());
   };
   Fd artworks = open_dir_at(root.get(), kArtworks, false);
   if (!artworks.valid()) return errno == ENOENT ? result("cleanupComplete") : result("unsafeNode");
@@ -1517,11 +1639,12 @@ struct ErasureNode {
   struct stat status {};
   std::string owner;
   std::string phase;
+  std::string content;
 };
 
 struct ErasureSnapshot {
   ErasureGeometry geometry = ErasureGeometry::kAbsent;
-  Fd root;
+  int root = -1;
   Fd control;
   ErasureNode temp;
   ErasureNode current;
@@ -1544,31 +1667,64 @@ Result inspect_erasure_node(int control, const std::string& name, ErasureNode* n
       opened.st_size < 0 || opened.st_size > 256) {
     return result("erasureUnsafe", "Erasure-control identity changed during inspection.");
   }
-  std::string content(static_cast<size_t>(opened.st_size), '\0');
+  node->content.assign(static_cast<size_t>(opened.st_size), '\0');
   size_t offset = 0;
-  while (offset < content.size()) {
-    const ssize_t count = read(file.get(), content.data() + offset, content.size() - offset);
+  while (offset < node->content.size()) {
+    const ssize_t count = read(file.get(), node->content.data() + offset,
+                               node->content.size() - offset);
     if (count <= 0) return result("ioFailure", "Could not read erasure control.");
     offset += static_cast<size_t>(count);
   }
-  if (!parse_erasure(content, &node->owner, &node->phase)) {
+  if (!parse_erasure(node->content, &node->owner, &node->phase)) {
     return result("erasureUnsafe", "Erasure control is malformed.");
   }
   node->status = opened;
   return result("available");
 }
 
-bool erasure_control_chain_matches(const ErasureSnapshot& snapshot) {
-  return snapshot.root.valid() && snapshot.control.valid() &&
-         directory_identity_matches(snapshot.root.get(), kErasureControl, snapshot.control.get());
+bool erasure_node_matches(int control, const std::string& name,
+                          const ErasureNode& node,
+                          bool require_link_count = false) {
+  if (!node.exists) return entry_absent(control, name);
+  std::string content;
+  struct stat status {};
+  if (!read_regular_at(control, name, 256, 1, 2, &content, &status) ||
+      !same_inode(status, node.status) || content != node.content ||
+      (require_link_count && status.st_nlink != node.status.st_nlink)) {
+    return false;
+  }
+  return true;
 }
 
-Result build_erasure_snapshot(const std::string& platform_root,
+bool erasure_control_chain_matches(const ErasureSnapshot& snapshot) {
+  return snapshot.root >= 0 && snapshot.control.valid() &&
+         directory_identity_matches(snapshot.root, kErasureControl, snapshot.control.get());
+}
+
+bool erasure_snapshot_entries_match(const ErasureSnapshot& snapshot,
+                                    const ErasureNode* excluded_first = nullptr,
+                                    const ErasureNode* excluded_second = nullptr) {
+  if (!snapshot.control.valid()) return true;
+  if (&snapshot.current != excluded_first && &snapshot.current != excluded_second &&
+      !erasure_node_matches(snapshot.control.get(), kErasureCurrent,
+                            snapshot.current)) {
+    return false;
+  }
+  if (snapshot.temp.exists && &snapshot.temp != excluded_first &&
+      &snapshot.temp != excluded_second &&
+      !erasure_node_matches(snapshot.control.get(), snapshot.temp_name,
+                            snapshot.temp)) {
+    return false;
+  }
+  return true;
+}
+
+Result build_erasure_snapshot(int platform_root,
                               const std::string& expected_owner,
                               bool create_control, ErasureSnapshot* snapshot) {
-  snapshot->root = open_root(platform_root);
-  if (!snapshot->root.valid()) return unsafe_or_io("The erasure-control parent is unsafe.");
-  snapshot->control = open_dir_at(snapshot->root.get(), kErasureControl, create_control,
+  snapshot->root = platform_root;
+  if (snapshot->root < 0) return result("erasureUnsafe", "The erasure-control parent is unsafe.");
+  snapshot->control = open_dir_at(snapshot->root, kErasureControl, create_control,
                                   "erasure.parentFsync");
   if (!snapshot->control.valid()) {
     if (errno == ENOENT) return result("available");
@@ -1626,7 +1782,7 @@ Result build_erasure_snapshot(const std::string& platform_root,
   return result("available");
 }
 
-Result exclusive_erasure_status(const std::string& platform_root,
+Result exclusive_erasure_status(int platform_root,
                                 const std::string& expected_owner) {
   if (!expected_owner.empty() && !opaque_id(expected_owner)) return result("invalidRequest");
   ErasureSnapshot snapshot;
@@ -1659,22 +1815,27 @@ Result create_erasure_temp(ErasureSnapshot& snapshot, const std::string& owner) 
   }
   struct stat expected {};
   if (fstat(file.get(), &expected) != 0 || expected.st_nlink != 1 ||
-      !sync_fd(snapshot.control.get(), "erasure.tempCreateDirectoryFsync") ||
-      !anchors() || !entry_identity_matches(snapshot.control.get(), name, expected)) {
+      !sync_fd(snapshot.control.get(), "erasure.tempCreateDirectoryFsync")) {
+    return result("ioFailure", "Erasure temp final validation or durability failed.");
+  }
+  ErasureNode expected_node;
+  expected_node.exists = true;
+  expected_node.status = expected;
+  expected_node.owner = owner;
+  expected_node.phase = kErasurePhase;
+  expected_node.content = content;
+  if (!anchors() ||
+      !erasure_node_matches(snapshot.control.get(), name, expected_node, true)) {
     return result("ioFailure", "Erasure temp final validation or durability failed.");
   }
   if (crash_at("erasure.afterTempFsync")) return result("ioFailure", "Injected erasure crash.");
   return result("available");
 }
 
-Result exclusive_write_or_recover_erasure(const std::string& platform_root,
+Result exclusive_write_or_recover_erasure(int platform_root,
                                           const std::string& owner,
                                           bool allow_create) {
   if (!opaque_id(owner)) return result("invalidRequest");
-  Fd lock_root = open_root(platform_root);
-  if (!lock_root.valid()) return unsafe_or_io("The erasure-control parent is unsafe.");
-  FileLock lock(lock_root.get());
-  if (!lock.valid()) return result("unsupported", "Erasure-control locking is unavailable.");
   for (int step = 0; step < 6; ++step) {
     ErasureSnapshot snapshot;
     Result built = build_erasure_snapshot(platform_root, owner, allow_create, &snapshot);
@@ -1686,30 +1847,49 @@ Result exclusive_write_or_recover_erasure(const std::string& platform_root,
         if (built.outcome != "available") return built;
         break;
       case ErasureGeometry::kTemp: {
-        const auto anchors = [&]() { return erasure_control_chain_matches(snapshot); };
+        const auto anchors = [&]() {
+          return erasure_control_chain_matches(snapshot) &&
+                 erasure_snapshot_entries_match(snapshot, &snapshot.temp,
+                                                &snapshot.current);
+        };
+        const EntryValidator validator = [&](int parent, const std::string& name,
+                                             const struct stat&) {
+          return erasure_node_matches(parent, name, snapshot.temp, true);
+        };
         built = checked_exclusive_rename(
             snapshot.control.get(), snapshot.temp_name, snapshot.temp.status,
             snapshot.control.get(), kErasureCurrent, anchors,
             "erasure.currentRename", "erasure.currentDirectoryFsync",
-            "erasure.currentDirectoryFsync", "erasureUnsafe");
+            "erasure.currentDirectoryFsync", "erasureUnsafe", validator);
         if (built.outcome == "publicationConflict") continue;
         if (built.outcome != "available") return built;
         if (crash_at("erasure.afterCurrentLink")) return result("ioFailure", "Injected erasure crash.");
         break;
       }
       case ErasureGeometry::kLegacyAlias:
+        {
+        const EntryValidator validator = [&](int parent, const std::string& name,
+                                             const struct stat&) {
+          return erasure_node_matches(parent, name, snapshot.temp, true);
+        };
         built = checked_unlink(snapshot.control.get(), snapshot.temp_name,
                                snapshot.temp.status,
-                               [&]() { return erasure_control_chain_matches(snapshot); },
+                               [&]() {
+                                 return erasure_control_chain_matches(snapshot) &&
+                                        erasure_snapshot_entries_match(snapshot,
+                                                                       &snapshot.temp);
+                               },
                                "erasure.legacyTempUnlink", "erasure.legacyTempFsync",
-                               "erasureUnsafe");
+                               "erasureUnsafe", validator);
         if (built.outcome != "available") return built;
         break;
+        }
       case ErasureGeometry::kCurrent: {
         if (!sync_fd(snapshot.control.get(), "erasure.ownedDirectoryFsync") ||
             !erasure_control_chain_matches(snapshot) ||
-            !entry_identity_matches(snapshot.control.get(), kErasureCurrent,
-                                    snapshot.current.status)) {
+            !erasure_snapshot_entries_match(snapshot) ||
+            !erasure_node_matches(snapshot.control.get(), kErasureCurrent,
+                                  snapshot.current, true)) {
           return result("ioFailure", "Erasure ownership durability could not be re-established.");
         }
         if (crash_at("erasure.afterTempCleanup")) return result("ioFailure", "Injected erasure crash.");
@@ -1727,13 +1907,9 @@ Result exclusive_write_or_recover_erasure(const std::string& platform_root,
   return result("ioFailure", "Erasure recovery did not converge.");
 }
 
-Result exclusive_clear_erasure(const std::string& platform_root, const std::string& owner,
+Result exclusive_clear_erasure(int platform_root, const std::string& owner,
                                bool cleanup_only) {
   if (!opaque_id(owner)) return result("invalidRequest");
-  Fd lock_root = open_root(platform_root);
-  if (!lock_root.valid()) return unsafe_or_io("The erasure-control parent is unsafe.");
-  FileLock lock(lock_root.get());
-  if (!lock.valid()) return result("unsupported", "Erasure-control locking is unavailable.");
   for (int step = 0; step < 6; ++step) {
     ErasureSnapshot snapshot;
     Result built = build_erasure_snapshot(platform_root, owner, false, &snapshot);
@@ -1746,14 +1922,14 @@ Result exclusive_clear_erasure(const std::string& platform_root, const std::stri
             !erasure_control_chain_matches(snapshot)) {
           return result("ioFailure", "Erasure absence durability could not be re-established.");
         }
-        built = checked_rmdir(snapshot.root.get(), kErasureControl,
+        built = checked_rmdir(snapshot.root, kErasureControl,
                               snapshot.control.get(),
-                              [&]() { return snapshot.root.valid(); },
+                              [&]() { return snapshot.root >= 0; },
                               "erasure.beforeControlRmdir", "erasure.rootFsync",
                               "erasureUnsafe");
         if (built.outcome != "available") return built;
-      } else if (!sync_fd(snapshot.root.get(), "erasure.absentRootFsync") ||
-                 !entry_absent(snapshot.root.get(), kErasureControl)) {
+      } else if (!sync_fd(snapshot.root, "erasure.absentRootFsync") ||
+                 !entry_absent(snapshot.root, kErasureControl)) {
         return result("ioFailure", "Erasure-control absence could not be re-established.");
       }
       return result("erasureAbsent");
@@ -1761,8 +1937,9 @@ Result exclusive_clear_erasure(const std::string& platform_root, const std::stri
     if (snapshot.geometry == ErasureGeometry::kCurrent && cleanup_only) {
       if (!sync_fd(snapshot.control.get(), "erasure.cleanupOwnedDirectoryFsync") ||
           !erasure_control_chain_matches(snapshot) ||
-          !entry_identity_matches(snapshot.control.get(), kErasureCurrent,
-                                  snapshot.current.status)) {
+          !erasure_snapshot_entries_match(snapshot) ||
+          !erasure_node_matches(snapshot.control.get(), kErasureCurrent,
+                                snapshot.current, true)) {
         return result("ioFailure", "Owned erasure control durability could not be re-established.");
       }
       Result output = result("erasureOwned");
@@ -1776,17 +1953,33 @@ Result exclusive_clear_erasure(const std::string& platform_root, const std::stri
         (snapshot.geometry == ErasureGeometry::kCurrent ||
          snapshot.geometry == ErasureGeometry::kLegacyAlias);
     if (remove_temp) {
+      const EntryValidator validator = [&](int parent, const std::string& name,
+                                           const struct stat&) {
+        return erasure_node_matches(parent, name, snapshot.temp, true);
+      };
       built = checked_unlink(snapshot.control.get(), snapshot.temp_name,
                              snapshot.temp.status,
-                             [&]() { return erasure_control_chain_matches(snapshot); },
+                             [&]() {
+                               return erasure_control_chain_matches(snapshot) &&
+                                      erasure_snapshot_entries_match(snapshot,
+                                                                     &snapshot.temp);
+                             },
                              "erasure.beforeClearTempUnlink", "erasure.cleanupTempFsync",
-                             "erasureUnsafe");
+                             "erasureUnsafe", validator);
     } else if (remove_current) {
+      const EntryValidator validator = [&](int parent, const std::string& name,
+                                           const struct stat&) {
+        return erasure_node_matches(parent, name, snapshot.current, true);
+      };
       built = checked_unlink(snapshot.control.get(), kErasureCurrent,
                              snapshot.current.status,
-                             [&]() { return erasure_control_chain_matches(snapshot); },
+                             [&]() {
+                               return erasure_control_chain_matches(snapshot) &&
+                                      erasure_snapshot_entries_match(snapshot,
+                                                                     &snapshot.current);
+                             },
                              "erasure.beforeCurrentUnlink", "erasure.currentClearFsync",
-                             "erasureUnsafe");
+                             "erasureUnsafe", validator);
     } else {
       continue;
     }
@@ -1804,7 +1997,7 @@ bool staged_operation(const std::string& name, const char* suffix, std::string* 
   return opaque_id(*operation_id);
 }
 
-Result exclusive_scan(const std::string& platform_root) {
+Result exclusive_scan(int platform_root) {
   Fd root;
   Result opened = open_attachment_root(platform_root, false, &root);
   if (opened.outcome != "available") return errno == ENOENT ? result("scanComplete") : opened;
@@ -1947,11 +2140,8 @@ Result exclusive_scan(const std::string& platform_root) {
 }
 
 
-Result exclusive_self_test(const std::string& platform_root) {
-  Fd platform = open_root(platform_root);
-  if (!platform.valid()) return unsafe_or_io("The app-private root is unsafe or unavailable.");
-  FileLock platform_lock(platform.get());
-  if (!platform_lock.valid()) return result("unsupported", "Required advisory locking is unavailable.");
+Result exclusive_self_test(int platform_root) {
+  if (platform_root < 0) return result("unsafeNode", "The app-private root is unsafe or unavailable.");
   Fd root;
   Result opened = open_attachment_root(platform_root, true, &root);
   if (opened.outcome != "available") return opened;
@@ -2098,28 +2288,42 @@ Result execute(const std::string& platform_root, const std::string& operation,
                const std::string& source_path, const std::string& operation_id,
                const std::string& artwork_id, const std::string& attachment_id,
                const std::string& canonical) {
-  if (operation == "capabilities" || operation == "selfTest") return exclusive_self_test(platform_root);
-  if (operation == "publish" || operation == "publicationStatus" ||
+  const bool known = operation == "capabilities" || operation == "selfTest" ||
+      operation == "publish" || operation == "publicationStatus" ||
       operation == "recoverPublication" || operation == "rollbackPublication" ||
-      operation == "cleanupPublication" || operation == "remove" || operation == "scan") {
-    Fd operation_root = open_root(platform_root);
-    if (!operation_root.valid()) return unsafe_or_io("The app-private root is unsafe or unavailable.");
-    FileLock operation_lock(operation_root.get());
-    if (!operation_lock.valid()) return result("unsupported", "Custody serialization is unavailable.");
-    if (operation == "publish") return exclusive_publish(platform_root, source_path, operation_id, artwork_id, attachment_id, canonical);
-    if (operation == "publicationStatus") return exclusive_publication_status(platform_root, operation_id, artwork_id, attachment_id, canonical);
-    if (operation == "recoverPublication") return exclusive_recover(platform_root, operation_id, artwork_id, attachment_id, canonical);
-    if (operation == "rollbackPublication") return exclusive_rollback(platform_root, operation_id, artwork_id, attachment_id, canonical, false);
-    if (operation == "cleanupPublication") return exclusive_rollback(platform_root, operation_id, artwork_id, attachment_id, canonical, true);
-    if (operation == "remove") return exclusive_remove_payload(platform_root, artwork_id, attachment_id, canonical);
-    return exclusive_scan(platform_root);
+      operation == "cleanupPublication" || operation == "remove" ||
+      operation == "scan" || operation == "writeErasureControl" ||
+      operation == "readErasureControl" || operation == "recoverErasureControl" ||
+      operation == "clearErasureControl" || operation == "cleanupErasureControl";
+  if (!known) return result("invalidRequest", "Unknown custody operation.");
+  const bool erasure_read = operation == "readErasureControl";
+  const bool erasure_mutation = operation == "writeErasureControl" ||
+      operation == "recoverErasureControl" || operation == "clearErasureControl" ||
+      operation == "cleanupErasureControl";
+  if ((erasure_read && !operation_id.empty() && !opaque_id(operation_id)) ||
+      (erasure_mutation && !opaque_id(operation_id))) {
+    return result("invalidRequest");
   }
-  if (operation == "writeErasureControl") return exclusive_write_or_recover_erasure(platform_root, operation_id, true);
-  if (operation == "readErasureControl") return exclusive_erasure_status(platform_root, operation_id);
-  if (operation == "recoverErasureControl") return exclusive_write_or_recover_erasure(platform_root, operation_id, false);
-  if (operation == "clearErasureControl") return exclusive_clear_erasure(platform_root, operation_id, false);
-  if (operation == "cleanupErasureControl") return exclusive_clear_erasure(platform_root, operation_id, true);
-  return result("invalidRequest", "Unknown custody operation.");
+
+  Fd operation_root = open_root(platform_root);
+  if (!operation_root.valid()) return unsafe_or_io("The app-private root is unsafe or unavailable.");
+  FileLock operation_lock(operation_root.get());
+  if (!operation_lock.valid()) return result("unsupported", "Custody serialization is unavailable.");
+  run_boundary("operation.afterRootLock");
+  const int root = operation_root.get();
+  if (operation == "capabilities" || operation == "selfTest") return exclusive_self_test(root);
+  if (operation == "publish") return exclusive_publish(root, source_path, operation_id, artwork_id, attachment_id, canonical);
+  if (operation == "publicationStatus") return exclusive_publication_status(root, operation_id, artwork_id, attachment_id, canonical);
+  if (operation == "recoverPublication") return exclusive_recover(root, operation_id, artwork_id, attachment_id, canonical);
+  if (operation == "rollbackPublication") return exclusive_rollback(root, operation_id, artwork_id, attachment_id, canonical, false);
+  if (operation == "cleanupPublication") return exclusive_rollback(root, operation_id, artwork_id, attachment_id, canonical, true);
+  if (operation == "remove") return exclusive_remove_payload(root, artwork_id, attachment_id, canonical);
+  if (operation == "scan") return exclusive_scan(root);
+  if (operation == "writeErasureControl") return exclusive_write_or_recover_erasure(root, operation_id, true);
+  if (operation == "readErasureControl") return exclusive_erasure_status(root, operation_id);
+  if (operation == "recoverErasureControl") return exclusive_write_or_recover_erasure(root, operation_id, false);
+  if (operation == "clearErasureControl") return exclusive_clear_erasure(root, operation_id, false);
+  return exclusive_clear_erasure(root, operation_id, true);
 }
 
 }  // namespace custody
