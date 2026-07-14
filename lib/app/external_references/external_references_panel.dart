@@ -50,16 +50,33 @@ class _ExternalReferencesPanelState extends State<ExternalReferencesPanel> {
   }
 
   Future<void> _reload({FocusNode? restoreFocus}) async {
+    final future = _startRead();
+    try {
+      await future;
+    } catch (_) {
+      // FutureBuilder owns the visible read-integrity error state. Consume the
+      // companion await so ignored lifecycle and post-save reloads do not
+      // surface the same failure as an unhandled asynchronous exception.
+      return;
+    }
+    if (mounted && restoreFocus != null) {
+      _restoreFocusWhenReady(restoreFocus);
+    }
+  }
+
+  Future<List<ExternalReferenceRecord>> _startRead() {
     final future = _dependencies.artworkRepository.externalReferencesForArtwork(
       widget.artworkId,
     );
     setState(() {
       _referencesFuture = future;
     });
-    await future;
-    if (mounted && restoreFocus != null) {
-      _restoreFocusWhenReady(restoreFocus);
-    }
+    return future;
+  }
+
+  void _retryRead() {
+    setState(() => _message = null);
+    _startRead();
   }
 
   void _restoreFocusWhenReady(FocusNode focusNode, [int attempts = 3]) {
@@ -247,6 +264,10 @@ class _ExternalReferencesPanelState extends State<ExternalReferencesPanel> {
     return FutureBuilder<List<ExternalReferenceRecord>>(
       future: _referencesFuture,
       builder: (context, snapshot) {
+        final readSucceeded =
+            snapshot.connectionState == ConnectionState.done &&
+            !snapshot.hasError &&
+            snapshot.hasData;
         final references = snapshot.data ?? const <ExternalReferenceRecord>[];
         return Column(
           key: const ValueKey('external-references-panel'),
@@ -268,7 +289,7 @@ class _ExternalReferencesPanelState extends State<ExternalReferencesPanel> {
                   : 'Opens in your browser or another app.',
               style: Theme.of(context).textTheme.bodySmall,
             ),
-            if (_message != null) ...[
+            if (_message != null && !snapshot.hasError) ...[
               const SizedBox(height: 12),
               Text(
                 _message!,
@@ -279,6 +300,8 @@ class _ExternalReferencesPanelState extends State<ExternalReferencesPanel> {
             const SizedBox(height: 12),
             if (snapshot.connectionState != ConnectionState.done)
               const Center(child: CircularProgressIndicator())
+            else if (snapshot.hasError)
+              _ExternalReferenceReadError(onRetry: _retryRead)
             else if (references.isEmpty)
               const Text('No external references yet.')
             else
@@ -330,13 +353,59 @@ class _ExternalReferencesPanelState extends State<ExternalReferencesPanel> {
             FilledButton.icon(
               key: const ValueKey('add-external-reference'),
               focusNode: _addFocus,
-              onPressed: _busy ? null : () => _showEditor(invoker: _addFocus),
+              onPressed: _busy || !readSucceeded
+                  ? null
+                  : () => _showEditor(invoker: _addFocus),
               icon: const Icon(Icons.add_link),
               label: const Text('Add external reference'),
             ),
           ],
         );
       },
+    );
+  }
+}
+
+class _ExternalReferenceReadError extends StatelessWidget {
+  const _ExternalReferenceReadError({required this.onRetry});
+
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      container: true,
+      liveRegion: true,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: Theme.of(context).colorScheme.errorContainer,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'External references couldn’t be read',
+                key: const ValueKey('external-reference-read-error'),
+                style: Theme.of(context).textTheme.titleSmall,
+              ),
+              const SizedBox(height: 6),
+              const Text(
+                'This does not mean they were deleted. Try again to reload this saved information.',
+              ),
+              const SizedBox(height: 12),
+              OutlinedButton.icon(
+                key: const ValueKey('retry-external-references'),
+                onPressed: onRetry,
+                icon: const Icon(Icons.refresh),
+                label: const Text('Retry'),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }
