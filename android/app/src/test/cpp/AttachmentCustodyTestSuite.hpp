@@ -75,7 +75,14 @@ inline std::string publication_crash_tests() {
     if (interrupted.outcome != "ioFailure") return "publication crash point did not interrupt: " + point;
     const auto recovered = call(root, "recoverPublication", {}, "intent-001", "artwork-001",
                                 "attachment-001", "payload.pdf");
-    if (recovered.outcome != "publicationRecovered") return "publication did not recover: " + point + " -> " + recovered.outcome;
+    const std::string expected_recovery =
+        (point == "publish.afterCommit" || point == "publish.afterDataCleanup")
+            ? "alreadyExists"
+            : "publicationRecovered";
+    if (recovered.outcome != expected_recovery) {
+      return "publication did not recover: " + point + " -> " + recovered.outcome +
+             " (" + recovered.detail + ")";
+    }
     const fs::path payload = root / "attachments/artworks/artwork-001/attachments/attachment-001/payload.pdf";
     if (!fs::exists(payload) || fingerprint(payload).bytes != expected) return "recovered payload bytes differ: " + point;
     struct stat status {};
@@ -175,6 +182,156 @@ inline std::string publication_retry_and_concurrency_tests() {
   return {};
 }
 
+inline std::string exclusive_publication_state_table_tests() {
+  const auto interrupt_at = [](const fs::path& root, const std::string& operation,
+                               const std::string& point) {
+    fs::create_directories(root);
+    const fs::path source = root / "source.pdf";
+    write_file(source, "%PDF-1.4\nexclusive-state-table\n%%EOF\n");
+    custody::test_crash_at(point);
+    const auto interrupted = call(root, "publish", source.string(), operation,
+                                  "artwork-001", "attachment-001", "payload.pdf");
+    custody::test_reset_hooks();
+    return interrupted.outcome == "ioFailure";
+  };
+  const auto paths = [](const fs::path& root, const std::string& operation) {
+    return std::array<fs::path, 5>{
+        root / ("attachments/.staging/publication-" + operation + ".data"),
+        root / ("attachments/.staging/publication-" + operation + ".tmp"),
+        root / ("attachments/.staging/publication-" + operation + ".json"),
+        root / "attachments/artworks/artwork-001/attachments/attachment-001/.publication.json",
+        root / "attachments/artworks/artwork-001/attachments/attachment-001/payload.pdf"};
+  };
+
+  for (const auto& fixture : std::vector<std::pair<std::string, std::string>>{
+           {"state-data", "publish.afterDataFsync"},
+           {"state-temp", "publish.afterIntentFileFsync"},
+           {"state-intent", "publish.afterIntentLink"},
+           {"state-claim", "publish.afterClaim"}}) {
+    const fs::path root = unique_path("archivale-exclusive-partial-");
+    if (!interrupt_at(root, fixture.first, fixture.second)) return "partial state fixture did not interrupt";
+    auto state_paths = paths(root, fixture.first);
+    if (fixture.second == "publish.afterIntentFileFsync") fs::remove(state_paths[0]);
+    if (fixture.second == "publish.afterIntentLink") fs::remove(state_paths[0]);
+    if (fixture.second == "publish.afterClaim") fs::remove(state_paths[0]);
+    const auto status = call(root, "publicationStatus", {}, fixture.first,
+                             "artwork-001", "attachment-001", "payload.pdf");
+    const std::string expected = fixture.second == "publish.afterDataFsync"
+        ? "publicationPartial" : "publicationPartial";
+    if (status.outcome != expected) return "descriptor/data-only state did not report partial";
+    if (call(root, "rollbackPublication", {}, fixture.first, "artwork-001",
+             "attachment-001", "payload.pdf").outcome != "publicationRolledBack") {
+      return "partial state did not roll back safely";
+    }
+    fs::remove_all(root);
+  }
+
+  {
+    const fs::path root = unique_path("archivale-exclusive-claim-payload-");
+    const std::string operation = "state-claim-payload";
+    if (!interrupt_at(root, operation, "publish.afterPayloadLink")) return "C+P fixture did not interrupt";
+    const auto state_paths = paths(root, operation);
+    const Fingerprint claim_before = fingerprint(state_paths[3]);
+    const Fingerprint payload_before = fingerprint(state_paths[4]);
+    for (const std::string& action : {"rollbackPublication", "cleanupPublication"}) {
+      const auto blocked = call(root, action, {}, operation, "artwork-001",
+                                "attachment-001", "payload.pdf");
+      if (blocked.outcome != "publicationPending" ||
+          !same_fingerprint(claim_before, fingerprint(state_paths[3])) ||
+          !same_fingerprint(payload_before, fingerprint(state_paths[4]))) {
+        return "C+P rollback/cleanup mutated state or reported false success";
+      }
+    }
+    if (call(root, "recoverPublication", {}, operation, "artwork-001",
+             "attachment-001", "payload.pdf").outcome != "publicationRecovered") {
+      return "C+P commit-only recovery did not converge";
+    }
+    fs::remove_all(root);
+  }
+
+  for (const std::string& legacy : {"descriptor-stage", "descriptor-claim", "payload-claim"}) {
+    const fs::path root = unique_path("archivale-exclusive-legacy-");
+    const std::string operation = "legacy-" + legacy;
+    const std::string point = legacy == "descriptor-stage" ? "publish.afterIntentFileFsync"
+                              : legacy == "descriptor-claim" ? "publish.afterIntentLink"
+                                                               : "publish.afterClaim";
+    if (!interrupt_at(root, operation, point)) return "legacy fixture did not interrupt";
+    const auto state_paths = paths(root, operation);
+    if (legacy == "descriptor-stage") {
+      fs::create_hard_link(state_paths[1], state_paths[2]);
+    } else if (legacy == "descriptor-claim") {
+      fs::create_hard_link(state_paths[2], state_paths[3]);
+    } else {
+      fs::create_hard_link(state_paths[0], state_paths[4]);
+    }
+    if (call(root, "recoverPublication", {}, operation, "artwork-001",
+             "attachment-001", "payload.pdf").outcome != "publicationRecovered") {
+      return "valid legacy alias did not normalize and recover: " + legacy;
+    }
+    struct stat payload {};
+    if (lstat(state_paths[4].c_str(), &payload) != 0 || payload.st_nlink != 1) {
+      return "legacy recovery did not finish with one canonical payload link";
+    }
+    fs::remove_all(root);
+  }
+
+  {
+    const fs::path root = unique_path("archivale-exclusive-post-commit-");
+    const std::string operation = "legacy-post-commit";
+    if (!interrupt_at(root, operation, "publish.afterIntentLink")) return "post-commit fixture did not interrupt";
+    const auto state_paths = paths(root, operation);
+    fs::create_hard_link(state_paths[2], state_paths[3]);
+    fs::create_hard_link(state_paths[0], state_paths[4]);
+    fs::remove(state_paths[3]);
+    if (call(root, "recoverPublication", {}, operation, "artwork-001",
+             "attachment-001", "payload.pdf").outcome != "publicationRecovered") {
+      return "post-commit legacy remnants did not normalize";
+    }
+    fs::remove_all(root);
+  }
+  return {};
+}
+
+inline std::string exclusive_durability_retry_tests() {
+  for (const std::string& point : {"publish.claimSourceFsync",
+                                   "publish.payloadSourceFsync",
+                                   "publish.commitDirectoryFsync"}) {
+    const fs::path root = unique_path("archivale-exclusive-fsync-retry-");
+    fs::create_directories(root);
+    const fs::path source = root / "source.pdf";
+    write_file(source, "%PDF-1.4\ndurability-retry\n%%EOF\n");
+    custody::test_fail_at(point);
+    const auto interrupted = call(root, "publish", source.string(), "intent-retry",
+                                  "artwork-001", "attachment-001", "payload.pdf");
+    custody::test_reset_hooks();
+    if (interrupted.outcome != "ioFailure") return "directory fsync failure was swallowed at " + point;
+    const auto recovered = call(root, "recoverPublication", {}, "intent-retry",
+                                "artwork-001", "attachment-001", "payload.pdf");
+    const std::string expected = point == "publish.commitDirectoryFsync"
+        ? "alreadyExists" : "publicationRecovered";
+    if (recovered.outcome != expected) {
+      return "directory fsync retry did not converge at " + point + ": " + recovered.outcome;
+    }
+    if (call(root, "scan").outcome != "scanComplete") {
+      return "directory fsync retry left noncanonical publication state";
+    }
+    fs::remove_all(root);
+  }
+
+  {
+    const fs::path root = unique_path("archivale-erasure-rename-fsync-");
+    fs::create_directories(root);
+    custody::test_fail_at("erasure.currentDirectoryFsync");
+    const auto interrupted = call(root, "writeErasureControl", {}, "erase-retry");
+    custody::test_reset_hooks();
+    if (interrupted.outcome != "ioFailure") return "erasure rename fsync failure was swallowed";
+    const auto recovered = call(root, "recoverErasureControl", {}, "erase-retry");
+    if (recovered.outcome != "erasureOwned") return "erasure rename fsync retry did not converge";
+    fs::remove_all(root);
+  }
+  return {};
+}
+
 inline std::string publication_scan_negative_tests() {
   for (const std::string& suffix : {std::string(".json"), std::string(".tmp")}) {
     for (const bool target_present : {false, true}) {
@@ -255,13 +412,18 @@ inline std::string publication_scan_negative_tests() {
     }
     const auto scanned = call(root, "scan");
     const size_t expected_entries = point == "publish.afterClaim" ? 0 : 1;
-    if (scanned.outcome != "scanComplete" || scanned.publications.size() != 1 ||
+    const size_t expected_publications = point == "publish.afterClaim" ? 1 : 0;
+    if (scanned.outcome != "scanComplete" ||
+        scanned.publications.size() != expected_publications ||
         scanned.entries.size() != expected_entries ||
-        scanned.publications.front().operation_id != "intent-recoverable") {
+        (expected_publications == 1 &&
+         scanned.publications.front().operation_id != "intent-recoverable")) {
       return "recoverable scan geometry was rejected at " + point;
     }
+    const std::string expected_recovery =
+        point == "publish.afterClaim" ? "publicationRecovered" : "alreadyExists";
     if (call(root, "recoverPublication", {}, "intent-recoverable", "artwork-001",
-             "attachment-001", "payload.pdf").outcome != "publicationRecovered") {
+             "attachment-001", "payload.pdf").outcome != expected_recovery) {
       return "recoverable scan fixture did not converge at " + point;
     }
     fs::remove_all(root);
@@ -454,6 +616,7 @@ inline std::string erasure_race_and_exclusivity_tests() {
     if (interrupted.outcome != "ioFailure") return "erasure temp-swap fixture did not interrupt";
     const fs::path control = root / "erasure-control";
     const fs::path temp = control / "current-erase-owner.tmp";
+    fs::create_hard_link(control / "current.json", temp);
     custody::test_at_boundary([&](const char* point) {
       if (std::string(point) != "erasure.beforeClearTempUnlink") return;
       fs::rename(temp, control / "held-owner.tmp");
@@ -474,11 +637,11 @@ inline std::string fail_closed_capability_test() {
   const fs::path root = unique_path("archivale-capability-");
   fs::create_directories(root);
   if (call(root, "selfTest").outcome != "available") return "native capability self-test did not pass";
-  custody::test_fail_at("selfTest.linkFsync");
+  custody::test_fail_at("selfTest.crossDestinationFsync");
   const auto failed = call(root, "selfTest");
   custody::test_reset_hooks();
   if (failed.outcome != "unsupported") return "capability probe did not fail closed";
-  for (const std::string point : {"selfTest.noReplaceCollision", "selfTest.directoryRmdir"}) {
+  for (const std::string point : {"selfTest.noReplaceCollision", "selfTest.crossDirectoryRename"}) {
     custody::test_fail_at(point);
     const auto negative = call(root, "selfTest");
     custody::test_reset_hooks();
@@ -574,6 +737,8 @@ inline std::string race_tests(int repetitions = 40) {
 
 inline std::string run_contract_suite() {
   for (const auto& test : {publication_crash_tests, publication_retry_and_concurrency_tests,
+                           exclusive_publication_state_table_tests,
+                           exclusive_durability_retry_tests,
                            publication_scan_negative_tests, erasure_control_tests,
                            erasure_race_and_exclusivity_tests, fail_closed_capability_test}) {
     const std::string failure = test();

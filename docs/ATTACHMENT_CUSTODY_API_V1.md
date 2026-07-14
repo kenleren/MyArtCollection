@@ -32,18 +32,24 @@ deterministic and intent-associated:
 - `attachments/.staging/publication-<operationId>.json`
 
 The canonical JSON descriptor fixes v1, operation/artwork/attachment IDs,
-canonical name, byte size, SHA-256, and the `staged` phase. The descriptor is
-published from `.tmp` by an exclusive hard link. The same descriptor inode is
-then linked as `<attachment>/.publication.json`, providing attachment-wide
-exclusion even when concurrent attempts use different extensions.
+canonical name, byte size, SHA-256, and the `staged` phase. Android publishes
+each transition with runtime-probed
+`renameat2(RENAME_NOREPLACE)` and Apple uses
+`renameatx_np(RENAME_EXCL)`. The descriptor moves `.tmp` → `.json` →
+`<attachment>/.publication.json`; the payload moves `.data` → the canonical
+name. There is no overwrite, pathname, check-then-rename, copy/unlink, or
+hard-link fallback.
 
-Publication copies and verifies the staged bytes, fsyncs every new directory
-entry and created ancestry level, links the payload with no-replace semantics,
-verifies descriptor and payload inode relationships, and commits by removing
-the attachment claim. Recovery reconciles the bounded two-link states by inode
-and re-verifies size and SHA-256 before success. Rollback removes only state
-owned by the exact operation and prunes empty canonical ancestry. Cleanup and
-all non-benign unlink, rmdir, and fsync failures are reported, never ignored.
+Every rename, unlink, and directory prune performs anchored prevalidation,
+the mutation, immediate result validation, all required directory fsyncs, and
+a final anchored named-path validation before another mutation or success.
+Publication copies and verifies staged bytes and fsyncs every new directory
+entry and created ancestry level. Recovery accepts only the enumerated current
+rename states and exact two-link legacy states, then re-verifies descriptor
+bytes, payload size/SHA-256, inode bindings, and final single-link geometry.
+Rollback removes only state owned by the exact operation and prunes only
+validated empty canonical ancestry. Cleanup and all non-benign rename, unlink,
+rmdir, and fsync failures are reported, never ignored.
 Status and recovery validate both exact-operation `.json` and `.tmp` metadata
 before target lookup, so malformed owned staging cannot be reported as
 absence even when target ancestry is missing.
@@ -58,13 +64,23 @@ The operations are:
 - `remove`
 - `scan`
 
-`scan` accepts committed single-link payloads and validated recoverable
-publication descriptors, including the descriptor `.tmp` crash window. It
+`scan` accepts committed single-link payloads, bounded descriptor-free staged
+payload orphans, and validated recoverable publication descriptors, including
+the descriptor `.tmp` crash window. It
 binds every descriptor filename to its operation ID and, once a descriptor
 exists, verifies the staged or canonical payload size and SHA-256. Attachment
-claims are bound to the exact canonical payload and staged descriptor/payload
-inodes. Unexpected geometry, links, identifiers, claim targets, or staging
-nodes fail closed.
+claims are bound to exact descriptor bytes and the canonical payload's declared
+size and SHA-256. The only accepted two-link geometries are the three legacy pairs:
+`.tmp`+`.json`, `.json`+claim, and `.data`+canonical payload. They must be the
+same inode with exactly two links and the exact descriptor/content binding.
+Unexpected geometry, third links, identifiers, claim targets, or staging nodes
+fail closed.
+
+`claim + canonical payload` without staged data is commit-only. Recovery may
+remove the claim only after opening and proving a call-local payload identity.
+Rollback and cleanup preserve both names and return `publicationPending`; the
+v1 descriptor does not persist an inode identity that could authorize payload
+deletion.
 
 ## Erasure Control
 
@@ -75,16 +91,16 @@ attachment root. Its canonical content is:
 {"version":1,"owner":"<opaque operationId>","phase":"erasing"}
 ```
 
-Native code fsyncs a deterministic owner staging file, publishes
-`current.json` with an exclusive hard link, fsyncs the directory, and removes
-the staging link. Status validates version, owner, phase, file type, link
-count, and the inode relationship in a two-link recovery window. Outcomes
+Native code fsyncs a deterministic owner staging file and exclusively renames
+it to `current.json` with the platform primitive above. Status validates
+version, owner, phase, file type, and link count. An exact two-link
+temp+current inode pair is accepted only as legacy recovery input. Outcomes
 distinguish exact ownership, recoverable pending staging, conflict, unsafe
 state, and absence. Only the
 exact owner may recover, clean staging, or clear `current.json`; clear also
 fsyncs and prunes empty control ancestry. Native erasure operations serialize
 on the app-private root and retain one validated control-directory descriptor
-from status through mutation. Immediately before each owner-sensitive link,
+from status through mutation. Immediately before each owner-sensitive rename,
 unlink, or directory removal, they revalidate the named directory and entry
 inodes through those descriptors and fail closed if identity changed.
 
@@ -102,11 +118,12 @@ or remote data.
 ## Capability And Compatibility
 
 `capabilities` and `selfTest` probe secure randomness, advisory locking,
-descriptor-relative directory/file creation, no-follow traversal, exclusive
-hard links, no-replace collision behavior, link-count inspection, file and
-directory fsync, file unlink, descriptor-relative directory removal, and
-cleanup. A failed required primitive returns `unsupported` or `ioFailure`;
-availability is never inferred.
+descriptor-relative directory/file creation, no-follow traversal,
+same-directory and cross-directory exclusive rename, collision no-overwrite,
+file and directory fsync, file unlink, descriptor-relative directory removal,
+and cleanup on the actual app-private volume. A failed required primitive
+returns `unsupported` or `ioFailure`; availability is never inferred and no
+fallback is attempted.
 
 v1 operation names, request fields, geometry, canonical phases, and outcomes
 are wire identifiers. Additive response fields are permitted. Renaming or

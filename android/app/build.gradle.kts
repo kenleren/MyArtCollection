@@ -142,6 +142,10 @@ val crashlyticsDartDefineEnabled =
     dartDefineEnabled("MY_ART_COLLECTION_INTERNAL_BETA_CRASHLYTICS")
 val remoteConfigDartDefineEnabled = dartDefineEnabled("MY_ART_COLLECTION_REMOTE_CONFIG")
 val googleServicesConfig = file("google-services.json")
+val attachmentCustodyRuntimeEvidence =
+    providers.gradleProperty("attachmentCustodyRuntimeEvidence")
+        .map { it.equals("true", ignoreCase = true) }
+        .getOrElse(false)
 
 if (crashlyticsDartDefineEnabled && !enableFirebaseAndroid) {
     throw GradleException(
@@ -221,6 +225,7 @@ android {
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+        testInstrumentationRunner = "app.archivale.AttachmentCustodyInstrumentation"
         manifestPlaceholders["crashlyticsCollectionEnabled"] = "false"
         buildConfigField(
             "boolean",
@@ -256,6 +261,11 @@ android {
     }
 
     buildTypes {
+        debug {
+            if (attachmentCustodyRuntimeEvidence) {
+                applicationIdSuffix = ".runtimeevidence"
+            }
+        }
         release {
             if (releaseSigningReady) {
                 signingConfig = signingConfigs.getByName("release")
