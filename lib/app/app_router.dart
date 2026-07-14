@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 
 import 'app_routes.dart';
-import 'prototype/prototype_artwork.dart';
 import 'screens/app_shell.dart';
 import 'screens/billing_plan_screen.dart';
 import 'screens/csv_import_screen.dart';
@@ -54,10 +53,7 @@ class AppRouter {
       case AppRoutes.settingsStorage:
         return _page(settings: settings, child: const SettingsStorageScreen());
       case AppRoutes.settingsExport:
-        return _page(
-          settings: settings,
-          child: const ExportPreviewScreen(artwork: prototypeArtwork),
-        );
+        return _page(settings: settings, child: const ExportPreviewScreen());
       case AppRoutes.settingsBackup:
         return _page(settings: settings, child: const SettingsBackupScreen());
       case AppRoutes.billing:
@@ -126,10 +122,6 @@ class AppRouter {
         settings: settings,
         child: _ArtworkRouteScreen(artworkId: artworkId, suffix: suffix),
       ),
-      'export' => _page(
-        settings: settings,
-        child: _ArtworkRouteScreen(artworkId: artworkId, suffix: suffix),
-      ),
       _ => null,
     };
   }
@@ -185,7 +177,6 @@ class _ArtworkRouteScreenState extends State<_ArtworkRouteScreen> {
           ),
           'documents' => DocumentsScreen(artwork: artwork),
           'report-preview' => ReportPreviewScreen(artwork: artwork),
-          'export' => ExportPreviewScreen(artwork: artwork),
           _ => ArtworkDetailsScreen(artwork: artwork),
         };
       },

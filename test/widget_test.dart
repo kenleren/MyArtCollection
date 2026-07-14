@@ -216,7 +216,7 @@ void main() {
     );
     await captureVisualEvidence(
       tester,
-      routeName: AppRoutes.artworkExport('sample-001'),
+      routeName: AppRoutes.settingsExport,
       themeMode: ThemeMode.dark,
       fileName: 'dark_export_preview.png',
     );
@@ -1421,7 +1421,7 @@ void main() {
 
     expect(find.text('Reports'), findsWidgets);
     expect(find.text('Preview artwork report'), findsOneWidget);
-    expect(find.text('Preview record export'), findsOneWidget);
+    expect(find.text('Preview record export'), findsNothing);
 
     await tapVisible(tester, find.text('Preview artwork report'));
     await pumpLiveData(tester);
@@ -2229,15 +2229,7 @@ void main() {
       findsOneWidget,
     );
 
-    await tapVisible(tester, find.text('Preview record export'));
-    expect(find.text('Record export preview'), findsWidgets);
-    expect(find.text('What the export includes'), findsOneWidget);
-    expect(
-      find.text(
-        'Any insurance value stays labeled as user-provided in the PDF record.',
-      ),
-      findsOneWidget,
-    );
+    expect(find.text('Preview record export'), findsNothing);
   });
 
   testWidgets('live import flow shows failed recovery state', (
@@ -3897,16 +3889,6 @@ void main() {
         ensureVisibleFinder: find.text('Report preview'),
         minimumTopClearance: 0,
       );
-      await captureArtifactForApp(
-        tester,
-        routeName: AppRoutes.artworkExport('edition-review'),
-        dependencies: fixture.dependencies,
-        themeMode: themeMode,
-        fileName: 'issue-212-edition-export-$themeName.png',
-        ensureVisibleFinder: find.text(
-          'Edition - document-extracted, needs review: 12/75.',
-        ),
-      );
     }
 
     await tester.pumpWidget(
@@ -3918,13 +3900,6 @@ void main() {
     await pumpLiveData(tester);
 
     await tapVisible(tester, find.text('Report preview'));
-    await pumpLiveData(tester);
-    expect(
-      find.text('Edition - document-extracted, needs review: 12/75.'),
-      findsOneWidget,
-    );
-
-    await tapVisible(tester, find.text('Preview record export'));
     await pumpLiveData(tester);
     expect(
       find.text('Edition - document-extracted, needs review: 12/75.'),
@@ -3972,14 +3947,6 @@ void main() {
         ensureVisibleFinder: find.text('Report preview'),
         minimumTopClearance: 0,
       );
-      await captureArtifactForApp(
-        tester,
-        routeName: AppRoutes.artworkExport('edition-review'),
-        dependencies: fixture.dependencies,
-        themeMode: themeMode,
-        fileName: 'issue-212-edition-confirmed-export-$themeName.png',
-        ensureVisibleFinder: find.text('Edition - User confirmed: 12/75.'),
-      );
     }
 
     await tester.pumpWidget(const SizedBox.shrink());
@@ -3995,10 +3962,6 @@ void main() {
     await tapVisible(tester, find.text('Report preview'));
     await pumpLiveData(tester);
     expect(find.text('Edition - User confirmed: 12/75.'), findsOneWidget);
-    await tapVisible(tester, find.text('Preview record export'));
-    await pumpLiveData(tester);
-    expect(find.text('Edition - User confirmed: 12/75.'), findsOneWidget);
-
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump();
     await tester.pumpWidget(
@@ -4085,15 +4048,7 @@ void main() {
         findsOneWidget,
       );
 
-      await tapVisible(tester, find.text('Preview record export'));
-      await pumpLiveData(tester);
-
-      expect(find.text('Record export preview'), findsWidgets);
-      expect(find.text('Purchase price: USD 1,200.50.'), findsOneWidget);
-      expect(
-        find.text('User-provided insurance value: NOK 12,000.'),
-        findsOneWidget,
-      );
+      expect(find.text('Preview record export'), findsNothing);
     },
   );
 
@@ -4981,7 +4936,9 @@ void main() {
     WidgetTester tester,
   ) async {
     for (final route in [AppRoutes.collectionSettings, AppRoutes.settings]) {
-      await tester.pumpWidget(ArchivaleApp(initialRoute: route));
+      await tester.pumpWidget(
+        ArchivaleApp(key: ValueKey(route), initialRoute: route),
+      );
       await pumpReady(tester);
 
       expect(find.text('Settings'), findsWidgets);
@@ -4990,9 +4947,22 @@ void main() {
       await tester.scrollUntilVisible(find.text('Review backup'), 200);
       await tester.pump();
       expect(find.text('Review backup'), findsOneWidget);
-      expect(find.text('Review archive export'), findsOneWidget);
+      expect(find.text('Export entire collection'), findsOneWidget);
       expect(find.text('No artworks yet'), findsNothing);
     }
+  });
+
+  testWidgets('legacy per-artwork export route stays unavailable', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(
+      const ArchivaleApp(initialRoute: '/artwork/sample-001/export'),
+    );
+    await pumpReady(tester);
+
+    expect(find.text('Route not found'), findsOneWidget);
+    expect(find.text('Collection archive ZIP'), findsNothing);
+    expect(find.text('Generate archive'), findsNothing);
   });
 
   testWidgets('settings home keeps trust hub heading copy', (
@@ -5297,19 +5267,11 @@ void main() {
     );
     await captureArtifactForApp(
       tester,
-      routeName: AppRoutes.artworkExport('issue-131-report-record'),
-      dependencies: fixture.dependencies,
-      themeMode: ThemeMode.light,
-      fileName: 'issue-171-export-light.png',
-      ensureVisibleFinder: find.text('What the export includes'),
-    );
-    await captureArtifactForApp(
-      tester,
       routeName: AppRoutes.settingsExport,
       dependencies: fixture.dependencies,
       themeMode: ThemeMode.light,
       fileName: 'issue-171-settings-export-light.png',
-      ensureVisibleFinder: find.text('Record export preview'),
+      ensureVisibleFinder: find.text('Export your entire collection'),
     );
     await captureArtifactForApp(
       tester,
@@ -5329,19 +5291,11 @@ void main() {
     );
     await captureArtifactForApp(
       tester,
-      routeName: AppRoutes.artworkExport('issue-131-report-record'),
-      dependencies: fixture.dependencies,
-      themeMode: ThemeMode.dark,
-      fileName: 'issue-171-export-dark.png',
-      ensureVisibleFinder: find.text('What the export includes'),
-    );
-    await captureArtifactForApp(
-      tester,
       routeName: AppRoutes.settingsExport,
       dependencies: fixture.dependencies,
       themeMode: ThemeMode.dark,
       fileName: 'issue-171-settings-export-dark.png',
-      ensureVisibleFinder: find.text('Record export preview'),
+      ensureVisibleFinder: find.text('Export your entire collection'),
     );
   });
 
@@ -5375,7 +5329,7 @@ void main() {
       );
       await captureArtifactForApp(
         tester,
-        routeName: AppRoutes.artworkExport('issue-178-export-record'),
+        routeName: AppRoutes.settingsExport,
         dependencies: fixture.dependencies,
         themeMode: themeMode,
         fileName: 'issue-178-archive-actions-$themeName.png',

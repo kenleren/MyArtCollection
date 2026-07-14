@@ -768,12 +768,6 @@ class _ReportsHomeContent extends StatelessWidget {
             label: 'Preview artwork report',
             routeName: AppRoutes.artworkReportPreview(firstArtwork.id),
           ),
-          const SizedBox(height: 12),
-          SecondaryActionButton(
-            icon: Icons.archive_outlined,
-            label: 'Preview record export',
-            routeName: AppRoutes.artworkExport(firstArtwork.id),
-          ),
         ],
       ],
     );
@@ -853,14 +847,14 @@ class SettingsHomeScreen extends StatelessWidget {
         const SizedBox(height: 12),
         const _StatusPanel(
           icon: Icons.ios_share_outlined,
-          title: 'Archive export preview',
+          title: 'Export your entire collection',
           body:
-              'Review what an export includes before you move or store a copy of your archive.',
+              'Create one unencrypted ZIP with every local artwork record and any available original supporting files.',
         ),
         const SizedBox(height: 12),
         const SecondaryActionButton(
           icon: Icons.archive_outlined,
-          label: 'Review archive export',
+          label: 'Export entire collection',
           routeName: AppRoutes.settingsExport,
         ),
       ],
@@ -2903,12 +2897,6 @@ class ReportPreviewScreen extends StatelessWidget {
             kind: ExportArtifactKind.report,
             artworkId: artwork.id,
           ),
-          const SizedBox(height: 12),
-          SecondaryActionButton(
-            icon: Icons.archive_outlined,
-            label: 'Preview record export',
-            routeName: AppRoutes.artworkExport(artwork.id),
-          ),
         ],
       ),
     );
@@ -2916,40 +2904,36 @@ class ReportPreviewScreen extends StatelessWidget {
 }
 
 class ExportPreviewScreen extends StatelessWidget {
-  const ExportPreviewScreen({super.key, required this.artwork});
-
-  final PrototypeArtwork artwork;
+  const ExportPreviewScreen({super.key});
 
   @override
   Widget build(BuildContext context) {
     return PrototypeScreenFrame(
-      title: 'Record export preview',
+      title: 'Export your entire collection',
       subtitle:
-          'Keep a portable record for family, estate, and personal files.',
+          'Create a portable, unencrypted ZIP from the collection stored on this device.',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _ReportSummary(artwork: artwork),
-          const SizedBox(height: 16),
           const _StatusPanel(
             icon: Icons.archive_outlined,
-            title: 'What the export includes',
+            title: 'Every local artwork record',
             body:
-                'All local artwork fields with source labels, external references, attachment outcomes, and available original supporting files.',
+                'The ZIP contains every local artwork record, source-labeled fields and external references, attachment outcomes, and available original supporting files.',
           ),
           const SizedBox(height: 12),
           const _StatusPanel(
             icon: Icons.info_outline,
-            title: 'Truthful attachment outcomes',
+            title: 'Available originals only',
             body:
                 'Missing or checksum-mismatched files are listed as excluded. The archive never claims that every original is present.',
           ),
           const SizedBox(height: 12),
           const _StatusPanel(
-            icon: Icons.picture_as_pdf_outlined,
-            title: 'Insurance value note',
+            icon: Icons.lock_open_outlined,
+            title: 'This ZIP is not encrypted',
             body:
-                'Any insurance value stays labeled as user-provided in the PDF record.',
+                'Open, Save a copy, or Share sends the entire collection outside Archivale. Anyone with access to that destination can read it.',
           ),
           const SizedBox(height: 20),
           const ExportWorkflowPanel(kind: ExportArtifactKind.archive),
@@ -3035,7 +3019,7 @@ class _ExportWorkflowPanelState extends State<ExportWorkflowPanel> {
           Text(
             _isReport
                 ? 'Generated from user-confirmed fields and verified local supporting files.'
-                : 'Generated locally in app-private storage before you choose where to save or share a copy.',
+                : 'Generated locally in app-private storage. This unencrypted ZIP contains the entire collection and available original supporting files.',
           ),
           if (_isBusy && progress != null) ...[
             const SizedBox(height: 12),
@@ -3095,19 +3079,23 @@ class _ExportWorkflowPanelState extends State<ExportWorkflowPanel> {
                 children: [
                   OutlinedButton.icon(
                     key: const ValueKey('open-export-action'),
-                    onPressed: () => _useDestination(_DestinationAction.open),
+                    onPressed: () =>
+                        _useDestination(EntireCollectionDestinationAction.open),
                     icon: const Icon(Icons.open_in_new),
                     label: const Text('Open'),
                   ),
                   OutlinedButton.icon(
                     key: const ValueKey('save-export-action'),
-                    onPressed: () => _useDestination(_DestinationAction.save),
+                    onPressed: () =>
+                        _useDestination(EntireCollectionDestinationAction.save),
                     icon: const Icon(Icons.save_alt),
                     label: const Text('Save a copy'),
                   ),
                   OutlinedButton.icon(
                     key: const ValueKey('share-export-action'),
-                    onPressed: () => _useDestination(_DestinationAction.share),
+                    onPressed: () => _useDestination(
+                      EntireCollectionDestinationAction.share,
+                    ),
                     icon: const Icon(Icons.ios_share_outlined),
                     label: const Text('Share'),
                   ),
@@ -3185,23 +3173,16 @@ class _ExportWorkflowPanelState extends State<ExportWorkflowPanel> {
     if (mounted) setState(() => _progress = progress);
   }
 
-  Future<void> _useDestination(_DestinationAction action) async {
+  Future<void> _useDestination(EntireCollectionDestinationAction action) async {
     final artifact = _artifact;
     if (artifact == null) return;
     final gateway = AppDependencyScope.of(context).exportDestinationGateway;
+    if (!_isReport && !await _confirmEntireCollectionAction(action)) return;
     try {
       final result = switch (action) {
-        _DestinationAction.open => gateway.open(artifact.file),
-        _DestinationAction.save => gateway.saveCopy(
-          artifact.file,
-          suggestedName: artifact.displayName,
-          mimeType: artifact.mimeType,
-        ),
-        _DestinationAction.share => gateway.share(
-          artifact.file,
-          displayName: artifact.displayName,
-          mimeType: artifact.mimeType,
-        ),
+        EntireCollectionDestinationAction.open => gateway.open(artifact),
+        EntireCollectionDestinationAction.save => gateway.saveCopy(artifact),
+        EntireCollectionDestinationAction.share => gateway.share(artifact),
       };
       final outcome = await result;
       if (!mounted) return;
@@ -3224,9 +3205,53 @@ class _ExportWorkflowPanelState extends State<ExportWorkflowPanel> {
       }
     }
   }
+
+  Future<bool> _confirmEntireCollectionAction(
+    EntireCollectionDestinationAction action,
+  ) => showEntireCollectionExportConfirmation(context, action);
 }
 
-enum _DestinationAction { open, save, share }
+enum EntireCollectionDestinationAction { open, save, share }
+
+Future<bool> showEntireCollectionExportConfirmation(
+  BuildContext context,
+  EntireCollectionDestinationAction action,
+) async {
+  final actionLabel = switch (action) {
+    EntireCollectionDestinationAction.open => 'Open',
+    EntireCollectionDestinationAction.save => 'Save a copy of',
+    EntireCollectionDestinationAction.share => 'Share',
+  };
+  return await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          key: const ValueKey('archive-destination-confirmation'),
+          title: Text('$actionLabel your entire collection?'),
+          content: const Text(
+            'This unencrypted ZIP includes every local artwork record and available original supporting files. Anyone with access to the destination can read it.',
+          ),
+          actions: [
+            TextButton(
+              key: const ValueKey('cancel-archive-destination'),
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              key: const ValueKey('confirm-archive-destination'),
+              onPressed: () => Navigator.of(context).pop(true),
+              child: Text(
+                action == EntireCollectionDestinationAction.share
+                    ? 'Share'
+                    : action == EntireCollectionDestinationAction.open
+                    ? 'Open'
+                    : 'Save a copy',
+              ),
+            ),
+          ],
+        ),
+      ) ??
+      false;
+}
 
 class PrototypeScreenFrame extends StatelessWidget {
   const PrototypeScreenFrame({

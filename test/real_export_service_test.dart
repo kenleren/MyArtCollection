@@ -403,6 +403,49 @@ void main() {
   });
 
   test(
+    'same-inode rewrite and restore across archive read passes fails closed',
+    () async {
+      final originalBytes = _validPdfBytes(
+        prefixComments: List<String>.filled(32 * 1024, '% padding'),
+      );
+      final source = File(p.join(temp.path, 'large-original.pdf'));
+      await source.writeAsBytes(originalBytes, flush: true);
+      final attachment = await attachmentStore.saveImportedAttachment(
+        artworkId: 'artwork-1',
+        attachmentId: 'attachment-rewrite-restore',
+        sourceFile: source,
+        originalFileName: 'large-original.pdf',
+        mimeType: 'application/pdf',
+        type: AttachmentType.receipt,
+        source: ArtworkFieldSource.userConfirmed,
+        importedAt: DateTime.utc(2026, 7, 14, 8),
+      );
+      await repository.addAttachment(attachment);
+      final payload = attachmentStore.fileFor(attachment);
+      final mutated = List<int>.from(originalBytes)..[160 * 1024] ^= 0x01;
+      final service = ArchiveExportService(
+        repository: repository,
+        attachmentStore: attachmentStore,
+        artifactStore: artifactStore,
+        clock: () => DateTime.utc(2026, 7, 14, 9),
+        attachmentReadPassHookForTest: (record, pass) {
+          if (record.id != attachment.id) return;
+          if (pass == 1) payload.writeAsBytesSync(mutated, flush: true);
+          if (pass == 2) payload.writeAsBytesSync(originalBytes, flush: true);
+        },
+      );
+
+      await expectLater(
+        service.generate(),
+        throwsA(isA<ExportIntegrityException>()),
+      );
+      expect(await artifactStore.latest(ExportArtifactKind.archive), isNull);
+      expect(await payload.readAsBytes(), originalBytes);
+      expect(await _partialFiles(artifactStore.root), isEmpty);
+    },
+  );
+
+  test(
     'artifact commit failure leaves no observable partial archive',
     () async {
       final createdAt = DateTime.utc(2026, 7, 14, 9);
@@ -422,10 +465,117 @@ void main() {
           artifactStore: artifactStore,
           clock: () => createdAt,
         ).generate(),
-        throwsA(isA<FileSystemException>()),
+        throwsA(isA<StateError>()),
       );
       expect(await artifactStore.latest(ExportArtifactKind.archive), isNull);
       expect(await _partialFiles(artifactStore.root), isEmpty);
+    },
+  );
+
+  test('committed metadata and latest bind exact payload bytes', () async {
+    final artifact = await ArchiveExportService(
+      repository: repository,
+      attachmentStore: attachmentStore,
+      artifactStore: artifactStore,
+      clock: () => DateTime.utc(2026, 7, 14, 9),
+    ).generate();
+    final metadata =
+        jsonDecode(await File('${artifact.file.path}.json').readAsString())
+            as Map<String, Object?>;
+    expect(metadata.keys.toList(), [
+      'metadata_version',
+      'state',
+      'artifact_id',
+      'kind',
+      'subject_id',
+      'file_name',
+      'mime_type',
+      'byte_size',
+      'checksum_sha256',
+      'created_at',
+      'warnings',
+    ]);
+    expect(metadata['state'], 'complete');
+    expect(metadata['byte_size'], artifact.byteSize);
+    expect(metadata['checksum_sha256'], artifact.checksumSha256);
+
+    final bytes = await artifact.file.readAsBytes();
+    bytes[bytes.length ~/ 2] ^= 0xff;
+    await artifact.file.writeAsBytes(bytes, flush: true);
+    expect(await artifact.revalidate(), isNull);
+    expect(await artifactStore.latest(ExportArtifactKind.archive), isNull);
+  });
+
+  test(
+    'latest rejects metadata, staging, arbitrary files, and symlinks',
+    () async {
+      final archiveDirectory = Directory(
+        p.join(artifactStore.root.path, 'archives'),
+      );
+      await archiveDirectory.create(recursive: true);
+      await File(
+        p.join(archiveDirectory.path, 'archive-fake.zip'),
+      ).writeAsBytes([1]);
+      await File(
+        p.join(archiveDirectory.path, 'archive-fake.zip.partial'),
+      ).writeAsBytes([2]);
+      await File(
+        p.join(archiveDirectory.path, 'archive-fake.zip.json'),
+      ).writeAsString('{}');
+      expect(await artifactStore.latest(ExportArtifactKind.archive), isNull);
+
+      final artifact = await ArchiveExportService(
+        repository: repository,
+        attachmentStore: attachmentStore,
+        artifactStore: artifactStore,
+        clock: () => DateTime.utc(2026, 7, 14, 10),
+      ).generate();
+      final linkId = 'archive-202607141001';
+      final link = File(p.join(archiveDirectory.path, '$linkId.zip'));
+      await Link(link.path).create(artifact.file.path);
+      final linkedMetadata =
+          jsonDecode(await File('${artifact.file.path}.json').readAsString())
+              as Map<String, Object?>;
+      linkedMetadata['artifact_id'] = linkId;
+      linkedMetadata['file_name'] = '$linkId.zip';
+      await File('${link.path}.json').writeAsString(jsonEncode(linkedMetadata));
+      await artifact.file.delete();
+      expect(await artifactStore.latest(ExportArtifactKind.archive), isNull);
+    },
+  );
+
+  test(
+    'concurrent same-id commit has one exact winner and no orphan',
+    () async {
+      final createdAt = DateTime.utc(2026, 7, 14, 11);
+      final id = 'archive-${createdAt.microsecondsSinceEpoch}';
+      final first = await artifactStore.stagingFile(
+        ExportArtifactKind.archive,
+        id,
+      );
+      final second = await artifactStore.stagingFile(
+        ExportArtifactKind.archive,
+        id,
+      );
+      await first.writeAsBytes([1, 2, 3], flush: true);
+      await second.writeAsBytes([4, 5, 6], flush: true);
+      final results = await Future.wait([
+        _captureCommit(artifactStore, id, createdAt, first),
+        _captureCommit(artifactStore, id, createdAt, second),
+      ]);
+      expect(results.whereType<ExportArtifact>(), hasLength(1));
+      expect(
+        results.whereType<Object>().where((value) => value is! ExportArtifact),
+        hasLength(1),
+      );
+      final winner = results.whereType<ExportArtifact>().single;
+      expect(
+        await winner.file.readAsBytes(),
+        anyOf(equals([1, 2, 3]), equals([4, 5, 6])),
+      );
+      expect(await _partialFiles(artifactStore.root), isEmpty);
+      final claims = Directory(p.join(artifactStore.root.path, '.claims'));
+      expect(await claims.list().toList(), isEmpty);
     },
   );
 
@@ -539,6 +689,51 @@ void main() {
     );
   });
 
+  test('PDF rewrite and restore during exact-byte read fails closed', () async {
+    final source = File(p.join(temp.path, 'artwork.png'));
+    await source.writeAsBytes(_pngBytes, flush: true);
+    final attachment = await attachmentStore.saveImportedAttachment(
+      artworkId: 'artwork-1',
+      attachmentId: 'attachment-pdf-rewrite',
+      sourceFile: source,
+      originalFileName: 'artwork.png',
+      mimeType: 'image/png',
+      type: AttachmentType.photo,
+      source: ArtworkFieldSource.userConfirmed,
+      importedAt: DateTime.utc(2026, 7, 14, 8),
+    );
+    await repository.addAttachment(attachment);
+    final payload = attachmentStore.fileFor(attachment);
+    final service = PdfReportService(
+      repository: repository,
+      attachmentStore: attachmentStore,
+      artifactStore: artifactStore,
+      clock: () => DateTime.utc(2026, 7, 14, 9),
+      imageBytesReaderForTest: (file) async {
+        final original = await file.readAsBytes();
+        final mutated = Uint8List.fromList(original)
+          ..[original.length - 1] ^= 1;
+        await file.writeAsBytes(mutated, flush: true);
+        final consumed = await file.readAsBytes();
+        await file.writeAsBytes(original, flush: true);
+        return consumed;
+      },
+    );
+
+    await expectLater(
+      service.generate('artwork-1'),
+      throwsA(isA<ExportIntegrityException>()),
+    );
+    expect(
+      await artifactStore.latest(
+        ExportArtifactKind.report,
+        subjectId: 'artwork-1',
+      ),
+      isNull,
+    );
+    expect(await payload.readAsBytes(), _pngBytes);
+  });
+
   testWidgets('report artifact identity never crosses artwork screens', (
     tester,
   ) async {
@@ -571,7 +766,7 @@ void main() {
     await tester.pumpWidget(
       AppDependencyScope(
         dependencies: dependencies,
-        child: const MaterialApp(
+        child: MaterialApp(
           home: Scaffold(
             body: ExportWorkflowPanel(
               kind: ExportArtifactKind.report,
@@ -620,108 +815,55 @@ void main() {
     );
   });
 
-  testWidgets('archive UI generates and keeps artifact after dismissed share', (
+  testWidgets('archive destination requires just-in-time confirmation', (
     tester,
   ) async {
+    final artifact = (await tester.runAsync(
+      () => ArchiveExportService(
+        repository: repository,
+        attachmentStore: attachmentStore,
+        artifactStore: artifactStore,
+        clock: () => DateTime.utc(2026, 7, 14, 9),
+      ).generate(),
+    ))!;
     final gateway = _FakeDestinationGateway();
-    final dependencies = AppDependencies(
-      artworkRepository: repository,
-      attachmentStore: attachmentStore,
-      imagePicker: _NoImagePicker(),
-      exportArtifactStore: artifactStore,
-      exportDestinationGateway: gateway,
-    );
     await tester.pumpWidget(
-      AppDependencyScope(
-        dependencies: dependencies,
-        child: const MaterialApp(
-          home: Scaffold(
-            body: SingleChildScrollView(
-              child: ExportWorkflowPanel(kind: ExportArtifactKind.archive),
+      MaterialApp(
+        home: Scaffold(
+          body: Builder(
+            builder: (context) => FilledButton(
+              key: const ValueKey('start-archive-destination'),
+              onPressed: () async {
+                if (await showEntireCollectionExportConfirmation(
+                  context,
+                  EntireCollectionDestinationAction.share,
+                )) {
+                  await gateway.share(artifact);
+                }
+              },
+              child: const Text('Share archive'),
             ),
           ),
         ),
       ),
     );
-    await tester.runAsync(() async {
-      tester
-          .widget<FilledButton>(
-            find.byKey(const ValueKey('generate-export-action')),
-          )
-          .onPressed!();
-      for (var attempt = 0; attempt < 40; attempt++) {
-        await Future<void>.delayed(const Duration(milliseconds: 50));
-        if (await artifactStore.latest(ExportArtifactKind.archive) != null) {
-          break;
-        }
-      }
-    });
-    await tester.pumpAndSettle();
-
+    await tester.tap(find.byKey(const ValueKey('start-archive-destination')));
+    await tester.pump(const Duration(milliseconds: 300));
     expect(
-      find.byKey(const ValueKey('export-workflow-message')),
+      find.byKey(const ValueKey('archive-destination-confirmation')),
       findsOneWidget,
     );
-    expect(
-      tester
-          .widget<Text>(find.byKey(const ValueKey('export-workflow-message')))
-          .data,
-      'Generated locally and ready.',
-    );
-    expect(find.byKey(const ValueKey('open-export-action')), findsOneWidget);
-    expect(find.byKey(const ValueKey('save-export-action')), findsOneWidget);
-    expect(find.byKey(const ValueKey('share-export-action')), findsOneWidget);
+    expect(find.textContaining('every local artwork record'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('cancel-archive-destination')));
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(gateway.shareCalls, 0);
 
-    await tester.tap(find.byKey(const ValueKey('share-export-action')));
-    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('start-archive-destination')));
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.tap(find.byKey(const ValueKey('confirm-archive-destination')));
+    await tester.pump(const Duration(milliseconds: 300));
     expect(gateway.shareCalls, 1);
-    expect(
-      find.text(
-        'No copy was saved or shared. The generated file remains available here.',
-      ),
-      findsOneWidget,
-    );
-    expect(find.byKey(const ValueKey('open-export-action')), findsOneWidget);
-
-    final visualArtifact = await tester.runAsync(
-      () => artifactStore.latest(ExportArtifactKind.archive),
-    );
-    expect(visualArtifact, isNotNull);
-
-    for (final fixture in const [
-      (size: Size(320, 700), dark: false, scale: 1.35),
-      (size: Size(390, 700), dark: true, scale: 1.0),
-    ]) {
-      await tester.binding.setSurfaceSize(fixture.size);
-      await tester.pumpWidget(
-        AppDependencyScope(
-          dependencies: dependencies,
-          child: MaterialApp(
-            theme: ThemeData.light(useMaterial3: true),
-            darkTheme: ThemeData.dark(useMaterial3: true),
-            themeMode: fixture.dark ? ThemeMode.dark : ThemeMode.light,
-            home: MediaQuery(
-              data: MediaQueryData(
-                size: fixture.size,
-                textScaler: TextScaler.linear(fixture.scale),
-              ),
-              child: Scaffold(
-                body: SingleChildScrollView(
-                  child: ExportWorkflowPanel(
-                    kind: ExportArtifactKind.archive,
-                    initialArtifact: visualArtifact,
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ),
-      );
-      await tester.pump();
-      expect(tester.takeException(), isNull);
-      expect(find.byKey(const ValueKey('share-export-action')), findsOneWidget);
-    }
-    await tester.binding.setSurfaceSize(null);
+    expect(await tester.runAsync(artifact.revalidate), isNotNull);
   });
 }
 
@@ -733,6 +875,25 @@ Future<List<FileSystemEntity>> _partialFiles(Directory root) => root
     .list(recursive: true)
     .where((entry) => entry.path.endsWith('.partial'))
     .toList();
+
+Future<Object> _captureCommit(
+  ExportArtifactStore store,
+  String id,
+  DateTime createdAt,
+  File staging,
+) async {
+  try {
+    return await store.commit(
+      kind: ExportArtifactKind.archive,
+      id: id,
+      staging: staging,
+      createdAt: createdAt,
+      warnings: const [],
+    );
+  } on Object catch (error) {
+    return error;
+  }
+}
 
 Future<AttachmentRecord> _addPdfAttachment({
   required Directory temp,
@@ -802,15 +963,20 @@ ArtworkRecord _artwork() => ArtworkRecord(
 );
 
 final _pdfBytes = _validPdfBytes();
+final _pngBytes = base64Decode(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+);
 
-List<int> _validPdfBytes() {
+List<int> _validPdfBytes({List<String> prefixComments = const []}) {
   const header = '%PDF-1.4\n';
   const catalog = '1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n';
   const pages = '2 0 obj\n<< /Type /Pages /Count 0 /Kids [] >>\nendobj\n';
-  final catalogOffset = header.length;
+  final comments = prefixComments.map((comment) => '$comment\n').join();
+  final catalogOffset = header.length + comments.length;
   final pagesOffset = catalogOffset + catalog.length;
   final xrefOffset = pagesOffset + pages.length;
   final source = StringBuffer(header)
+    ..write(comments)
     ..write(catalog)
     ..write(pages)
     ..write('xref\n0 3\n')
@@ -832,24 +998,23 @@ class _NoImagePicker implements ArtworkImagePicker {
 
 class _FakeDestinationGateway implements ExportDestinationGateway {
   int shareCalls = 0;
+  int openCalls = 0;
+  int saveCalls = 0;
 
   @override
-  Future<ExportDestinationResult> open(File file) async =>
-      ExportDestinationResult.completed;
+  Future<ExportDestinationResult> open(ExportArtifact artifact) async {
+    openCalls++;
+    return ExportDestinationResult.completed;
+  }
 
   @override
-  Future<ExportDestinationResult> saveCopy(
-    File file, {
-    required String suggestedName,
-    required String mimeType,
-  }) async => ExportDestinationResult.completed;
+  Future<ExportDestinationResult> saveCopy(ExportArtifact artifact) async {
+    saveCalls++;
+    return ExportDestinationResult.completed;
+  }
 
   @override
-  Future<ExportDestinationResult> share(
-    File file, {
-    required String displayName,
-    required String mimeType,
-  }) async {
+  Future<ExportDestinationResult> share(ExportArtifact artifact) async {
     shareCalls++;
     return ExportDestinationResult.dismissed;
   }

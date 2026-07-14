@@ -4,7 +4,7 @@ import UIKit
 @main
 @objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate, UIDocumentInteractionControllerDelegate, UIDocumentPickerDelegate {
   private var attachmentPreviewController: UIDocumentInteractionController?
-  private var pendingExportSaveResult: FlutterResult?
+  private var pendingExportSave: (result: FlutterResult, copy: PickerExportCopy)?
   override func application(
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
@@ -63,68 +63,53 @@ import UIKit
       suggestedName.count <= 160 &&
       !suggestedName.contains("/") &&
       !suggestedName.contains("\\")
-    guard pendingExportSaveResult == nil,
+    guard pendingExportSave == nil,
           safeName,
           mimeType == "application/pdf" || mimeType == "application/zip",
-          let presenter = activeViewController() else {
-      result("unavailable")
-      return
-    }
-    let candidate = URL(fileURLWithPath: sourcePath)
-      .resolvingSymlinksInPath()
-      .standardizedFileURL
-    guard isGeneratedExport(candidate),
-          candidate.lastPathComponent == suggestedName else {
+          let presenter = activeViewController(),
+          let documentsDirectory = FileManager.default.urls(
+            for: .documentDirectory,
+            in: .userDomainMask
+          ).first,
+          let pickerCopy = ExportArtifactPolicy.makePickerCopy(
+            sourcePath: sourcePath,
+            suggestedName: suggestedName,
+            mimeType: mimeType,
+            documentsDirectory: documentsDirectory
+          ) else {
       result("unavailable")
       return
     }
     let picker = UIDocumentPickerViewController(
-      forExporting: [candidate],
+      forExporting: [pickerCopy.url],
       asCopy: true
     )
     picker.delegate = self
-    pendingExportSaveResult = result
+    pendingExportSave = (result, pickerCopy)
     presenter.present(picker, animated: true)
-  }
-
-  private func isGeneratedExport(_ url: URL) -> Bool {
-    guard let documentsDirectory = FileManager.default.urls(
-      for: .documentDirectory,
-      in: .userDomainMask
-    ).first else {
-      return false
-    }
-    let exportRoot = documentsDirectory
-      .appendingPathComponent("generated_exports", isDirectory: true)
-      .resolvingSymlinksInPath()
-      .standardizedFileURL
-    let rootPath = exportRoot.path.hasSuffix("/")
-      ? exportRoot.path
-      : exportRoot.path + "/"
-    return url.isFileURL &&
-      url.path.hasPrefix(rootPath) &&
-      FileManager.default.fileExists(atPath: url.path)
   }
 
   func documentPicker(
     _ controller: UIDocumentPickerViewController,
     didPickDocumentsAt urls: [URL]
   ) {
-    let result = pendingExportSaveResult
-    pendingExportSaveResult = nil
-    result?(urls.isEmpty ? "unavailable" : "completed")
+    let pending = pendingExportSave
+    pendingExportSave = nil
+    pending?.copy.remove()
+    pending?.result(urls.isEmpty ? "unavailable" : "completed")
   }
 
   func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
-    let result = pendingExportSaveResult
-    pendingExportSaveResult = nil
-    result?("dismissed")
+    let pending = pendingExportSave
+    pendingExportSave = nil
+    pending?.copy.remove()
+    pending?.result("dismissed")
   }
 
   private func previewSupportingAttachment(_ url: URL) -> Bool {
     let candidate = url.resolvingSymlinksInPath().standardizedFileURL
     guard isSupportingAttachmentPayload(candidate),
-          let presenter = activeViewController() else {
+          activeViewController() != nil else {
       return false
     }
     let controller = UIDocumentInteractionController(url: candidate)

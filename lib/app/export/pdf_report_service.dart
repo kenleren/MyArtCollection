@@ -1,3 +1,6 @@
+import 'dart:io';
+
+import 'package:crypto/crypto.dart';
 import 'package:flutter/services.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
@@ -16,6 +19,7 @@ class PdfReportService {
     required this.artifactStore,
     this.clock = DateTime.now,
     Future<ByteData> Function(String asset)? fontLoader,
+    this.imageBytesReaderForTest,
   }) : fontLoader = fontLoader ?? rootBundle.load;
 
   static const _maxEmbeddedImageBytes = 20 * 1024 * 1024;
@@ -25,6 +29,7 @@ class PdfReportService {
   final ExportArtifactStore artifactStore;
   final DateTime Function() clock;
   final Future<ByteData> Function(String asset) fontLoader;
+  final Future<Uint8List> Function(File file)? imageBytesReaderForTest;
 
   Future<ExportArtifact> generate(
     String artworkId, {
@@ -66,20 +71,35 @@ class PdfReportService {
           completed++;
           continue;
         }
-        final status = await attachmentStore.payloadStatus(attachment);
-        if (status != AttachmentPayloadStatus.available) {
+        final file = attachmentStore.fileFor(attachment);
+        final stat = await file.stat();
+        if (await FileSystemEntity.type(file.path, followLinks: false) !=
+                FileSystemEntityType.file ||
+            stat.type != FileSystemEntityType.file) {
           warnings.add('A listed image was unavailable and was not embedded.');
           completed++;
           continue;
         }
-        if (embeddedBytes + attachment.fileSizeBytes > _maxEmbeddedImageBytes) {
+        if (stat.size != attachment.fileSizeBytes) {
+          throw const ExportIntegrityException(
+            'A report image changed while it was being prepared. Please retry.',
+          );
+        }
+        if (embeddedBytes + stat.size > _maxEmbeddedImageBytes) {
           warnings.add(
             'Some available images were not embedded to keep the report size bounded.',
           );
           completed++;
           continue;
         }
-        final bytes = await attachmentStore.fileFor(attachment).readAsBytes();
+        final bytes =
+            await (imageBytesReaderForTest?.call(file) ?? file.readAsBytes());
+        if (bytes.length != attachment.fileSizeBytes ||
+            sha256.convert(bytes).toString() != attachment.checksum) {
+          throw const ExportIntegrityException(
+            'A report image changed while its exact bytes were being consumed. Please retry.',
+          );
+        }
         embeddedBytes += bytes.length;
         images.add(_ReportImage(attachment: attachment, bytes: bytes));
         completed++;

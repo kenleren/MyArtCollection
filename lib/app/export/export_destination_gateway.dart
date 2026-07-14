@@ -5,22 +5,16 @@ import 'package:flutter/services.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:share_plus/share_plus.dart';
 
+import 'export_artifact_store.dart';
+
 enum ExportDestinationResult { completed, dismissed, unavailable }
 
 abstract interface class ExportDestinationGateway {
-  Future<ExportDestinationResult> open(File file);
+  Future<ExportDestinationResult> open(ExportArtifact artifact);
 
-  Future<ExportDestinationResult> saveCopy(
-    File file, {
-    required String suggestedName,
-    required String mimeType,
-  });
+  Future<ExportDestinationResult> saveCopy(ExportArtifact artifact);
 
-  Future<ExportDestinationResult> share(
-    File file, {
-    required String displayName,
-    required String mimeType,
-  });
+  Future<ExportDestinationResult> share(ExportArtifact artifact);
 }
 
 class SystemExportDestinationGateway implements ExportDestinationGateway {
@@ -35,27 +29,27 @@ class SystemExportDestinationGateway implements ExportDestinationGateway {
   final bool? useNativeMobileSaveCopy;
 
   @override
-  Future<ExportDestinationResult> open(File file) async {
-    final result = await OpenFilex.open(file.path);
+  Future<ExportDestinationResult> open(ExportArtifact artifact) async {
+    final validated = await artifact.revalidate();
+    if (validated == null) return ExportDestinationResult.unavailable;
+    final result = await OpenFilex.open(validated.file.path);
     return result.type == ResultType.done
         ? ExportDestinationResult.completed
         : ExportDestinationResult.unavailable;
   }
 
   @override
-  Future<ExportDestinationResult> saveCopy(
-    File file, {
-    required String suggestedName,
-    required String mimeType,
-  }) async {
+  Future<ExportDestinationResult> saveCopy(ExportArtifact artifact) async {
+    final validated = await artifact.revalidate();
+    if (validated == null) return ExportDestinationResult.unavailable;
     final useNative =
         useNativeMobileSaveCopy ?? (Platform.isAndroid || Platform.isIOS);
     if (useNative) {
       try {
         final outcome = await saveCopyChannel.invokeMethod<String>('saveCopy', {
-          'sourcePath': file.path,
-          'suggestedName': suggestedName,
-          'mimeType': mimeType,
+          'sourcePath': validated.file.path,
+          'suggestedName': validated.displayName,
+          'mimeType': validated.mimeType,
         });
         return switch (outcome) {
           'completed' => ExportDestinationResult.completed,
@@ -68,26 +62,32 @@ class SystemExportDestinationGateway implements ExportDestinationGateway {
         return ExportDestinationResult.unavailable;
       }
     }
-    final location = await getSaveLocation(suggestedName: suggestedName);
+    final location = await getSaveLocation(
+      suggestedName: validated.displayName,
+    );
     if (location == null) return ExportDestinationResult.dismissed;
     await XFile(
-      file.path,
-      mimeType: mimeType,
-      name: suggestedName,
+      validated.file.path,
+      mimeType: validated.mimeType,
+      name: validated.displayName,
     ).saveTo(location.path);
     return ExportDestinationResult.completed;
   }
 
   @override
-  Future<ExportDestinationResult> share(
-    File file, {
-    required String displayName,
-    required String mimeType,
-  }) async {
+  Future<ExportDestinationResult> share(ExportArtifact artifact) async {
+    final validated = await artifact.revalidate();
+    if (validated == null) return ExportDestinationResult.unavailable;
     final result = await SharePlus.instance.share(
       ShareParams(
-        files: [XFile(file.path, mimeType: mimeType, name: displayName)],
-        fileNameOverrides: [displayName],
+        files: [
+          XFile(
+            validated.file.path,
+            mimeType: validated.mimeType,
+            name: validated.displayName,
+          ),
+        ],
+        fileNameOverrides: [validated.displayName],
       ),
     );
     return switch (result.status) {

@@ -1,9 +1,12 @@
 # Archivale Archive v1
 
 Archivale archive v1 is the portable, local collection export owned by issue
-#178. It is a ZIP file created in app-private storage and exposed only after the
-collector chooses Open, Save a copy, or Share. It is not a backup or restore
-format, and it is not encrypted.
+#178. The sole archive entry point is Settings; artwork and report screens do
+not offer collection export. The screen states before generation that the ZIP
+contains every local artwork record and every available original supporting
+file. It is created in app-private storage and exposed only after a separate,
+just-in-time confirmation for Open, Save a copy, or Share. It is not a backup
+or restore format, and it is not encrypted.
 
 ## Root manifest
 
@@ -93,13 +96,33 @@ omitted.
 
 ## Integrity and recovery
 
-Both outputs use a temporary app-private file and atomic completion. Cancelled
-or failed work deletes the temporary file. Archive payloads are checksum-checked
-before composition, immediately before they are added, and immediately after
-the streaming add. A collection
-change during generation fails closed and asks the collector to retry. Completed
-artifacts remain app-private and can be reopened after a dismissed native
-destination flow.
+Both outputs use randomized temporary app-private files and an exclusive
+single-winner commit. Cancelled, failed, or losing concurrent work deletes only
+its own temporary files. Archive payloads are read from one opened input stream;
+every ZIP encoder pass hashes the exact bytes it consumes and must match the
+indexed size and checksum. The completed ZIP is then streamed back through the
+v1 decoder, and its exact entry set, sizes, and checksums are validated before
+commit. Bounded report images are likewise sized and hashed from the exact byte
+buffer consumed by the PDF generator. Same-inode rewrite/restore races and
+path replacement fail closed. A collection change during generation asks the
+collector to retry.
+
+A completed payload becomes destination-eligible only beside a strict metadata
+record with these exact ordered fields:
+
+```text
+metadata_version, state, artifact_id, kind, subject_id, file_name, mime_type,
+byte_size, checksum_sha256, created_at, warnings
+```
+
+`metadata_version` is `1` and `state` is `complete`. Identity, kind, artwork
+scope for reports, normalized app-private geometry, filename, MIME type, size,
+SHA-256 checksum, canonical UTC timestamp, and warning types must all match.
+Legacy, partial, arbitrary, symlinked, malformed, or mutated files are never
+surfaced. Destination APIs accept only this store-issued capability and repeat
+the exact named-path, metadata, size, and checksum validation immediately
+before dispatch. Completed artifacts remain app-private and available after a
+dismissed destination flow.
 
 The v1 decoder rejects corrupt ZIP data, duplicate or unlisted entries,
 non-canonical paths/JSON, unknown or reordered fields, mismatched sizes or
@@ -107,12 +130,24 @@ checksums, invalid child-to-artwork links, and count mismatches. The golden,
 round-trip, large-collection, corruption, TOCTOU, mid-flight cancellation, and
 atomic-failure tests are in `test/real_export_service_test.dart`.
 
-On Android, Save a copy uses the system `ACTION_CREATE_DOCUMENT` flow and
-writes only to its returned URI. On iOS, it uses a document picker export copy.
-Both native bridges accept only existing files under the app-private
-`generated_exports` root and only PDF/ZIP MIME types. Deterministic bridge and
-policy tests prove request, byte-copy, dismissal, and failure semantics; they
-are not physical Pixel or iPhone evidence.
+On Android, Save a copy opens the payload and sidecar with `O_NOFOLLOW` before
+launching the system `ACTION_CREATE_DOCUMENT` flow. Strict native policy derives
+the name and MIME type from validated metadata, retains the payload descriptor
+across the picker, revalidates that descriptor after picker return, and hashes
+the same descriptor while copying to the returned URI. A changed source fails
+closed and the bridge attempts to remove or truncate the provider destination.
+
+On iOS, strict native policy opens the committed payload and sidecar with
+`O_NOFOLLOW`, validates the same metadata contract, and copies the held payload
+descriptor into a call-local `0700` directory using an exclusive `0600` file.
+The document picker receives only that verified copy; it is removed on
+completion, cancellation, failure, or object teardown.
+
+Deterministic bridge/policy tests cover metadata, geometry, symlink, checksum,
+same-inode mutation, path replacement, concurrent collision, byte-copy,
+dismissal, and failure semantics. iPhone Simulator XCTest covers the iOS
+policy. Physical Pixel evidence is deferred to issue #228 and is not claimed as
+passed; physical iPhone destination interaction also remains unverified.
 
 Any incompatible root, manifest, path, or PDF semantics change requires a
 versioned successor. The #179 attachment subsection cannot be changed by this
