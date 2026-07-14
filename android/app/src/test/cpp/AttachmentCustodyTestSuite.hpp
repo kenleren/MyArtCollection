@@ -233,7 +233,7 @@ inline std::string exclusive_publication_state_table_tests() {
     const auto state_paths = paths(root, operation);
     const Fingerprint claim_before = fingerprint(state_paths[3]);
     const Fingerprint payload_before = fingerprint(state_paths[4]);
-    for (const std::string& action : {"rollbackPublication", "cleanupPublication"}) {
+    for (const std::string action : {"rollbackPublication", "cleanupPublication"}) {
       const auto blocked = call(root, action, {}, operation, "artwork-001",
                                 "attachment-001", "payload.pdf");
       if (blocked.outcome != "publicationPending" ||
@@ -249,7 +249,7 @@ inline std::string exclusive_publication_state_table_tests() {
     fs::remove_all(root);
   }
 
-  for (const std::string& legacy : {"descriptor-stage", "descriptor-claim", "payload-claim"}) {
+  for (const std::string legacy : {"descriptor-stage", "descriptor-claim", "payload-claim"}) {
     const fs::path root = unique_path("archivale-exclusive-legacy-");
     const std::string operation = "legacy-" + legacy;
     const std::string point = legacy == "descriptor-stage" ? "publish.afterIntentFileFsync"
@@ -293,7 +293,7 @@ inline std::string exclusive_publication_state_table_tests() {
 }
 
 inline std::string exclusive_durability_retry_tests() {
-  for (const std::string& point : {"publish.claimSourceFsync",
+  for (const std::string point : {"publish.claimSourceFsync",
                                    "publish.payloadSourceFsync",
                                    "publish.commitDirectoryFsync"}) {
     const fs::path root = unique_path("archivale-exclusive-fsync-retry-");
