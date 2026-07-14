@@ -110,6 +110,7 @@ jobs:
         run: bash test/attachment_native_viewer_policy_test.sh
       - name: Test native attachment custody crash and race contracts
         run: |
+          bash test/attachment_custody_instrumentation_contract_test.sh
           bash test/attachment_custody_native_test.sh
           ATTACHMENT_CUSTODY_SANITIZERS=address,undefined bash test/attachment_custody_native_test.sh
           ATTACHMENT_CUSTODY_SANITIZERS=thread bash test/attachment_custody_native_test.sh

@@ -56,10 +56,10 @@ class AttachmentCustodyInstrumentation : Instrumentation() {
                 setUpHarness()
                 testCapabilitiesAndCrashRecoveryUseShippingJni()
                 testConcurrencyAndCollisionPreserveWinnerThroughShippingJni()
-                testRepeatedLeafAndIntermediateSwapRacesPreserveSentinelThroughShippingJni()
+                testRepeatedLeafAndIntermediateSwapRacesPreserveOutsideTargetsThroughShippingJni()
                 results.putString(
                     "stream",
-                    "PASS capabilities/crash/concurrency/collision; leaf=40x20; intermediate=40x20; sentinel identity/bytes/SHA-256 unchanged\n",
+                    "PASS capabilities/crash/concurrency/collision; leaf=40x20; intermediate=40x20; outside targets exist with identity/bytes/SHA-256 unchanged\n",
                 )
                 Activity.RESULT_OK
             } catch (error: Throwable) {
@@ -187,17 +187,17 @@ class AttachmentCustodyInstrumentation : Instrumentation() {
         }
     }
 
-    private fun testRepeatedLeafAndIntermediateSwapRacesPreserveSentinelThroughShippingJni() {
+    private fun testRepeatedLeafAndIntermediateSwapRacesPreserveOutsideTargetsThroughShippingJni() {
         withTestDirectory { parent ->
-            val sentinel = File(parent, "outside-sentinel").apply {
+            val leafSentinel = File(parent, "outside-leaf-sentinel").apply {
                 writeText("outside-root-sentinel-with-stable-identity")
             }
-            val expected = fingerprint(sentinel)
+            val expectedLeafSentinel = fingerprint(leafSentinel)
             repeat(RACE_REPETITIONS) { iteration ->
-                runLeafRace(parent, sentinel, expected, iteration)
+                runLeafRace(parent, leafSentinel, expectedLeafSentinel, iteration)
             }
             repeat(RACE_REPETITIONS) { iteration ->
-                runIntermediateRace(parent, sentinel, expected, iteration)
+                runIntermediateRace(parent, iteration)
             }
         }
     }
@@ -266,8 +266,6 @@ class AttachmentCustodyInstrumentation : Instrumentation() {
 
     private fun runIntermediateRace(
         parent: File,
-        sentinel: File,
-        expected: Fingerprint,
         iteration: Int,
     ) {
         val root = File(parent, "intermediate-root-$iteration").apply { mkdirs() }
@@ -290,7 +288,10 @@ class AttachmentCustodyInstrumentation : Instrumentation() {
         val attachment = File(attachmentParent, "attachment-001")
         val held = File(attachmentParent, "attachment-held")
         val outside = File(parent, "outside-directory-$iteration").apply { mkdirs() }
-        File(outside, "payload.pdf").writeText("outside-replacement-$iteration")
+        val outsidePayload = File(outside, "payload.pdf").apply {
+            writeText("outside-replacement-$iteration")
+        }
+        val expectedOutsidePayload = fingerprint(outsidePayload)
         val stop = AtomicBoolean(false)
         val attacker = Thread {
             while (!stop.get()) {
@@ -310,20 +311,20 @@ class AttachmentCustodyInstrumentation : Instrumentation() {
                     attachmentId = "attachment-001",
                     canonicalName = "payload.pdf",
                 )
-                requireEquals(
-                    expected,
-                    fingerprint(sentinel),
-                    "intermediate iteration=$iteration attempt=$attempt changed sentinel",
+                requireExistingFingerprint(
+                    expectedOutsidePayload,
+                    outsidePayload,
+                    "intermediate iteration=$iteration attempt=$attempt changed outside payload",
                 )
             }
         } finally {
             stop.set(true)
             attacker.join()
         }
-        requireEquals(
-            expected,
-            fingerprint(sentinel),
-            "intermediate iteration=$iteration changed sentinel after join",
+        requireExistingFingerprint(
+            expectedOutsidePayload,
+            outsidePayload,
+            "intermediate iteration=$iteration changed outside payload after join",
         )
         removeTree(root)
         source.delete()
@@ -360,6 +361,11 @@ class AttachmentCustodyInstrumentation : Instrumentation() {
 
     private fun requireEquals(expected: Fingerprint, actual: Fingerprint, message: String) {
         check(expected == actual) { message }
+    }
+
+    private fun requireExistingFingerprint(expected: Fingerprint, file: File, message: String) {
+        check(file.exists()) { "$message: exact target does not exist" }
+        requireEquals(expected, fingerprint(file), message)
     }
 
     private fun fingerprint(file: File): Fingerprint {
