@@ -108,6 +108,12 @@ jobs:
           bash test/gradle_wrapper_validation_test.sh
       - name: Validate native attachment viewer policy
         run: bash test/attachment_native_viewer_policy_test.sh
+      - name: Test native attachment custody crash and race contracts
+        run: |
+          bash test/attachment_custody_native_test.sh
+          ATTACHMENT_CUSTODY_SANITIZERS=address,undefined bash test/attachment_custody_native_test.sh
+          ATTACHMENT_CUSTODY_SANITIZERS=thread bash test/attachment_custody_native_test.sh
+          bash test/attachment_custody_release_symbol_test.sh
       - name: Set up Temurin Java
         uses: actions/setup-java@0f481fcb613427c0f801b606911222b5b6f3083a
         with:
@@ -132,6 +138,24 @@ jobs:
         run: flutter pub get --enforce-lockfile
       - name: Build a secret-free debug APK
         run: flutter build apk --debug --no-pub
+      - name: Prove attachment custody release hooks are absent
+        shell: bash
+        run: |
+          set -euo pipefail
+          (
+            cd android
+            java -Dorg.gradle.appname=gradlew \
+              -classpath gradle/wrapper/gradle-wrapper.jar \
+              org.gradle.wrapper.GradleWrapperMain \
+              :app:externalNativeBuildRelease
+          )
+          mapfile -t custody_libraries < <(
+            find build/app/intermediates/cxx/release \
+              -name libattachment_custody.so \
+              -type f
+          )
+          test "${#custody_libraries[@]}" -gt 0
+          bash test/attachment_custody_release_symbol_test.sh "${custody_libraries[@]}"
       - name: Test Android attachment viewer policy
         working-directory: android
         run: >-
