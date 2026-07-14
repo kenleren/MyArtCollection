@@ -1,5 +1,6 @@
 package app.archivale
 
+import android.app.Activity
 import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
@@ -30,8 +31,13 @@ import org.json.JSONObject
 import java.io.File
 
 class MainActivity : FlutterActivity() {
+    private companion object {
+        const val CREATE_EXPORT_DOCUMENT_REQUEST = 47178
+    }
+
     private val onDeviceAiScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var onDeviceAiProvider: MlKitPromptOnDeviceAiProvider? = null
+    private var pendingExportSave: PendingExportSave? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -122,9 +128,91 @@ class MainActivity : FlutterActivity() {
                 uri != null && mimeType != null && openSupportingAttachment(uri, mimeType),
             )
         }
+
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            "app.archivale/export_destination",
+        ).setMethodCallHandler { call, result ->
+            if (call.method != "saveCopy") {
+                result.notImplemented()
+                return@setMethodCallHandler
+            }
+            val sourcePath = call.argument<String>("sourcePath")
+            val suggestedName = call.argument<String>("suggestedName")
+            val mimeType = call.argument<String>("mimeType")
+            if (
+                sourcePath == null ||
+                suggestedName == null ||
+                mimeType == null ||
+                !ExportSaveCopyPolicy.isSafeSuggestedName(suggestedName) ||
+                !ExportSaveCopyPolicy.isAllowedMimeType(mimeType)
+            ) {
+                result.success("unavailable")
+                return@setMethodCallHandler
+            }
+            val sourceFile = File(sourcePath)
+            val applicationDocumentsDirectory = getDir("flutter", Context.MODE_PRIVATE)
+            if (
+                pendingExportSave != null ||
+                !ExportSaveCopyPolicy.isGeneratedExport(
+                    sourceFile,
+                    applicationDocumentsDirectory,
+                )
+            ) {
+                result.success("unavailable")
+                return@setMethodCallHandler
+            }
+            val createIntent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+                addCategory(Intent.CATEGORY_OPENABLE)
+                type = mimeType
+                putExtra(Intent.EXTRA_TITLE, suggestedName)
+            }
+            try {
+                pendingExportSave = PendingExportSave(sourceFile, result)
+                startActivityForResult(createIntent, CREATE_EXPORT_DOCUMENT_REQUEST)
+            } catch (_: ActivityNotFoundException) {
+                pendingExportSave = null
+                result.success("unavailable")
+            } catch (_: SecurityException) {
+                pendingExportSave = null
+                result.success("unavailable")
+            }
+        }
+    }
+
+    @Deprecated("Activity result callback is required for ACTION_CREATE_DOCUMENT.")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        if (requestCode != CREATE_EXPORT_DOCUMENT_REQUEST) {
+            super.onActivityResult(requestCode, resultCode, data)
+            return
+        }
+        val pending = pendingExportSave
+        pendingExportSave = null
+        if (pending == null) return
+        val destination = data?.data
+        if (resultCode != Activity.RESULT_OK || destination == null) {
+            pending.result.success("dismissed")
+            return
+        }
+        val completed = try {
+            val output = contentResolver.openOutputStream(destination, "w")
+            if (output == null) {
+                false
+            } else {
+                pending.source.inputStream().use { source ->
+                    output.use { ExportSaveCopyPolicy.copy(source, it) }
+                }
+                true
+            }
+        } catch (_: Exception) {
+            false
+        }
+        pending.result.success(if (completed) "completed" else "unavailable")
     }
 
     override fun onDestroy() {
+        pendingExportSave?.result?.success("unavailable")
+        pendingExportSave = null
         onDeviceAiProvider?.close()
         onDeviceAiScope.cancel()
         super.onDestroy()
@@ -177,6 +265,11 @@ class MainActivity : FlutterActivity() {
         )
     }
 }
+
+private data class PendingExportSave(
+    val source: File,
+    val result: MethodChannel.Result,
+)
 
 private class MlKitPromptOnDeviceAiProvider(
     private val scope: CoroutineScope,

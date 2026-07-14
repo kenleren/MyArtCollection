@@ -521,6 +521,7 @@ void main() {
       await tester.tap(find.byTooltip('Confirm external reference'));
       await _pumpLiveData(tester);
       await _scrollToPanel(tester);
+      await _waitForFinder(tester, find.text('Confirmed by you'));
       expect(find.text('Confirmed by you'), findsOneWidget);
       expect(find.text('https://example.com/suggested'), findsOneWidget);
       await _capture(

@@ -3000,7 +3000,10 @@ class _ExportWorkflowPanelState extends State<ExportWorkflowPanel> {
     final dependencies = _maybeDependencies(context);
     final store = dependencies?.exportArtifactStore;
     if (store == null) return;
-    final artifact = await store.latest(widget.kind);
+    final artifact = await store.latest(
+      widget.kind,
+      subjectId: _isReport ? widget.artworkId : null,
+    );
     if (mounted && artifact != null) setState(() => _artifact = artifact);
   }
 

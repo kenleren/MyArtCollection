@@ -132,7 +132,7 @@ jobs:
         run: flutter pub get --enforce-lockfile
       - name: Build a secret-free debug APK
         run: flutter build apk --debug --no-pub
-      - name: Test Android attachment viewer policy
+      - name: Test Android private-file destination policies
         working-directory: android
         run: >-
           java -Dorg.gradle.appname=gradlew
@@ -140,6 +140,7 @@ jobs:
           org.gradle.wrapper.GradleWrapperMain
           :app:testDebugUnitTest
           --tests app.archivale.AttachmentViewerPolicyTest
+          --tests app.archivale.ExportSaveCopyPolicyTest
 
   backend-and-audit:
     name: Backend and audit policy

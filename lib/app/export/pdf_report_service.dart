@@ -1,5 +1,4 @@
-import 'dart:typed_data';
-
+import 'package:flutter/services.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 
@@ -16,7 +15,8 @@ class PdfReportService {
     required this.attachmentStore,
     required this.artifactStore,
     this.clock = DateTime.now,
-  });
+    Future<ByteData> Function(String asset)? fontLoader,
+  }) : fontLoader = fontLoader ?? rootBundle.load;
 
   static const _maxEmbeddedImageBytes = 20 * 1024 * 1024;
 
@@ -24,6 +24,7 @@ class PdfReportService {
   final LocalAttachmentStore attachmentStore;
   final ExportArtifactStore artifactStore;
   final DateTime Function() clock;
+  final Future<ByteData> Function(String asset) fontLoader;
 
   Future<ExportArtifact> generate(
     String artworkId, {
@@ -32,7 +33,7 @@ class PdfReportService {
   }) async {
     final token = cancellationToken ?? ExportCancellationToken();
     final createdAt = clock().toUtc();
-    final id = 'report-${createdAt.microsecondsSinceEpoch}';
+    final id = ExportArtifactStore.reportId(artworkId, createdAt);
     final staging = await artifactStore.stagingFile(
       ExportArtifactKind.report,
       id,
@@ -92,7 +93,7 @@ class PdfReportService {
         );
       }
       token.throwIfCancelled();
-      final document = _buildDocument(
+      final document = await _buildDocument(
         record: record,
         attachments: attachments,
         images: images,
@@ -127,6 +128,7 @@ class PdfReportService {
         staging: staging,
         createdAt: createdAt,
         warnings: warnings.toSet().toList(),
+        subjectId: artworkId,
       );
     } on Object {
       await artifactStore.discard(staging);
@@ -134,20 +136,27 @@ class PdfReportService {
     }
   }
 
-  pw.Document _buildDocument({
+  Future<pw.Document> _buildDocument({
     required ArtworkRecord record,
     required List<AttachmentRecord> attachments,
     required List<_ReportImage> images,
     required DateTime createdAt,
     required List<String> warnings,
-  }) {
+  }) async {
     final confirmedFields = confirmedFieldsForReport(record);
     final title =
         record.field(ArtworkFieldKeys.title)?.source ==
             ArtworkFieldSource.userConfirmed
         ? record.field(ArtworkFieldKeys.title)!.value
         : 'Untitled artwork record';
+    final regularFont = pw.Font.ttf(
+      await fontLoader('assets/fonts/Roboto-Regular.ttf'),
+    );
+    final boldFont = pw.Font.ttf(
+      await fontLoader('assets/fonts/Roboto-Bold.ttf'),
+    );
     final document = pw.Document(
+      theme: pw.ThemeData.withFont(base: regularFont, bold: boldFont),
       title: 'Archivale collector report - ${_pdfSafeText(title)}',
       author: 'Archivale',
       subject: 'Private collector record',
@@ -223,7 +232,7 @@ class PdfReportService {
             for (final attachment in attachments)
               pw.Bullet(
                 text:
-                    '${_attachmentLabel(attachment)} — ${attachment.lifecycleStatus.storageValue}',
+                    '${_attachmentLabel(attachment)} — Source: ${attachment.source.label} — ${attachment.lifecycleStatus.storageValue}',
               ),
           if (warnings.isNotEmpty) ...[
             pw.SizedBox(height: 14),
@@ -321,12 +330,8 @@ String _attachmentFingerprint(List<AttachmentRecord> records) {
 String _pdfSafeText(String value) {
   final output = StringBuffer();
   for (final rune in value.runes) {
-    if (rune >= 0x20 && rune <= 0x7e) {
+    if (rune == 0x0a || rune == 0x0d || rune == 0x09 || rune >= 0x20) {
       output.writeCharCode(rune);
-    } else if (rune <= 0xffff) {
-      output.write('\\u${rune.toRadixString(16).padLeft(4, '0')}');
-    } else {
-      output.write('\\U${rune.toRadixString(16).padLeft(8, '0')}');
     }
   }
   return output.toString();

@@ -8,6 +8,7 @@ android_paths="$repo_root/android/app/src/main/res/xml/filepaths.xml"
 android_manifest="$repo_root/android/app/src/main/AndroidManifest.xml"
 ios_delegate="$repo_root/ios/Runner/AppDelegate.swift"
 android_policy="$repo_root/android/app/src/main/kotlin/app/archivale/AttachmentViewerPolicy.kt"
+android_export_policy="$repo_root/android/app/src/main/kotlin/app/archivale/ExportSaveCopyPolicy.kt"
 release_workflow="$repo_root/.github/workflows/release-readiness.yml"
 
 grep -F 'path="../app_flutter/attachments/artworks/"' "$android_paths"
@@ -37,6 +38,7 @@ fi
 grep -F 'bash test/attachment_native_viewer_policy_test.sh' "$release_workflow"
 grep -F ':app:testDebugUnitTest' "$release_workflow"
 grep -F -- '--tests app.archivale.AttachmentViewerPolicyTest' "$release_workflow"
+grep -F -- '--tests app.archivale.ExportSaveCopyPolicyTest' "$release_workflow"
 if grep -F '<root-path' "$android_paths"; then
   echo "Android FileProvider must not expose a broad filesystem root." >&2
   exit 1
@@ -48,3 +50,15 @@ fi
 grep -F 'url.resolvingSymlinksInPath().standardizedFileURL' "$ios_delegate"
 grep -F 'appendingPathComponent("attachments/artworks", isDirectory: true)' "$ios_delegate"
 grep -F 'url.path.hasPrefix(rootPath)' "$ios_delegate"
+grep -F 'Intent(Intent.ACTION_CREATE_DOCUMENT)' "$android_activity"
+grep -F 'putExtra(Intent.EXTRA_TITLE, suggestedName)' "$android_activity"
+grep -F 'contentResolver.openOutputStream(destination, "w")' "$android_activity"
+grep -F 'File(applicationDocumentsDirectory, "generated_exports").canonicalFile' "$android_export_policy"
+grep -F 'ExportSaveCopyPolicy.copy(source, it)' "$android_activity"
+grep -F 'UIDocumentPickerViewController(' "$ios_delegate"
+grep -F 'forExporting: [candidate]' "$ios_delegate"
+grep -F 'appendingPathComponent("generated_exports", isDirectory: true)' "$ios_delegate"
+if grep -F -e 'READ_EXTERNAL_STORAGE' -e 'WRITE_EXTERNAL_STORAGE' -e 'MANAGE_EXTERNAL_STORAGE' "$android_manifest"; then
+  echo "Export save must not request broad storage permissions." >&2
+  exit 1
+fi

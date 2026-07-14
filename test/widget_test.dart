@@ -1796,6 +1796,7 @@ void main() {
       find.widgetWithText(FilledButton, 'Add to collection'),
     );
 
+    await waitForFinder(tester, find.text('Import ready for review'));
     expect(find.text('Import ready for review'), findsOneWidget);
     final records = await tester.runAsync(fixture.repository.list);
     expect(records, hasLength(6));

@@ -12,6 +12,7 @@ import '../storage/local_artwork_repository.dart';
 import '../storage/local_attachment_store.dart';
 import 'export_artifact_store.dart';
 import 'external_reference_export_codec.dart';
+import 'archive_v1_codec.dart';
 
 class ExportCancelledException implements Exception {
   const ExportCancelledException();
@@ -57,8 +58,8 @@ class ArchiveExportService {
     this.clock = DateTime.now,
   });
 
-  static const contract = 'ARCHIVALE_ARCHIVE_V1';
-  static const version = 1;
+  static const contract = ArchivaleArchiveV1Codec.archiveContract;
+  static const version = ArchivaleArchiveV1Codec.version;
 
   final LocalArtworkRepository repository;
   final LocalAttachmentStore attachmentStore;
@@ -93,8 +94,8 @@ class ArchiveExportService {
         0,
         (sum, item) => sum + item.record.fileSizeBytes,
       );
-      final artworksJson = _canonicalJson(
-        snapshot.artworks.map(_artworkJson).toList(growable: false),
+      final artworksJson = const ArchivaleArchiveV1Codec().encodeArtworks(
+        snapshot.artworks,
       );
       final externalReferences = const ExternalReferenceExportCodec()
           .encodeSectionValue(snapshot.externalReferences);
@@ -104,7 +105,7 @@ class ArchiveExportService {
       };
       final warnings = prepared.warningCodes;
       final contentFiles = <String, Uint8List>{
-        'records/artworks.json': _utf8(artworksJson),
+        'records/artworks.json': artworksJson,
         'records/external_references.json': _utf8(
           _canonicalJson(externalReferences),
         ),
@@ -187,6 +188,12 @@ class ArchiveExportService {
           );
         }
         await encoder.addFile(item.file, item.payloadPath);
+        final finalStatus = await attachmentStore.payloadStatus(item.record);
+        if (finalStatus != AttachmentPayloadStatus.available) {
+          throw const ExportIntegrityException(
+            'A supporting record changed while the archive was being written. Please retry.',
+          );
+        }
         bytesProcessed += item.record.fileSizeBytes;
         completed++;
         onProgress?.call(
