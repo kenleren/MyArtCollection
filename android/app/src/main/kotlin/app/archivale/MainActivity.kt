@@ -31,27 +31,6 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 
-private object AttachmentCustodyNative {
-    init {
-        System.loadLibrary("attachment_custody")
-    }
-
-    external fun execute(
-        flutterRoot: String,
-        operation: String,
-        sourcePath: String,
-        operationId: String,
-        artworkId: String,
-        attachmentId: String,
-        canonicalName: String,
-    ): String
-
-    external fun openExportPair(
-        flutterRoot: String,
-        sourcePath: String,
-    ): IntArray
-}
-
 class MainActivity : FlutterActivity() {
     private companion object {
         const val CREATE_EXPORT_DOCUMENT_REQUEST = 47178
@@ -218,8 +197,8 @@ class MainActivity : FlutterActivity() {
                     arguments["artworkId"] as? String ?: "",
                     arguments["attachmentId"] as? String ?: "",
                     arguments["canonicalName"] as? String ?: "",
-                )
-            } catch (_: UnsatisfiedLinkError) {
+                ) ?: "{\"outcome\":\"unsupported\",\"detail\":\"Native attachment custody is unavailable.\"}"
+            } catch (_: LinkageError) {
                 "{\"outcome\":\"unsupported\",\"detail\":\"Native attachment custody is unavailable.\"}"
             } catch (_: Exception) {
                 "{\"outcome\":\"ioFailure\",\"detail\":\"Native attachment custody failed.\"}"
@@ -348,7 +327,7 @@ class MainActivity : FlutterActivity() {
             }.also { validated ->
                 if (validated == null) payload.close()
             }
-        } catch (_: UnsatisfiedLinkError) {
+        } catch (_: LinkageError) {
             try {
                 payload?.close()
             } catch (_: Exception) {

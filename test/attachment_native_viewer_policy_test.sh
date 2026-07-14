@@ -39,6 +39,7 @@ fi
 grep -F 'bash test/attachment_native_viewer_policy_test.sh' "$release_workflow"
 grep -F ':app:testDebugUnitTest' "$release_workflow"
 grep -F -- '--tests app.archivale.AttachmentViewerPolicyTest' "$release_workflow"
+grep -F -- '--tests app.archivale.AttachmentCustodyNativeAccessTest' "$release_workflow"
 grep -F -- '--tests app.archivale.ExportSaveCopyPolicyTest' "$release_workflow"
 grep -F -- '--tests app.archivale.ExportSaveCallbackPolicyTest' "$release_workflow"
 if grep -F '<root-path' "$android_paths"; then
@@ -57,6 +58,8 @@ grep -F 'putExtra(Intent.EXTRA_TITLE, source.metadata.fileName)' "$android_activ
 grep -F 'contentResolver.openOutputStream(requireNotNull(destination), "w")' "$android_activity"
 grep -F 'ExportSaveCopyPolicy.openValidated(' "$android_activity"
 grep -F 'AttachmentCustodyNative.openExportPair(' "$android_activity"
+grep -F 'catch (_: LinkageError)' "$android_activity"
+grep -F 'catch (_: LinkageError)' "$repo_root/android/app/src/main/kotlin/app/archivale/AttachmentCustodyNativeAccess.kt"
 grep -F 'ParcelFileDescriptor.adoptFd(' "$android_activity"
 grep -F 'pending.source.revalidateAndCopy(it)' "$android_activity"
 grep -F 'ExportSaveCallbackPolicy.complete(' "$android_activity"

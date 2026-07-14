@@ -2423,7 +2423,7 @@ std::string from_jstring(JNIEnv* env, jstring value) {
 }  // namespace
 
 extern "C" JNIEXPORT jstring JNICALL
-Java_app_archivale_AttachmentCustodyNative_execute(
+Java_app_archivale_AttachmentCustodyJni_execute(
     JNIEnv* env, jobject, jstring root, jstring operation, jstring source,
     jstring operation_id, jstring artwork, jstring attachment, jstring name) {
   const auto output = custody::to_json(custody::execute(
@@ -2434,7 +2434,7 @@ Java_app_archivale_AttachmentCustodyNative_execute(
 }
 
 extern "C" JNIEXPORT jintArray JNICALL
-Java_app_archivale_AttachmentCustodyNative_openExportPair(
+Java_app_archivale_AttachmentCustodyJni_openExportPair(
     JNIEnv* env, jobject, jstring root, jstring source) {
   auto pair = custody::open_export_pair(from_jstring(env, root), from_jstring(env, source));
   const jsize size = pair.valid() ? 2 : 0;

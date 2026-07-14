@@ -172,6 +172,7 @@ jobs:
           org.gradle.wrapper.GradleWrapperMain
           :app:testDebugUnitTest
           --tests app.archivale.AttachmentViewerPolicyTest
+          --tests app.archivale.AttachmentCustodyNativeAccessTest
           --tests app.archivale.ExportSaveCopyPolicyTest
           --tests app.archivale.ExportSaveCallbackPolicyTest
 
