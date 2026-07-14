@@ -3,6 +3,7 @@ package app.archivale
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileInputStream
+import java.io.OutputStream
 import java.nio.file.Files
 import java.security.MessageDigest
 import org.json.JSONObject
@@ -79,6 +80,30 @@ class ExportSaveCopyPolicyTest {
         metadata.writeText(original)
         report.writeBytes(byteArrayOf(9, 9, 9))
         assertNull(validate(report))
+    }
+
+    @Test
+    fun rejectsImpossibleAndNonCanonicalUtcTimestamps() {
+        val report = committedReport()
+        val metadata = File("${report.path}.json")
+        val original = JSONObject(metadata.readText())
+        val invalid = listOf(
+            "2026-99-14T09:00:00.000Z",
+            "2026-02-30T09:00:00.000Z",
+            "2026-07-14T24:00:00.000Z",
+            "2026-07-14T09:60:00.000Z",
+            "2026-07-14T09:00:00+00:00",
+            "2026-07-14T09:00:00Z",
+            "2026-07-14T09:00:00.123000Z",
+            "2026-07-14T09:00:00.000000Z",
+            "2026-07-14T09:00:00.0000000Z",
+        )
+        for (value in invalid) {
+            metadata.writeText(JSONObject(original.toString()).put("created_at", value).toString())
+            assertNull("Accepted invalid timestamp: $value", validate(report))
+        }
+        metadata.writeText(original.put("created_at", "2026-07-14T09:00:00.123456Z").toString())
+        assertNotNull(validate(report))
     }
 
     @Test
@@ -186,6 +211,80 @@ class ExportSaveCopyPolicyTest {
         }
         if (validated == null) payload.close()
         return validated
+    }
+}
+
+class ExportSaveCallbackPolicyTest {
+    @Test
+    fun cancellationNullDestinationAndDestroyCloseExactlyOnce() {
+        repeat(25) {
+            val dismissed = FakeExportSource()
+            val outcomes = mutableListOf<String>()
+            val pending = PendingExportSave(dismissed, outcomes::add)
+            ExportSaveCallbackPolicy.complete(pending, accepted = false, copy = {
+                throw AssertionError("copy must not run")
+            }, cleanup = {
+                throw AssertionError("cleanup must not run without a destination")
+            })
+            pending.finish("unavailable")
+            assertTrue(outcomes == listOf("dismissed"))
+            assertTrue(dismissed.closeCount == 1)
+        }
+
+        val destroyed = FakeExportSource()
+        val outcomes = mutableListOf<String>()
+        val pending = PendingExportSave(destroyed, outcomes::add)
+        pending.finish("unavailable")
+        pending.finish("dismissed")
+        assertTrue(outcomes == listOf("unavailable"))
+        assertTrue(destroyed.closeCount == 1)
+    }
+
+    @Test
+    fun providerFailureCleansDestinationAndClosesExactlyOnce() {
+        val source = FakeExportSource()
+        val outcomes = mutableListOf<String>()
+        var cleanupCount = 0
+        val pending = PendingExportSave(source, outcomes::add)
+        ExportSaveCallbackPolicy.complete(pending, accepted = true, copy = {
+            throw IllegalStateException("provider failed")
+        }, cleanup = {
+            cleanupCount += 1
+        })
+        assertTrue(outcomes == listOf("unavailable"))
+        assertTrue(cleanupCount == 1)
+        assertTrue(source.closeCount == 1)
+    }
+
+    @Test
+    fun successClosesExactlyOnceWithoutCleanup() {
+        val source = FakeExportSource()
+        val outcomes = mutableListOf<String>()
+        val pending = PendingExportSave(source, outcomes::add)
+        ExportSaveCallbackPolicy.complete(pending, accepted = true, copy = { true }, cleanup = {
+            throw AssertionError("successful copy must not be cleaned")
+        })
+        assertTrue(outcomes == listOf("completed"))
+        assertTrue(source.closeCount == 1)
+    }
+}
+
+private class FakeExportSource : ExportSaveSource {
+    override val metadata = ExportSaveCopyPolicy.CommittedExportMetadata(
+        artifactId = "archive-1",
+        kind = "archive",
+        subjectId = null,
+        fileName = "archive-1.zip",
+        mimeType = "application/zip",
+        byteSize = 1,
+        checksum = "0".repeat(64),
+    )
+    var closeCount = 0
+
+    override fun revalidateAndCopy(destination: OutputStream): Boolean = true
+
+    override fun close() {
+        closeCount += 1
     }
 }
 

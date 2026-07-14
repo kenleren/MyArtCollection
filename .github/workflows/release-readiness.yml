@@ -173,6 +173,7 @@ jobs:
           :app:testDebugUnitTest
           --tests app.archivale.AttachmentViewerPolicyTest
           --tests app.archivale.ExportSaveCopyPolicyTest
+          --tests app.archivale.ExportSaveCallbackPolicyTest
 
   backend-and-audit:
     name: Backend and audit policy

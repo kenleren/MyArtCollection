@@ -6,6 +6,8 @@ import java.io.InputStream
 import java.io.OutputStream
 import java.nio.file.Files
 import java.security.MessageDigest
+import java.time.Instant
+import java.time.format.DateTimeFormatterBuilder
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -99,7 +101,7 @@ internal object ExportSaveCopyPolicy {
         val checksum = value.opt("checksum_sha256") as? String ?: return null
         val createdAt = value.opt("created_at") as? String ?: return null
         val warnings = value.opt("warnings") as? JSONArray ?: return null
-        if (!canonicalUtc.matches(createdAt) || (0 until warnings.length()).any { warnings.opt(it) !is String }) {
+        if (!isCanonicalUtc(createdAt) || (0 until warnings.length()).any { warnings.opt(it) !is String }) {
             return null
         }
         val subjectValue = value.opt("subject_id")
@@ -141,6 +143,23 @@ internal object ExportSaveCopyPolicy {
         )
     }
 
+    private fun isCanonicalUtc(value: String): Boolean {
+        if (!canonicalUtc.matches(value)) return false
+        return try {
+            val instant = Instant.parse(value)
+            val fractionDigits = if (value.length == 24) 3 else 6
+            val precision = if (fractionDigits == 3) 1_000_000 else 1_000
+            (fractionDigits == 3 || instant.nano % 1_000_000 != 0) &&
+                instant.nano % precision == 0 &&
+                DateTimeFormatterBuilder()
+                    .appendInstant(fractionDigits)
+                    .toFormatter()
+                    .format(instant) == value
+        } catch (_: Exception) {
+            false
+        }
+    }
+
     private fun digest(input: InputStream): CopyDigest {
         val digest = MessageDigest.getInstance("SHA-256")
         val buffer = ByteArray(64 * 1024)
@@ -166,9 +185,9 @@ internal object ExportSaveCopyPolicy {
 
     internal class ValidatedExportSource(
         private val payload: FileInputStream,
-        val metadata: CommittedExportMetadata,
-    ) : AutoCloseable {
-        fun revalidateAndCopy(destination: OutputStream): Boolean {
+        override val metadata: CommittedExportMetadata,
+    ) : ExportSaveSource {
+        override fun revalidateAndCopy(destination: OutputStream): Boolean {
             return try {
                 payload.channel.position(0)
                 val beforeCopy = digest(payload)
@@ -202,6 +221,11 @@ internal object ExportSaveCopyPolicy {
     }
 
     private data class CopyDigest(val byteSize: Long, val checksum: String)
+}
+
+internal interface ExportSaveSource : AutoCloseable {
+    val metadata: ExportSaveCopyPolicy.CommittedExportMetadata
+    fun revalidateAndCopy(destination: OutputStream): Boolean
 }
 
 private fun ByteArray.toHex(): String = joinToString("") { byte -> "%02x".format(byte) }

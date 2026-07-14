@@ -146,6 +146,108 @@ class RunnerTests: XCTestCase {
     )
   }
 
+  func testIntermediateSourceAndTemporarySymlinksFailClosed() throws {
+    let bytes = Data([1, 2, 3])
+    let report = try committedReport(bytes: bytes)
+    let reports = report.deletingLastPathComponent()
+    let heldReports = reports.deletingLastPathComponent()
+      .appendingPathComponent("reports-held", isDirectory: true)
+    let outside = root.appendingPathComponent("outside", isDirectory: true)
+    try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
+    try FileManager.default.moveItem(at: reports, to: heldReports)
+    try FileManager.default.createSymbolicLink(at: reports, withDestinationURL: outside)
+    try bytes.write(to: outside.appendingPathComponent(report.lastPathComponent))
+    try FileManager.default.copyItem(
+      at: URL(fileURLWithPath: heldReports.appendingPathComponent(report.lastPathComponent).path + ".json"),
+      to: URL(fileURLWithPath: outside.appendingPathComponent(report.lastPathComponent).path + ".json")
+    )
+    let sentinel = try Data(contentsOf: outside.appendingPathComponent(report.lastPathComponent))
+    XCTAssertNil(
+      ExportArtifactPolicy.makePickerCopy(
+        sourcePath: report.path,
+        suggestedName: report.lastPathComponent,
+        mimeType: "application/pdf",
+        documentsDirectory: documents,
+        temporaryRoot: temporary
+      )
+    )
+    XCTAssertEqual(
+      try Data(contentsOf: outside.appendingPathComponent(report.lastPathComponent)),
+      sentinel
+    )
+
+    try FileManager.default.removeItem(at: reports)
+    try FileManager.default.moveItem(at: heldReports, to: reports)
+    let pickerRoot = temporary.appendingPathComponent(
+      "verified_export_picker",
+      isDirectory: true
+    )
+    let outsideTemporary = root.appendingPathComponent("outside-tmp", isDirectory: true)
+    try FileManager.default.createDirectory(
+      at: outsideTemporary,
+      withIntermediateDirectories: true
+    )
+    try FileManager.default.createSymbolicLink(
+      at: pickerRoot,
+      withDestinationURL: outsideTemporary
+    )
+    XCTAssertNil(
+      ExportArtifactPolicy.makePickerCopy(
+        sourcePath: report.path,
+        suggestedName: report.lastPathComponent,
+        mimeType: "application/pdf",
+        documentsDirectory: documents,
+        temporaryRoot: temporary
+      )
+    )
+    XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: outsideTemporary.path), [])
+  }
+
+  func testImpossibleAndNonCanonicalUtcTimestampsFailClosed() throws {
+    let report = try committedReport(bytes: Data([1, 2, 3]))
+    let metadataURL = URL(fileURLWithPath: report.path + ".json")
+    let original = try JSONSerialization.jsonObject(with: Data(contentsOf: metadataURL))
+      as! [String: Any]
+    let invalid = [
+      "2026-99-14T09:00:00.000Z",
+      "2026-02-30T09:00:00.000Z",
+      "2026-07-14T24:00:00.000Z",
+      "2026-07-14T09:60:00.000Z",
+      "2026-07-14T09:00:00+00:00",
+      "2026-07-14T09:00:00Z",
+      "2026-07-14T09:00:00.123000Z",
+      "2026-07-14T09:00:00.000000Z",
+      "2026-07-14T09:00:00.0000000Z",
+    ]
+    for value in invalid {
+      var metadata = original
+      metadata["created_at"] = value
+      try JSONSerialization.data(withJSONObject: metadata).write(to: metadataURL)
+      XCTAssertNil(
+        ExportArtifactPolicy.makePickerCopy(
+          sourcePath: report.path,
+          suggestedName: report.lastPathComponent,
+          mimeType: "application/pdf",
+          documentsDirectory: documents,
+          temporaryRoot: temporary
+        ),
+        "Accepted invalid timestamp: \(value)"
+      )
+    }
+    var valid = original
+    valid["created_at"] = "2026-07-14T09:00:00.123456Z"
+    try JSONSerialization.data(withJSONObject: valid).write(to: metadataURL)
+    XCTAssertNotNil(
+      ExportArtifactPolicy.makePickerCopy(
+        sourcePath: report.path,
+        suggestedName: report.lastPathComponent,
+        mimeType: "application/pdf",
+        documentsDirectory: documents,
+        temporaryRoot: temporary
+      )
+    )
+  }
+
   private func committedReport(bytes: Data) throws -> URL {
     let subjectId = "artwork-1"
     let subjectHash = SHA256.hash(data: Data(subjectId.utf8)).hex

@@ -130,24 +130,32 @@ checksums, invalid child-to-artwork links, and count mismatches. The golden,
 round-trip, large-collection, corruption, TOCTOU, mid-flight cancellation, and
 atomic-failure tests are in `test/real_export_service_test.dart`.
 
-On Android, Save a copy opens the payload and sidecar with `O_NOFOLLOW` before
-launching the system `ACTION_CREATE_DOCUMENT` flow. Strict native policy derives
-the name and MIME type from validated metadata, retains the payload descriptor
-across the picker, revalidates that descriptor after picker return, and hashes
-the same descriptor while copying to the returned URI. A changed source fails
-closed and the bridge attempts to remove or truncate the provider destination.
+On Android, Save a copy traverses from a held app-documents descriptor and opens
+every export parent, payload, and sidecar descriptor-relative with no-follow
+semantics before launching the system `ACTION_CREATE_DOCUMENT` flow. Named and
+opened inode identity, regular-file type, and single-link custody must match.
+Strict native policy derives the name and MIME type from semantically validated
+metadata, retains the payload descriptor across the picker, and closes it on
+every terminal success, failure, cancellation, null-destination, and teardown
+path. It revalidates and hashes that same descriptor while copying to the
+returned URI. A changed source fails closed and the bridge attempts to remove
+or truncate the provider destination.
 
-On iOS, strict native policy opens the committed payload and sidecar with
-`O_NOFOLLOW`, validates the same metadata contract, and copies the held payload
-descriptor into a call-local `0700` directory using an exclusive `0600` file.
-The document picker receives only that verified copy; it is removed on
-completion, cancellation, failure, or object teardown.
+On iOS, the shared native policy applies the same descriptor-relative parent,
+payload, sidecar, inode, and single-link checks. It validates the same semantic
+metadata contract and copies the held payload descriptor through held temporary
+root and call-local directory descriptors into an exclusive `0600` file. The
+document picker receives only that verified copy; descriptor-relative cleanup
+removes it on completion, cancellation, failure, or object teardown without
+following replacement ancestry.
 
-Deterministic bridge/policy tests cover metadata, geometry, symlink, checksum,
-same-inode mutation, path replacement, concurrent collision, byte-copy,
-dismissal, and failure semantics. iPhone Simulator XCTest covers the iOS
-policy. Physical Pixel evidence is deferred to issue #228 and is not claimed as
-passed; physical iPhone destination interaction also remains unverified.
+Deterministic bridge/policy tests cover metadata, semantic UTC timestamps,
+geometry, static and repeated intermediate/leaf symlink and swap races,
+hard-links, checksums, same-inode mutation, path replacement, concurrent
+collision, byte-copy, exact-once descriptor closure, dismissal, and failure
+semantics. iPhone Simulator XCTest covers the iOS policy. Physical Pixel
+evidence is deferred to issue #228 and is not claimed as passed; physical iPhone
+destination interaction also remains unverified.
 
 Any incompatible root, manifest, path, or PDF semantics change requires a
 versioned successor. The #179 attachment subsection cannot be changed by this

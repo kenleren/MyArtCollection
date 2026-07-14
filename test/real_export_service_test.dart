@@ -507,6 +507,47 @@ void main() {
   });
 
   test(
+    'artifact metadata requires a semantic canonical UTC timestamp',
+    () async {
+      final artifact = await ArchiveExportService(
+        repository: repository,
+        attachmentStore: attachmentStore,
+        artifactStore: artifactStore,
+        clock: () => DateTime.utc(2026, 7, 14, 9),
+      ).generate();
+      final metadataFile = File('${artifact.file.path}.json');
+      final original =
+          jsonDecode(await metadataFile.readAsString()) as Map<String, Object?>;
+      const invalid = [
+        '2026-99-14T09:00:00.000Z',
+        '2026-02-30T09:00:00.000Z',
+        '2026-07-14T24:00:00.000Z',
+        '2026-07-14T09:60:00.000Z',
+        '2026-07-14T09:00:00+00:00',
+        '2026-07-14T09:00:00Z',
+        '2026-07-14T09:00:00.123000Z',
+        '2026-07-14T09:00:00.000000Z',
+        '2026-07-14T09:00:00.0000000Z',
+      ];
+      for (final value in invalid) {
+        await metadataFile.writeAsString(
+          jsonEncode({...original, 'created_at': value}),
+          flush: true,
+        );
+        expect(await artifact.revalidate(), isNull, reason: value);
+      }
+
+      final microsecondArtifact = await ArchiveExportService(
+        repository: repository,
+        attachmentStore: attachmentStore,
+        artifactStore: artifactStore,
+        clock: () => DateTime.utc(2026, 7, 14, 9, 0, 1, 123, 456),
+      ).generate();
+      expect(await microsecondArtifact.revalidate(), isNotNull);
+    },
+  );
+
+  test(
     'latest rejects metadata, staging, arbitrary files, and symlinks',
     () async {
       final archiveDirectory = Directory(

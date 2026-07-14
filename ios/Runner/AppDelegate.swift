@@ -76,7 +76,8 @@ import UIKit
             suggestedName: suggestedName,
             mimeType: mimeType,
             documentsDirectory: documentsDirectory
-          ) else {
+          ),
+          pickerCopy.isReadyForPicker() else {
       result("unavailable")
       return
     }

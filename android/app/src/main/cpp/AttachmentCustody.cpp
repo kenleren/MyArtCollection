@@ -84,6 +84,7 @@ class Fd {
   }
   int get() const { return value_; }
   bool valid() const { return value_ >= 0; }
+  int release() { return std::exchange(value_, -1); }
 
  private:
   int value_;
@@ -216,6 +217,87 @@ Fd open_dir_at(int parent, const std::string& name, bool create, const char* syn
     return Fd();
   }
   return Fd(child);
+}
+
+struct ExportPair {
+  Fd payload;
+  Fd metadata;
+  ExportPair() : payload(-1), metadata(-1) {}
+  ExportPair(Fd payload_value, Fd metadata_value)
+      : payload(std::move(payload_value)), metadata(std::move(metadata_value)) {}
+  bool valid() const { return payload.valid() && metadata.valid(); }
+};
+
+bool directory_identity_matches(int parent, const std::string& name, int opened);
+bool entry_identity_matches(int parent, const std::string& name, const struct stat& expected);
+
+Fd open_export_file_at(int parent, const std::string& name, struct stat* opened_status) {
+  struct stat named {};
+  if (fstatat(parent, name.c_str(), &named, AT_SYMLINK_NOFOLLOW) != 0 ||
+      !S_ISREG(named.st_mode) || named.st_nlink != 1) {
+    if (errno == 0) errno = ELOOP;
+    return Fd();
+  }
+  Fd file(openat(parent, name.c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW));
+  struct stat opened {};
+  if (!file.valid() || fstat(file.get(), &opened) != 0 ||
+      !S_ISREG(opened.st_mode) || opened.st_nlink != 1 || !same_inode(named, opened)) {
+    if (errno == 0) errno = ELOOP;
+    return Fd();
+  }
+  *opened_status = opened;
+  return file;
+}
+
+ExportPair open_export_pair(const std::string& platform_root, const std::string& source_path) {
+  const std::string prefix = platform_root + "/generated_exports/";
+  if (platform_root.empty() || source_path.rfind(prefix, 0) != 0) return {};
+  const std::string relative = source_path.substr(prefix.size());
+  const size_t separator = relative.find('/');
+  if (separator == std::string::npos || relative.find('/', separator + 1) != std::string::npos) return {};
+  const std::string kind = relative.substr(0, separator);
+  const std::string payload_name = relative.substr(separator + 1);
+  const bool report = kind == "reports" && payload_name.ends_with(".pdf");
+  const bool archive = kind == "archives" && payload_name.ends_with(".zip");
+  if ((!report && !archive) || payload_name.empty() || payload_name.size() > 160 ||
+      payload_name == "." || payload_name == "..") {
+    return {};
+  }
+  for (unsigned char ch : payload_name) {
+    if (ch < 0x20 || ch == 0x7f || ch == '/' || ch == '\\') return {};
+  }
+
+  Fd root = open_root(platform_root);
+  if (!root.valid()) return {};
+  run_boundary("export.afterRootOpen");
+  Fd exports = open_dir_at(root.get(), "generated_exports", false);
+  if (!exports.valid()) return {};
+  run_boundary("export.afterExportsOpen");
+  Fd kind_directory = open_dir_at(exports.get(), kind, false);
+  if (!kind_directory.valid()) return {};
+  run_boundary("export.afterKindOpen");
+
+  struct stat payload_status {};
+  struct stat metadata_status {};
+  Fd payload = open_export_file_at(kind_directory.get(), payload_name, &payload_status);
+  Fd metadata = open_export_file_at(
+      kind_directory.get(), payload_name + ".json", &metadata_status);
+  if (!payload.valid() || !metadata.valid()) return {};
+  run_boundary("export.afterPairOpen");
+
+  struct stat final_payload {};
+  struct stat final_metadata {};
+
+  if (!directory_identity_matches(root.get(), "generated_exports", exports.get()) ||
+      !directory_identity_matches(exports.get(), kind, kind_directory.get()) ||
+      fstat(payload.get(), &final_payload) != 0 || final_payload.st_nlink != 1 ||
+      fstat(metadata.get(), &final_metadata) != 0 || final_metadata.st_nlink != 1 ||
+      !entry_identity_matches(kind_directory.get(), payload_name, payload_status) ||
+      !entry_identity_matches(kind_directory.get(), payload_name + ".json", metadata_status)) {
+    errno = ELOOP;
+    return {};
+  }
+  return ExportPair(std::move(payload), std::move(metadata));
 }
 
 bool list_names(int fd, std::vector<std::string>* names) {
@@ -2349,6 +2431,22 @@ Java_app_archivale_AttachmentCustodyNative_execute(
       from_jstring(env, operation_id), from_jstring(env, artwork),
       from_jstring(env, attachment), from_jstring(env, name)));
   return env->NewStringUTF(output.c_str());
+}
+
+extern "C" JNIEXPORT jintArray JNICALL
+Java_app_archivale_AttachmentCustodyNative_openExportPair(
+    JNIEnv* env, jobject, jstring root, jstring source) {
+  auto pair = custody::open_export_pair(from_jstring(env, root), from_jstring(env, source));
+  const jsize size = pair.valid() ? 2 : 0;
+  jintArray output = env->NewIntArray(size);
+  if (output == nullptr || size == 0) return output;
+  const jint descriptors[] = {pair.payload.release(), pair.metadata.release()};
+  env->SetIntArrayRegion(output, 0, size, descriptors);
+  if (env->ExceptionCheck()) {
+    close(descriptors[0]);
+    close(descriptors[1]);
+  }
+  return output;
 }
 
 #ifdef ATTACHMENT_CUSTODY_TESTING
