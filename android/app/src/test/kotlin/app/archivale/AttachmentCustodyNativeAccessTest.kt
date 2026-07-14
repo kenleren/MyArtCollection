@@ -6,16 +6,40 @@ import org.junit.Test
 
 class AttachmentCustodyNativeAccessTest {
     @Test
+    fun noClassDefFoundErrorOnFirstLoadIsCachedUnavailable() {
+        var loadAttempts = 0
+        val bindings = RecordingBindings()
+        val access = AttachmentCustodyNativeAccess(
+            loadLibrary = {
+                loadAttempts += 1
+                throw NoClassDefFoundError("injected poisoned loader")
+            },
+            bindings = bindings,
+        )
+        var destinationActions = 0
+
+        repeat(3) {
+            assertEquals(
+                "unavailable",
+                attemptSave(access) { destinationActions += 1 },
+            )
+            assertNull(attemptCustody(access))
+        }
+
+        assertEquals(1, loadAttempts)
+        assertEquals(0, bindings.calls)
+        assertEquals(0, bindings.liveDescriptors)
+        assertEquals(0, destinationActions)
+    }
+
+    @Test
     fun firstAndSubsequentMissingLibraryAttemptsStayUnavailable() {
         var loadAttempts = 0
         val bindings = RecordingBindings()
         val access = AttachmentCustodyNativeAccess(
             loadLibrary = {
                 loadAttempts += 1
-                if (loadAttempts == 1) {
-                    throw UnsatisfiedLinkError("injected missing library")
-                }
-                throw NoClassDefFoundError("injected poisoned loader")
+                throw UnsatisfiedLinkError("injected missing library")
             },
             bindings = bindings,
         )
