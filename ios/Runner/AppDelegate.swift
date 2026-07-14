@@ -14,6 +14,7 @@ import UIKit
 
   func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
     GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
+    AttachmentCustodyBridge.register(with: engineBridge.applicationRegistrar.messenger())
     let channel = FlutterMethodChannel(
       name: "app.archivale/attachment_viewer",
       binaryMessenger: engineBridge.applicationRegistrar.messenger()

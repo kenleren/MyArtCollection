@@ -30,6 +30,22 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 
+private object AttachmentCustodyNative {
+    init {
+        System.loadLibrary("attachment_custody")
+    }
+
+    external fun execute(
+        flutterRoot: String,
+        operation: String,
+        sourcePath: String,
+        operationId: String,
+        artworkId: String,
+        attachmentId: String,
+        canonicalName: String,
+    ): String
+}
+
 class MainActivity : FlutterActivity() {
     private companion object {
         const val CREATE_EXPORT_DOCUMENT_REQUEST = 47178
@@ -178,6 +194,33 @@ class MainActivity : FlutterActivity() {
                 result.success("unavailable")
             }
         }
+
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            "app.archivale/attachment_custody_v1",
+        ).setMethodCallHandler { call, result ->
+            val arguments = call.arguments as? Map<*, *> ?: emptyMap<Any?, Any?>()
+            val response = try {
+                AttachmentCustodyNative.execute(
+                    getDir("flutter", Context.MODE_PRIVATE).absolutePath,
+                    call.method,
+                    arguments["sourcePath"] as? String ?: "",
+                    arguments["operationId"] as? String ?: "",
+                    arguments["artworkId"] as? String ?: "",
+                    arguments["attachmentId"] as? String ?: "",
+                    arguments["canonicalName"] as? String ?: "",
+                )
+            } catch (_: UnsatisfiedLinkError) {
+                "{\"outcome\":\"unsupported\",\"detail\":\"Native attachment custody is unavailable.\"}"
+            } catch (_: Exception) {
+                "{\"outcome\":\"ioFailure\",\"detail\":\"Native attachment custody failed.\"}"
+            }
+            try {
+                result.success(JSONObject(response).toMethodChannelMap())
+            } catch (_: Exception) {
+                result.success(mapOf("outcome" to "ioFailure", "detail" to "Invalid native custody response."))
+            }
+        }
     }
 
     @Deprecated("Activity result callback is required for ACTION_CREATE_DOCUMENT.")
@@ -270,6 +313,17 @@ private data class PendingExportSave(
     val source: File,
     val result: MethodChannel.Result,
 )
+
+private fun JSONObject.toMethodChannelMap(): Map<String, Any?> =
+    keys().asSequence().associateWith { key -> get(key).toMethodChannelValue() }
+
+private fun Any?.toMethodChannelValue(): Any? =
+    when (this) {
+        JSONObject.NULL -> null
+        is JSONObject -> toMethodChannelMap()
+        is JSONArray -> List(length()) { index -> get(index).toMethodChannelValue() }
+        else -> this
+    }
 
 private class MlKitPromptOnDeviceAiProvider(
     private val scope: CoroutineScope,
