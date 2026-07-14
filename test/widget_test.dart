@@ -5344,6 +5344,45 @@ void main() {
     );
   });
 
+  testWidgets('visual evidence covers issue 178 real export actions', (
+    WidgetTester tester,
+  ) async {
+    final fixture = (await tester.runAsync(_LiveDependencyFixture.create))!;
+    addTearDown(() async {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.runAsync(fixture.dispose);
+    });
+    await tester.runAsync(() async {
+      await fixture.repository.create(
+        _artworkRecord(
+          id: 'issue-178-export-record',
+          title: 'Private Export Record',
+          state: ArtworkRecordState.verifiedByYou,
+          source: ArtworkFieldSource.userConfirmed,
+        ),
+      );
+    });
+    for (final themeMode in [ThemeMode.light, ThemeMode.dark]) {
+      final themeName = themeMode == ThemeMode.light ? 'light' : 'dark';
+      await captureArtifactForApp(
+        tester,
+        routeName: AppRoutes.artworkReportPreview('issue-178-export-record'),
+        dependencies: fixture.dependencies,
+        themeMode: themeMode,
+        fileName: 'issue-178-report-actions-$themeName.png',
+        ensureVisibleFinder: find.text('Collector report PDF'),
+      );
+      await captureArtifactForApp(
+        tester,
+        routeName: AppRoutes.artworkExport('issue-178-export-record'),
+        dependencies: fixture.dependencies,
+        themeMode: themeMode,
+        fileName: 'issue-178-archive-actions-$themeName.png',
+        ensureVisibleFinder: find.text('Collection archive ZIP'),
+      );
+    }
+  });
+
   testWidgets('visual evidence covers issue 172 settings trust routes', (
     WidgetTester tester,
   ) async {

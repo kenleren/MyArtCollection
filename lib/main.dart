@@ -16,6 +16,7 @@ import 'app/startup_route.dart';
 import 'app/storage/local_artwork_repository.dart';
 import 'app/storage/local_attachment_store.dart';
 import 'app/telemetry/crash_telemetry.dart';
+import 'app/export/export_artifact_store.dart';
 
 Future<void> main() async {
   final crashTelemetry = CrashTelemetry.production();
@@ -35,6 +36,7 @@ Future<void> main() async {
 
     final artworkRepository = await LocalArtworkRepository.open();
     final attachmentStore = await LocalAttachmentStore.open();
+    final exportArtifactStore = await ExportArtifactStore.open();
     // Firebase-backed feature evaluation is intentionally not part of startup.
     // Consent-gated research initializes it only after confirmed consent.
     final researchRuntime = FlutterFirebaseResearchRuntime();
@@ -71,6 +73,7 @@ Future<void> main() async {
       billingManagementService: billingService,
       onDeviceAiDraftProvider: MethodChannelOnDeviceAiDraftProvider(),
       onlineResearchClient: researchClient,
+      exportArtifactStore: exportArtifactStore,
     );
 
     runApp(

@@ -8,6 +8,9 @@ import '../app_dependencies.dart';
 import '../app_routes.dart';
 import '../billing/entitlement_plan.dart';
 import '../external_references/external_references_panel.dart';
+import '../export/archive_export_service.dart';
+import '../export/export_artifact_store.dart';
+import '../export/export_destination_gateway.dart';
 import '../intake/artwork_intake_service.dart';
 import '../intake/supporting_attachment_service.dart';
 import '../localization/app_currency_formatter.dart';
@@ -2896,8 +2899,13 @@ class ReportPreviewScreen extends StatelessWidget {
                 'No authenticity finding, appraisal, legal advice, or promise of insurance acceptance.',
           ),
           const SizedBox(height: 20),
-          PrimaryActionButton(
-            icon: Icons.ios_share_outlined,
+          ExportWorkflowPanel(
+            kind: ExportArtifactKind.report,
+            artworkId: artwork.id,
+          ),
+          const SizedBox(height: 12),
+          SecondaryActionButton(
+            icon: Icons.archive_outlined,
             label: 'Preview record export',
             routeName: AppRoutes.artworkExport(artwork.id),
           ),
@@ -2923,16 +2931,18 @@ class ExportPreviewScreen extends StatelessWidget {
         children: [
           _ReportSummary(artwork: artwork),
           const SizedBox(height: 16),
-          const _LimitHint(
-            currentActiveArtworkCount: 0,
-            entitlementState: EntitlementState(plan: EntitlementPlans.free),
-          ),
-          const SizedBox(height: 16),
           const _StatusPanel(
             icon: Icons.archive_outlined,
             title: 'What the export includes',
             body:
-                'Artwork details, how each detail was recorded, supporting record details, and report date.',
+                'All local artwork fields with source labels, external references, attachment outcomes, and available original supporting files.',
+          ),
+          const SizedBox(height: 12),
+          const _StatusPanel(
+            icon: Icons.info_outline,
+            title: 'Truthful attachment outcomes',
+            body:
+                'Missing or checksum-mismatched files are listed as excluded. The archive never claims that every original is present.',
           ),
           const SizedBox(height: 12),
           const _StatusPanel(
@@ -2941,11 +2951,279 @@ class ExportPreviewScreen extends StatelessWidget {
             body:
                 'Any insurance value stays labeled as user-provided in the PDF record.',
           ),
+          const SizedBox(height: 20),
+          const ExportWorkflowPanel(kind: ExportArtifactKind.archive),
         ],
       ),
     );
   }
 }
+
+class ExportWorkflowPanel extends StatefulWidget {
+  const ExportWorkflowPanel({
+    super.key,
+    required this.kind,
+    this.artworkId,
+    this.initialArtifact,
+  });
+
+  final ExportArtifactKind kind;
+  final String? artworkId;
+  final ExportArtifact? initialArtifact;
+
+  @override
+  State<ExportWorkflowPanel> createState() => _ExportWorkflowPanelState();
+}
+
+class _ExportWorkflowPanelState extends State<ExportWorkflowPanel> {
+  ExportArtifact? _artifact;
+  ExportProgress? _progress;
+  ExportCancellationToken? _cancellationToken;
+  String? _message;
+  bool _isBusy = false;
+
+  bool get _isReport => widget.kind == ExportArtifactKind.report;
+
+  @override
+  void initState() {
+    super.initState();
+    _artifact = widget.initialArtifact;
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_artifact == null && !_isBusy) _loadLatest();
+  }
+
+  Future<void> _loadLatest() async {
+    final dependencies = _maybeDependencies(context);
+    final store = dependencies?.exportArtifactStore;
+    if (store == null) return;
+    final artifact = await store.latest(widget.kind);
+    if (mounted && artifact != null) setState(() => _artifact = artifact);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final artifact = _artifact;
+    final progress = _progress;
+    return _Panel(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              _IconMedallion(
+                icon: _isReport
+                    ? Icons.picture_as_pdf_outlined
+                    : Icons.archive_outlined,
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  _isReport ? 'Collector report PDF' : 'Collection archive ZIP',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Text(
+            _isReport
+                ? 'Generated from user-confirmed fields and verified local supporting files.'
+                : 'Generated locally in app-private storage before you choose where to save or share a copy.',
+          ),
+          if (_isBusy && progress != null) ...[
+            const SizedBox(height: 12),
+            LinearProgressIndicator(value: progress.fraction),
+            const SizedBox(height: 6),
+            Text(
+              'Preparing ${progress.completedItems} of ${progress.totalItems} items…',
+            ),
+          ],
+          if (_message != null) ...[
+            const SizedBox(height: 10),
+            Text(
+              _message!,
+              key: const ValueKey('export-workflow-message'),
+              style: TextStyle(
+                color: _message!.startsWith('Could not')
+                    ? Theme.of(context).colorScheme.error
+                    : null,
+              ),
+            ),
+          ],
+          if (artifact != null) ...[
+            const SizedBox(height: 10),
+            _StatusLine(
+              icon: artifact.warnings.isEmpty
+                  ? Icons.check_circle_outline
+                  : Icons.warning_amber_outlined,
+              text: artifact.warnings.isEmpty
+                  ? 'Ready to open, save, or share.'
+                  : 'Ready with ${artifact.warnings.length} inclusion warning${artifact.warnings.length == 1 ? '' : 's'}.',
+            ),
+          ],
+          const SizedBox(height: 14),
+          if (_isBusy)
+            OutlinedButton.icon(
+              key: const ValueKey('cancel-export-action'),
+              onPressed: () => _cancellationToken?.cancel(),
+              icon: const Icon(Icons.close),
+              label: const Text('Cancel'),
+            )
+          else ...[
+            FilledButton.icon(
+              key: const ValueKey('generate-export-action'),
+              onPressed: _generate,
+              icon: Icon(artifact == null ? Icons.auto_awesome : Icons.refresh),
+              label: Text(
+                artifact == null
+                    ? (_isReport ? 'Generate PDF' : 'Generate archive')
+                    : 'Generate again',
+              ),
+            ),
+            if (artifact != null) ...[
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  OutlinedButton.icon(
+                    key: const ValueKey('open-export-action'),
+                    onPressed: () => _useDestination(_DestinationAction.open),
+                    icon: const Icon(Icons.open_in_new),
+                    label: const Text('Open'),
+                  ),
+                  OutlinedButton.icon(
+                    key: const ValueKey('save-export-action'),
+                    onPressed: () => _useDestination(_DestinationAction.save),
+                    icon: const Icon(Icons.save_alt),
+                    label: const Text('Save a copy'),
+                  ),
+                  OutlinedButton.icon(
+                    key: const ValueKey('share-export-action'),
+                    onPressed: () => _useDestination(_DestinationAction.share),
+                    icon: const Icon(Icons.ios_share_outlined),
+                    label: const Text('Share'),
+                  ),
+                ],
+              ),
+            ],
+          ],
+        ],
+      ),
+    );
+  }
+
+  Future<void> _generate() async {
+    final dependencies = AppDependencyScope.of(context);
+    final token = ExportCancellationToken();
+    setState(() {
+      _isBusy = true;
+      _cancellationToken = token;
+      _progress = null;
+      _message = null;
+    });
+    try {
+      final ExportArtifact artifact;
+      if (_isReport) {
+        final artworkId = widget.artworkId;
+        if (artworkId == null) {
+          throw const ExportIntegrityException(
+            'Choose an artwork before generating a report.',
+          );
+        }
+        artifact = await (await dependencies.createPdfReportService()).generate(
+          artworkId,
+          cancellationToken: token,
+          onProgress: _onProgress,
+        );
+      } else {
+        artifact = await (await dependencies.createArchiveExportService())
+            .generate(cancellationToken: token, onProgress: _onProgress);
+      }
+      if (!mounted) return;
+      setState(() {
+        _artifact = artifact;
+        _message = artifact.warnings.isEmpty
+            ? 'Generated locally and ready.'
+            : 'Generated with truthful exclusions. Review the warning count before sharing.';
+      });
+    } on ExportCancelledException {
+      if (mounted) {
+        setState(
+          () => _message = 'Generation cancelled. No partial file was kept.',
+        );
+      }
+    } on ExportIntegrityException catch (error) {
+      if (mounted) {
+        setState(() => _message = 'Could not generate: ${error.message}');
+      }
+    } on Object {
+      if (mounted) {
+        setState(
+          () => _message =
+              'Could not generate the file. Your private records were not changed; please retry.',
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isBusy = false;
+          _cancellationToken = null;
+        });
+      }
+    }
+  }
+
+  void _onProgress(ExportProgress progress) {
+    if (mounted) setState(() => _progress = progress);
+  }
+
+  Future<void> _useDestination(_DestinationAction action) async {
+    final artifact = _artifact;
+    if (artifact == null) return;
+    final gateway = AppDependencyScope.of(context).exportDestinationGateway;
+    try {
+      final result = switch (action) {
+        _DestinationAction.open => gateway.open(artifact.file),
+        _DestinationAction.save => gateway.saveCopy(
+          artifact.file,
+          suggestedName: artifact.displayName,
+          mimeType: artifact.mimeType,
+        ),
+        _DestinationAction.share => gateway.share(
+          artifact.file,
+          displayName: artifact.displayName,
+          mimeType: artifact.mimeType,
+        ),
+      };
+      final outcome = await result;
+      if (!mounted) return;
+      setState(() {
+        _message = switch (outcome) {
+          ExportDestinationResult.completed =>
+            'Destination opened successfully.',
+          ExportDestinationResult.dismissed =>
+            'No copy was saved or shared. The generated file remains available here.',
+          ExportDestinationResult.unavailable =>
+            'Could not open that destination. The generated file remains available here.',
+        };
+      });
+    } on Object {
+      if (mounted) {
+        setState(
+          () => _message =
+              'Could not open that destination. The generated file remains available here.',
+        );
+      }
+    }
+  }
+}
+
+enum _DestinationAction { open, save, share }
 
 class PrototypeScreenFrame extends StatelessWidget {
   const PrototypeScreenFrame({
