@@ -140,10 +140,46 @@ def _braced_block(source: str, marker: str, label: str) -> str:
     raise GuardFailure(f"unterminated body for {label}")
 
 
-def _require_linkage_catch(block: str, label: str) -> None:
-    catches = re.findall(r"catch\s*\(\s*_\s*:\s*LinkageError\s*\)", block)
-    if len(catches) != 1:
-        raise GuardFailure(f"expected one LinkageError catch in {label}; found {len(catches)}")
+def _matching_brace(source: str, opening: int, label: str) -> int:
+    depth = 0
+    for index in range(opening, len(source)):
+        if source[index] == "{":
+            depth += 1
+        elif source[index] == "}":
+            depth -= 1
+            if depth == 0:
+                return index
+    raise GuardFailure(f"unterminated braced body for {label}")
+
+
+def _require_linkage_catch_for_call(block: str, call: str, label: str) -> None:
+    if block.count(call) != 1:
+        raise GuardFailure(f"expected exactly one protected call in {label}")
+    call_index = block.index(call)
+    enclosing_tries: list[tuple[int, int]] = []
+    for match in re.finditer(r"\btry\s*\{", block):
+        opening = block.index("{", match.start())
+        closing = _matching_brace(block, opening, label)
+        if opening < call_index < closing:
+            enclosing_tries.append((opening, closing))
+    if not enclosing_tries:
+        raise GuardFailure(f"protected call is not inside a try in {label}")
+
+    _, closing = max(enclosing_tries)
+    catches: list[str] = []
+    cursor = closing + 1
+    while match := re.match(r"\s*catch\s*\(([^)]*)\)\s*\{", block[cursor:]):
+        catches.append(match.group(1))
+        opening = cursor + match.end() - 1
+        cursor = _matching_brace(block, opening, label) + 1
+    linkage_catches = [
+        catch for catch in catches if re.fullmatch(r"\s*_\s*:\s*LinkageError\s*", catch)
+    ]
+    if len(linkage_catches) != 1:
+        raise GuardFailure(
+            f"expected one LinkageError catch on the protected try in {label}; "
+            f"found {len(linkage_catches)}"
+        )
 
 
 def validate_kotlin(native_access: str, activity: str) -> None:
@@ -152,28 +188,32 @@ def validate_kotlin(native_access: str, activity: str) -> None:
         "internal class AttachmentCustodyNativeAccess(",
         "AttachmentCustodyNativeAccess",
     )
-    _require_linkage_catch(
+    _require_linkage_catch_for_call(
         _braced_block(
             access_class,
             "private val libraryAvailable: Boolean by lazy(LazyThreadSafetyMode.SYNCHRONIZED)",
             "libraryAvailable loader",
         ),
+        "loadLibrary()",
         "libraryAvailable loader",
     )
-    _require_linkage_catch(
+    _require_linkage_catch_for_call(
         _braced_block(access_class, "fun execute(", "native execute entry"),
+        "bindings.execute(",
         "native execute entry",
     )
-    _require_linkage_catch(
+    _require_linkage_catch_for_call(
         _braced_block(access_class, "fun openExportPair(", "native openExportPair entry"),
+        "bindings.openExportPair(",
         "native openExportPair entry",
     )
-    _require_linkage_catch(
+    _require_linkage_catch_for_call(
         _braced_block(
             activity,
             "private fun openValidatedExportSource(",
             "Save openValidatedExportSource entry",
         ),
+        "AttachmentCustodyNative.openExportPair(",
         "Save openValidatedExportSource entry",
     )
 
@@ -251,6 +291,71 @@ def self_test(workflow: str, native_access: str, activity: str) -> None:
                 "        } catch (_: LinkageError) {\n            try {\n                payload?.close()",
                 "        } catch (_: UnsatisfiedLinkError) {\n            try {\n                payload?.close()",
                 "Save catch",
+            ),
+        ),
+        "relocated loader catch decoy": (
+            workflow,
+            _replace_once(
+                _replace_once(
+                    native_access,
+                    "        } catch (_: LinkageError) {\n            false",
+                    "        } catch (_: UnsatisfiedLinkError) {\n            false",
+                    "loader catch",
+                ),
+                "        try {\n            loadLibrary()",
+                "        try {\n            Unit\n        } catch (_: LinkageError) {\n"
+                "            Unit\n        }\n        try {\n            loadLibrary()",
+                "loader try",
+            ),
+            activity,
+        ),
+        "relocated native execute catch decoy": (
+            workflow,
+            _replace_once(
+                _replace_once(
+                    native_access,
+                    "        } catch (_: LinkageError) {\n            linkageUnavailable.set(true)\n            null",
+                    "        } catch (_: UnsatisfiedLinkError) {\n            linkageUnavailable.set(true)\n            null",
+                    "native execute catch",
+                ),
+                "        return try {\n            bindings.execute(",
+                "        try {\n            Unit\n        } catch (_: LinkageError) {\n"
+                "            Unit\n        }\n        return try {\n            bindings.execute(",
+                "native execute try",
+            ),
+            activity,
+        ),
+        "relocated native openExportPair catch decoy": (
+            workflow,
+            _replace_once(
+                _replace_once(
+                    native_access,
+                    "        } catch (_: LinkageError) {\n            linkageUnavailable.set(true)\n            IntArray(0)",
+                    "        } catch (_: UnsatisfiedLinkError) {\n            linkageUnavailable.set(true)\n            IntArray(0)",
+                    "native openExportPair catch",
+                ),
+                "        return try {\n            bindings.openExportPair(",
+                "        try {\n            Unit\n        } catch (_: LinkageError) {\n"
+                "            Unit\n        }\n        return try {\n            bindings.openExportPair(",
+                "native openExportPair try",
+            ),
+            activity,
+        ),
+        "relocated Save catch decoy": (
+            workflow,
+            native_access,
+            _replace_once(
+                _replace_once(
+                    activity,
+                    "        } catch (_: LinkageError) {\n            try {\n                payload?.close()",
+                    "        } catch (_: UnsatisfiedLinkError) {\n            try {\n                payload?.close()",
+                    "Save catch",
+                ),
+                "        return try {\n            val descriptors = AttachmentCustodyNative.openExportPair(",
+                "        try {\n            Unit\n        } catch (_: LinkageError) {\n"
+                "            Unit\n        }\n        return try {\n"
+                "            val descriptors = AttachmentCustodyNative.openExportPair(",
+                "Save try",
             ),
         ),
     }
