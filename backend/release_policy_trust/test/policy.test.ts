@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import test from "node:test";
 import { sha256 } from "../src/canonical.js";
 import { assertCanonicalPolicy, loadCanonicalPolicy } from "../src/policy.js";
+import * as policyRuntime from "../src/policy.js";
 
 const bytes = readFileSync(resolve(process.cwd(), "policy/release-policy.v1.json"));
 
@@ -16,6 +17,24 @@ test("canonical policy computes its own raw-byte digest and owns every runtime i
   assert.ok(policy.pathPolicy.prefixes.includes(".github/"));
   assert.doesNotThrow(() => assertCanonicalPolicy(policy));
   assert.throws(() => assertCanonicalPolicy({ ...policy }), /canonical policy bytes/);
+});
+
+test("emitted JavaScript exposes no policy constructor and rejects prototype and symbol forgery", () => {
+  assert.equal(Object.hasOwn(policyRuntime, "CanonicalReleasePolicy"), false);
+  const policy = loadCanonicalPolicy(bytes);
+  const runtimeConstructor = Object.getPrototypeOf(policy).constructor as new (...input: unknown[]) => object;
+  assert.throws(() => Reflect.construct(runtimeConstructor, [{}, {
+    baseCommit: policy.baseCommit,
+    checkName: policy.checkName,
+    digest: policy.digest,
+    limits: policy.limits,
+    pathPolicy: { exact: [], prefixes: [] },
+  }]), /construction is private/);
+
+  const forged = Object.create(Object.getPrototypeOf(policy)) as object;
+  Object.defineProperties(forged, Object.getOwnPropertyDescriptors(policy));
+  for (const symbol of Object.getOwnPropertySymbols(policy)) Object.defineProperty(forged, symbol, Object.getOwnPropertyDescriptor(policy, symbol)!);
+  assert.throws(() => assertCanonicalPolicy(forged), /canonical policy bytes/);
 });
 
 test("policy rejects unknown keys, binds selector substitution to a new digest, and rejects inconsistent limits/repository drift", () => {

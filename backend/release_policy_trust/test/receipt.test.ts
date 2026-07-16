@@ -29,14 +29,45 @@ async function generation(port = new FakePort()) {
   return generationFromEvaluation(await snapshotPullRequest(port, identity, port.pull.number, policy()));
 }
 
-test("same-body replay resumes nonterminal receipt; different body or kind conflicts terminally", async () => {
+test("pre-terminal delivery conflict is durable, absorbing, and survives an ambiguous conflict commit", async () => {
   const store = new InMemoryDurableStore();
   const first = await receive(store, pullInput);
   assert.equal((await beginReceiptSnapshot(store, first)).state, "snapshotting");
   assert.equal((await receive(store, pullInput)).state, "snapshotting");
+  store.ambiguousNextCommit = true;
   const conflict = await receive(store, { ...pullInput, payloadDigest: "f".repeat(64) });
-  assert.equal(conflict.state, "conflict");
+  assert.equal(conflict.state, "conflict"); assert.equal(conflict.completedOutcome, undefined);
+  assert.deepEqual(await store.read(receiptKey(22, "delivery")), conflict);
   assert.equal((await receive(store, pullInput)).state, "conflict");
+  assert.equal((await beginReceiptSnapshot(store, first)).state, "conflict");
+  await assert.rejects(atomicEnqueuePull(store, first, await generation()), /receipt changed/);
+});
+
+test("post-terminal delivery conflict persists while retaining already-completed side-effect truth", async () => {
+  const store = new InMemoryDurableStore();
+  const input = { ...pushInput, deliveryId: "terminal-conflict", payloadDigest: "e".repeat(64) };
+  const receipt = await receive(store, input);
+  await atomicEnqueuePush(store, receipt, "6".repeat(64), []);
+  const completed = await store.read(receiptKey(22, "terminal-conflict")) as { completedOutcome?: string; state: string };
+  assert.deepEqual(completed, { ...completed, completedOutcome: "terminal_success", state: "terminal_success" });
+
+  const conflict = await receive(store, { ...input, payloadDigest: "f".repeat(64) });
+  assert.equal(conflict.state, "conflict"); assert.equal(conflict.completedOutcome, "terminal_success");
+  assert.deepEqual(await store.read(receiptKey(22, "terminal-conflict")), conflict);
+  assert.equal((await receive(store, input)).state, "conflict");
+  await assert.rejects(atomicEnqueuePush(store, conflict, "6".repeat(64), []), /receipt changed/);
+});
+
+test("concurrent conflicting first deliveries converge on one durable conflict", async () => {
+  const store = new InMemoryDurableStore();
+  const left = { ...pullInput, deliveryId: "concurrent-first", payloadDigest: "a".repeat(64) };
+  const right = { ...left, payloadDigest: "b".repeat(64) };
+  const results = await Promise.all([receive(store, left), receive(store, right)]);
+  assert.deepEqual(results.map((receipt) => receipt.state).sort(), ["conflict", "received"]);
+  const durable = await store.read(receiptKey(22, "concurrent-first")) as { completedOutcome?: string; state: string };
+  assert.equal(durable.state, "conflict"); assert.equal(durable.completedOutcome, undefined);
+  assert.equal((await receive(store, left)).state, "conflict");
+  assert.equal((await receive(store, right)).state, "conflict");
 });
 
 test("receipt, immutable generation, current pointer, and evaluate intent commit atomically", async () => {
@@ -108,7 +139,7 @@ test("push fanout, child lease/enqueue, replay, and ambiguous commit are resumab
 test("empty push fanout terminates successfully and malformed target ordering fails", async () => {
   const store = new InMemoryDurableStore(); const receipt = await receive(store, pushInput);
   await atomicEnqueuePush(store, receipt, "6".repeat(64), []);
-  assert.equal((await store.read(receiptKey(22, "push")) as { state: string }).state, "terminal_success");
+  assert.deepEqual(await store.read(receiptKey(22, "push")), { ...receipt, completedOutcome: "terminal_success", state: "terminal_success", targetCount: 0, targetDigest: "6".repeat(64), targetNumbers: [], version: receipt.version + 1 });
   const second = await receive(store, { ...pushInput, deliveryId: "push-2", payloadDigest: "7".repeat(64) });
   await assert.rejects(atomicEnqueuePush(store, second, "6".repeat(64), [8, 7]), /ascending/);
 });

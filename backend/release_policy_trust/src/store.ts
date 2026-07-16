@@ -38,8 +38,10 @@ export class InMemoryDurableStore implements DurableStorePort {
   keys(): string[] { return [...this.rows.keys()].sort(); }
 }
 
-export type ReceiptState = "received" | "snapshotting" | "enqueued" | "processing" | "terminal_success" | "terminal_failure" | "conflict";
+export type ReceiptTerminalOutcome = "terminal_success" | "terminal_failure";
+export type ReceiptState = "received" | "snapshotting" | "enqueued" | ReceiptTerminalOutcome | "conflict";
 export interface Receipt {
+  completedOutcome?: ReceiptTerminalOutcome;
   deliveryId: string;
   generationId?: string;
   identityDigest: string;
@@ -169,19 +171,41 @@ function receiptMatches(existing: Receipt, input: Pick<Receipt, "identityDigest"
   return existing.payloadDigest === input.payloadDigest && existing.identityDigest === input.identityDigest && existing.kind === input.kind;
 }
 
-export async function receive(store: DurableStorePort, input: Omit<Receipt, "state" | "version" | "generationId" | "targetCount" | "targetDigest" | "targetNumbers">): Promise<Receipt> {
+function receiptTerminalOutcome(receipt: Receipt): ReceiptTerminalOutcome | undefined {
+  if (receipt.completedOutcome !== undefined) return receipt.completedOutcome;
+  return receipt.state === "terminal_success" || receipt.state === "terminal_failure" ? receipt.state : undefined;
+}
+
+async function persistReceiptConflict(store: DurableStorePort, key: string): Promise<Receipt> {
+  for (;;) {
+    const current = await store.read(key) as Receipt | undefined;
+    if (current === undefined) return fail("cas_lost", "receipt disappeared before conflict persistence");
+    if (current.state === "conflict") return current;
+    const completedOutcome = receiptTerminalOutcome(current);
+    const next: Receipt = completedOutcome === undefined
+      ? { ...current, state: "conflict", version: current.version + 1 }
+      : { ...current, completedOutcome, state: "conflict", version: current.version + 1 };
+    try {
+      await store.transact((transaction) => transaction.compareAndSwap(key, current.version, next));
+      return next;
+    } catch (error) {
+      const durable = await store.read(key) as Receipt | undefined;
+      if (durable?.state === "conflict") return durable;
+      if (error instanceof FailClosedError && error.code === "cas_lost") continue;
+      throw error;
+    }
+  }
+}
+
+type ReceiptInput = Omit<Receipt, "completedOutcome" | "state" | "version" | "generationId" | "targetCount" | "targetDigest" | "targetNumbers">;
+
+export async function receive(store: DurableStorePort, input: ReceiptInput): Promise<Receipt> {
   positive(input.installationId, "installation id"); digest(input.payloadDigest, "payload digest"); digest(input.identityDigest, "identity digest");
   if (input.deliveryId.length === 0 || !["pull_request", "push"].includes(input.kind)) fail("invalid_input", "receipt identity is malformed");
   const key = receiptKey(input.installationId, input.deliveryId);
   const existing = await store.read(key) as Receipt | undefined;
   if (existing !== undefined) {
-    if (!receiptMatches(existing, input)) {
-      if (!terminal(existing.state) && existing.state !== "conflict") {
-        const conflict = { ...existing, state: "conflict" as const, version: existing.version + 1 };
-        await recoverCommit(store, (transaction) => transaction.compareAndSwap(key, existing.version, conflict), async () => (await store.read(key) as Receipt | undefined)?.state === "conflict");
-      }
-      return { ...existing, state: "conflict" };
-    }
+    if (!receiptMatches(existing, input)) return persistReceiptConflict(store, key);
     return existing;
   }
   const receipt: Receipt = { ...input, state: "received", version: 1 };
@@ -189,6 +213,7 @@ export async function receive(store: DurableStorePort, input: Omit<Receipt, "sta
   catch (error) {
     const durable = await store.read(key) as Receipt | undefined;
     if (durable !== undefined && receiptMatches(durable, input)) return durable;
+    if (durable !== undefined) return persistReceiptConflict(store, key);
     throw error;
   }
   return receipt;
@@ -198,7 +223,7 @@ export async function beginReceiptSnapshot(store: DurableStorePort, receipt: Rec
   const key = receiptKey(receipt.installationId, receipt.deliveryId);
   const durable = await store.read(key) as Receipt | undefined;
   if (durable === undefined || !receiptMatches(durable, receipt)) return fail("conflict", "receipt disappeared or changed");
-  if (durable.state === "snapshotting" || durable.state === "enqueued" || durable.state === "processing" || terminal(durable.state)) return durable;
+  if (durable.state === "snapshotting" || durable.state === "enqueued" || terminal(durable.state)) return durable;
   if (durable.state !== "received") return fail("cas_lost", "receipt cannot start snapshotting");
   const next = { ...durable, state: "snapshotting" as const, version: durable.version + 1 };
   await recoverCommit(store, (transaction) => transaction.compareAndSwap(key, durable.version, next), async () => (await store.read(key) as Receipt | undefined)?.state === "snapshotting");
@@ -261,7 +286,7 @@ export async function atomicEnqueuePush(store: DurableStorePort, receipt: Receip
   const finalState: ReceiptState = targets.length === 0 ? "terminal_success" : "enqueued";
   const verify = async (): Promise<boolean> => {
     const durable = await store.read(key) as Receipt | undefined;
-    if (durable?.state !== finalState || durable.targetDigest !== targetDigest || canonicalHash(durable.targetNumbers) !== canonicalHash(targets)) return false;
+    if (durable?.state !== finalState || (targets.length === 0 && durable.completedOutcome !== "terminal_success") || durable.targetDigest !== targetDigest || canonicalHash(durable.targetNumbers) !== canonicalHash(targets)) return false;
     for (const pr of targets) if ((await store.read(pushChildKey(receipt.installationId, receipt.deliveryId, pr)) as PushChild | undefined)?.pullRequestNumber !== pr) return false;
     return true;
   };
@@ -270,7 +295,10 @@ export async function atomicEnqueuePush(store: DurableStorePort, receipt: Receip
     const durable = transaction.get(key) as Receipt | undefined;
     if (durable === undefined || !receiptMatches(durable, receipt) || !["received", "snapshotting"].includes(durable.state)) fail("cas_lost", "push receipt changed before fanout");
     for (const pr of targets) transaction.putIfAbsent(pushChildKey(receipt.installationId, receipt.deliveryId, pr), { leaseOwner: null, pullRequestNumber: pr, state: "pending", version: 1 } satisfies PushChild);
-    transaction.compareAndSwap(key, durable.version, { ...durable, state: finalState, targetCount: targets.length, targetDigest, targetNumbers: targets, version: durable.version + 1 });
+    const next: Receipt = targets.length === 0
+      ? { ...durable, completedOutcome: "terminal_success", state: finalState, targetCount: 0, targetDigest, targetNumbers: targets, version: durable.version + 1 }
+      : { ...durable, state: finalState, targetCount: targets.length, targetDigest, targetNumbers: targets, version: durable.version + 1 };
+    transaction.compareAndSwap(key, durable.version, next);
   }, verify);
 }
 
@@ -520,11 +548,16 @@ export async function settlePullReceipt(store: DurableStorePort, receipt: Receip
   if (durable === undefined || durable.kind !== "pull_request" || durable.generationId === undefined) fail("cas_lost", "pull receipt has no generation");
   const generation = await store.read(generationKey(durable.generationId)) as Generation | undefined;
   if (generation === undefined || !["terminal_success", "terminal_failure", "obsolete", "blocked_ambiguous"].includes(generation.state)) fail("cas_lost", "pull generation is not terminal");
-  const state: ReceiptState = generation.state === "terminal_success" ? "terminal_success" : "terminal_failure";
-  if (durable.state === state) return durable;
-  const next = { ...durable, state, version: durable.version + 1 };
-  await recoverCommit(store, (transaction) => transaction.compareAndSwap(key, durable.version, next), async () => (await store.read(key) as Receipt | undefined)?.state === state);
-  return next;
+  const outcome: ReceiptTerminalOutcome = generation.state === "terminal_success" ? "terminal_success" : "terminal_failure";
+  const priorOutcome = receiptTerminalOutcome(durable);
+  if (priorOutcome !== undefined && priorOutcome !== outcome) fail("conflict", "receipt completion outcome changed");
+  if (durable.completedOutcome === outcome && (durable.state === outcome || durable.state === "conflict")) return durable;
+  const next: Receipt = { ...durable, completedOutcome: outcome, state: durable.state === "conflict" ? "conflict" : outcome, version: durable.version + 1 };
+  await recoverCommit(store, (transaction) => transaction.compareAndSwap(key, durable.version, next), async () => {
+    const current = await store.read(key) as Receipt | undefined;
+    return current?.completedOutcome === outcome && (current.state === outcome || current.state === "conflict");
+  });
+  return (await store.read(key)) as Receipt;
 }
 
 export async function settlePushChild(store: DurableStorePort, receipt: Receipt, pr: number): Promise<Receipt> {
@@ -541,8 +574,12 @@ export async function settlePushChild(store: DurableStorePort, receipt: Receipt,
     if (!terminal(durableChild.state)) transaction.compareAndSwap(cKey, durableChild.version, { ...durableChild, leaseOwner: null, state: childState, version: durableChild.version + 1 });
     const states = currentReceipt.targetNumbers!.map((number) => number === pr ? childState : (transaction.get(pushChildKey(receipt.installationId, receipt.deliveryId, number)) as PushChild | undefined)?.state);
     if (states.every((state) => state === "terminal_success" || state === "terminal_failure")) {
-      const finalState: ReceiptState = states.every((state) => state === "terminal_success") ? "terminal_success" : "terminal_failure";
-      transaction.compareAndSwap(rKey, currentReceipt.version, { ...currentReceipt, state: finalState, version: currentReceipt.version + 1 });
+      const outcome: ReceiptTerminalOutcome = states.every((state) => state === "terminal_success") ? "terminal_success" : "terminal_failure";
+      const priorOutcome = receiptTerminalOutcome(currentReceipt);
+      if (priorOutcome !== undefined && priorOutcome !== outcome) fail("conflict", "push receipt completion outcome changed");
+      if (currentReceipt.completedOutcome !== outcome || (currentReceipt.state !== outcome && currentReceipt.state !== "conflict")) {
+        transaction.compareAndSwap(rKey, currentReceipt.version, { ...currentReceipt, completedOutcome: outcome, state: currentReceipt.state === "conflict" ? "conflict" : outcome, version: currentReceipt.version + 1 });
+      }
     }
   }, async () => terminal((await store.read(cKey) as PushChild | undefined)?.state ?? "pending"));
   return (await store.read(rKey)) as Receipt;

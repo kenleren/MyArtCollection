@@ -161,6 +161,23 @@ test("update possible-send is fenced, validates the bound identity, and ambiguit
   assert.equal((await settlePullReceipt(store, receipt)).state, "terminal_success");
 });
 
+test("pre-terminal conflict remains absorbing when already-enqueued work later completes", async () => {
+  const store = new InMemoryDurableStore(); const port = new FakePort(); const { generation, receipt } = await ready(store, port);
+  const conflict = await receive(store, {
+    deliveryId: receipt.deliveryId,
+    identityDigest: receipt.identityDigest,
+    installationId: receipt.installationId,
+    kind: receipt.kind,
+    payloadDigest: "f".repeat(64),
+  });
+  assert.equal(conflict.state, "conflict"); assert.equal(conflict.completedOutcome, undefined);
+  const check = await bind(store, port, generation.generationId); port.checkPages = pages([check]);
+  await runUpdateCheck({ generationId: generation.generationId, port, store, worker: "update-after-conflict" });
+  const settled = await settlePullReceipt(store, receipt);
+  assert.equal(settled.state, "conflict"); assert.equal(settled.completedOutcome, "terminal_success");
+  assert.equal((await receive(store, { deliveryId: receipt.deliveryId, identityDigest: receipt.identityDigest, installationId: receipt.installationId, kind: receipt.kind, payloadDigest: receipt.payloadDigest })).state, "conflict");
+});
+
 test("mismatched bound ID or same-name non-App check cannot be updated", async () => {
   const store = new InMemoryDurableStore(); const port = new FakePort(); const { generation } = await ready(store, port); const check = await bind(store, port, generation.generationId);
   port.checkPages = pages([{ ...check, checkId: 999, appId: 999 }]);

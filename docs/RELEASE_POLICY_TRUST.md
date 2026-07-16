@@ -11,7 +11,9 @@ merge.
 
 The package validates canonical policy bytes and computes their digest
 internally before using their repository/base identity, limits, selectors, or
-check name. It verifies an injected raw webhook body before parsing it, binds
+check name. Its emitted JavaScript exports no policy constructor; a module-private
+factory token and registry make prototype, property, or symbol copying fail the
+runtime origin assertion. It verifies an injected raw webhook body before parsing it, binds
 positive numeric App, installation, and repository identities, builds an
 immutable pull-request/main/files snapshot, evaluates current and prior paths,
 and persists the complete tuple, snapshot, file digest, policy, and decision.
@@ -28,11 +30,15 @@ full-Unicode-case-folding, identity, pagination, snapshot, storage, lease, API, 
 check-creation ambiguity is fail-closed and cannot produce success. A
 same-named GitHub Actions check is not accepted as the external App check.
 
-Receipt processing is resumable from `received` through snapshot, enqueue,
-processing, and terminal aggregation. Pull generation/current/outbox state is
-atomic. Push target lists and digests are durable, each child has a CAS lease,
-and the parent receipt becomes terminal only after all children do. Ambiguous
-store commits are resolved by exact durable reread. The Check binding stores
+Receipt processing is resumable through the explicit `received`, `snapshotting`,
+`enqueued`, and terminal states; there is no unused synthetic processing state.
+Delivery-ID conflict is an absorbing durable state before or after completion.
+When work already completed, the receipt retains its terminal outcome separately
+without allowing either payload to replay the side effect. Pull
+generation/current/outbox state is atomic. Push target lists and digests are
+durable, each child has a CAS lease, and the parent receipt records its terminal
+outcome only after all children do. Ambiguous store commits are resolved by exact
+durable reread. The Check binding stores
 App/repository/head/name/external/check identities. Unique create and update
 intents enter possible-send state before an external call. Ambiguous creation
 is reconciled without recreation; ambiguous update retries only its already

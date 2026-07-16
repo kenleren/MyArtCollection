@@ -11,7 +11,8 @@ const LIMIT_KEYS = [
   "header_count", "header_name_bytes", "header_value_bytes", "json_depth", "json_nodes", "open_pr_pages",
   "open_pr_passes", "open_pr_rows", "page_size", "reconcile_delays_seconds", "webhook_body_bytes",
 ] as const;
-const POLICY_BRAND = Symbol("canonical-release-policy");
+const POLICY_FACTORY_TOKEN = Object.freeze({});
+const CANONICAL_POLICIES = new WeakSet<object>();
 
 type JsonRecord = Record<string, unknown>;
 
@@ -66,8 +67,16 @@ export interface PolicyLimits {
   webhookBodyBytes: number;
 }
 
-export class CanonicalReleasePolicy {
-  readonly [POLICY_BRAND] = true;
+export interface CanonicalReleasePolicy {
+  readonly baseCommit: string;
+  readonly checkName: string;
+  readonly digest: string;
+  readonly limits: Readonly<PolicyLimits>;
+  readonly pathPolicy: Readonly<PathPolicy>;
+  readonly repository: Readonly<{ baseRef: "main"; name: "kenleren/MyArtCollection" }>;
+}
+
+class CanonicalReleasePolicyValue implements CanonicalReleasePolicy {
   readonly baseCommit: string;
   readonly checkName: string;
   readonly digest: string;
@@ -75,25 +84,27 @@ export class CanonicalReleasePolicy {
   readonly pathPolicy: Readonly<PathPolicy>;
   readonly repository: Readonly<{ baseRef: "main"; name: "kenleren/MyArtCollection" }>;
 
-  constructor(input: {
+  constructor(token: object, input: {
     baseCommit: string;
     checkName: string;
     digest: string;
     limits: PolicyLimits;
     pathPolicy: PathPolicy;
   }) {
+    if (token !== POLICY_FACTORY_TOKEN) fail("invalid_input", "canonical policy construction is private");
     this.baseCommit = input.baseCommit;
     this.checkName = input.checkName;
     this.digest = input.digest;
     this.limits = Object.freeze({ ...input.limits, reconcileDelaysSeconds: Object.freeze([...input.limits.reconcileDelaysSeconds]) });
     this.pathPolicy = Object.freeze({ exact: Object.freeze([...input.pathPolicy.exact]), prefixes: Object.freeze([...input.pathPolicy.prefixes]) });
     this.repository = Object.freeze({ baseRef: "main", name: "kenleren/MyArtCollection" });
+    CANONICAL_POLICIES.add(this);
     Object.freeze(this);
   }
 }
 
 export function assertCanonicalPolicy(value: unknown): asserts value is CanonicalReleasePolicy {
-  if (!(value instanceof CanonicalReleasePolicy) || value[POLICY_BRAND] !== true) fail("invalid_input", "policy must come from canonical policy bytes");
+  if (value === null || typeof value !== "object" || !CANONICAL_POLICIES.has(value)) fail("invalid_input", "policy must come from canonical policy bytes");
 }
 
 export function loadCanonicalPolicy(bytes: Uint8Array): CanonicalReleasePolicy {
@@ -140,7 +151,7 @@ export function loadCanonicalPolicy(bytes: Uint8Array): CanonicalReleasePolicy {
   const prefixes = [...strings(selectors.baseline_prefixes, "baseline prefixes", true), ...strings(selectors.final_prefix_additions, "final prefixes", true)];
   if (new Set(exact).size !== exact.length || new Set(prefixes).size !== prefixes.length) fail("invalid_input", "policy selector groups overlap");
 
-  return new CanonicalReleasePolicy({
+  return new CanonicalReleasePolicyValue(POLICY_FACTORY_TOKEN, {
     baseCommit: parsed.base_commit,
     checkName: parsed.check_name,
     digest: sha256(bytes),
