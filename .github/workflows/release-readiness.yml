@@ -73,8 +73,55 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          evidence="$RUNNER_TEMP/poppler-apt-evidence"
+          archives="$evidence/archives"
+          mkdir -p "$archives/partial"
           sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends poppler-utils
+          apt-get --simulate install --no-install-recommends poppler-utils \
+            > "$evidence/simulation.txt"
+          awk '
+            /^Inst / {
+              package_name=$2
+              version=""
+              architecture=$NF
+              gsub(/[\[\])]/, "", architecture)
+              for (i=3; i<=NF; i++) {
+                if ($i ~ /^\(/) {
+                  version=$i
+                  gsub(/^\(/, "", version)
+                  break
+                }
+              }
+              if (version == "" || architecture == "") exit 1
+              print package_name "\t" version "\t" architecture
+            }
+          ' "$evidence/simulation.txt" | LC_ALL=C sort -u > "$evidence/expected.tsv"
+          sudo apt-get -o "Dir::Cache::archives=$archives" install \
+            --yes --download-only --no-install-recommends poppler-utils
+          : > "$evidence/actual.tsv"
+          while IFS= read -r -d '' archive; do
+            package_name="$(dpkg-deb -f "$archive" Package)"
+            version="$(dpkg-deb -f "$archive" Version)"
+            architecture="$(dpkg-deb -f "$archive" Architecture)"
+            digest="$(sha256sum "$archive" | cut -d ' ' -f 1)"
+            printf '%s\t%s\t%s\t%s\n' \
+              "$package_name" "$version" "$architecture" "$digest" \
+              >> "$evidence/actual.tsv"
+          done < <(find "$archives" -maxdepth 1 -type f -name '*.deb' -print0)
+          cut -f 1-3 "$evidence/actual.tsv" | LC_ALL=C sort -u \
+            > "$evidence/actual-coordinates.tsv"
+          diff -u "$evidence/expected.tsv" "$evidence/actual-coordinates.tsv"
+          awk -F '\t' 'NF != 4 || $4 !~ /^[0-9a-f]{64}$/ { exit 1 }' \
+            "$evidence/actual.tsv"
+          sha256sum \
+            "$evidence/simulation.txt" \
+            "$evidence/expected.tsv" \
+            "$evidence/actual.tsv" \
+            "$evidence/actual-coordinates.tsv" \
+            > "$evidence/runtime-evidence.sha256"
+          test "$(wc -l < "$evidence/runtime-evidence.sha256")" -eq 4
+          sudo apt-get -o "Dir::Cache::archives=$archives" install \
+            --yes --no-download --no-install-recommends poppler-utils
           pdftotext -v
       - name: Map checksum-verified Flutter test fonts
         shell: bash
@@ -214,6 +261,11 @@ jobs:
             --cache "$core_audit_cache" > "$RUNNER_TEMP/broker-core-audit.json"
           core_audit_status=$?
           set -e
+          sha256sum \
+            "$RUNNER_TEMP/broker-audit.json" \
+            "$RUNNER_TEMP/broker-core-audit.json" \
+            > "$RUNNER_TEMP/broker-audit-runtime-evidence.sha256"
+          test "$(wc -l < "$RUNNER_TEMP/broker-audit-runtime-evidence.sha256")" -eq 2
           test "$full_audit_status" -eq 1 || { echo "full npm audit did not report the expected policy input" >&2; exit 1; }
           test "$core_audit_status" -eq 1 || { echo "peer-omitted npm audit did not report the expected policy input" >&2; exit 1; }
           node scripts/check_broker_audit.mjs \
@@ -266,6 +318,59 @@ jobs:
           python3 -m py_compile scripts/validate_static_site.py test/validate_static_site_test.py
           jq . firebase.json
           python3 -c 'from scripts import generate_sitemap as s; routes=sorted(s.route_for_html(p) for p in s.SITE_ROOT.glob("**/*.html")); routes.remove("/"); routes.insert(0, "/"); expected=s.sitemap_xml(routes); actual=s.SITEMAP_PATH.read_text(encoding="utf-8"); assert actual == expected, "site/sitemap.xml is stale"'
+
+  release-policy-trust:
+    name: Release policy trust source
+    runs-on: ubuntu-24.04
+    env:
+      CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - name: Check out full repository history
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Set up Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        with:
+          node-version: 22.23.1
+      - name: Verify credential-free trust source and evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          base=f42582c8eb0d1405cd5e214f6b9c80980225b5f1
+          npm --prefix backend/release_policy_trust ci --ignore-scripts
+          npm --prefix backend/release_policy_trust run build
+          npm --prefix backend/release_policy_trust run test:history
+          npm --prefix backend/release_policy_trust run test:webhook
+          npm --prefix backend/release_policy_trust run test:pagination
+          npm --prefix backend/release_policy_trust run test:receipt
+          npm --prefix backend/release_policy_trust run test:external
+          npm --prefix backend/release_policy_trust run test:conformance
+          npm --prefix backend/release_policy_trust run test:api-boundary
+          npm --prefix backend/release_policy_trust run test:ci-checkout
+          npm --prefix backend/release_policy_trust test
+          npm --prefix backend/release_policy_trust audit \
+            --package-lock-only --audit-level=info
+          npm --prefix backend/release_policy_trust run evidence:verify -- \
+            --tip "$base" \
+            --input backend/release_policy_trust/evidence/base
+          npm --prefix backend/release_policy_trust run policy:verify -- \
+            --base "$base" --candidate "$CANDIDATE_SHA"
+          npm --prefix backend/release_policy_trust run candidate:generate -- \
+            --candidate "$CANDIDATE_SHA" \
+            --output "$RUNNER_TEMP/candidate-tree.v1.jsonl"
+          cmp \
+            backend/release_policy_trust/evidence/review/candidate-tree.v1.jsonl \
+            "$RUNNER_TEMP/candidate-tree.v1.jsonl"
+          npm --prefix backend/release_policy_trust run codeowners:verify
+          npm --prefix backend/release_policy_trust run external:verify
+          npm --prefix backend/release_policy_trust run reproduce -- \
+            --candidate "$CANDIDATE_SHA" \
+            --output "$RUNNER_TEMP/reproducibility.v1.json"
+          cmp \
+            backend/release_policy_trust/evidence/review/reproducibility.v1.json \
+            "$RUNNER_TEMP/reproducibility.v1.json"
 
   mobile-broker-bypass-guard:
     name: Mobile broker bypass guard
@@ -321,6 +426,7 @@ jobs:
       - static-site
       - mobile-broker-bypass-guard
       - secret-scan
+      - release-policy-trust
     steps:
       - name: Require every release check to succeed
         shell: bash
@@ -334,6 +440,7 @@ jobs:
             "static-site=${{ needs.static-site.result }}"
             "mobile-broker-bypass-guard=${{ needs.mobile-broker-bypass-guard.result }}"
             "secret-scan=${{ needs.secret-scan.result }}"
+            "release-policy-trust=${{ needs.release-policy-trust.result }}"
           )
           printf '%s\n' "${results[@]}"
           for result in "${results[@]}"; do

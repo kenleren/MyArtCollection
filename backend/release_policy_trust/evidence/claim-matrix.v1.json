@@ -1,0 +1,20 @@
+{
+  "claims": [
+    {"claim":"anchors_inventory_history","evidence":["evidence:verify","history.test.js"],"required":"exact schemas, counts, SHA-256 digests, byte order, LF, NFC, and object types"},
+    {"claim":"final_delta_codeowners","evidence":["policy:verify","candidate:generate+cmp","codeowners:verify","test:ci-checkout"],"required":"owned paths only, detached-checkout anchors, exact candidate inventory, true PR head, and generated equality"},
+    {"claim":"canonical_policy_decision","evidence":["policy.test.js","conformance.test.js"],"required":"policy bytes alone determine digest, selectors, limits, repository/base/check identity, immutable tuple/snapshot/files, and durable decision_ready completion; emitted JavaScript exposes no constructor and a private registry rejects prototype/symbol forgery"},
+    {"claim":"webhook_hmac_identity","evidence":["test:webhook"],"required":"valid pull/push plus HMAC ordering, strict JSON whitespace, UTF-8, header/body/JSON limits, and identity negatives"},
+    {"claim":"pagination_paths","evidence":["test:pagination"],"required":"all file/open-PR/check bounds, cursors, passes, races, operations, malformed paths, and full Unicode case-fold collisions"},
+    {"claim":"receipt_fanout_recovery","evidence":["test:receipt","test:conformance"],"required":"atomic pull receipt/generation/outbox, resumable push child leases/aggregation, absorbing durable pre/post-terminal and concurrent delivery-ID conflict, preserved completion truth, every lease recovery, and ambiguous commit reread"},
+    {"claim":"fenced_check_binding","evidence":["test:conformance"],"required":"unique durable create/update intents, possible-send before calls, reconcile-only ambiguous create, bound-ID update retry, full Check identity, per-PR fences, and stale-worker side-effect exclusion"},
+    {"claim":"api_boundary","evidence":["test:api-boundary"],"required":"allowlisted typed Check Run port only; generic HTTP, GraphQL, status, token, neutral, and skipped are unrepresentable"},
+    {"claim":"external_manifest","evidence":["external:verify","test:external"],"required":"algorithm-strict digests, trusted/evidence separation, workflow/action/tool/lock/generated reconciliation, runtime evidence hashes, and apt preinstall closure"},
+    {"claim":"durable_review_summary","evidence":["evidence_summary.test.js","policy:verify","reproduce+cmp"],"required":"every summary/reproduction digest and executable test count matches committed evidence and exact candidate regeneration"},
+    {"claim":"package_quality","evidence":["build","focused tests","aggregate test","npm audit"],"required":"all pass and clean audit"},
+    {"claim":"reproducibility","evidence":["reproduce","reproducibility.v1.json"],"required":"byte-identical build, pack, canonical SBOM, package source, and committed regeneration"},
+    {"claim":"repository_safety","evidence":["git diff --check","scripts/secret_scan.sh"],"required":"scoped diff, redacted scan, no generated outputs, and clean worktree"},
+    {"claim":"exact_head_ci","evidence":["GitHub Release Readiness run"],"required":"exactly one successful exact-head run with every prerequisite and aggregate job"},
+    {"claim":"acceptance","evidence":["repeat independent task review","repeat security redteam"],"required":"both ACCEPT the same new frozen SHA"}
+  ],
+  "schema_version": 1
+}
