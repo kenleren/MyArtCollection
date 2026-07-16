@@ -1,6 +1,6 @@
 {"blob_oid":"dd56ec11688bbd692f165b78709bfbf44538c79a","class":"evaluated-input","mode":"100644","path":".env.local.example"}
 {"blob_oid":"ddf9c84c334257795e4ac20bbda78ae269bde885","class":"protected-control","mode":"100644","path":".github/CODEOWNERS"}
-{"blob_oid":"16f94ea48e31d42ccf524b6d66d25162b06b65e4","class":"protected-control","mode":"100644","path":".github/workflows/release-readiness.yml"}
+{"blob_oid":"2f7e38034751487db450ece5bceeff5d2ad73116","class":"protected-control","mode":"100644","path":".github/workflows/release-readiness.yml"}
 {"blob_oid":"d1398907f923d1f23e593092d0ed0dbe78471243","class":"evaluated-input","mode":"100644","path":".gitignore"}
 {"blob_oid":"db887dde90662d8f6e31a95d15d03c0afa59f648","class":"protected-control","mode":"100644","path":".gitleaks.toml"}
 {"blob_oid":"954d6716a2082cf91479b0c7d0a07d5614328503","class":"evaluated-input","mode":"100644","path":".metadata"}
@@ -464,9 +464,9 @@
 {"blob_oid":"996d9e0875f1901d463a50564f4f2ca2060d19fb","class":"protected-control","mode":"100644","path":"backend/release_policy_trust/evidence/base/history-occurrences.v1.jsonl"}
 {"blob_oid":"53258440ffe047376cfa62d0ef04c011a6b030fe","class":"protected-control","mode":"100644","path":"backend/release_policy_trust/evidence/base/history-only.v1.jsonl"}
 {"blob_oid":"39c4e65311a7b10854fb84cb168ab88b94712026","class":"protected-control","mode":"100644","path":"backend/release_policy_trust/evidence/base/history-relations.v1.jsonl"}
-{"blob_oid":"e9eec4b99e78d3f92aee24f9867bb686c3de14c4","class":"protected-control","mode":"100644","path":"backend/release_policy_trust/evidence/claim-matrix.v1.json"}
+{"blob_oid":"66acdb1d3ec24e4eb93e8e88ade6cb83ea08d857","class":"protected-control","mode":"100644","path":"backend/release_policy_trust/evidence/claim-matrix.v1.json"}
 {"blob_oid":"65fab569f3ea362aa150876ccbbe950b7066ac99","class":"protected-control","mode":"100644","path":"backend/release_policy_trust/package-lock.json"}
-{"blob_oid":"391b47ec444360d9176d8b893cab324090ef531e","class":"protected-control","mode":"100644","path":"backend/release_policy_trust/package.json"}
+{"blob_oid":"928dc7d028d5c8db4c3c97085930e3fa4580a761","class":"protected-control","mode":"100644","path":"backend/release_policy_trust/package.json"}
 {"blob_oid":"7c5690834688253c69a021291f7134300f694d38","class":"protected-control","mode":"100644","path":"backend/release_policy_trust/policy/external-inputs.v1.jsonl"}
 {"blob_oid":"4d35ea7c140b61c925b25b6a9dc04f386ab42da1","class":"protected-control","mode":"100644","path":"backend/release_policy_trust/policy/release-policy.v1.json"}
 {"blob_oid":"62c9778fc9f3926e2e6b423babb7e3fb1dab41f5","class":"protected-control","mode":"100644","path":"backend/release_policy_trust/scripts/candidate_evidence.ts"}
@@ -474,7 +474,8 @@
 {"blob_oid":"db742024ac45097dc08fb9c16211590c5d025c7c","class":"protected-control","mode":"100644","path":"backend/release_policy_trust/scripts/codeowners_verify.ts"}
 {"blob_oid":"eb2e28e8d79e473c09cf93cc9f3d82d269618c2d","class":"protected-control","mode":"100644","path":"backend/release_policy_trust/scripts/evidence.ts"}
 {"blob_oid":"3ff4502268d12e465b55a0dab38f92dfb04a2c92","class":"protected-control","mode":"100644","path":"backend/release_policy_trust/scripts/external_verify.ts"}
-{"blob_oid":"c8af81dfd8837dbe44871ef47c3d4011d4dc84cb","class":"protected-control","mode":"100644","path":"backend/release_policy_trust/scripts/policy_verify.ts"}
+{"blob_oid":"13728fae264aa36e7c85aa87d99ad40c52b96289","class":"protected-control","mode":"100644","path":"backend/release_policy_trust/scripts/git_anchors.ts"}
+{"blob_oid":"d81a35489d0c671ee7f2b848dc52fb1e7335c7db","class":"protected-control","mode":"100644","path":"backend/release_policy_trust/scripts/policy_verify.ts"}
 {"blob_oid":"48d52da0df2a8b35f5ab838a03a3b17a9242abf5","class":"protected-control","mode":"100644","path":"backend/release_policy_trust/scripts/reproduce.ts"}
 {"blob_oid":"8fc070101a2787524cf57f9ad250adbbaebfe433","class":"protected-control","mode":"100644","path":"backend/release_policy_trust/scripts/shared.ts"}
 {"blob_oid":"ad28134121fb45141b1dedba803775cd7438d11c","class":"protected-control","mode":"100644","path":"backend/release_policy_trust/src/canonical.ts"}
@@ -492,6 +493,7 @@
 {"blob_oid":"be3d06104c4568e4f42d49a90561d27c303cf0ec","class":"protected-control","mode":"100644","path":"backend/release_policy_trust/src/webhook.ts"}
 {"blob_oid":"cdc94776bd98142c005a6c6d55a8b39785401de9","class":"protected-control","mode":"100644","path":"backend/release_policy_trust/test/api_boundary.test.ts"}
 {"blob_oid":"b2afacfdc312789452f87a16bdc2e128458a7f6e","class":"protected-control","mode":"100644","path":"backend/release_policy_trust/test/canonical.test.ts"}
+{"blob_oid":"9d55dce7f93247e08cce42a1b62919f676499b9b","class":"protected-control","mode":"100644","path":"backend/release_policy_trust/test/ci_checkout.test.ts"}
 {"blob_oid":"2ecd345b98b8923ba9c325f59aa48cd9430e5ba6","class":"protected-control","mode":"100644","path":"backend/release_policy_trust/test/conformance.test.ts"}
 {"blob_oid":"9e806d6c2a7a9ae119e054ca6a54d368fa24add8","class":"protected-control","mode":"100644","path":"backend/release_policy_trust/test/external.test.ts"}
 {"blob_oid":"20832339102c4571b7c8a6bb1b98bc85fc9cf46c","class":"protected-control","mode":"100644","path":"backend/release_policy_trust/test/helpers.ts"}

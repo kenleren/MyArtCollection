@@ -22,6 +22,7 @@
     "test:external": "npm run build --silent && node --test dist/test/external.test.js",
     "test:conformance": "npm run build --silent && node --test dist/test/conformance.test.js",
     "test:api-boundary": "npm run build --silent && node --test dist/test/api_boundary.test.js",
+    "test:ci-checkout": "npm run build --silent && node --test dist/test/ci_checkout.test.js",
     "evidence:generate": "node dist/scripts/evidence.js generate",
     "evidence:verify": "node dist/scripts/evidence.js verify",
     "policy:verify": "node dist/scripts/policy_verify.js",

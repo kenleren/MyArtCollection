@@ -310,6 +310,8 @@ jobs:
   release-policy-trust:
     name: Release policy trust source
     runs-on: ubuntu-24.04
+    env:
+      CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
     steps:
       - name: Check out full repository history
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
@@ -334,6 +336,7 @@ jobs:
           npm --prefix backend/release_policy_trust run test:external
           npm --prefix backend/release_policy_trust run test:conformance
           npm --prefix backend/release_policy_trust run test:api-boundary
+          npm --prefix backend/release_policy_trust run test:ci-checkout
           npm --prefix backend/release_policy_trust test
           npm --prefix backend/release_policy_trust audit \
             --package-lock-only --audit-level=info
@@ -341,11 +344,11 @@ jobs:
             --tip "$base" \
             --input backend/release_policy_trust/evidence/base
           npm --prefix backend/release_policy_trust run policy:verify -- \
-            --base "$base" --candidate "$GITHUB_SHA"
+            --base "$base" --candidate "$CANDIDATE_SHA"
           npm --prefix backend/release_policy_trust run codeowners:verify
           npm --prefix backend/release_policy_trust run external:verify
           npm --prefix backend/release_policy_trust run reproduce -- \
-            --candidate "$GITHUB_SHA" \
+            --candidate "$CANDIDATE_SHA" \
             --output "$RUNNER_TEMP/reproducibility.v1.json"
 
   mobile-broker-bypass-guard:

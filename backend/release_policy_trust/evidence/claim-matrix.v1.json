@@ -1,7 +1,7 @@
 {
   "claims": [
     {"claim":"anchors_inventory_history","evidence":["evidence:verify","history.test.js"],"required":"exact counts and SHA-256 digests"},
-    {"claim":"final_delta_codeowners","evidence":["policy:verify","codeowners:verify"],"required":"owned paths only and generated equality"},
+    {"claim":"final_delta_codeowners","evidence":["policy:verify","codeowners:verify","test:ci-checkout"],"required":"owned paths only, detached-checkout anchors, true candidate head, and generated equality"},
     {"claim":"webhook_hmac_identity","evidence":["test:webhook"],"required":"valid pull/push and fail-closed negatives"},
     {"claim":"pagination_paths","evidence":["test:pagination"],"required":"all bounds, races, operations, and malformed paths"},
     {"claim":"receipt_cas_outbox_checks","evidence":["test:receipt","test:conformance"],"required":"atomic replay, crash, stale, and ambiguity schedules"},

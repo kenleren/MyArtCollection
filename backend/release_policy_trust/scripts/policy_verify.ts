@@ -1,14 +1,14 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { isProtected } from "../src/paths.js";
+import { verifyFrozenBaseAndCandidate } from "./git_anchors.js";
 import { argument, git, hashBytes, loadPolicy, repoRoot, validateOid } from "./shared.js";
 
 const base = validateOid(argument("--base"));
 const candidate = validateOid(argument("--candidate"));
 const policy = loadPolicy();
 if (base !== policy.base_commit) throw new Error("base differs from frozen policy base");
-for (const ref of ["main", "origin/main"]) if ((git(["rev-parse", ref], { encoding: "utf8" }) as string).trim() !== base) throw new Error(`${ref} moved from frozen bootstrap base`);
-if ((git(["merge-base", base, candidate], { encoding: "utf8" }) as string).trim() !== base) throw new Error("candidate is not based on frozen main");
+verifyFrozenBaseAndCandidate(repoRoot, base, candidate);
 
 const allowedExact = new Set([".github/workflows/release-readiness.yml", ".github/CODEOWNERS", "docs/RELEASE_READINESS_CI.md", "docs/RELEASE_POLICY_TRUST.md"]);
 const changed = (git(["diff", "--name-only", "-z", base, candidate]) as Buffer).subarray(0).toString("utf8").split("\0").filter(Boolean);
