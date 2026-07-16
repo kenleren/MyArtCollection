@@ -13,6 +13,10 @@ import 'intake/supporting_document_picker.dart';
 import 'intake/supporting_attachment_service.dart';
 import 'external_references/external_reference_launch_gateway.dart';
 import 'external_references/external_reference_launch_service.dart';
+import 'export/archive_export_service.dart';
+import 'export/export_artifact_store.dart';
+import 'export/export_destination_gateway.dart';
+import 'export/pdf_report_service.dart';
 import 'research/online_research_service.dart';
 import 'storage/local_artwork_repository.dart';
 import 'storage/local_attachment_store.dart';
@@ -32,6 +36,8 @@ class AppDependencies {
     this.onDeviceAiDraftProvider = const DisabledOnDeviceAiDraftProvider(),
     this.onlineResearchClient,
     this.externalReferenceLaunchGateway,
+    this.exportArtifactStore,
+    this.exportDestinationGateway = const SystemExportDestinationGateway(),
   });
 
   final LocalArtworkRepository artworkRepository;
@@ -46,6 +52,8 @@ class AppDependencies {
   final OnDeviceAiDraftProvider onDeviceAiDraftProvider;
   final OnlineResearchClient? onlineResearchClient;
   final ExternalReferenceLaunchGateway? externalReferenceLaunchGateway;
+  final ExportArtifactStore? exportArtifactStore;
+  final ExportDestinationGateway exportDestinationGateway;
 
   ArtworkIntakeService createIntakeService() {
     return ArtworkIntakeService(
@@ -90,6 +98,22 @@ class AppDependencies {
       gateway:
           externalReferenceLaunchGateway ??
           createSystemExternalReferenceLaunchGateway(),
+    );
+  }
+
+  Future<ArchiveExportService> createArchiveExportService() async {
+    return ArchiveExportService(
+      repository: artworkRepository,
+      attachmentStore: attachmentStore,
+      artifactStore: exportArtifactStore ?? await ExportArtifactStore.open(),
+    );
+  }
+
+  Future<PdfReportService> createPdfReportService() async {
+    return PdfReportService(
+      repository: artworkRepository,
+      attachmentStore: attachmentStore,
+      artifactStore: exportArtifactStore ?? await ExportArtifactStore.open(),
     );
   }
 }

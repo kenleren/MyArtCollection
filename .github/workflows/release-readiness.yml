@@ -69,6 +69,13 @@ jobs:
           printf '%s  %s\n' "$FLUTTER_LINUX_X64_SHA256" "$archive" | sha256sum -c -
           tar -xJf "$archive" -C "$RUNNER_TEMP"
           echo "$RUNNER_TEMP/flutter/bin" >> "$GITHUB_PATH"
+      - name: Install PDF text extraction for report assertions
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends poppler-utils
+          pdftotext -v
       - name: Map checksum-verified Flutter test fonts
         shell: bash
         run: |
@@ -157,7 +164,7 @@ jobs:
           )
           test "${#custody_libraries[@]}" -gt 0
           bash test/attachment_custody_release_symbol_test.sh "${custody_libraries[@]}"
-      - name: Test Android attachment viewer policy
+      - name: Test Android private-file destination policies
         working-directory: android
         run: >-
           java -Dorg.gradle.appname=gradlew
@@ -165,6 +172,9 @@ jobs:
           org.gradle.wrapper.GradleWrapperMain
           :app:testDebugUnitTest
           --tests app.archivale.AttachmentViewerPolicyTest
+          --tests app.archivale.AttachmentCustodyNativeAccessTest
+          --tests app.archivale.ExportSaveCopyPolicyTest
+          --tests app.archivale.ExportSaveCallbackPolicyTest
 
   backend-and-audit:
     name: Backend and audit policy

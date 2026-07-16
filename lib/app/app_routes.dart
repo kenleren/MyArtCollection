@@ -34,6 +34,4 @@ class AppRoutes {
       '${artwork(artworkId)}/supporting-photo/import';
   static String artworkReportPreview(String artworkId) =>
       '${artwork(artworkId)}/report-preview';
-  static String artworkExport(String artworkId) =>
-      '${artwork(artworkId)}/export';
 }

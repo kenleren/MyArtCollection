@@ -57,6 +57,10 @@ dependencies:
   image: ^4.9.1
   url_launcher: 6.3.2
   web: ^1.1.1
+  archive: ^4.0.7
+  open_filex: ^4.7.0
+  pdf: ^3.11.3
+  share_plus: ^12.0.1
 
 dev_dependencies:
   flutter_test:
@@ -76,6 +80,10 @@ dev_dependencies:
 # The following section is specific to Flutter packages.
 flutter:
   generate: true
+  assets:
+    - assets/fonts/Roboto-Regular.ttf
+    - assets/fonts/Roboto-Bold.ttf
+    - assets/fonts/Roboto_LICENSE.txt
 
   # The following line ensures that the Material Icons font is
   # included with your application, so that you can use the icons in

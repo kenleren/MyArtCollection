@@ -1,11 +1,13 @@
 package app.archivale
 
+import android.app.Activity
 import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
 import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Build
+import android.os.ParcelFileDescriptor
 import androidx.core.content.FileProvider
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.embedding.android.FlutterActivity
@@ -29,25 +31,14 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 
-private object AttachmentCustodyNative {
-    init {
-        System.loadLibrary("attachment_custody")
+class MainActivity : FlutterActivity() {
+    private companion object {
+        const val CREATE_EXPORT_DOCUMENT_REQUEST = 47178
     }
 
-    external fun execute(
-        flutterRoot: String,
-        operation: String,
-        sourcePath: String,
-        operationId: String,
-        artworkId: String,
-        attachmentId: String,
-        canonicalName: String,
-    ): String
-}
-
-class MainActivity : FlutterActivity() {
     private val onDeviceAiScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var onDeviceAiProvider: MlKitPromptOnDeviceAiProvider? = null
+    private var pendingExportSave: PendingExportSave? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -141,6 +132,59 @@ class MainActivity : FlutterActivity() {
 
         MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
+            "app.archivale/export_destination",
+        ).setMethodCallHandler { call, result ->
+            if (call.method != "saveCopy") {
+                result.notImplemented()
+                return@setMethodCallHandler
+            }
+            val sourcePath = call.argument<String>("sourcePath")
+            val suggestedName = call.argument<String>("suggestedName")
+            val mimeType = call.argument<String>("mimeType")
+            if (
+                sourcePath == null ||
+                suggestedName == null ||
+                mimeType == null ||
+                !ExportSaveCopyPolicy.isSafeSuggestedName(suggestedName)
+            ) {
+                result.success("unavailable")
+                return@setMethodCallHandler
+            }
+            val sourceFile = File(sourcePath)
+            val applicationDocumentsDirectory = getDir("flutter", Context.MODE_PRIVATE)
+            if (pendingExportSave != null) {
+                result.success("unavailable")
+                return@setMethodCallHandler
+            }
+            val source = openValidatedExportSource(
+                sourceFile = sourceFile,
+                applicationDocumentsDirectory = applicationDocumentsDirectory,
+                suggestedName = suggestedName,
+                mimeType = mimeType,
+            )
+            if (source == null) {
+                result.success("unavailable")
+                return@setMethodCallHandler
+            }
+            val createIntent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+                addCategory(Intent.CATEGORY_OPENABLE)
+                type = source.metadata.mimeType
+                putExtra(Intent.EXTRA_TITLE, source.metadata.fileName)
+            }
+            try {
+                pendingExportSave = PendingExportSave(source) { outcome -> result.success(outcome) }
+                startActivityForResult(createIntent, CREATE_EXPORT_DOCUMENT_REQUEST)
+            } catch (_: ActivityNotFoundException) {
+                pendingExportSave?.finish("unavailable")
+                pendingExportSave = null
+            } catch (_: SecurityException) {
+                pendingExportSave?.finish("unavailable")
+                pendingExportSave = null
+            }
+        }
+
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
             "app.archivale/attachment_custody_v1",
         ).setMethodCallHandler { call, result ->
             val arguments = call.arguments as? Map<*, *> ?: emptyMap<Any?, Any?>()
@@ -153,8 +197,8 @@ class MainActivity : FlutterActivity() {
                     arguments["artworkId"] as? String ?: "",
                     arguments["attachmentId"] as? String ?: "",
                     arguments["canonicalName"] as? String ?: "",
-                )
-            } catch (_: UnsatisfiedLinkError) {
+                ) ?: "{\"outcome\":\"unsupported\",\"detail\":\"Native attachment custody is unavailable.\"}"
+            } catch (_: LinkageError) {
                 "{\"outcome\":\"unsupported\",\"detail\":\"Native attachment custody is unavailable.\"}"
             } catch (_: Exception) {
                 "{\"outcome\":\"ioFailure\",\"detail\":\"Native attachment custody failed.\"}"
@@ -167,7 +211,38 @@ class MainActivity : FlutterActivity() {
         }
     }
 
+    @Deprecated("Activity result callback is required for ACTION_CREATE_DOCUMENT.")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        if (requestCode != CREATE_EXPORT_DOCUMENT_REQUEST) {
+            super.onActivityResult(requestCode, resultCode, data)
+            return
+        }
+        val pending = pendingExportSave
+        pendingExportSave = null
+        if (pending == null) return
+        val destination = data?.data
+        ExportSaveCallbackPolicy.complete(
+            pending = pending,
+            accepted = resultCode == Activity.RESULT_OK && destination != null,
+            copy = {
+                val output = contentResolver.openOutputStream(requireNotNull(destination), "w")
+                if (output == null) {
+                    false
+                } else {
+                    output.use { pending.source.revalidateAndCopy(it) }
+                }
+            },
+            cleanup = {
+                if (contentResolver.delete(requireNotNull(destination), null, null) == 0) {
+                    contentResolver.openOutputStream(destination, "wt")?.close()
+                }
+            },
+        )
+    }
+
     override fun onDestroy() {
+        pendingExportSave?.finish("unavailable")
+        pendingExportSave = null
         onDeviceAiProvider?.close()
         onDeviceAiScope.cancel()
         super.onDestroy()
@@ -218,6 +293,105 @@ class MainActivity : FlutterActivity() {
             sourceFile,
             applicationDocumentsDirectory,
         )
+    }
+
+    private fun openValidatedExportSource(
+        sourceFile: File,
+        applicationDocumentsDirectory: File,
+        suggestedName: String,
+        mimeType: String,
+    ): ExportSaveCopyPolicy.ValidatedExportSource? {
+        var payload: ParcelFileDescriptor.AutoCloseInputStream? = null
+        var metadata: ParcelFileDescriptor.AutoCloseInputStream? = null
+        return try {
+            val descriptors = AttachmentCustodyNative.openExportPair(
+                applicationDocumentsDirectory.absolutePath,
+                sourceFile.absolutePath,
+            )
+            if (descriptors.size != 2) return null
+            payload = ParcelFileDescriptor.AutoCloseInputStream(
+                ParcelFileDescriptor.adoptFd(descriptors[0]),
+            )
+            metadata = ParcelFileDescriptor.AutoCloseInputStream(
+                ParcelFileDescriptor.adoptFd(descriptors[1]),
+            )
+            metadata.use { metadataPayload ->
+                ExportSaveCopyPolicy.openValidated(
+                    sourceFile = sourceFile,
+                    applicationDocumentsDirectory = applicationDocumentsDirectory,
+                    suggestedName = suggestedName,
+                    mimeType = mimeType,
+                    payload = requireNotNull(payload),
+                    metadataPayload = metadataPayload,
+                )
+            }.also { validated ->
+                if (validated == null) payload.close()
+            }
+        } catch (_: LinkageError) {
+            try {
+                payload?.close()
+            } catch (_: Exception) {
+                // The native linkage failure wins.
+            }
+            null
+        } catch (_: Exception) {
+            try {
+                payload?.close()
+            } catch (_: Exception) {
+                // The original validation failure wins.
+            }
+            null
+        }
+    }
+}
+
+internal class PendingExportSave(
+    val source: ExportSaveSource,
+    private val result: (String) -> Unit,
+) {
+    private var finished = false
+
+    fun finish(outcome: String) {
+        if (finished) return
+        finished = true
+        try {
+            result(outcome)
+        } catch (_: Exception) {
+            // Flutter completion errors must not retain the private source descriptor.
+        } finally {
+            try {
+                source.close()
+            } catch (_: Exception) {
+                // Terminal cleanup is best effort after the descriptor close was attempted.
+            }
+        }
+    }
+}
+
+internal object ExportSaveCallbackPolicy {
+    fun complete(
+        pending: PendingExportSave,
+        accepted: Boolean,
+        copy: () -> Boolean,
+        cleanup: () -> Unit,
+    ) {
+        if (!accepted) {
+            pending.finish("dismissed")
+            return
+        }
+        val completed = try {
+            copy()
+        } catch (_: Exception) {
+            false
+        }
+        if (!completed) {
+            try {
+                cleanup()
+            } catch (_: Exception) {
+                // The provider may not allow cleanup. The operation still fails closed.
+            }
+        }
+        pending.finish(if (completed) "completed" else "unavailable")
     }
 }
 

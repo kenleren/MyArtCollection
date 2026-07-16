@@ -1041,7 +1041,20 @@ Iterable<File> _mobileFilesUnder(Directory directory) sync* {
   if (!directory.existsSync()) {
     return;
   }
-  for (final entity in directory.listSync(recursive: true)) {
+  const generatedDependencyDirectories = {
+    '.gradle',
+    '.symlinks',
+    'Pods',
+    'build',
+  };
+  for (final entity in directory.listSync(
+    recursive: true,
+    followLinks: false,
+  )) {
+    final pathParts = p.split(entity.path);
+    if (pathParts.any(generatedDependencyDirectories.contains)) {
+      continue;
+    }
     if (entity is File && _isMobileSourceOrConfig(entity.path)) {
       yield entity;
     }
