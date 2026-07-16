@@ -17,7 +17,8 @@ ruleset handoff described below; this change does not mutate repository rules.
   the broker audit policy;
 - the credential-free release-policy trust package build, synthetic
   conformance, frozen inventory/history, external-manifest, CODEOWNERS, audit,
-  and reproducibility gates;
+  candidate-inventory byte regeneration, final-summary digest verification,
+  and reproducibility byte-regeneration gates;
 - static-site validation with Python 3.12.13;
 - mobile broker-bypass guard and its negative fixtures; and
 - a full-history, redacted Gitleaks scan plus repository secret-path guard.
@@ -77,6 +78,9 @@ Before `poppler-utils` installation, CI records the apt metadata response,
 simulates the no-recommends closure, downloads into an empty archive directory,
 and compares exact package/version/architecture coordinates. It hashes every
 `.deb` before using `--no-download` to install the already verified closure.
+The simulation, expected closure, observed closure, and archive evidence are
+themselves hashed before installation. Broker audit response files are likewise
+hashed before the audit policy consumes them.
 These runtime observations are evidence-only and never promote mutable apt
 metadata or packages to a predeclared trusted input.
 

@@ -13,6 +13,8 @@ test("every protected operation evaluates current and prior names", () => {
 test("malformed, duplicate, case-fold, and Unicode-collision paths fail", () => {
   for (const path of ["", "/absolute", "a\\b", "a/../b", "a/./b", "a//b", "a\u0000b", "Cafe\u0301.md"]) assert.throws(() => evaluateChangedFiles([{ path, status: "modified" }], policy));
   assert.throws(() => evaluateChangedFiles([{ path: "A.md", status: "modified" }, { path: "a.md", status: "modified" }], policy), /collision/);
+  assert.throws(() => evaluateChangedFiles([{ path: "Straße.md", status: "modified" }, { path: "STRASSE.md", status: "modified" }], policy), /collision/);
+  assert.throws(() => evaluateChangedFiles([{ path: "\u13A0.md", status: "modified" }, { path: "\uAB70.md", status: "modified" }], policy), /collision/);
   assert.throws(() => evaluateChangedFiles([{ path: "a.md", status: "modified" }, { path: "a.md", status: "modified" }], policy), /duplicate/);
   assert.throws(() => evaluateChangedFiles([{ path: "x", previousPath: "x", status: "renamed" }], policy));
 });

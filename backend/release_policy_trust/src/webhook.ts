@@ -2,6 +2,7 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import { sha256 } from "./canonical.js";
 import { fail } from "./errors.js";
 import { parseStrictJson } from "./strict_json.js";
+import { assertCanonicalPolicy, type CanonicalReleasePolicy } from "./policy.js";
 
 export interface HeaderField { name: string; value: string }
 export interface WebhookLimits {
@@ -34,8 +35,20 @@ export function verifyWebhook(
   rawBody: Uint8Array,
   headers: readonly HeaderField[],
   secret: Uint8Array,
-  limits: WebhookLimits,
+  policy: CanonicalReleasePolicy,
 ): VerifiedWebhook {
+  assertCanonicalPolicy(policy);
+  const limits: WebhookLimits = {
+    actionBytes: policy.limits.actionBytes,
+    bodyBytes: policy.limits.webhookBodyBytes,
+    deliveryIdBytes: policy.limits.deliveryIdBytes,
+    eventBytes: policy.limits.eventBytes,
+    headerCount: policy.limits.headerCount,
+    headerNameBytes: policy.limits.headerNameBytes,
+    headerValueBytes: policy.limits.headerValueBytes,
+    jsonDepth: policy.limits.jsonDepth,
+    jsonNodes: policy.limits.jsonNodes,
+  };
   if (rawBody.byteLength > limits.bodyBytes) fail("overflow", "webhook body too large");
   if (headers.length > limits.headerCount) fail("overflow", "too many webhook headers");
   const values = new Map<string, string[]>();

@@ -113,6 +113,13 @@ jobs:
           diff -u "$evidence/expected.tsv" "$evidence/actual-coordinates.tsv"
           awk -F '\t' 'NF != 4 || $4 !~ /^[0-9a-f]{64}$/ { exit 1 }' \
             "$evidence/actual.tsv"
+          sha256sum \
+            "$evidence/simulation.txt" \
+            "$evidence/expected.tsv" \
+            "$evidence/actual.tsv" \
+            "$evidence/actual-coordinates.tsv" \
+            > "$evidence/runtime-evidence.sha256"
+          test "$(wc -l < "$evidence/runtime-evidence.sha256")" -eq 4
           sudo apt-get -o "Dir::Cache::archives=$archives" install \
             --yes --no-download --no-install-recommends poppler-utils
           pdftotext -v
@@ -254,6 +261,11 @@ jobs:
             --cache "$core_audit_cache" > "$RUNNER_TEMP/broker-core-audit.json"
           core_audit_status=$?
           set -e
+          sha256sum \
+            "$RUNNER_TEMP/broker-audit.json" \
+            "$RUNNER_TEMP/broker-core-audit.json" \
+            > "$RUNNER_TEMP/broker-audit-runtime-evidence.sha256"
+          test "$(wc -l < "$RUNNER_TEMP/broker-audit-runtime-evidence.sha256")" -eq 2
           test "$full_audit_status" -eq 1 || { echo "full npm audit did not report the expected policy input" >&2; exit 1; }
           test "$core_audit_status" -eq 1 || { echo "peer-omitted npm audit did not report the expected policy input" >&2; exit 1; }
           node scripts/check_broker_audit.mjs \
@@ -345,11 +357,20 @@ jobs:
             --input backend/release_policy_trust/evidence/base
           npm --prefix backend/release_policy_trust run policy:verify -- \
             --base "$base" --candidate "$CANDIDATE_SHA"
+          npm --prefix backend/release_policy_trust run candidate:generate -- \
+            --candidate "$CANDIDATE_SHA" \
+            --output "$RUNNER_TEMP/candidate-tree.v1.jsonl"
+          cmp \
+            backend/release_policy_trust/evidence/review/candidate-tree.v1.jsonl \
+            "$RUNNER_TEMP/candidate-tree.v1.jsonl"
           npm --prefix backend/release_policy_trust run codeowners:verify
           npm --prefix backend/release_policy_trust run external:verify
           npm --prefix backend/release_policy_trust run reproduce -- \
             --candidate "$CANDIDATE_SHA" \
             --output "$RUNNER_TEMP/reproducibility.v1.json"
+          cmp \
+            backend/release_policy_trust/evidence/review/reproducibility.v1.json \
+            "$RUNNER_TEMP/reproducibility.v1.json"
 
   mobile-broker-bypass-guard:
     name: Mobile broker bypass guard

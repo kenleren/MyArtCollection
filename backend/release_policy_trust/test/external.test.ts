@@ -1,18 +1,21 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { sha256 } from "../src/canonical.js";
-import { validateExternalInputs, verifyAcquiredDigest, verifyAptClosure } from "../src/external.js";
+import { runtimeObservationContractDigest, validateExternalInputs, verifyAcquiredDigest, verifyAptClosure } from "../src/external.js";
 
 const valid = { consumer: "ci", id: "one", integrity: { algorithm: "sha256", digest: "a".repeat(64), source: "policy" }, kind: "toolchain", locator: "https:example.invalid/tool", producer: "verified download", retention: "ephemeral", secret_policy: "forbidden", trust: "trusted" };
 
 test("external manifest schema separates trusted and evidence-only input", () => {
   assert.equal(validateExternalInputs([valid]).length, 1);
-  assert.equal(validateExternalInputs([{ ...valid, id: "evidence", integrity: { algorithm: "sha256", digest: "runtime-sha256", source: "runtime-observation" }, kind: "evidence", trust: "evidence-only" }]).length, 1);
+  const evidence = { ...valid, id: "evidence", kind: "evidence", trust: "evidence-only" } as const;
+  assert.equal(validateExternalInputs([{ ...evidence, integrity: { algorithm: "sha256", digest: runtimeObservationContractDigest(evidence), source: "runtime-observation" } }]).length, 1);
 });
 
 test("observed, missing digest, promotion, unknown keys, and secret locators fail", () => {
   assert.throws(() => validateExternalInputs([{ ...valid, integrity: { algorithm: "observed", digest: "x", source: "policy" } }]));
   assert.throws(() => validateExternalInputs([{ ...valid, integrity: { ...valid.integrity, digest: "" } }]));
+  assert.throws(() => validateExternalInputs([{ ...valid, integrity: { algorithm: "git-commit-sha1", digest: "a".repeat(64), source: "policy" } }]));
+  assert.throws(() => validateExternalInputs([{ ...valid, integrity: { algorithm: "sha256", digest: "runtime-sha256", source: "policy" } }]));
   assert.throws(() => validateExternalInputs([{ ...valid, integrity: { ...valid.integrity, source: "runtime-observation" } }]));
   assert.throws(() => validateExternalInputs([{ ...valid, extra: true }]));
   assert.throws(() => validateExternalInputs([{ ...valid, locator: "workspace/.env.local" }]));

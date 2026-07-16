@@ -4,6 +4,24 @@ export type FileStatus = "added" | "modified" | "removed" | "renamed" | "copied"
 export interface ChangedFile { path: string; previousPath?: string; status: FileStatus }
 export interface PathPolicy { exact: readonly string[]; prefixes: readonly string[] }
 
+// ECMAScript's Unicode casing plus the three Unicode 15.1 full-fold exceptions
+// to upper-then-lower yields the default full case fold. Node is version-pinned;
+// Cherokee folds to uppercase, dotless i remains dotless, and capital sharp-s
+// expands to "ss". NFC is applied only to make the collision key stable.
+export function fullUnicodeCaseFold(value: string): string {
+  let output = "";
+  for (const character of value) {
+    const code = character.codePointAt(0)!;
+    if (code === 0x0131) output += character;
+    else if (code === 0x1e9e) output += "ss";
+    else if ((code >= 0x13a0 && code <= 0x13f5)) output += character;
+    else if (code >= 0x13f8 && code <= 0x13fd) output += String.fromCodePoint(code - 8);
+    else if (code >= 0xab70 && code <= 0xabbf) output += String.fromCodePoint(code - 0x97d0);
+    else output += character.toUpperCase().toLowerCase();
+  }
+  return output.normalize("NFC");
+}
+
 export function validateRepositoryPath(path: string): string {
   if (path.length === 0 || path.startsWith("/") || path.includes("\\") || /[\u0000-\u001f\u007f]/.test(path)) {
     return fail("invalid_input", "malformed repository path");
@@ -31,7 +49,7 @@ export function evaluateChangedFiles(files: readonly ChangedFile[], policy: Path
       const path = validateRepositoryPath(candidate);
       if (exact.has(path)) fail("invalid_input", "duplicate repository path");
       exact.add(path);
-      const collisionKey = path.normalize("NFC").toLowerCase();
+      const collisionKey = fullUnicodeCaseFold(path);
       const prior = folded.get(collisionKey);
       if (prior !== undefined && prior !== path) fail("invalid_input", "case or Unicode path collision");
       folded.set(collisionKey, path);

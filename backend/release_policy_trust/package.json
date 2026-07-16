@@ -16,7 +16,7 @@
     "build": "node scripts/clean.mjs && tsc -p tsconfig.json",
     "test": "npm run build --silent && node --test dist/test/*.test.js",
     "test:history": "npm run build --silent && node --test dist/test/history.test.js",
-    "test:webhook": "npm run build --silent && node --test dist/test/webhook.test.js dist/test/canonical.test.js",
+    "test:webhook": "npm run build --silent && node --test dist/test/webhook.test.js dist/test/canonical.test.js dist/test/policy.test.js",
     "test:pagination": "npm run build --silent && node --test dist/test/pagination.test.js dist/test/paths.test.js",
     "test:receipt": "npm run build --silent && node --test dist/test/receipt.test.js",
     "test:external": "npm run build --silent && node --test dist/test/external.test.js",

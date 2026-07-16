@@ -110,7 +110,7 @@ class Parser {
   }
 
   private space(): void {
-    while (/\s/.test(this.text[this.index] ?? "")) this.index += 1;
+    while ([" ", "\t", "\r", "\n"].includes(this.text[this.index] ?? "")) this.index += 1;
   }
 }
 

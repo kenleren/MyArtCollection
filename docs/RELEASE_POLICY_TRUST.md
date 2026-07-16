@@ -9,10 +9,14 @@ merge.
 
 ## What this repository owns
 
-The package verifies an injected raw webhook body before parsing it, binds
+The package validates canonical policy bytes and computes their digest
+internally before using their repository/base identity, limits, selectors, or
+check name. It verifies an injected raw webhook body before parsing it, binds
 positive numeric App, installation, and repository identities, builds an
 immutable pull-request/main/files snapshot, evaluates current and prior paths,
-and emits work through durable CAS/outbox interfaces. Its GitHub port has only
+and persists the complete tuple, snapshot, file digest, policy, and decision.
+Only a CAS-protected `decision_ready` generation can proceed to completion.
+Its GitHub port has only
 typed pull-request, main-ref, file, open-PR, App-owned Check Run listing,
 Check Run creation, and bound Check Run update operations. Commit statuses,
 generic HTTP, GraphQL, token acquisition, `neutral`, and `skipped` conclusions
@@ -20,15 +24,31 @@ are not part of the port.
 
 The canonical policy treats protected-path additions, modifications, removals,
 copies, rename sources, and rename targets as failures. Malformed, duplicate,
-case-folding, Unicode, identity, pagination, snapshot, storage, lease, API, or
+full-Unicode-case-folding, identity, pagination, snapshot, storage, lease, API, or
 check-creation ambiguity is fail-closed and cannot produce success. A
 same-named GitHub Actions check is not accepted as the external App check.
+
+Receipt processing is resumable from `received` through snapshot, enqueue,
+processing, and terminal aggregation. Pull generation/current/outbox state is
+atomic. Push target lists and digests are durable, each child has a CAS lease,
+and the parent receipt becomes terminal only after all children do. Ambiguous
+store commits are resolved by exact durable reread. The Check binding stores
+App/repository/head/name/external/check identities. Unique create and update
+intents enter possible-send state before an external call. Ambiguous creation
+is reconciled without recreation; ambiguous update retries only its already
+bound numeric Check ID. A per-PR fence prevents a newer generation from being
+admitted while an external effect is in flight.
 
 The committed base evidence is anchored only to ancestry of
 `f42582c8eb0d1405cd5e214f6b9c80980225b5f1`. The policy, exact current-tree
 inventory, full-history relations, external-input manifest, CODEOWNERS file,
 claim matrix, reproducibility record, and final candidate summary are
 deterministic review inputs. They contain no credentials or provider data.
+The summary verifies every dependent digest and test count. CI regenerates and
+byte-compares candidate inventory and reproducibility evidence. External
+integrity algorithms have strict digest syntax; workflow Action/tool pins,
+locks, apt/audit runtime evidence, and generated-output contracts are
+mechanically reconciled with the external manifest.
 
 ## What remains outside this repository
 
