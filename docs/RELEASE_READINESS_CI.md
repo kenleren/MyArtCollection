@@ -15,6 +15,9 @@ ruleset handoff described below; this change does not mutate repository rules.
   JVM boundary validation;
 - broker and forms dependency installs, builds, tests, a clean forms audit, and
   the broker audit policy;
+- the credential-free release-policy trust package build, synthetic
+  conformance, frozen inventory/history, external-manifest, CODEOWNERS, audit,
+  and reproducibility gates;
 - static-site validation with Python 3.12.13;
 - mobile broker-bypass guard and its negative fixtures; and
 - a full-history, redacted Gitleaks scan plus repository secret-path guard.
@@ -30,6 +33,13 @@ result deterministic while still running every test.
 The Linux runner maps Roboto and Material Icons from the checksum-verified
 Flutter SDK to the macOS-compatible paths used by the existing screenshot test
 harness, keeping text metrics and lazy-list visibility consistent across hosts.
+
+The release-policy trust job is source evidence only. It uses no App secret,
+private key, installation token, provider, host, store, queue, live Check Run,
+repository setting, or ruleset mutation. Its passing result does not mean the
+dedicated external App is deployed or that its distinct check is required.
+That operational boundary is documented in
+[Release policy trust](RELEASE_POLICY_TRUST.md).
 
 ## Reproducibility and cache boundary
 
@@ -62,6 +72,13 @@ forms audit also uses an isolated temporary cache. No audit cache is persisted.
 Every checkout uses
 `persist-credentials: false`, and CI verifies that checkout leaves no local git
 credential configuration without printing any credential value.
+
+Before `poppler-utils` installation, CI records the apt metadata response,
+simulates the no-recommends closure, downloads into an empty archive directory,
+and compares exact package/version/architecture coordinates. It hashes every
+`.deb` before using `--no-download` to install the already verified closure.
+These runtime observations are evidence-only and never promote mutable apt
+metadata or packages to a predeclared trusted input.
 
 ## Debug package boundary
 
@@ -132,10 +149,10 @@ Updating or removing it needs a separately reviewed lockfile and policy change.
 
 ## Owner protection handoff
 
-`/.github/CODEOWNERS` assigns `@kenleren` to the release workflow, CODEOWNERS
-file, secret-scan and broker-guard policy, broker audit checker/fixtures, Android
-input guard, Gradle wrapper/validator, and this runbook. CODEOWNERS alone does
-not enforce review. After this PR passes independent task and redteam review,
+`/.github/CODEOWNERS` is generated from the canonical release-policy selectors
+and assigns `@kenleren` to every protected release control, including the trust
+package and its runbook. CODEOWNERS alone does not enforce review. After this PR
+passes independent task and redteam review,
 the repository owner must prepare and validate a ruleset for `main` that:
 
 1. Requires the `Release readiness` status from the expected GitHub Actions app,

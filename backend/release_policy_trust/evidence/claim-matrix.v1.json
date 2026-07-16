@@ -1,0 +1,17 @@
+{
+  "claims": [
+    {"claim":"anchors_inventory_history","evidence":["evidence:verify","history.test.js"],"required":"exact counts and SHA-256 digests"},
+    {"claim":"final_delta_codeowners","evidence":["policy:verify","codeowners:verify"],"required":"owned paths only and generated equality"},
+    {"claim":"webhook_hmac_identity","evidence":["test:webhook"],"required":"valid pull/push and fail-closed negatives"},
+    {"claim":"pagination_paths","evidence":["test:pagination"],"required":"all bounds, races, operations, and malformed paths"},
+    {"claim":"receipt_cas_outbox_checks","evidence":["test:receipt","test:conformance"],"required":"atomic replay, crash, stale, and ambiguity schedules"},
+    {"claim":"api_boundary","evidence":["test:api-boundary"],"required":"allowlisted typed Check Run port only"},
+    {"claim":"external_manifest","evidence":["external:verify","test:external"],"required":"trusted/evidence-only separation and apt preinstall closure"},
+    {"claim":"package_quality","evidence":["build","test","npm audit"],"required":"all pass and clean audit"},
+    {"claim":"reproducibility","evidence":["reproduce","reproducibility.v1.json"],"required":"byte-identical build, pack, and canonical SBOM"},
+    {"claim":"repository_safety","evidence":["git diff --check","scripts/secret_scan.sh"],"required":"scoped diff, redacted scan, clean worktree"},
+    {"claim":"exact_head_ci","evidence":["GitHub Release Readiness run"],"required":"one successful exact-head run with prerequisite jobs"},
+    {"claim":"acceptance","evidence":["independent task review","security redteam"],"required":"both ACCEPT on the same frozen SHA"}
+  ],
+  "schema_version": 1
+}

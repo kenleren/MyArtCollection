@@ -1,0 +1,84 @@
+{
+  "base_commit": "f42582c8eb0d1405cd5e214f6b9c80980225b5f1",
+  "check_name": "Archivale release policy trust",
+  "limits": {
+    "action_bytes": 64,
+    "check_pages": 30,
+    "check_rows": 3000,
+    "delivery_id_bytes": 128,
+    "event_bytes": 32,
+    "file_pages": 30,
+    "file_rows": 3000,
+    "header_count": 64,
+    "header_name_bytes": 64,
+    "header_value_bytes": 1024,
+    "json_depth": 64,
+    "json_nodes": 200000,
+    "open_pr_pages": 10,
+    "open_pr_passes": 2,
+    "open_pr_rows": 1000,
+    "page_size": 100,
+    "reconcile_delays_seconds": [1, 2, 4, 8, 16, 32],
+    "webhook_body_bytes": 26214400
+  },
+  "repository": {
+    "base_ref": "main",
+    "name": "kenleren/MyArtCollection"
+  },
+  "schema_version": 1,
+  "selectors": {
+    "baseline_exact": [
+      ".gitleaks.toml",
+      "analysis_options.yaml",
+      "android/.gitignore",
+      "android/app/build.gradle.kts",
+      "android/app/src/androidTest/kotlin/app/archivale/AttachmentCustodyInstrumentationTest.kt",
+      "android/app/src/main/cpp/CMakeLists.txt",
+      "android/app/src/test/cpp/AttachmentCustodyHarness.cpp",
+      "android/app/src/test/cpp/AttachmentCustodyTestSuite.hpp",
+      "android/app/src/test/kotlin/app/archivale/AttachmentCustodyNativeAccessTest.kt",
+      "android/app/src/test/kotlin/app/archivale/AttachmentViewerPolicyTest.kt",
+      "android/app/src/test/kotlin/app/archivale/ExportSaveCopyPolicyTest.kt",
+      "android/build.gradle.kts",
+      "android/gradle.properties",
+      "android/settings.gradle.kts",
+      "backend/broker/package.json",
+      "backend/broker/tsconfig.json",
+      "backend/forms/package.json",
+      "backend/forms/tsconfig.json",
+      "backend/play_billing/package.json",
+      "backend/play_billing/tsconfig.json",
+      "docs/RELEASE_READINESS_CI.md",
+      "docs/SECRET_HYGIENE.md",
+      "scripts/check_android_ci_inputs.sh",
+      "scripts/check_broker_audit.mjs",
+      "scripts/generate_sitemap.py",
+      "scripts/mobile_broker_bypass_guard.mjs",
+      "scripts/secret_scan.sh",
+      "scripts/validate_static_site.py",
+      "scripts/verify_gradle_wrapper.sh",
+      "test/android_ci_input_guard_test.sh",
+      "test/attachment_custody_instrumentation_contract_test.sh",
+      "test/attachment_custody_native_test.sh",
+      "test/attachment_custody_release_symbol_test.sh",
+      "test/attachment_native_viewer_policy_guard.py",
+      "test/attachment_native_viewer_policy_test.sh",
+      "test/broker_audit_policy_test.mjs",
+      "test/gradle_wrapper_validation_test.sh",
+      "test/mobile_broker_bypass_guard_fixture_test.mjs",
+      "test/mobile_broker_bypass_guard_test.dart",
+      "test/validate_static_site_test.py"
+    ],
+    "baseline_prefixes": [
+      ".github/",
+      "android/gradle/wrapper/",
+      "test/fixtures/broker-audit/"
+    ],
+    "final_exact_additions": [
+      "docs/RELEASE_POLICY_TRUST.md"
+    ],
+    "final_prefix_additions": [
+      "backend/release_policy_trust/"
+    ]
+  }
+}

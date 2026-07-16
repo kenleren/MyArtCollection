@@ -1,0 +1,9 @@
+{
+  "base_commit": "f42582c8eb0d1405cd5e214f6b9c80980225b5f1",
+  "build_sha256": "3b20e793b7d0ec54486c8baa9bf7cc6cd2a83015d8ab00880e5c873b1521243d",
+  "package_lock_sha256": "1ae763d37b5a1a37f5451f8a1632e2f7c2e1df1a42d608ee2fcdefce4f6fa894",
+  "package_source_sha256": "fd1f8aaaad6b2bc174e3f92dfe79db88fcbaad0cb52bc312deb671aece087c21",
+  "pack_sha256": "68c5706f66f7598e672f07243ae55abc44144a2cb5f3de2ff0218e43bdf01498",
+  "sbom_sha256": "c114e01b58d8f4ab831a370476cf0d29499f8889fa1e9a9fdf986acdef4e00d7",
+  "schema_version": 1
+}
