@@ -4,20 +4,22 @@ import { isProtected } from "../src/paths.js";
 import ts from "typescript";
 import { verifyFrozenBaseAndCandidate } from "./git_anchors.js";
 import { argument, externalPath, git, hashBytes, hashFile, loadPolicy, packageRoot, policyPath, repoRoot, validateOid } from "./shared.js";
+import { trustSourceChanged } from "./trust_source_scope.js";
 
 const base = validateOid(argument("--base"));
 const candidate = validateOid(argument("--candidate"));
+const changeBase = validateOid(argument("--change-base"));
 const expectedMain = validateOid(argument("--expected-main"));
 const mode = argument("--mode");
 if (mode !== "frozen-bootstrap-pr" && mode !== "post-merge-main") throw new Error("unsupported anchor verification mode");
 const policy = loadPolicy();
 if (base !== policy.base_commit) throw new Error("base differs from frozen policy base");
-verifyFrozenBaseAndCandidate(repoRoot, base, candidate, { expectedMain, mode });
+verifyFrozenBaseAndCandidate(repoRoot, base, candidate, { changeBase, expectedMain, mode });
 
-const allowedExact = new Set([".github/workflows/release-readiness.yml", ".github/CODEOWNERS", "docs/RELEASE_READINESS_CI.md", "docs/RELEASE_POLICY_TRUST.md"]);
-const changed = (git(["diff", "--name-only", "-z", base, candidate]) as Buffer).subarray(0).toString("utf8").split("\0").filter(Boolean);
-for (const path of changed) if (!path.startsWith("backend/release_policy_trust/") && !allowedExact.has(path)) throw new Error(`out-of-scope path changed: ${path}`);
-for (const path of allowedExact) if (!changed.includes(path)) throw new Error(`required shared surface is unchanged: ${path}`);
+if (!trustSourceChanged(repoRoot, changeBase, candidate)) {
+  process.stdout.write("unchanged\n");
+  process.exit(0);
+}
 
 const output = git(["ls-tree", "-rz", "--full-tree", candidate]) as Buffer;
 const finalPolicy = { exact: [...policy.selectors.baseline_exact, ...policy.selectors.final_exact_additions], prefixes: [...policy.selectors.baseline_prefixes, ...policy.selectors.final_prefix_additions] };
@@ -75,3 +77,4 @@ if (
   summary.policy_sha256 !== hashFile(policyPath) ||
   summary.reproducibility_sha256 !== hashFile(reproducibilityPath)
 ) throw new Error("final candidate summary diverges from exact candidate or dependent evidence");
+process.stdout.write("full\n");

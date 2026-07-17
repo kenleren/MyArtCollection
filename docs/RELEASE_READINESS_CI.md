@@ -17,8 +17,10 @@ ruleset handoff described below; this change does not mutate repository rules.
   the broker audit policy;
 - the credential-free release-policy trust package build, synthetic
   conformance, frozen inventory/history, external-manifest, CODEOWNERS, audit,
-  candidate-inventory byte regeneration, final-summary digest verification,
-  and reproducibility byte-regeneration gates;
+  exact event-range anchors, final-summary digest verification, and
+  reproducibility byte-regeneration gates; trust-source changes additionally
+  require complete candidate-inventory byte regeneration while unrelated
+  changes retain the anchored unchanged-source path;
 - static-site validation with Python 3.12.13;
 - mobile broker-bypass guard and its negative fixtures; and
 - a full-history, redacted Gitleaks scan plus repository secret-path guard.

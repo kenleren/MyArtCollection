@@ -24,3 +24,10 @@ register, install, host, deploy, or authorize an App; provide a production
 store or queue; change repository settings or rulesets; call a live GitHub API;
 or establish that the trusted release policy is operational. See
 `docs/RELEASE_POLICY_TRUST.md` for the ownership and deployment boundary.
+
+Repository CI anchors every candidate to the frozen policy base and the exact
+event change range. Ordinary ranges that leave this package, its workflow,
+CODEOWNERS mirror, and trust runbooks unchanged retain the source build, tests,
+evidence, generated-contract, and reproducibility checks without comparing an
+obsolete full-repository inventory. A change to any of those trust-source
+surfaces requires the complete candidate inventory and review-evidence gate.
