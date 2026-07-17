@@ -27,6 +27,7 @@
     "evidence:verify": "node dist/scripts/evidence.js verify",
     "policy:verify": "node dist/scripts/policy_verify.js",
     "candidate:generate": "node dist/scripts/candidate_evidence.js",
+    "candidate:summary": "node dist/scripts/final_candidate_generate.js",
     "codeowners:generate": "node dist/scripts/codeowners_generate.js",
     "codeowners:verify": "node dist/scripts/codeowners_verify.js",
     "external:verify": "node dist/scripts/external_verify.js",
