@@ -48,14 +48,27 @@ admitted while an external effect is in flight.
 The committed base evidence is anchored only to ancestry of
 `f42582c8eb0d1405cd5e214f6b9c80980225b5f1`. Pull-request verification keeps
 that base immutable while requiring `origin/main` to equal the event's exact
-base SHA and the candidate to descend from it. Post-merge verification instead
-requires the candidate, the event's expected main SHA, and `origin/main` to be
-identical, with the frozen base still an ancestor. The policy, exact current-tree
+base SHA and the candidate to descend from it. Post-merge verification requires
+the candidate, the event's expected main SHA, and `origin/main` to be identical;
+the prior push SHA must be a nonzero full OID and an ancestor. Only manual
+dispatch derives the change base from the candidate's first parent. Missing,
+malformed, zero, divergent, or event-inappropriate anchors fail; the frozen
+base must remain an ancestor of both. The workflow
+and package verifier independently classify the exact event change range and
+fail if their results differ. Their agreed result selects one of two fail-closed
+paths. If the trust-source
+package, workflow, CODEOWNERS mirror, or trust/readiness runbooks changed, CI
+runs the complete frozen policy, candidate inventory, summary, and reproducibility
+gate. If none changed, CI still builds and tests the unchanged source, verifies
+its frozen evidence, anchors the exact candidate and event main, checks the
+generated CODEOWNERS and external-input contracts, and reproduces the package;
+only the obsolete full-repository candidate byte comparison is skipped. The policy, exact current-tree
 inventory, full-history relations, external-input manifest, CODEOWNERS file,
 claim matrix, reproducibility record, and final candidate summary are
 deterministic review inputs. They contain no credentials or provider data.
-The summary verifies every dependent digest and test count. CI regenerates and
-byte-compares candidate inventory and reproducibility evidence. External
+The summary verifies every dependent digest and test count. For trust-source
+changes, CI regenerates and byte-compares the complete candidate inventory; all
+runs byte-compare reproducibility evidence. External
 integrity algorithms have strict digest syntax; workflow Action/tool pins,
 locks, apt/audit runtime evidence, and generated-output contracts are
 mechanically reconciled with the external manifest.

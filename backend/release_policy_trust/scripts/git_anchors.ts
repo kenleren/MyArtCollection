@@ -12,6 +12,7 @@ function mergeBase(cwd: string, left: string, right: string): string {
 }
 
 export interface AnchorContext {
+  changeBase: string;
   expectedMain: string;
   mode: "frozen-bootstrap-pr" | "post-merge-main";
 }
@@ -19,12 +20,15 @@ export interface AnchorContext {
 export function verifyFrozenBaseAndCandidate(cwd: string, base: string, candidate: string, context: AnchorContext): void {
   if (revParse(cwd, base) !== base) throw new Error("frozen base object is unavailable");
   if (revParse(cwd, candidate) !== candidate) throw new Error("candidate object is unavailable");
+  if (revParse(cwd, context.changeBase) !== context.changeBase) throw new Error("change base object is unavailable");
   if (revParse(cwd, context.expectedMain) !== context.expectedMain) throw new Error("expected main object is unavailable");
   if (revParse(cwd, "refs/remotes/origin/main") !== context.expectedMain) throw new Error("origin/main differs from expected event main");
+  if (mergeBase(cwd, base, context.changeBase) !== base) throw new Error("change base is not descended from frozen main");
+  if (mergeBase(cwd, context.changeBase, candidate) !== context.changeBase) throw new Error("candidate is not descended from change base");
 
   if (context.mode === "frozen-bootstrap-pr") {
+    if (context.changeBase !== context.expectedMain) throw new Error("pull request change base differs from expected main");
     if (mergeBase(cwd, base, context.expectedMain) !== base) throw new Error("pull request base is not descended from frozen main");
-    if (mergeBase(cwd, context.expectedMain, candidate) !== context.expectedMain) throw new Error("candidate is not based on expected pull request main");
     return;
   }
   if (context.mode === "post-merge-main") {
