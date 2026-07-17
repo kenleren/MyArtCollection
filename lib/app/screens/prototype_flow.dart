@@ -2437,11 +2437,19 @@ class _ArtworkOrganizationPanelState extends State<_ArtworkOrganizationPanel> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    _data ??= _load();
+    if (_maybeDependencies(context) != null) _data ??= _load();
   }
 
   Future<_ArtworkOrganizationData> _load() async {
-    final repository = AppDependencyScope.of(context).artworkRepository;
+    final dependencies = _maybeDependencies(context);
+    if (dependencies == null) {
+      return const _ArtworkOrganizationData(
+        groups: [],
+        memberships: {},
+        favorite: false,
+      );
+    }
+    final repository = dependencies.artworkRepository;
     return _ArtworkOrganizationData(
       groups: await repository.listGroups(),
       memberships: await repository.groupIdsForArtwork(widget.artworkId),
@@ -2452,7 +2460,8 @@ class _ArtworkOrganizationPanelState extends State<_ArtworkOrganizationPanel> {
   void _reload() => setState(() => _data = _load());
   @override
   Widget build(BuildContext context) {
-    if (!AppDependencyScope.of(context).featureFlags.groupingsEnabled)
+    final dependencies = _maybeDependencies(context);
+    if (dependencies == null || !dependencies.featureFlags.groupingsEnabled)
       return const SizedBox.shrink();
     return FutureBuilder<_ArtworkOrganizationData>(
       future: _data,
@@ -2463,7 +2472,7 @@ class _ArtworkOrganizationPanelState extends State<_ArtworkOrganizationPanel> {
             height: 32,
             child: Center(child: CircularProgressIndicator()),
           );
-        final repository = AppDependencyScope.of(context).artworkRepository;
+        final repository = dependencies.artworkRepository;
         return _Panel(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
