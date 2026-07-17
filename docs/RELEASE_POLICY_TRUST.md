@@ -46,7 +46,11 @@ bound numeric Check ID. A per-PR fence prevents a newer generation from being
 admitted while an external effect is in flight.
 
 The committed base evidence is anchored only to ancestry of
-`f42582c8eb0d1405cd5e214f6b9c80980225b5f1`. The policy, exact current-tree
+`f42582c8eb0d1405cd5e214f6b9c80980225b5f1`. Pull-request verification keeps
+that base immutable while requiring `origin/main` to equal the event's exact
+base SHA and the candidate to descend from it. Post-merge verification instead
+requires the candidate, the event's expected main SHA, and `origin/main` to be
+identical, with the frozen base still an ancestor. The policy, exact current-tree
 inventory, full-history relations, external-input manifest, CODEOWNERS file,
 claim matrix, reproducibility record, and final candidate summary are
 deterministic review inputs. They contain no credentials or provider data.
@@ -84,6 +88,6 @@ secret gate; it must never be replaced with manual inspection of ignored or
 local credential paths.
 
 Independent task review and security redteam must both ACCEPT the same frozen
-candidate SHA. Exact-head Release Readiness must then succeed while `main`
-remains the recorded bootstrap base. Deployment or merge authorization is not
-implied by any of those source checks.
+candidate SHA. Exact-head Release Readiness must succeed for the reviewed pull
+request head, and the exact merge SHA must pass again on `main`. Deployment or
+merge authorization is not implied by any of those source checks.

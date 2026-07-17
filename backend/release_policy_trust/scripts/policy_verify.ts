@@ -7,9 +7,12 @@ import { argument, externalPath, git, hashBytes, hashFile, loadPolicy, packageRo
 
 const base = validateOid(argument("--base"));
 const candidate = validateOid(argument("--candidate"));
+const expectedMain = validateOid(argument("--expected-main"));
+const mode = argument("--mode");
+if (mode !== "frozen-bootstrap-pr" && mode !== "post-merge-main") throw new Error("unsupported anchor verification mode");
 const policy = loadPolicy();
 if (base !== policy.base_commit) throw new Error("base differs from frozen policy base");
-verifyFrozenBaseAndCandidate(repoRoot, base, candidate);
+verifyFrozenBaseAndCandidate(repoRoot, base, candidate, { expectedMain, mode });
 
 const allowedExact = new Set([".github/workflows/release-readiness.yml", ".github/CODEOWNERS", "docs/RELEASE_READINESS_CI.md", "docs/RELEASE_POLICY_TRUST.md"]);
 const changed = (git(["diff", "--name-only", "-z", base, candidate]) as Buffer).subarray(0).toString("utf8").split("\0").filter(Boolean);
