@@ -151,6 +151,56 @@ void main() {
     );
   });
 
+  testWidgets(
+    'issue 214 captures gated local organization mobile and desktop',
+    (WidgetTester tester) async {
+      final fixture = (await tester.runAsync(_LiveDependencyFixture.create))!;
+      addTearDown(() async {
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.runAsync(fixture.dispose);
+      });
+      await tester.runAsync(() async {
+        await fixture.repository.createGroup(
+          id: 'group-studio',
+          name: 'Studio',
+        );
+        await fixture.repository.createGroup(id: 'group-loan', name: 'Loan');
+      });
+      final dependencies = fixture.dependenciesWithFlags(
+        featureFlags: const AppFeatureFlags(groupingsEnabled: true),
+      );
+      final boundaryKey = GlobalKey();
+      await _configureMobileViewport(tester);
+      await tester.pumpWidget(
+        RepaintBoundary(
+          key: boundaryKey,
+          child: ArchivaleApp(
+            initialRoute: AppRoutes.collectionGroups,
+            dependencies: dependencies,
+          ),
+        ),
+      );
+      await pumpLiveData(tester);
+      expect(find.text('Manage groups'), findsOneWidget);
+      expect(find.text('Studio'), findsOneWidget);
+    await captureBoundaryToArtifacts(
+      tester,
+      boundaryKey,
+      'issue-214-groups-mobile.png',
+      resetAfterCapture: false,
+    );
+
+      tester.view.physicalSize = const Size(1440, 900);
+      tester.view.devicePixelRatio = 1;
+      await tester.pump();
+      await captureBoundaryToArtifacts(
+        tester,
+        boundaryKey,
+        'issue-214-groups-desktop.png',
+      );
+    },
+  );
+
   testWidgets('visual evidence covers refreshed core mobile screens', (
     WidgetTester tester,
   ) async {
