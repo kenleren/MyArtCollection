@@ -463,6 +463,189 @@ void main() {
     );
   });
 
+  testWidgets(
+    'detail organization toggles memberships and refreshes after managing groups',
+    (WidgetTester tester) async {
+      final fixture = await tester.runAsync(_LiveDependencyFixture.create);
+      addTearDown(() async {
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.runAsync(fixture!.dispose);
+      });
+      await tester.runAsync(
+        () => fixture!.repository.upsert(
+          _artworkRecord(
+            id: 'organization-detail',
+            title: 'Organization detail',
+            state: ArtworkRecordState.verifiedByYou,
+            source: ArtworkFieldSource.userConfirmed,
+          ),
+        ),
+      );
+      await tester.runAsync(
+        () => fixture!.repository.createGroup(id: 'studio', name: 'Studio'),
+      );
+      await tester.runAsync(
+        () => fixture!.repository.setFavorite(
+          artworkId: 'organization-detail',
+          isFavorite: true,
+        ),
+      );
+      final dependencies = fixture!.dependenciesWithFlags(
+        featureFlags: const AppFeatureFlags(groupingsEnabled: true),
+      );
+      await tester.pumpWidget(
+        ArchivaleApp(
+          initialRoute: AppRoutes.artworkDetails('organization-detail'),
+          dependencies: dependencies,
+        ),
+      );
+      await pumpLiveData(tester);
+      await pumpLiveData(tester);
+      expect(find.text('Organization detail'), findsWidgets);
+      final studioChip = find.byKey(const ValueKey('artwork-group-studio'));
+      expect(studioChip, findsOneWidget);
+
+      expect(
+        tester
+            .widget<CheckboxListTile>(
+              find.byKey(const ValueKey('artwork-favorite-toggle')),
+            )
+            .value,
+        isTrue,
+      );
+
+      Future<void> openManageGroups() async {
+        await tapVisible(
+          tester,
+          find.byKey(const ValueKey('artwork-manage-groups')),
+        );
+        await pumpLiveData(tester);
+        expect(find.text('Manage groups'), findsOneWidget);
+      }
+
+      Future<void> returnToDetail() async {
+        await tester.pageBack();
+        await pumpLiveData(tester);
+        expect(find.text('Local organization'), findsOneWidget);
+      }
+
+      await tapVisible(tester, studioChip);
+      await pumpLiveData(tester);
+      expect(tester.widget<FilterChip>(studioChip).selected, isTrue);
+      expect(
+        tester.getSemantics(studioChip).flagsCollection.isSelected,
+        ui.Tristate.isTrue,
+      );
+      await tapVisible(tester, studioChip);
+      await pumpLiveData(tester);
+      expect(tester.widget<FilterChip>(studioChip).selected, isFalse);
+      expect(
+        tester.getSemantics(studioChip).flagsCollection.isSelected,
+        ui.Tristate.isFalse,
+      );
+
+      await openManageGroups();
+      await tester.tap(find.byTooltip('Rename group'));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byType(TextField), 'Studio Local');
+      await tester.tap(find.widgetWithText(FilledButton, 'Save'));
+      await pumpLiveData(tester);
+      await returnToDetail();
+      expect(find.text('Studio'), findsNothing);
+      expect(
+        find.descendant(of: studioChip, matching: find.text('Studio Local')),
+        findsOneWidget,
+      );
+      expect(
+        tester
+            .widget<CheckboxListTile>(
+              find.byKey(const ValueKey('artwork-favorite-toggle')),
+            )
+            .value,
+        isTrue,
+      );
+
+      await openManageGroups();
+      await tester.tap(find.byKey(const ValueKey('create-group-action')));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byType(TextField), 'Loan');
+      await tester.tap(find.widgetWithText(FilledButton, 'Create'));
+      await pumpLiveData(tester);
+      await tester.tap(find.byTooltip('Move group earlier').last);
+      await pumpLiveData(tester);
+      await returnToDetail();
+      expect(
+        await tester.runAsync(
+          () => fixture.repository.listGroups().then(
+            (groups) => groups.map((group) => group.name).toList(),
+          ),
+        ),
+        ['Loan', 'Studio Local'],
+      );
+
+      await openManageGroups();
+      await tester.tap(find.byTooltip('Delete group').last);
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, 'Delete'));
+      await pumpLiveData(tester);
+      await returnToDetail();
+      expect(find.text('Studio Local'), findsNothing);
+      final loan = await tester.runAsync(
+        () => fixture.repository.listGroups().then((groups) => groups.single),
+      );
+      final loanChip = find.byKey(ValueKey('artwork-group-${loan!.id}'));
+      await tapVisible(tester, loanChip);
+      await pumpLiveData(tester);
+      expect(tester.widget<FilterChip>(loanChip).selected, isTrue);
+      expect(
+        tester.getSemantics(loanChip).flagsCollection.isSelected,
+        ui.Tristate.isTrue,
+      );
+      await tapVisible(tester, loanChip);
+      await pumpLiveData(tester);
+      expect(tester.widget<FilterChip>(loanChip).selected, isFalse);
+      expect(
+        tester.getSemantics(loanChip).flagsCollection.isSelected,
+        ui.Tristate.isFalse,
+      );
+      expect(
+        await tester.runAsync(
+          () => fixture.repository.groupIdsForArtwork('organization-detail'),
+        ),
+        isEmpty,
+      );
+      await openManageGroups();
+      await tester.tap(find.byTooltip('Delete group'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, 'Delete'));
+      await pumpLiveData(tester);
+      await returnToDetail();
+      expect(find.text('No local groups yet.'), findsOneWidget);
+
+      await openManageGroups();
+      await tester.tap(find.byKey(const ValueKey('create-group-action')));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byType(TextField), 'Gallery');
+      await tester.tap(find.widgetWithText(FilledButton, 'Create'));
+      await pumpLiveData(tester);
+      await returnToDetail();
+      expect(find.text('No local groups yet.'), findsNothing);
+      final gallery = await tester.runAsync(
+        () => fixture.repository.listGroups().then((groups) => groups.single),
+      );
+      expect(
+        find.byKey(ValueKey('artwork-group-${gallery!.id}')),
+        findsOneWidget,
+      );
+      expect(
+        await tester.runAsync(
+          () => fixture.repository.isFavorite('organization-detail'),
+        ),
+        isTrue,
+      );
+    },
+  );
+
   testWidgets('visual evidence covers refreshed core mobile screens', (
     WidgetTester tester,
   ) async {

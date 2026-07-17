@@ -26,6 +26,7 @@ import '../storage/artwork_collection_query.dart';
 import '../storage/artwork_group.dart';
 import '../storage/artwork_record.dart';
 import '../storage/local_attachment_store.dart';
+import '../storage/local_artwork_repository.dart';
 
 class PrototypeIntroScreen extends StatelessWidget {
   const PrototypeIntroScreen({super.key});
@@ -2478,7 +2479,35 @@ class _ArtworkOrganizationPanelState extends State<_ArtworkOrganizationPanel> {
     );
   }
 
-  void _reload() => setState(() => _data = _load());
+  void _reload() {
+    if (mounted) {
+      setState(() {
+        _data = _load();
+      });
+    }
+  }
+
+  Future<void> _toggleGroupMembership(
+    LocalArtworkRepository repository,
+    _ArtworkOrganizationData data,
+    String groupId,
+  ) async {
+    final next = Set<String>.of(data.memberships);
+    if (!next.add(groupId)) {
+      next.remove(groupId);
+    }
+    await repository.replaceArtworkGroupMemberships(
+      artworkId: widget.artworkId,
+      groupIds: next,
+    );
+    if (mounted) _reload();
+  }
+
+  Future<void> _manageGroups() async {
+    await Navigator.of(context).pushNamed(AppRoutes.collectionGroups);
+    if (mounted) _reload();
+  }
+
   @override
   Widget build(BuildContext context) {
     final dependencies = _maybeDependencies(context);
@@ -2506,18 +2535,21 @@ class _ArtworkOrganizationPanelState extends State<_ArtworkOrganizationPanel> {
               const Text(
                 'Groups are separate from the factual current location.',
               ),
-              CheckboxListTile(
-                key: const ValueKey('artwork-favorite-toggle'),
-                contentPadding: EdgeInsets.zero,
-                value: data.favorite,
-                title: const Text('Favorite'),
-                onChanged: (value) async {
-                  await repository.setFavorite(
-                    artworkId: widget.artworkId,
-                    isFavorite: value ?? false,
-                  );
-                  _reload();
-                },
+              Material(
+                color: Colors.transparent,
+                child: CheckboxListTile(
+                  key: const ValueKey('artwork-favorite-toggle'),
+                  contentPadding: EdgeInsets.zero,
+                  value: data.favorite,
+                  title: const Text('Favorite'),
+                  onChanged: (value) async {
+                    await repository.setFavorite(
+                      artworkId: widget.artworkId,
+                      isFavorite: value ?? false,
+                    );
+                    _reload();
+                  },
+                ),
               ),
               if (data.groups.isEmpty)
                 const Text('No local groups yet.')
@@ -2531,21 +2563,14 @@ class _ArtworkOrganizationPanelState extends State<_ArtworkOrganizationPanel> {
                         key: ValueKey('artwork-group-${group.id}'),
                         label: Text(group.name),
                         selected: data.memberships.contains(group.id),
-                        onSelected: (selected) async {
-                          final next = Set<String>.of(data.memberships);
-                          selected ? next.add(group.id) : next.remove(group.id);
-                          await repository.replaceArtworkGroupMemberships(
-                            artworkId: widget.artworkId,
-                            groupIds: next,
-                          );
-                          _reload();
-                        },
+                        onSelected: (_) =>
+                            _toggleGroupMembership(repository, data, group.id),
                       ),
                   ],
                 ),
               TextButton.icon(
-                onPressed: () =>
-                    Navigator.of(context).pushNamed(AppRoutes.collectionGroups),
+                key: const ValueKey('artwork-manage-groups'),
+                onPressed: _manageGroups,
                 icon: const Icon(Icons.folder_outlined),
                 label: const Text('Manage groups'),
               ),
