@@ -3,6 +3,7 @@ import { execFileSync } from "node:child_process";
 const trustSourceExact = new Set([
   ".github/CODEOWNERS",
   ".github/workflows/release-readiness.yml",
+  ".gitleaksignore",
   "docs/RELEASE_POLICY_TRUST.md",
   "docs/RELEASE_READINESS_CI.md",
 ]);

@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
 import { verifyFrozenBaseAndCandidate } from "../scripts/git_anchors.js";
-import { changedPaths, trustSourceChanged } from "../scripts/trust_source_scope.js";
+import { changedPaths, isTrustSourcePath, trustSourceChanged } from "../scripts/trust_source_scope.js";
 
 function git(cwd: string, args: string[]): string {
   return execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
@@ -151,6 +151,13 @@ test("trust source scope separates ordinary changes from protected source change
       "lib/renamed.ts",
     ]);
     assert.equal(trustSourceChanged(root, protectedSource, movedSource), true);
+
+    writeFileSync(join(root, ".gitleaksignore"), "future ignored finding\n");
+    git(root, ["add", ".gitleaksignore"]);
+    git(root, ["commit", "-m", "add protected future path"]);
+    const futurePath = git(root, ["rev-parse", "HEAD"]);
+    assert.equal(trustSourceChanged(root, movedSource, futurePath), true);
+    assert.equal(isTrustSourcePath(".gitleaksignore"), true);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -171,6 +178,7 @@ test("pull-request workflow passes the true head SHA to candidate gates", () => 
   assert.match(workflow, /--mode "\$VERIFICATION_MODE"/);
   assert.match(workflow, /git diff --quiet --no-renames/);
   assert.match(workflow, /backend\/release_policy_trust/);
+  assert.match(workflow, /\.gitleaksignore/);
   assert.match(workflow, /case "\$EVENT_NAME" in/);
   assert.match(workflow, /push\)\s+change_base="\$PUSH_BEFORE_SHA"/);
   assert.match(workflow, /workflow_dispatch\)\s+change_base="\$\(git rev-parse --verify "\$CANDIDATE_SHA\^"\)"/);

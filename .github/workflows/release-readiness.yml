@@ -385,6 +385,7 @@ jobs:
             backend/release_policy_trust \
             .github/CODEOWNERS \
             .github/workflows/release-readiness.yml \
+            .gitleaksignore \
             docs/RELEASE_POLICY_TRUST.md \
             docs/RELEASE_READINESS_CI.md; then
             expected_verification_scope=unchanged

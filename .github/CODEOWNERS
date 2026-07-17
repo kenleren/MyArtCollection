@@ -2,6 +2,7 @@
 # Release-readiness trust boundary; repository-owner review is required.
 /.github/ @kenleren
 /.gitleaks.toml @kenleren
+/.gitleaksignore @kenleren
 /analysis_options.yaml @kenleren
 /android/.gitignore @kenleren
 /android/app/build.gradle.kts @kenleren
