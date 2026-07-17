@@ -440,6 +440,22 @@ jobs:
           node scripts/mobile_broker_bypass_guard.mjs
           node --test test/mobile_broker_bypass_guard_fixture_test.mjs
 
+  apple-build-guard:
+    name: Apple build command guard
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          persist-credentials: false
+      - name: Run safe Apple build regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash test/safe_apple_build_test.sh
+          bash test/apple_build_command_guard_test.sh
+          scripts/check_apple_build_commands.sh
+
   secret-scan:
     name: Secret scan
     runs-on: ubuntu-24.04
@@ -476,6 +492,7 @@ jobs:
       - backend-and-audit
       - static-site
       - mobile-broker-bypass-guard
+      - apple-build-guard
       - secret-scan
       - release-policy-trust
     steps:
@@ -490,6 +507,7 @@ jobs:
             "backend-and-audit=${{ needs.backend-and-audit.result }}"
             "static-site=${{ needs.static-site.result }}"
             "mobile-broker-bypass-guard=${{ needs.mobile-broker-bypass-guard.result }}"
+            "apple-build-guard=${{ needs.apple-build-guard.result }}"
             "secret-scan=${{ needs.secret-scan.result }}"
             "release-policy-trust=${{ needs.release-policy-trust.result }}"
           )
