@@ -537,7 +537,7 @@
 {"blob_oid":"1fa1d77dd8779487f8dfdb1ab344a8177af2fda4","class":"evaluated-input","mode":"100644","path":"docs/PROTOTYPE_STORYBOARD.md"}
 {"blob_oid":"c1e52f4cd69b6376f2da29813eb155727c59adf2","class":"protected-control","mode":"100644","path":"docs/RELEASE_POLICY_TRUST.md"}
 {"blob_oid":"d28fdcb898cdf159b04418e965b0ef69dc0e386a","class":"protected-control","mode":"100644","path":"docs/RELEASE_READINESS_CI.md"}
-{"blob_oid":"26fda9628b5a0e6dc7c7732f8031943f0a05dd76","class":"protected-control","mode":"100644","path":"docs/SECRET_HYGIENE.md"}
+{"blob_oid":"753aec8629757def02ceff0695c71dedb24e7776","class":"protected-control","mode":"100644","path":"docs/SECRET_HYGIENE.md"}
 {"blob_oid":"b6a773ff31d53903bd86af3cedb4625d63b0f4d3","class":"evaluated-input","mode":"100644","path":"docs/SUPPORTING_RECORD_ATTACHMENT_EXPORT_CONTRACT_V1.md"}
 {"blob_oid":"d5662d39dd9bb4fd724fffa674013111fd6dbac9","class":"evaluated-input","mode":"100644","path":"docs/VALUE_TAXONOMY_SPEC.md"}
 {"blob_oid":"07ee0c64e00f6f0611dcb2ec1ff7097383a1efcc","class":"evaluated-input","mode":"100644","path":"docs/adr/0001-local-first-flutter-google-drive.md"}
@@ -689,7 +689,7 @@
 {"blob_oid":"63c0dc560be1b85b1131024d8a8005220c058d8f","class":"evaluated-input","mode":"100755","path":"scripts/firebase_app_distribution_upload.sh"}
 {"blob_oid":"ca7a5c7d996c246f60be3a5553f99404af94afd1","class":"protected-control","mode":"100644","path":"scripts/generate_sitemap.py"}
 {"blob_oid":"ef866a2466d2efb55e08acf89132ef9e973686e2","class":"protected-control","mode":"100755","path":"scripts/mobile_broker_bypass_guard.mjs"}
-{"blob_oid":"3d965d9c0414c2928d50396393db9de149b27df9","class":"evaluated-input","mode":"100755","path":"scripts/safe_apple_build.sh"}
+{"blob_oid":"db326bccfb7463d07ba32977bbe282de1a5f18b4","class":"evaluated-input","mode":"100755","path":"scripts/safe_apple_build.sh"}
 {"blob_oid":"adb9ccb051feef363d06d85c2a2accf3a6ec6c89","class":"protected-control","mode":"100755","path":"scripts/secret_scan.sh"}
 {"blob_oid":"d3777d9ff67f148f14b150878290ef3be5b76269","class":"protected-control","mode":"100755","path":"scripts/validate_static_site.py"}
 {"blob_oid":"78343417dd75800b9dff401941d450e093b6f00f","class":"protected-control","mode":"100644","path":"scripts/verify_gradle_wrapper.sh"}
@@ -770,7 +770,7 @@
 {"blob_oid":"6a43236fbc5414f21532517b10f8e3769347c244","class":"evaluated-input","mode":"100644","path":"test/online_research_service_test.dart"}
 {"blob_oid":"b201e734ff2f3b235b9af11e26ab340e202597a5","class":"evaluated-input","mode":"100644","path":"test/play_billing_adapter_test.dart"}
 {"blob_oid":"ea2fdb3d3e288f05f45286d72d7acbbe524eb248","class":"evaluated-input","mode":"100644","path":"test/real_export_service_test.dart"}
-{"blob_oid":"a0f730724884a88f17e432c96810f812085e49f1","class":"evaluated-input","mode":"100755","path":"test/safe_apple_build_test.sh"}
+{"blob_oid":"d82127b1a96dc9d657e49709daeca98c4e4e6f55","class":"evaluated-input","mode":"100755","path":"test/safe_apple_build_test.sh"}
 {"blob_oid":"cd1b2cdbb8475c435209ad620759cbb31cb22f8e","class":"evaluated-input","mode":"100644","path":"test/supporting_attachment_service_test.dart"}
 {"blob_oid":"af369489bb1a8a92eec539b83ee9786a59cf7e92","class":"evaluated-input","mode":"100644","path":"test/supporting_record_attachment_export_contract_test.dart"}
 {"blob_oid":"74f34c2cfdb74ddca52f87f88cf88374a0307873","class":"protected-control","mode":"100644","path":"test/validate_static_site_test.py"}
