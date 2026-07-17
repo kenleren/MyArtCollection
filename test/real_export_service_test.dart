@@ -198,6 +198,50 @@ void main() {
     },
   );
 
+  test('archive v2 round-trips app-generated HEIC and HEIF payloads', () async {
+    final fixture = await File(
+      p.join('test', 'fixtures', 'synthetic-supporting-record.heic'),
+    ).readAsBytes();
+    for (final image in <({String extension, String mimeType})>[
+      (extension: 'heic', mimeType: 'image/heic'),
+      (extension: 'heif', mimeType: 'image/heif'),
+    ]) {
+      final source = File(p.join(temp.path, 'image.${image.extension}'));
+      await source.writeAsBytes(fixture);
+      final attachment = await attachmentStore.saveImportedAttachment(
+        artworkId: 'artwork-1',
+        attachmentId: 'attachment-${image.extension}',
+        sourceFile: source,
+        originalFileName: 'image.${image.extension}',
+        mimeType: image.mimeType,
+        type: AttachmentType.photo,
+        source: ArtworkFieldSource.userConfirmed,
+        importedAt: DateTime.utc(2026, 7, 14, 8),
+      );
+      await repository.addAttachment(attachment);
+    }
+
+    final artifact = await ArchiveExportService(
+      repository: repository,
+      attachmentStore: attachmentStore,
+      artifactStore: artifactStore,
+      clock: () => DateTime.utc(2026, 7, 14, 9),
+    ).generate();
+    final bytes = Uint8List.fromList(await artifact.file.readAsBytes());
+    final archive = ZipDecoder().decodeBytes(bytes);
+    expect(
+      archive.files.map((file) => file.name),
+      containsAll(<String>[
+        'attachments/attachment-heic/payload.heic',
+        'attachments/attachment-heif/payload.heif',
+      ]),
+    );
+    expect(
+      () => const ArchivaleArchiveV2Codec().decodeArchive(bytes),
+      returnsNormally,
+    );
+  });
+
   test(
     'archive v2 round-trips non-empty local organization canonically',
     () async {
@@ -731,6 +775,16 @@ void main() {
       expect(
         () => const ArchivaleArchiveV2Codec().decodeArchive(
           _v2ArchiveWithEntries(malformed),
+        ),
+        throwsA(isA<ArchiveV2FormatException>()),
+      );
+
+      final mismatched = _archiveEntries(source);
+      mismatched['attachments/attachment-strict/payload.heic'] = mismatched
+          .remove('attachments/attachment-strict/payload.pdf')!;
+      expect(
+        () => const ArchivaleArchiveV2Codec().decodeArchive(
+          _v2ArchiveWithEntries(mismatched),
         ),
         throwsA(isA<ArchiveV2FormatException>()),
       );

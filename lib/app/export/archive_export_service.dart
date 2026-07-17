@@ -14,6 +14,7 @@ import '../storage/local_attachment_store.dart';
 import 'export_artifact_store.dart';
 import 'external_reference_export_codec.dart';
 import 'archive_v1_codec.dart';
+import 'archive_attachment_payload_contract.dart';
 import 'archive_v2_codec.dart';
 
 class ExportCancelledException implements Exception {
@@ -481,23 +482,15 @@ Map<String, Object?> _excludedAttachmentJson(
   'archive_status': archiveStatus,
 };
 
-String _approvedExtension(String mimeType) => switch (mimeType) {
-  'application/pdf' => 'pdf',
-  'image/jpeg' => 'jpg',
-  'image/png' => 'png',
-  'image/heic' => 'heic',
-  'image/heif' => 'heif',
-  _ => throw const ExportIntegrityException(
-    'An attachment has an unsupported archive file type.',
-  ),
-};
+String _approvedExtension(String mimeType) =>
+    approvedArchivePayloadExtensionsByMimeType[mimeType] ??
+    (throw const ExportIntegrityException(
+      'An attachment has an unsupported archive file type.',
+    ));
 
 void _validatePayloadPath(String path, String attachmentId) {
-  final expected = RegExp(
-    '^attachments/${RegExp.escape(attachmentId)}/payload\\.(pdf|jpg|jpeg|png|heic|heif)\$',
-  );
-  if (!RegExp(r'^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$').hasMatch(attachmentId) ||
-      !expected.hasMatch(path) ||
+  if (!isApprovedArchivePayloadPath(path) ||
+      !path.startsWith('attachments/$attachmentId/') ||
       path.contains('..') ||
       path.contains('%') ||
       path.contains(r'\')) {

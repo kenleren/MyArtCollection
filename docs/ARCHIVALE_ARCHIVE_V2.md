@@ -8,7 +8,7 @@ The canonical ZIP order is `manifest.json`, `records/artworks.json`,
 `records/external_references.json`, `records/attachments.json`, and mandatory
 `records/groupings.json`, followed by lexically ordered attachment payloads.
 Each payload must be exactly one approved path of the form
-`attachments/<opaque-id>/payload.<pdf|jpg|png>` and must have a one-to-one
+`attachments/<opaque-id>/payload.<pdf|jpg|png|heic|heif>` and must have a one-to-one
 matching included row in `records/attachments.json`. Extra, malformed,
 unreferenced, or missing payload entries make v2 decoding fail closed.
 The groupings envelope is `ARCHIVALE_GROUPINGS_V1` version 1 and always has

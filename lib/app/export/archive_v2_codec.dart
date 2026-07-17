@@ -7,6 +7,7 @@ import 'package:archive/archive.dart';
 import 'package:crypto/crypto.dart';
 
 import '../storage/artwork_group.dart';
+import 'archive_attachment_payload_contract.dart';
 import 'archive_v1_codec.dart';
 import 'external_reference_export_codec.dart';
 
@@ -291,9 +292,7 @@ class ArchivaleArchiveV2Codec {
   }
 }
 
-bool _isApprovedPayloadPath(String path) => RegExp(
-  r'^attachments/[A-Za-z0-9][A-Za-z0-9_-]{0,127}/payload\.(pdf|jpg|png)$',
-).hasMatch(path);
+bool _isApprovedPayloadPath(String path) => isApprovedArchivePayloadPath(path);
 
 Map<String, Object?> _groupJson(ArtworkGroup group) => {
   'group_id': group.id,
