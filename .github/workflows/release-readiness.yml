@@ -324,8 +324,10 @@ jobs:
     runs-on: ubuntu-24.04
     env:
       CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-      CHANGE_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before || '' }}
+      EVENT_NAME: ${{ github.event_name }}
       EXPECTED_MAIN_SHA: ${{ github.event.pull_request.base.sha || github.sha }}
+      PULL_REQUEST_BASE_SHA: ${{ github.event.pull_request.base.sha || '' }}
+      PUSH_BEFORE_SHA: ${{ github.event.before || '' }}
       VERIFICATION_MODE: ${{ github.event_name == 'pull_request' && 'frozen-bootstrap-pr' || 'post-merge-main' }}
     steps:
       - name: Check out full repository history
@@ -358,10 +360,25 @@ jobs:
           npm --prefix backend/release_policy_trust run evidence:verify -- \
             --tip "$base" \
             --input backend/release_policy_trust/evidence/base
-          change_base="$CHANGE_BASE_SHA"
+          case "$EVENT_NAME" in
+            pull_request)
+              change_base="$PULL_REQUEST_BASE_SHA"
+              ;;
+            push)
+              change_base="$PUSH_BEFORE_SHA"
+              ;;
+            workflow_dispatch)
+              change_base="$(git rev-parse --verify "$CANDIDATE_SHA^")"
+              ;;
+            *)
+              echo "Unsupported Release Readiness event" >&2
+              exit 1
+              ;;
+          esac
           if [[ ! "$change_base" =~ ^[0-9a-f]{40}$ ]] || \
              [[ "$change_base" == 0000000000000000000000000000000000000000 ]]; then
-            change_base="$(git rev-parse --verify "$CANDIDATE_SHA^")"
+            echo "Event change base is missing or invalid" >&2
+            exit 1
           fi
           if git diff --quiet --no-renames \
             "$change_base" "$CANDIDATE_SHA" -- \

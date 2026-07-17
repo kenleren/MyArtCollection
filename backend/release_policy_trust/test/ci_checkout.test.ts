@@ -160,7 +160,9 @@ test("pull-request workflow passes the true head SHA to candidate gates", () => 
   const workflow = readFileSync(resolve(process.cwd(), "../../.github/workflows/release-readiness.yml"), "utf8");
   assert.match(workflow, /CANDIDATE_SHA:\s*\$\{\{ github\.event\.pull_request\.head\.sha \|\| github\.sha \}\}/);
   assert.match(workflow, /EXPECTED_MAIN_SHA:\s*\$\{\{ github\.event\.pull_request\.base\.sha \|\| github\.sha \}\}/);
-  assert.match(workflow, /CHANGE_BASE_SHA:\s*\$\{\{ github\.event\.pull_request\.base\.sha \|\| github\.event\.before \|\| '' \}\}/);
+  assert.match(workflow, /EVENT_NAME:\s*\$\{\{ github\.event_name \}\}/);
+  assert.match(workflow, /PULL_REQUEST_BASE_SHA:\s*\$\{\{ github\.event\.pull_request\.base\.sha \|\| '' \}\}/);
+  assert.match(workflow, /PUSH_BEFORE_SHA:\s*\$\{\{ github\.event\.before \|\| '' \}\}/);
   assert.match(workflow, /VERIFICATION_MODE:\s*\$\{\{ github\.event_name == 'pull_request' && 'frozen-bootstrap-pr' \|\| 'post-merge-main' \}\}/);
   assert.doesNotMatch(workflow, /--candidate "\$GITHUB_SHA"/);
   assert.match(workflow, /--candidate "\$CANDIDATE_SHA"/);
@@ -169,6 +171,10 @@ test("pull-request workflow passes the true head SHA to candidate gates", () => 
   assert.match(workflow, /--mode "\$VERIFICATION_MODE"/);
   assert.match(workflow, /git diff --quiet --no-renames/);
   assert.match(workflow, /backend\/release_policy_trust/);
+  assert.match(workflow, /case "\$EVENT_NAME" in/);
+  assert.match(workflow, /push\)\s+change_base="\$PUSH_BEFORE_SHA"/);
+  assert.match(workflow, /workflow_dispatch\)\s+change_base="\$\(git rev-parse --verify "\$CANDIDATE_SHA\^"\)"/);
+  assert.match(workflow, /"\$change_base" == 0000000000000000000000000000000000000000/);
   assert.match(workflow, /if \[\[ "\$verification_scope" != "\$expected_verification_scope" \]\]; then/);
   assert.match(workflow, /if \[\[ "\$expected_verification_scope" == full \]\]; then/);
 });
