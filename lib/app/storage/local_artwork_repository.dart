@@ -660,10 +660,8 @@ class LocalArtworkRepository {
   }) async {
     return _database.transaction((txn) async {
       final current = await _orderedGroupIds(txn);
-      if (current.length != requestedOrder.length ||
-          current.toSet().length != current.length ||
-          requestedOrder.toSet().length != requestedOrder.length ||
-          !current.toSet().containsAll(requestedOrder))
+      if (!_isExactGroupPermutation(current, requestedOrder) ||
+          !_isExactGroupPermutation(current, expectedCurrentOrder))
         throw ArgumentError(
           'Order must be an exact duplicate-free group permutation.',
         );
@@ -674,6 +672,14 @@ class LocalArtworkRepository {
       await _writeDenseGroupOrder(txn, requestedOrder, now ?? DateTime.now());
       return GroupOrderReplaceResult.applied;
     });
+  }
+
+  bool _isExactGroupPermutation(List<String> current, List<String> candidate) {
+    if (current.length != candidate.length ||
+        candidate.toSet().length != candidate.length) {
+      return false;
+    }
+    return current.toSet().containsAll(candidate);
   }
 
   Future<List<String>> _orderedGroupIds(DatabaseExecutor db) async {

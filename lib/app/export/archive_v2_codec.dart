@@ -184,6 +184,22 @@ class ArchivaleArchiveV2Codec {
     );
     final attachments = const ArchivaleArchiveV1Codec()
         .decodeAttachmentOutcomes(_entry(archive, _structuredPaths[2]));
+    final manifestPayloads = rows
+        .skip(_structuredPaths.length)
+        .map((row) => row['path'] as String)
+        .toList(growable: false);
+    final indexedPayloads =
+        attachments
+            .where((row) => row['archive_status'] == 'included')
+            .map((row) => row['payload_path'] as String)
+            .toList()
+          ..sort();
+    if (indexedPayloads.toSet().length != indexedPayloads.length ||
+        !_sameStrings(manifestPayloads, indexedPayloads)) {
+      throw const ArchiveV2FormatException(
+        'Archive payload entries do not exactly match the attachment index.',
+      );
+    }
     final groupings = decodeGroupings(_entry(archive, _structuredPaths[3]));
     final counts = _object(manifest['counts'], 'Archive counts');
     if (counts['artworks'] != artworks.length ||
@@ -263,7 +279,7 @@ class ArchivaleArchiveV2Codec {
     final payloads = paths.skip(_structuredPaths.length).toList();
     if (payloads.toSet().length != payloads.length ||
         !_sameStrings(payloads, List<String>.of(payloads)..sort()) ||
-        payloads.any((path) => !path.startsWith('attachments/')))
+        payloads.any((path) => !_isApprovedPayloadPath(path)))
       throw const ArchiveV2FormatException(
         'Archive payload files are not canonical.',
       );
@@ -274,6 +290,10 @@ class ArchivaleArchiveV2Codec {
     return root;
   }
 }
+
+bool _isApprovedPayloadPath(String path) => RegExp(
+  r'^attachments/[A-Za-z0-9][A-Za-z0-9_-]{0,127}/payload\.(pdf|jpg|png)$',
+).hasMatch(path);
 
 Map<String, Object?> _groupJson(ArtworkGroup group) => {
   'group_id': group.id,

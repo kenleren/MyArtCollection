@@ -1,5 +1,10 @@
 // ignore_for_file: curly_braces_in_flow_control_structures
 
+import 'package:unorm_dart/unorm_dart.dart' as unorm;
+
+import 'unicode_15_1_casefold.dart';
+import 'unicode_15_1_default_ignorables.dart';
+
 /// Local-only organizational metadata. It deliberately has no factual-field,
 /// provenance, ownership, or valuation meaning.
 class ArtworkGroup {
@@ -42,28 +47,17 @@ class ArtworkGroupingExportData {
   final List<Map<String, Object?>> preferences;
 }
 
-/// The pinned, locale-independent identity key for the supported Unicode 15.1
-/// collision vectors. Dart has no Unicode normalization/case-fold API, so the
-/// mapping is deliberately explicit instead of using device-locale lowercasing.
+/// The pinned, locale-independent Unicode 15.1 NFKC_Casefold identity key.
+///
+/// The vendored normalizer and generated tables are deliberately data-versioned
+/// rather than delegated to a device locale or platform Unicode library. See
+/// `third_party/unorm_dart_15_1/README.md` for normalization provenance and the
+/// generated tables beside this file for CaseFolding and Default_Ignorable data.
 String normalizeArtworkGroupName(String raw) {
   final display = normalizeArtworkGroupDisplayName(raw);
-  // NFKC compatibility mappings used by the contract, followed by default
-  // case-fold mappings that differ from ASCII lowercasing.
-  return display
-      .replaceAll('Ｆ', 'F')
-      .replaceAll('ｏ', 'o')
-      .replaceAll('Ｏ', 'O')
-      .replaceAll('K', 'K')
-      .replaceAll('ς', 'σ')
-      .replaceAll('Σ', 'σ')
-      .replaceAll('σ', 'σ')
-      .replaceAll('ß', 'ss')
-      .replaceAll('ẞ', 'ss')
-      .replaceAll('é', 'e\u0301')
-      .replaceAll('É', 'e\u0301')
-      .replaceAll('İ', 'i\u0307')
-      .replaceAll('I', 'i')
-      .toLowerCase();
+  return unorm.nfc(
+    _removeDefaultIgnorables(_fullCaseFold(unorm.nfkc(display))),
+  );
 }
 
 String normalizeArtworkGroupDisplayName(String raw) {
@@ -83,6 +77,31 @@ String normalizeArtworkGroupDisplayName(String raw) {
       );
   if (trimmed.isEmpty)
     throw const ArtworkGroupNameException('A group name is required.');
-  // NFC composition needed for the pinned Café vector.
-  return trimmed.replaceAll('e\u0301', 'é').replaceAll('E\u0301', 'É');
+  return unorm.nfc(trimmed);
+}
+
+String _fullCaseFold(String value) {
+  final result = StringBuffer();
+  for (final rune in value.runes) {
+    final mapping = unicode151CaseFold[rune];
+    if (mapping == null) {
+      result.writeCharCode(rune);
+    } else {
+      for (final mappedRune in mapping) {
+        result.writeCharCode(mappedRune);
+      }
+    }
+  }
+  return result.toString();
+}
+
+String _removeDefaultIgnorables(String value) {
+  final result = StringBuffer();
+  for (final rune in value.runes) {
+    final isIgnorable = unicode151DefaultIgnorableRanges.any(
+      (range) => rune >= range.$1 && rune <= range.$2,
+    );
+    if (!isIgnorable) result.writeCharCode(rune);
+  }
+  return result.toString();
 }

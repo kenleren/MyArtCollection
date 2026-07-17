@@ -61,6 +61,8 @@ dependencies:
   open_filex: ^4.7.0
   pdf: ^3.11.3
   share_plus: ^12.0.1
+  unorm_dart:
+    path: third_party/unorm_dart_15_1
 
 dev_dependencies:
   flutter_test:

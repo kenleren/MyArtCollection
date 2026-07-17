@@ -4,6 +4,7 @@ import 'dart:typed_data';
 
 import 'package:archive/archive.dart';
 import 'package:archive/archive_io.dart';
+import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
@@ -697,6 +698,54 @@ void main() {
     },
   );
 
+  test(
+    'archive v2 rejects extra, malformed, unreferenced, and missing payloads',
+    () async {
+      await _addPdfAttachment(
+        temp: temp,
+        repository: repository,
+        attachmentStore: attachmentStore,
+        id: 'attachment-strict',
+      );
+      final artifact = await ArchiveExportService(
+        repository: repository,
+        attachmentStore: attachmentStore,
+        artifactStore: artifactStore,
+        clock: () => DateTime.utc(2026, 7, 14, 9),
+      ).generate();
+      final source = ZipDecoder().decodeBytes(
+        await artifact.file.readAsBytes(),
+      );
+
+      final extra = _archiveEntries(source)
+        ..['attachments/unreferenced/payload.pdf'] = Uint8List.fromList([1]);
+      expect(
+        () => const ArchivaleArchiveV2Codec().decodeArchive(
+          _v2ArchiveWithEntries(extra),
+        ),
+        throwsA(isA<ArchiveV2FormatException>()),
+      );
+
+      final malformed = _archiveEntries(source)
+        ..['attachments/unreferenced/payload.exe'] = Uint8List.fromList([1]);
+      expect(
+        () => const ArchivaleArchiveV2Codec().decodeArchive(
+          _v2ArchiveWithEntries(malformed),
+        ),
+        throwsA(isA<ArchiveV2FormatException>()),
+      );
+
+      final missing = _archiveEntries(source)
+        ..remove('attachments/attachment-strict/payload.pdf');
+      expect(
+        () => const ArchivaleArchiveV2Codec().decodeArchive(
+          _v2ArchiveWithEntries(missing),
+        ),
+        throwsA(isA<ArchiveV2FormatException>()),
+      );
+    },
+  );
+
   test('large collection remains deterministic and round-trips', () async {
     await repository.createAll([
       for (var index = 2; index <= 202; index++)
@@ -957,6 +1006,65 @@ void main() {
 Map<String, Object?> _jsonEntry(Archive archive, String name) =>
     jsonDecode(utf8.decode(archive.findFile(name)!.content))
         as Map<String, Object?>;
+
+Map<String, Uint8List> _archiveEntries(Archive archive) => {
+  for (final file in archive.files)
+    if (file.name != 'manifest.json')
+      file.name: Uint8List.fromList(file.content as List<int>),
+};
+
+Uint8List _v2ArchiveWithEntries(Map<String, Uint8List> entries) {
+  const structured = [
+    'records/artworks.json',
+    'records/external_references.json',
+    'records/attachments.json',
+    'records/groupings.json',
+  ];
+  final payloads =
+      entries.keys.where((path) => path.startsWith('attachments/')).toList()
+        ..sort();
+  final ordered = [...structured, ...payloads];
+  final manifest = <String, Object?>{
+    'contract': ArchivaleArchiveV2Codec.archiveContract,
+    'version': ArchivaleArchiveV2Codec.version,
+    'created_at': '2026-07-14T09:00:00.000Z',
+    'archive_status': 'complete',
+    'trust_notice':
+        'Values are user-provided or source-labeled. Supporting records do not prove authenticity, attribution, provenance, value, ownership, or insurance acceptance.',
+    'counts': {
+      'artworks': 1,
+      'external_references': 0,
+      'attachments_included': 1,
+      'attachments_excluded': 0,
+      'groups': 0,
+      'memberships': 0,
+      'preferences': 0,
+    },
+    'warnings': <Object?>[],
+    'files': [
+      for (final path in ordered)
+        {
+          'path': path,
+          'size_bytes': entries[path]!.length,
+          'checksum_sha256': sha256.convert(entries[path]!).toString(),
+        },
+    ],
+    'exclusions': [
+      'generated_reports_and_exports',
+      'ai_and_research_job_caches',
+      'telemetry',
+      'billing_state',
+      'credentials_and_device_paths',
+    ],
+  };
+  final archive = Archive()
+    ..addFile(ArchiveFile.string('manifest.json', jsonEncode(manifest)));
+  for (final path in ordered) {
+    final content = entries[path]!;
+    archive.addFile(ArchiveFile(path, content.length, content));
+  }
+  return Uint8List.fromList(ZipEncoder().encode(archive));
+}
 
 Future<List<FileSystemEntity>> _partialFiles(Directory root) => root
     .list(recursive: true)

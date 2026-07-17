@@ -702,7 +702,13 @@ class _GroupManagementScreenState extends State<GroupManagementScreen> {
 
   Future<List<ArtworkGroup>> _load() async =>
       AppDependencyScope.of(context).artworkRepository.listGroups();
-  void _reload() => setState(() => _groups = _load());
+  void _reload() {
+    if (mounted) {
+      setState(() {
+        _groups = _load();
+      });
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -784,29 +790,10 @@ class _GroupManagementScreenState extends State<GroupManagementScreen> {
   }
 
   Future<void> _create() async {
-    final controller = TextEditingController();
     final name = await showDialog<String>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Create group'),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          decoration: const InputDecoration(labelText: 'Group name'),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, controller.text),
-            child: const Text('Create'),
-          ),
-        ],
-      ),
+      builder: (_) => const _GroupNameDialog(title: 'Create group'),
     );
-    controller.dispose();
     if (name == null) return;
     try {
       await AppDependencyScope.of(context).artworkRepository.createGroup(
@@ -851,29 +838,14 @@ class _GroupManagementScreenState extends State<GroupManagementScreen> {
   }
 
   Future<void> _rename(ArtworkGroup group) async {
-    final controller = TextEditingController(text: group.name);
     final name = await showDialog<String>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Rename group'),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          decoration: const InputDecoration(labelText: 'Group name'),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, controller.text),
-            child: const Text('Save'),
-          ),
-        ],
+      builder: (_) => _GroupNameDialog(
+        title: 'Rename group',
+        initialName: group.name,
+        submitLabel: 'Save',
       ),
     );
-    controller.dispose();
     if (name == null) return;
     try {
       await AppDependencyScope.of(
@@ -902,6 +874,55 @@ class _GroupManagementScreenState extends State<GroupManagementScreen> {
         const SnackBar(content: Text('Group order changed. Please try again.')),
       );
     _reload();
+  }
+}
+
+class _GroupNameDialog extends StatefulWidget {
+  const _GroupNameDialog({
+    required this.title,
+    this.initialName = '',
+    this.submitLabel = 'Create',
+  });
+
+  final String title;
+  final String initialName;
+  final String submitLabel;
+
+  @override
+  State<_GroupNameDialog> createState() => _GroupNameDialogState();
+}
+
+class _GroupNameDialogState extends State<_GroupNameDialog> {
+  late final TextEditingController _controller = TextEditingController(
+    text: widget.initialName,
+  );
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text(widget.title),
+      content: TextField(
+        controller: _controller,
+        autofocus: true,
+        decoration: const InputDecoration(labelText: 'Group name'),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.pop(context, _controller.text),
+          child: Text(widget.submitLabel),
+        ),
+      ],
+    );
   }
 }
 
