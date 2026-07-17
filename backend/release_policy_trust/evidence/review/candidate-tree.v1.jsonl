@@ -523,7 +523,7 @@
 {"blob_oid":"8d372ba0d1b94e42de393e71a52a7d931a0dfec9","class":"evaluated-input","mode":"100644","path":"docs/APPLE_APP_STORE_TESTFLIGHT_READINESS_SPEC.md"}
 {"blob_oid":"2be56bb573108a2ad4c769eaa9f2a7ccf0f35b9d","class":"evaluated-input","mode":"100644","path":"docs/ARCHITECTURE.md"}
 {"blob_oid":"2d730f7dc1f9232370af7beb67ca84be110444af","class":"evaluated-input","mode":"100644","path":"docs/ARCHIVALE_ARCHIVE_V1.md"}
-{"blob_oid":"cfe2b506d4391b4b965d75f160fe1be4e9a3a3a7","class":"evaluated-input","mode":"100644","path":"docs/ARCHIVALE_ARCHIVE_V2.md"}
+{"blob_oid":"0aef1a69a7aba9942c9e350a88b357c99407d78b","class":"evaluated-input","mode":"100644","path":"docs/ARCHIVALE_ARCHIVE_V2.md"}
 {"blob_oid":"1b8e77b33be74b0cb7906378dfa5415a8e6998f8","class":"evaluated-input","mode":"100644","path":"docs/ARCHIVALE_BLOG_EDITORIAL_PLAN.md"}
 {"blob_oid":"6179eb3dc6c705120222ffa8c4709be12036cf85","class":"evaluated-input","mode":"100644","path":"docs/ARTWORK_RECORD_SCHEMA.md"}
 {"blob_oid":"37ccf7c9f2791504cb8dfc55ef60c3d149cb3220","class":"evaluated-input","mode":"100644","path":"docs/ATTACHMENT_CUSTODY_API_V1.md"}
@@ -606,9 +606,10 @@
 {"blob_oid":"d1c4d9c39c4cc43007153c63d9246f81c120c05b","class":"evaluated-input","mode":"100644","path":"lib/app/billing/entitlement_plan.dart"}
 {"blob_oid":"2b4413ca2684c92c0b0a4b035343709fb92d2f38","class":"evaluated-input","mode":"100644","path":"lib/app/billing/play_billing_adapter.dart"}
 {"blob_oid":"a994a2ba694fa3a76a58be5360ae35ae7ed65159","class":"evaluated-input","mode":"100644","path":"lib/app/config/app_feature_flags.dart"}
-{"blob_oid":"fda5ea2831a8d0af081e96c4ccea3c19ba0721ed","class":"evaluated-input","mode":"100644","path":"lib/app/export/archive_export_service.dart"}
+{"blob_oid":"fe8d2574f3f6ddeb841d5e1ee7c6346c64f036ce","class":"evaluated-input","mode":"100644","path":"lib/app/export/archive_attachment_payload_contract.dart"}
+{"blob_oid":"ac1a7c6c599aa7d5a8a0ed983e125322f7410cdd","class":"evaluated-input","mode":"100644","path":"lib/app/export/archive_export_service.dart"}
 {"blob_oid":"9b653d9ddffad16785c6e51651e024107cf15bb7","class":"evaluated-input","mode":"100644","path":"lib/app/export/archive_v1_codec.dart"}
-{"blob_oid":"3db0ec7df046189ed6c2c48ed527aea0bc103a04","class":"evaluated-input","mode":"100644","path":"lib/app/export/archive_v2_codec.dart"}
+{"blob_oid":"03586d95bb3869febdd643de3e2e1b231a85efc6","class":"evaluated-input","mode":"100644","path":"lib/app/export/archive_v2_codec.dart"}
 {"blob_oid":"6105cb12f94c67aa00239e85f257f84886fcc311","class":"evaluated-input","mode":"100644","path":"lib/app/export/export_artifact_store.dart"}
 {"blob_oid":"12ea105dc8ee335055f967dd6ca7a33e0f36de9b","class":"evaluated-input","mode":"100644","path":"lib/app/export/export_destination_gateway.dart"}
 {"blob_oid":"63f8e6cc5a7bf50c517fa10b7e50e5b455889cb5","class":"evaluated-input","mode":"100644","path":"lib/app/export/external_reference_export_codec.dart"}
@@ -782,7 +783,7 @@
 {"blob_oid":"80def54a90bd3ec3798cadb5b666fa9602f9d54c","class":"evaluated-input","mode":"100644","path":"test/on_device_ai_draft_service_test.dart"}
 {"blob_oid":"6a43236fbc5414f21532517b10f8e3769347c244","class":"evaluated-input","mode":"100644","path":"test/online_research_service_test.dart"}
 {"blob_oid":"b201e734ff2f3b235b9af11e26ab340e202597a5","class":"evaluated-input","mode":"100644","path":"test/play_billing_adapter_test.dart"}
-{"blob_oid":"060d7341d701123a617638b05cee63564e09a8c7","class":"evaluated-input","mode":"100644","path":"test/real_export_service_test.dart"}
+{"blob_oid":"5b7b0b198ed3a926b3601e24fc09b8edc5a5b4c8","class":"evaluated-input","mode":"100644","path":"test/real_export_service_test.dart"}
 {"blob_oid":"d82127b1a96dc9d657e49709daeca98c4e4e6f55","class":"evaluated-input","mode":"100755","path":"test/safe_apple_build_test.sh"}
 {"blob_oid":"cd1b2cdbb8475c435209ad620759cbb31cb22f8e","class":"evaluated-input","mode":"100644","path":"test/supporting_attachment_service_test.dart"}
 {"blob_oid":"af369489bb1a8a92eec539b83ee9786a59cf7e92","class":"evaluated-input","mode":"100644","path":"test/supporting_record_attachment_export_contract_test.dart"}
