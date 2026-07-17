@@ -183,12 +183,12 @@ void main() {
       await pumpLiveData(tester);
       expect(find.text('Manage groups'), findsOneWidget);
       expect(find.text('Studio'), findsOneWidget);
-    await captureBoundaryToArtifacts(
-      tester,
-      boundaryKey,
-      'issue-214-groups-mobile.png',
-      resetAfterCapture: false,
-    );
+      await captureBoundaryToArtifacts(
+        tester,
+        boundaryKey,
+        'issue-214-groups-mobile.png',
+        resetAfterCapture: false,
+      );
 
       tester.view.physicalSize = const Size(1440, 900);
       tester.view.devicePixelRatio = 1;
