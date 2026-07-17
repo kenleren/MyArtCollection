@@ -38,6 +38,8 @@ class AppRouter {
         return _page(settings: settings, child: const AddArtworkScreen());
       case AppRoutes.collectionImportCsv:
         return _page(settings: settings, child: const CsvImportScreen());
+      case AppRoutes.collectionGroups:
+        return _page(settings: settings, child: const GroupManagementScreen());
       case AppRoutes.capture:
         return _page(
           settings: settings,

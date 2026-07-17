@@ -10,6 +10,8 @@ import 'package:image_picker/image_picker.dart';
 import 'package:my_art_collection/app/app_dependencies.dart';
 import 'package:my_art_collection/app/export/archive_export_service.dart';
 import 'package:my_art_collection/app/export/archive_v1_codec.dart';
+import 'package:my_art_collection/app/export/archive_v2_codec.dart';
+import 'package:my_art_collection/app/export/external_reference_export_codec.dart';
 import 'package:my_art_collection/app/export/export_artifact_store.dart';
 import 'package:my_art_collection/app/export/export_destination_gateway.dart';
 import 'package:my_art_collection/app/export/pdf_report_service.dart';
@@ -53,45 +55,41 @@ void main() {
     await temp.delete(recursive: true);
   });
 
-  test(
-    'archive v1 root and artwork bytes match frozen golden fixtures',
-    () async {
-      final codec = const ArchivaleArchiveV1Codec();
-      final artworkGolden = await File(
-        'test/fixtures/archive_v1/artworks.golden.json',
-      ).readAsString();
-      expect(
-        utf8.decode(codec.encodeArtworks([_artwork()])),
-        artworkGolden.trimRight(),
-      );
+  test('v1 artwork golden remains frozen while the service emits v2', () async {
+    final codec = const ArchivaleArchiveV1Codec();
+    final artworkGolden = await File(
+      'test/fixtures/archive_v1/artworks.golden.json',
+    ).readAsString();
+    expect(
+      utf8.decode(codec.encodeArtworks([_artwork()])),
+      artworkGolden.trimRight(),
+    );
 
-      final artifact = await ArchiveExportService(
-        repository: repository,
-        attachmentStore: attachmentStore,
-        artifactStore: artifactStore,
-        clock: () => DateTime.utc(2026, 7, 14, 9),
-      ).generate();
-      final archive = ZipDecoder().decodeBytes(
-        await artifact.file.readAsBytes(),
-      );
-      final manifestGolden = await File(
-        'test/fixtures/archive_v1/manifest.golden.json',
-      ).readAsString();
-      expect(
-        utf8.decode(archive.findFile('manifest.json')!.content),
-        manifestGolden.trimRight(),
-      );
-      expect(
-        () => codec.decodeManifest(
-          Uint8List.fromList(utf8.encode(manifestGolden.trimRight())),
-        ),
-        returnsNormally,
-      );
-    },
-  );
+    final artifact = await ArchiveExportService(
+      repository: repository,
+      attachmentStore: attachmentStore,
+      artifactStore: artifactStore,
+      clock: () => DateTime.utc(2026, 7, 14, 9),
+    ).generate();
+    final archive = ZipDecoder().decodeBytes(await artifact.file.readAsBytes());
+    final manifestGolden = await File(
+      'test/fixtures/archive_v1/manifest.golden.json',
+    ).readAsString();
+    expect(
+      _jsonEntry(archive, 'manifest.json')['contract'],
+      'ARCHIVALE_ARCHIVE_V2',
+    );
+    expect(archive.findFile('records/groupings.json'), isNotNull);
+    expect(
+      () => codec.decodeManifest(
+        Uint8List.fromList(utf8.encode(manifestGolden.trimRight())),
+      ),
+      returnsNormally,
+    );
+  });
 
   test(
-    'archive v1 contains canonical records and verified original bytes',
+    'archive v2 contains canonical records, groupings, and verified original bytes',
     () async {
       final source = File(p.join(temp.path, 'receipt.pdf'));
       await source.writeAsBytes(_pdfBytes);
@@ -133,12 +131,13 @@ void main() {
           'records/artworks.json',
           'records/external_references.json',
           'records/attachments.json',
+          'records/groupings.json',
           'attachments/attachment-1/payload.pdf',
         ]),
       );
       final manifest = _jsonEntry(archive, 'manifest.json');
       expect(manifest['contract'], ArchiveExportService.contract);
-      expect(manifest['version'], 1);
+      expect(manifest['version'], 2);
       expect(manifest['archive_status'], 'complete');
       expect(
         (manifest['files'] as List<Object?>).cast<Map<String, Object?>>().map(
@@ -160,21 +159,31 @@ void main() {
         archive.findFile('attachments/attachment-1/payload.pdf')!.content,
         _pdfBytes,
       );
-      final decoded = const ArchivaleArchiveV1Codec().decodeArchive(
-        Uint8List.fromList(await artifact.file.readAsBytes()),
+      final bytes = Uint8List.fromList(await artifact.file.readAsBytes());
+      final decoded = const ArchivaleArchiveV2Codec().decodeArchive(bytes);
+      final artworks = const ArchivaleArchiveV1Codec().decodeArtworks(
+        Uint8List.fromList(archive.findFile('records/artworks.json')!.content),
       );
-      expect(decoded.artworks, hasLength(1));
-      expect(decoded.artworks.single.id, 'artwork-1');
-      expect(
-        decoded.artworks.single.lifecycleStatus,
-        ArtworkLifecycleStatus.active,
+      final references = const ExternalReferenceExportCodec().decodeStandalone(
+        Uint8List.fromList(
+          archive.findFile('records/external_references.json')!.content,
+        ),
       );
+      final outcomes = const ArchivaleArchiveV1Codec().decodeAttachmentOutcomes(
+        Uint8List.fromList(
+          archive.findFile('records/attachments.json')!.content,
+        ),
+      );
+      expect(decoded.groupings.groups, isEmpty);
+      expect(artworks, hasLength(1));
+      expect(artworks.single.id, 'artwork-1');
+      expect(artworks.single.lifecycleStatus, ArtworkLifecycleStatus.active);
       expect(
-        decoded.artworks.single.fields.keys.toSet(),
+        artworks.single.fields.keys.toSet(),
         _artwork().fields.keys.toSet(),
       );
       for (final entry in _artwork().fields.entries) {
-        final roundTripped = decoded.artworks.single.fields[entry.key]!;
+        final roundTripped = artworks.single.fields[entry.key]!;
         expect(roundTripped.value, entry.value.value);
         expect(roundTripped.source, entry.value.source);
         expect(roundTripped.note, entry.value.note);
@@ -182,13 +191,38 @@ void main() {
         expect(roundTripped.moneyAmount, entry.value.moneyAmount);
         expect(roundTripped.moneyCurrencyCode, entry.value.moneyCurrencyCode);
       }
-      expect(decoded.externalReferences.single.id, 'reference-1');
-      expect(decoded.externalReferences.single.label, 'Gallery record');
-      expect(decoded.attachmentOutcomes.single, row);
-      expect(
-        decoded.payloads['attachments/attachment-1/payload.pdf'],
-        _pdfBytes,
+      expect(references.single.id, 'reference-1');
+      expect(references.single.label, 'Gallery record');
+      expect(outcomes.single, row);
+    },
+  );
+
+  test(
+    'archive v2 round-trips non-empty local organization canonically',
+    () async {
+      await repository.createGroup(id: 'group-studio', name: ' Studio ');
+      await repository.replaceArtworkGroupMemberships(
+        artworkId: 'artwork-1',
+        groupIds: {'group-studio'},
+        now: DateTime.utc(2026, 7, 14, 8),
       );
+      await repository.setFavorite(
+        artworkId: 'artwork-1',
+        isFavorite: true,
+        now: DateTime.utc(2026, 7, 14, 8),
+      );
+      final artifact = await ArchiveExportService(
+        repository: repository,
+        attachmentStore: attachmentStore,
+        artifactStore: artifactStore,
+        clock: () => DateTime.utc(2026, 7, 14, 9),
+      ).generate();
+      final decoded = const ArchivaleArchiveV2Codec().decodeArchive(
+        Uint8List.fromList(await artifact.file.readAsBytes()),
+      );
+      expect(decoded.groupings.groups.single.name, 'Studio');
+      expect(decoded.groupings.memberships.single['group_id'], 'group-studio');
+      expect(decoded.groupings.preferences.single['is_favorite'], 1);
     },
   );
 
@@ -326,11 +360,19 @@ void main() {
       artifactStore: artifactStore,
       clock: () => DateTime.utc(2026, 7, 14, 9),
     ).generate();
-    final decoded = const ArchivaleArchiveV1Codec().decodeArchive(
+    final decoded = const ArchivaleArchiveV2Codec().decodeArchive(
       Uint8List.fromList(await artifact.file.readAsBytes()),
     );
     final statuses = {
-      for (final row in decoded.attachmentOutcomes)
+      for (final row
+          in const ArchivaleArchiveV1Codec().decodeAttachmentOutcomes(
+            Uint8List.fromList(
+              ZipDecoder()
+                  .decodeBytes(await artifact.file.readAsBytes())
+                  .findFile('records/attachments.json')!
+                  .content,
+            ),
+          ))
         row['attachment_id']: row['archive_status'],
     };
     expect(statuses, {
@@ -338,7 +380,7 @@ void main() {
       'attachment-removed': 'excluded_user_removed',
       'attachment-superseded': 'excluded_superseded',
     });
-    expect(decoded.payloads, isEmpty);
+    expect(decoded.groupings.groups, isEmpty);
   });
 
   test('mid-flight cancellation deletes staged and completed output', () async {
@@ -649,8 +691,8 @@ void main() {
       final bytes = Uint8List.fromList(ZipEncoder().encode(tampered));
 
       expect(
-        () => const ArchivaleArchiveV1Codec().decodeArchive(bytes),
-        throwsA(isA<ArchiveV1FormatException>()),
+        () => const ArchivaleArchiveV2Codec().decodeArchive(bytes),
+        throwsA(isA<ArchiveV2FormatException>()),
       );
     },
   );
@@ -667,12 +709,16 @@ void main() {
       clock: () => DateTime.utc(2026, 7, 14, 9),
     ).generate();
 
-    final decoded = const ArchivaleArchiveV1Codec().decodeArchive(
+    const ArchivaleArchiveV2Codec().decodeArchive(
       Uint8List.fromList(await artifact.file.readAsBytes()),
     );
-    expect(decoded.artworks, hasLength(202));
-    expect(decoded.artworks.first.id, 'artwork-1');
-    expect(decoded.artworks.last.id, 'artwork-99');
+    final archive = ZipDecoder().decodeBytes(await artifact.file.readAsBytes());
+    final artworks = const ArchivaleArchiveV1Codec().decodeArtworks(
+      Uint8List.fromList(archive.findFile('records/artworks.json')!.content),
+    );
+    expect(artworks, hasLength(202));
+    expect(artworks.first.id, 'artwork-1');
+    expect(artworks.last.id, 'artwork-99');
   });
 
   test('cancellation keeps no partial archive', () async {

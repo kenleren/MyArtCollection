@@ -15,6 +15,7 @@ void main() {
       expect(service.localResearchCapabilityEnabled, isFalse);
       expect(service.localFlags().localResearchCapabilityEnabled, isFalse);
       expect(service.localFlags().onlineResearchEnabled, isFalse);
+      expect(const AppFeatureFlags().groupingsEnabled, isFalse);
     },
   );
 

@@ -1,5 +1,6 @@
 import 'attachment_record.dart';
 import 'artwork_record.dart';
+import 'artwork_group.dart';
 
 enum ArtworkCollectionSort {
   recentlyUpdated('Recently updated'),
@@ -12,7 +13,13 @@ enum ArtworkCollectionSort {
   final String label;
 }
 
-enum ArtworkCollectionSnapshotRead { artworks, fields, acceptedAttachmentRoles }
+enum ArtworkCollectionSnapshotRead {
+  artworks,
+  fields,
+  acceptedAttachmentRoles,
+  groupMemberships,
+  preferences,
+}
 
 class ArtworkCollectionSnapshotObserver {
   const ArtworkCollectionSnapshotObserver({required this.onRead});
@@ -28,6 +35,8 @@ class ArtworkCollectionQuery {
     this.recordStates = const {},
     this.lifecycleStatuses = const {},
     this.missingSupportingRecords = false,
+    this.selectedGroupIds = const {},
+    this.favoritesOnly = false,
   });
 
   final String searchTerm;
@@ -36,12 +45,16 @@ class ArtworkCollectionQuery {
   final Set<ArtworkRecordState> recordStates;
   final Set<ArtworkLifecycleStatus> lifecycleStatuses;
   final bool missingSupportingRecords;
+  final Set<String> selectedGroupIds;
+  final bool favoritesOnly;
 
   int get selectedFilterCount =>
       locations.length +
       recordStates.length +
       lifecycleStatuses.length +
-      (missingSupportingRecords ? 1 : 0);
+      selectedGroupIds.length +
+      (missingSupportingRecords ? 1 : 0) +
+      (favoritesOnly ? 1 : 0);
 
   bool get hasConstraints =>
       searchTerm.trim().isNotEmpty || selectedFilterCount > 0;
@@ -53,6 +66,8 @@ class ArtworkCollectionQuery {
     Set<ArtworkRecordState>? recordStates,
     Set<ArtworkLifecycleStatus>? lifecycleStatuses,
     bool? missingSupportingRecords,
+    Set<String>? selectedGroupIds,
+    bool? favoritesOnly,
   }) {
     return ArtworkCollectionQuery(
       searchTerm: searchTerm ?? this.searchTerm,
@@ -62,6 +77,8 @@ class ArtworkCollectionQuery {
       lifecycleStatuses: lifecycleStatuses ?? this.lifecycleStatuses,
       missingSupportingRecords:
           missingSupportingRecords ?? this.missingSupportingRecords,
+      selectedGroupIds: selectedGroupIds ?? this.selectedGroupIds,
+      favoritesOnly: favoritesOnly ?? this.favoritesOnly,
     );
   }
 
@@ -78,10 +95,14 @@ class ArtworkCollectionEntry {
   const ArtworkCollectionEntry({
     required this.record,
     required this.acceptedAttachments,
+    this.groupIds = const {},
+    this.isFavorite = false,
   });
 
   final ArtworkRecord record;
   final List<AttachmentRecord> acceptedAttachments;
+  final Set<String> groupIds;
+  final bool isFavorite;
 
   int get supportingAttachmentCount => acceptedAttachments
       .where(
@@ -117,12 +138,14 @@ class ArtworkCollectionSnapshot {
     required this.totalRecordCount,
     required this.activeRecordCount,
     required this.availableLocations,
+    this.availableGroups = const [],
   });
 
   final List<ArtworkCollectionEntry> entries;
   final int totalRecordCount;
   final int activeRecordCount;
   final List<String> availableLocations;
+  final List<ArtworkGroup> availableGroups;
 }
 
 bool hasMissingSupportingRecords(

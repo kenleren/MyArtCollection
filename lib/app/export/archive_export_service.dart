@@ -7,12 +7,14 @@ import 'package:crypto/crypto.dart';
 
 import '../storage/attachment_record.dart';
 import '../storage/artwork_record.dart';
+import '../storage/artwork_group.dart';
 import '../storage/external_reference.dart';
 import '../storage/local_artwork_repository.dart';
 import '../storage/local_attachment_store.dart';
 import 'export_artifact_store.dart';
 import 'external_reference_export_codec.dart';
 import 'archive_v1_codec.dart';
+import 'archive_v2_codec.dart';
 
 class ExportCancelledException implements Exception {
   const ExportCancelledException();
@@ -59,8 +61,8 @@ class ArchiveExportService {
     this.attachmentReadPassHookForTest,
   });
 
-  static const contract = ArchivaleArchiveV1Codec.archiveContract;
-  static const version = ArchivaleArchiveV1Codec.version;
+  static const contract = ArchivaleArchiveV2Codec.archiveContract;
+  static const version = ArchivaleArchiveV2Codec.version;
 
   final LocalArtworkRepository repository;
   final LocalAttachmentStore attachmentStore;
@@ -92,7 +94,7 @@ class ArchiveExportService {
             .toList(growable: false),
         token,
       );
-      final totalItems = prepared.included.length + 4;
+      final totalItems = prepared.included.length + 5;
       final totalBytes = prepared.included.fold<int>(
         0,
         (sum, item) => sum + item.record.fileSizeBytes,
@@ -106,6 +108,9 @@ class ArchiveExportService {
         'contract_version': 'supporting_record_attachment_export_contract_v1',
         'attachments': prepared.entries,
       };
+      final groupingsJson = const ArchivaleArchiveV2Codec().encodeGroupings(
+        snapshot.groupings,
+      );
       final warnings = prepared.warningCodes;
       final contentFiles = <String, Uint8List>{
         'records/artworks.json': artworksJson,
@@ -113,6 +118,7 @@ class ArchiveExportService {
           _canonicalJson(externalReferences),
         ),
         'records/attachments.json': _utf8(_canonicalJson(attachmentsJson)),
+        'records/groupings.json': groupingsJson,
       };
       final manifest = <String, Object?>{
         'contract': contract,
@@ -127,6 +133,9 @@ class ArchiveExportService {
           'attachments_included': prepared.included.length,
           'attachments_excluded':
               prepared.entries.length - prepared.included.length,
+          'groups': snapshot.groupings.groups.length,
+          'memberships': snapshot.groupings.memberships.length,
+          'preferences': snapshot.groupings.preferences.length,
         },
         'warnings': warnings,
         'files': [
@@ -264,9 +273,14 @@ class ArchiveExportService {
         );
       }
       final manifestBytes = manifestEntry.content;
-      const ArchivaleArchiveV1Codec().decodeManifest(manifestBytes);
+      const ArchivaleArchiveV2Codec().decodeArchive(
+        Uint8List.fromList(await staging.readAsBytes()),
+      );
       final manifest = jsonDecode(utf8.decode(manifestBytes));
-      if (manifest is! Map<String, Object?> || manifest['files'] is! List) {
+      if (manifest is! Map<String, Object?> ||
+          manifest['contract'] != contract ||
+          manifest['version'] != version ||
+          manifest['files'] is! List) {
         throw const ExportIntegrityException(
           'The completed archive manifest is invalid.',
         );
@@ -332,11 +346,18 @@ class ArchiveExportService {
     }
     artworks.sort((a, b) => a.id.compareTo(b.id));
     attachments.sort((a, b) => a.id.compareTo(b.id));
+    final groupings = await repository.groupingExportData();
     return _ArchiveSnapshot(
       artworks: artworks,
       attachments: attachments,
       externalReferences: references,
-      fingerprint: _snapshotFingerprint(artworks, attachments, references),
+      groupings: groupings,
+      fingerprint: _snapshotFingerprint(
+        artworks,
+        attachments,
+        references,
+        groupings,
+      ),
     );
   }
 
@@ -490,6 +511,7 @@ String _snapshotFingerprint(
   List<ArtworkRecord> artworks,
   List<AttachmentRecord> attachments,
   List<ExternalReferenceRecord> references,
+  ArtworkGroupingExportData groupings,
 ) => sha256
     .convert(
       _utf8(
@@ -514,6 +536,9 @@ String _snapshotFingerprint(
           'references': const ExternalReferenceExportCodec().encodeSectionValue(
             references,
           ),
+          'groupings': const ArchivaleArchiveV2Codec().encodeGroupings(
+            groupings,
+          ),
         }),
       ),
     )
@@ -527,11 +552,13 @@ class _ArchiveSnapshot {
     required this.artworks,
     required this.attachments,
     required this.externalReferences,
+    required this.groupings,
     required this.fingerprint,
   });
   final List<ArtworkRecord> artworks;
   final List<AttachmentRecord> attachments;
   final List<ExternalReferenceRecord> externalReferences;
+  final ArtworkGroupingExportData groupings;
   final String fingerprint;
 }
 
