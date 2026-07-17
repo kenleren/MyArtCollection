@@ -51,8 +51,10 @@ that base immutable while requiring `origin/main` to equal the event's exact
 base SHA and the candidate to descend from it. Post-merge verification requires
 the candidate, the event's expected main SHA, and `origin/main` to be identical;
 the prior push SHA (or the candidate's first parent for manual dispatch) must be
-an ancestor, and the frozen base must remain an ancestor of both. The exact
-event change range then selects one of two fail-closed paths. If the trust-source
+an ancestor, and the frozen base must remain an ancestor of both. The workflow
+and package verifier independently classify the exact event change range and
+fail if their results differ. Their agreed result selects one of two fail-closed
+paths. If the trust-source
 package, workflow, CODEOWNERS mirror, or trust/readiness runbooks changed, CI
 runs the complete frozen policy, candidate inventory, summary, and reproducibility
 gate. If none changed, CI still builds and tests the unchanged source, verifies

@@ -1,7 +1,7 @@
 {
   "claims": [
     {"claim":"anchors_inventory_history","evidence":["evidence:verify","history.test.js"],"required":"exact schemas, counts, SHA-256 digests, byte order, LF, NFC, and object types"},
-    {"claim":"final_delta_codeowners","evidence":["policy:verify","candidate:generate+cmp","codeowners:verify","test:ci-checkout"],"required":"exact event-range anchors, true PR head, generated equality, ordinary-change source continuity, and complete candidate inventory for trust-source changes"},
+    {"claim":"final_delta_codeowners","evidence":["policy:verify","candidate:generate+cmp","codeowners:verify","test:ci-checkout"],"required":"exact event-range anchors, true PR head, independent workflow/verifier scope agreement, generated equality, ordinary-change source continuity, and complete candidate inventory for trust-source changes"},
     {"claim":"canonical_policy_decision","evidence":["policy.test.js","conformance.test.js"],"required":"policy bytes alone determine digest, selectors, limits, repository/base/check identity, immutable tuple/snapshot/files, and durable decision_ready completion; emitted JavaScript exposes no constructor and a private registry rejects prototype/symbol forgery"},
     {"claim":"webhook_hmac_identity","evidence":["test:webhook"],"required":"valid pull/push plus HMAC ordering, strict JSON whitespace, UTF-8, header/body/JSON limits, and identity negatives"},
     {"claim":"pagination_paths","evidence":["test:pagination"],"required":"all file/open-PR/check bounds, cursors, passes, races, operations, malformed paths, and full Unicode case-fold collisions"},

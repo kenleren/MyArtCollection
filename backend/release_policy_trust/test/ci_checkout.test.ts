@@ -167,5 +167,8 @@ test("pull-request workflow passes the true head SHA to candidate gates", () => 
   assert.match(workflow, /--change-base "\$change_base"/);
   assert.match(workflow, /--expected-main "\$EXPECTED_MAIN_SHA"/);
   assert.match(workflow, /--mode "\$VERIFICATION_MODE"/);
-  assert.match(workflow, /if \[\[ "\$verification_scope" == full \]\]; then/);
+  assert.match(workflow, /git diff --quiet --no-renames/);
+  assert.match(workflow, /backend\/release_policy_trust/);
+  assert.match(workflow, /if \[\[ "\$verification_scope" != "\$expected_verification_scope" \]\]; then/);
+  assert.match(workflow, /if \[\[ "\$expected_verification_scope" == full \]\]; then/);
 });

@@ -363,6 +363,17 @@ jobs:
              [[ "$change_base" == 0000000000000000000000000000000000000000 ]]; then
             change_base="$(git rev-parse --verify "$CANDIDATE_SHA^")"
           fi
+          if git diff --quiet --no-renames \
+            "$change_base" "$CANDIDATE_SHA" -- \
+            backend/release_policy_trust \
+            .github/CODEOWNERS \
+            .github/workflows/release-readiness.yml \
+            docs/RELEASE_POLICY_TRUST.md \
+            docs/RELEASE_READINESS_CI.md; then
+            expected_verification_scope=unchanged
+          else
+            expected_verification_scope=full
+          fi
           verification_scope="$(
             npm --silent --prefix backend/release_policy_trust run policy:verify -- \
               --base "$base" \
@@ -371,14 +382,18 @@ jobs:
               --expected-main "$EXPECTED_MAIN_SHA" \
               --mode "$VERIFICATION_MODE"
           )"
-          if [[ "$verification_scope" == full ]]; then
+          if [[ "$verification_scope" != "$expected_verification_scope" ]]; then
+            echo "Trust-source verifier disagrees with the workflow range classification" >&2
+            exit 1
+          fi
+          if [[ "$expected_verification_scope" == full ]]; then
             npm --prefix backend/release_policy_trust run candidate:generate -- \
               --candidate "$CANDIDATE_SHA" \
               --output "$RUNNER_TEMP/candidate-tree.v1.jsonl"
             cmp \
               backend/release_policy_trust/evidence/review/candidate-tree.v1.jsonl \
               "$RUNNER_TEMP/candidate-tree.v1.jsonl"
-          elif [[ "$verification_scope" != unchanged ]]; then
+          elif [[ "$expected_verification_scope" != unchanged ]]; then
             echo "Unexpected trust-source verification scope" >&2
             exit 1
           fi
