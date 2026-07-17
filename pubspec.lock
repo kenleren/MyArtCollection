@@ -938,6 +938,13 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "1.4.0"
+  unorm_dart:
+    dependency: "direct main"
+    description:
+      path: "third_party/unorm_dart_15_1"
+      relative: true
+    source: path
+    version: "15.1.0"
   url_launcher:
     dependency: "direct main"
     description:

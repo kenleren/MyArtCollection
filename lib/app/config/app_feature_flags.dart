@@ -14,6 +14,9 @@ const _remoteConfigDefine = bool.fromEnvironment(
 const _brokerEndpointDefine = String.fromEnvironment(
   'MY_ART_COLLECTION_BROKER_ENDPOINT',
 );
+const _groupingsEnabledDefine = bool.fromEnvironment(
+  'MY_ART_GROUPINGS_ENABLED',
+);
 
 /// Closed endpoint set for #188. A live Function URL must be added here only
 /// after #155 approves the deployment target and release gate.
@@ -38,12 +41,16 @@ class AppFeatureFlags {
   const AppFeatureFlags({
     this.localResearchCapabilityEnabled = false,
     this.onlineResearchEnabled = false,
+    this.groupingsEnabled = _groupingsEnabledDefine,
   });
 
   /// This local gate controls whether consent UI may be offered. It is never
   /// backed by Firebase and defaults to false in every artifact.
   final bool localResearchCapabilityEnabled;
   final bool onlineResearchEnabled;
+
+  /// Local-only organizational UI; never coupled to research or remote config.
+  final bool groupingsEnabled;
 }
 
 class AppFeatureFlagKeys {

@@ -151,6 +151,501 @@ void main() {
     );
   });
 
+  testWidgets(
+    'issue 214 captures gated local organization mobile and desktop',
+    (WidgetTester tester) async {
+      final fixture = (await tester.runAsync(_LiveDependencyFixture.create))!;
+      addTearDown(() async {
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.runAsync(fixture.dispose);
+      });
+      await tester.runAsync(() async {
+        await fixture.repository.createGroup(
+          id: 'group-studio',
+          name: 'Studio',
+        );
+        await fixture.repository.createGroup(id: 'group-loan', name: 'Loan');
+      });
+      final dependencies = fixture.dependenciesWithFlags(
+        featureFlags: const AppFeatureFlags(groupingsEnabled: true),
+      );
+      final boundaryKey = GlobalKey();
+      await _configureMobileViewport(tester);
+      await tester.pumpWidget(
+        RepaintBoundary(
+          key: boundaryKey,
+          child: ArchivaleApp(
+            initialRoute: AppRoutes.collectionGroups,
+            dependencies: dependencies,
+          ),
+        ),
+      );
+      await pumpLiveData(tester);
+      expect(find.text('Manage groups'), findsOneWidget);
+      expect(find.text('Studio'), findsOneWidget);
+      await captureBoundaryToArtifacts(
+        tester,
+        boundaryKey,
+        'issue-214-groups-mobile.png',
+        resetAfterCapture: false,
+      );
+
+      tester.view.physicalSize = const Size(1440, 900);
+      tester.view.devicePixelRatio = 1;
+      await tester.pump();
+      await captureBoundaryToArtifacts(
+        tester,
+        boundaryKey,
+        'issue-214-groups-desktop.png',
+      );
+    },
+  );
+
+  testWidgets('issue 214 exercises local organization workflows', (
+    WidgetTester tester,
+  ) async {
+    final fixture = (await tester.runAsync(_LiveDependencyFixture.create))!;
+    addTearDown(() async {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.runAsync(fixture.dispose);
+    });
+    await tester.runAsync(() async {
+      await fixture.repository.createAll([
+        _collectionQueryRecord(
+          id: 'issue-214-home',
+          title: 'Home Studio Work',
+          artist: 'A. Collector',
+          notes: 'Multi-group favorite.',
+          location: 'Home',
+          state: ArtworkRecordState.verifiedByYou,
+        ),
+        _collectionQueryRecord(
+          id: 'issue-214-vault',
+          title: 'Vault Loan Work',
+          artist: 'B. Collector',
+          notes: 'Loan record.',
+          location: 'Vault',
+          state: ArtworkRecordState.verifiedByYou,
+        ),
+        _collectionQueryRecord(
+          id: 'issue-214-gallery',
+          title: 'Gallery Studio Work',
+          artist: 'C. Collector',
+          notes: 'Studio record.',
+          location: 'Gallery',
+          state: ArtworkRecordState.verifiedByYou,
+        ),
+      ]);
+      await fixture.repository.createGroup(id: 'studio', name: 'Studio');
+      await fixture.repository.createGroup(id: 'loan', name: 'Loan');
+      await fixture.repository.replaceArtworkGroupMemberships(
+        artworkId: 'issue-214-home',
+        groupIds: {'studio', 'loan'},
+      );
+      await fixture.repository.setFavorite(
+        artworkId: 'issue-214-home',
+        isFavorite: true,
+      );
+      await fixture.repository.replaceArtworkGroupMemberships(
+        artworkId: 'issue-214-vault',
+        groupIds: {'loan'},
+      );
+      await fixture.repository.replaceArtworkGroupMemberships(
+        artworkId: 'issue-214-gallery',
+        groupIds: {'studio'},
+      );
+    });
+    final dependencies = fixture.dependenciesWithFlags(
+      featureFlags: const AppFeatureFlags(groupingsEnabled: true),
+    );
+    final boundaryKey = GlobalKey();
+    await _configureMobileViewport(tester);
+    await tester.pumpWidget(
+      RepaintBoundary(
+        key: boundaryKey,
+        child: ArchivaleApp(
+          key: const ValueKey('issue-214-no-results-route'),
+          initialRoute: AppRoutes.collection,
+          dependencies: dependencies,
+        ),
+      ),
+    );
+    await pumpLiveData(tester);
+    await tester.tap(find.byKey(const ValueKey('collection-filter-toggle')));
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('group-filter-studio')));
+    await pumpLiveData(tester);
+    await tester.tap(find.byKey(const ValueKey('group-filter-loan')));
+    await pumpLiveData(tester);
+    await pumpLiveData(tester);
+    expect(
+      await tester
+          .runAsync(
+            () => fixture.repository.queryCollection(
+              query: const ArtworkCollectionQuery(
+                selectedGroupIds: {'studio', 'loan'},
+              ),
+            ),
+          )
+          .then(
+            (snapshot) => snapshot!.entries.map((entry) => entry.record.id),
+          ),
+      containsAll(['issue-214-home', 'issue-214-vault', 'issue-214-gallery']),
+    );
+    await tester.tap(find.byKey(const ValueKey('favorites-filter')));
+    await pumpLiveData(tester);
+    expect(
+      await tester
+          .runAsync(
+            () => fixture.repository.queryCollection(
+              query: const ArtworkCollectionQuery(
+                selectedGroupIds: {'studio', 'loan'},
+                favoritesOnly: true,
+              ),
+            ),
+          )
+          .then(
+            (snapshot) => snapshot!.entries.map((entry) => entry.record.id),
+          ),
+      ['issue-214-home'],
+    );
+    await captureBoundaryToArtifacts(
+      tester,
+      boundaryKey,
+      'issue-214/workflow-mobile-favorite-or.png',
+      resetAfterCapture: false,
+    );
+    await tester.scrollUntilVisible(
+      find.text('Home Studio Work'),
+      300,
+      scrollable: find.byType(Scrollable).first,
+    );
+    expect(find.text('Home Studio Work'), findsOneWidget);
+    expect(find.text('Vault Loan Work'), findsNothing);
+    await tester.pumpWidget(
+      RepaintBoundary(
+        key: boundaryKey,
+        child: ArchivaleApp(
+          key: const ValueKey('issue-214-location-composition-route'),
+          initialRoute: AppRoutes.collection,
+          dependencies: dependencies,
+        ),
+      ),
+    );
+    await pumpLiveData(tester);
+    await tester.tap(find.byKey(const ValueKey('collection-filter-toggle')));
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('group-filter-studio')));
+    await pumpLiveData(tester);
+    await tester.tap(find.text('Vault'));
+    await pumpLiveData(tester);
+    expect(
+      await tester
+          .runAsync(
+            () => fixture.repository.queryCollection(
+              query: const ArtworkCollectionQuery(
+                locations: {'Vault'},
+                selectedGroupIds: {'studio'},
+              ),
+            ),
+          )
+          .then((snapshot) => snapshot!.entries),
+      isEmpty,
+    );
+    await tester.drag(find.byType(Scrollable).first, const Offset(0, -700));
+    await tester.pump();
+    expect(find.text('No matching artworks'), findsOneWidget);
+    await tester.scrollUntilVisible(
+      find.text('No matching artworks'),
+      300,
+      scrollable: find.byType(Scrollable).first,
+    );
+    expect(
+      find.byKey(const ValueKey('collection-no-results-clear')),
+      findsOneWidget,
+    );
+    await captureBoundaryToArtifacts(
+      tester,
+      boundaryKey,
+      'issue-214/workflow-mobile-location-no-results.png',
+      resetAfterCapture: false,
+    );
+    await tester.tap(find.byKey(const ValueKey('collection-no-results-clear')));
+    await pumpLiveData(tester);
+    expect(
+      await tester
+          .runAsync(() => fixture.repository.queryCollection())
+          .then((snapshot) => snapshot!.entries),
+      hasLength(3),
+    );
+
+    await tester.pumpWidget(
+      RepaintBoundary(
+        key: boundaryKey,
+        child: ArchivaleApp(
+          key: const ValueKey('issue-214-groups-route'),
+          initialRoute: AppRoutes.collectionGroups,
+          dependencies: dependencies,
+        ),
+      ),
+    );
+    await pumpLiveData(tester);
+    await tester.tap(find.byKey(const ValueKey('create-group-action')));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), '   ');
+    await tester.tap(find.widgetWithText(FilledButton, 'Create'));
+    await pumpLiveData(tester);
+    expect(find.text('A group name is required.'), findsOneWidget);
+    await tester.tap(find.byTooltip('Rename group').first);
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), 'Studio Local');
+    await tester.tap(find.widgetWithText(FilledButton, 'Save'));
+    await pumpLiveData(tester);
+    expect(find.text('Studio Local'), findsOneWidget);
+    await tester.tap(find.byTooltip('Move group earlier').last);
+    await pumpLiveData(tester);
+    expect(
+      await tester.runAsync(
+        () => fixture.repository.listGroups().then(
+          (groups) => groups.map((group) => group.id).toList(),
+        ),
+      ),
+      ['loan', 'studio'],
+    );
+    await tester.tap(find.byTooltip('Delete group').last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Delete'));
+    await pumpLiveData(tester);
+    expect(
+      await tester.runAsync(
+        () => fixture.repository.groupIdsForArtwork('issue-214-home'),
+      ),
+      {'loan'},
+    );
+    expect(
+      await tester.runAsync(
+        () => fixture.repository.isFavorite('issue-214-home'),
+      ),
+      isTrue,
+    );
+    await captureBoundaryToArtifacts(
+      tester,
+      boundaryKey,
+      'issue-214/workflow-mobile-management.png',
+      resetAfterCapture: false,
+    );
+
+    tester.view.physicalSize = const Size(1440, 900);
+    tester.view.devicePixelRatio = 1;
+    await tester.pump();
+    await captureBoundaryToArtifacts(
+      tester,
+      boundaryKey,
+      'issue-214/workflow-desktop-management.png',
+      resetAfterCapture: false,
+    );
+    await tester.pumpWidget(
+      RepaintBoundary(
+        key: boundaryKey,
+        child: ArchivaleApp(
+          key: const ValueKey('issue-214-export-route'),
+          initialRoute: AppRoutes.settingsExport,
+          dependencies: dependencies,
+        ),
+      ),
+    );
+    await pumpLiveData(tester);
+    expect(find.text('Collection archive ZIP'), findsOneWidget);
+    await captureBoundaryToArtifacts(
+      tester,
+      boundaryKey,
+      'issue-214/workflow-desktop-export-successor.png',
+    );
+  });
+
+  testWidgets(
+    'detail organization toggles memberships and refreshes after managing groups',
+    (WidgetTester tester) async {
+      final fixture = await tester.runAsync(_LiveDependencyFixture.create);
+      addTearDown(() async {
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.runAsync(fixture!.dispose);
+      });
+      await tester.runAsync(
+        () => fixture!.repository.upsert(
+          _artworkRecord(
+            id: 'organization-detail',
+            title: 'Organization detail',
+            state: ArtworkRecordState.verifiedByYou,
+            source: ArtworkFieldSource.userConfirmed,
+          ),
+        ),
+      );
+      await tester.runAsync(
+        () => fixture!.repository.createGroup(id: 'studio', name: 'Studio'),
+      );
+      await tester.runAsync(
+        () => fixture!.repository.setFavorite(
+          artworkId: 'organization-detail',
+          isFavorite: true,
+        ),
+      );
+      final dependencies = fixture!.dependenciesWithFlags(
+        featureFlags: const AppFeatureFlags(groupingsEnabled: true),
+      );
+      await tester.pumpWidget(
+        ArchivaleApp(
+          initialRoute: AppRoutes.artworkDetails('organization-detail'),
+          dependencies: dependencies,
+        ),
+      );
+      await pumpLiveData(tester);
+      await pumpLiveData(tester);
+      expect(find.text('Organization detail'), findsWidgets);
+      final studioChip = find.byKey(const ValueKey('artwork-group-studio'));
+      expect(studioChip, findsOneWidget);
+
+      expect(
+        tester
+            .widget<CheckboxListTile>(
+              find.byKey(const ValueKey('artwork-favorite-toggle')),
+            )
+            .value,
+        isTrue,
+      );
+
+      Future<void> openManageGroups() async {
+        await tapVisible(
+          tester,
+          find.byKey(const ValueKey('artwork-manage-groups')),
+        );
+        await pumpLiveData(tester);
+        expect(find.text('Manage groups'), findsOneWidget);
+      }
+
+      Future<void> returnToDetail() async {
+        await tester.pageBack();
+        await pumpLiveData(tester);
+        expect(find.text('Local organization'), findsOneWidget);
+      }
+
+      await tapVisible(tester, studioChip);
+      await pumpLiveData(tester);
+      expect(tester.widget<FilterChip>(studioChip).selected, isTrue);
+      expect(
+        tester.getSemantics(studioChip).flagsCollection.isSelected,
+        ui.Tristate.isTrue,
+      );
+      await tapVisible(tester, studioChip);
+      await pumpLiveData(tester);
+      expect(tester.widget<FilterChip>(studioChip).selected, isFalse);
+      expect(
+        tester.getSemantics(studioChip).flagsCollection.isSelected,
+        ui.Tristate.isFalse,
+      );
+
+      await openManageGroups();
+      await tester.tap(find.byTooltip('Rename group'));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byType(TextField), 'Studio Local');
+      await tester.tap(find.widgetWithText(FilledButton, 'Save'));
+      await pumpLiveData(tester);
+      await returnToDetail();
+      expect(find.text('Studio'), findsNothing);
+      expect(
+        find.descendant(of: studioChip, matching: find.text('Studio Local')),
+        findsOneWidget,
+      );
+      expect(
+        tester
+            .widget<CheckboxListTile>(
+              find.byKey(const ValueKey('artwork-favorite-toggle')),
+            )
+            .value,
+        isTrue,
+      );
+
+      await openManageGroups();
+      await tester.tap(find.byKey(const ValueKey('create-group-action')));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byType(TextField), 'Loan');
+      await tester.tap(find.widgetWithText(FilledButton, 'Create'));
+      await pumpLiveData(tester);
+      await tester.tap(find.byTooltip('Move group earlier').last);
+      await pumpLiveData(tester);
+      await returnToDetail();
+      expect(
+        await tester.runAsync(
+          () => fixture.repository.listGroups().then(
+            (groups) => groups.map((group) => group.name).toList(),
+          ),
+        ),
+        ['Loan', 'Studio Local'],
+      );
+
+      await openManageGroups();
+      await tester.tap(find.byTooltip('Delete group').last);
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, 'Delete'));
+      await pumpLiveData(tester);
+      await returnToDetail();
+      expect(find.text('Studio Local'), findsNothing);
+      final loan = await tester.runAsync(
+        () => fixture.repository.listGroups().then((groups) => groups.single),
+      );
+      final loanChip = find.byKey(ValueKey('artwork-group-${loan!.id}'));
+      await tapVisible(tester, loanChip);
+      await pumpLiveData(tester);
+      expect(tester.widget<FilterChip>(loanChip).selected, isTrue);
+      expect(
+        tester.getSemantics(loanChip).flagsCollection.isSelected,
+        ui.Tristate.isTrue,
+      );
+      await tapVisible(tester, loanChip);
+      await pumpLiveData(tester);
+      expect(tester.widget<FilterChip>(loanChip).selected, isFalse);
+      expect(
+        tester.getSemantics(loanChip).flagsCollection.isSelected,
+        ui.Tristate.isFalse,
+      );
+      expect(
+        await tester.runAsync(
+          () => fixture.repository.groupIdsForArtwork('organization-detail'),
+        ),
+        isEmpty,
+      );
+      await openManageGroups();
+      await tester.tap(find.byTooltip('Delete group'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, 'Delete'));
+      await pumpLiveData(tester);
+      await returnToDetail();
+      expect(find.text('No local groups yet.'), findsOneWidget);
+
+      await openManageGroups();
+      await tester.tap(find.byKey(const ValueKey('create-group-action')));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byType(TextField), 'Gallery');
+      await tester.tap(find.widgetWithText(FilledButton, 'Create'));
+      await pumpLiveData(tester);
+      await returnToDetail();
+      expect(find.text('No local groups yet.'), findsNothing);
+      final gallery = await tester.runAsync(
+        () => fixture.repository.listGroups().then((groups) => groups.single),
+      );
+      expect(
+        find.byKey(ValueKey('artwork-group-${gallery!.id}')),
+        findsOneWidget,
+      );
+      expect(
+        await tester.runAsync(
+          () => fixture.repository.isFavorite('organization-detail'),
+        ),
+        isTrue,
+      );
+    },
+  );
+
   testWidgets('visual evidence covers refreshed core mobile screens', (
     WidgetTester tester,
   ) async {
@@ -6168,6 +6663,7 @@ Future<void> captureRenderedBoundaryToArtifacts(
   final outputDirectory = Directory(p.join('artifacts', 'visual'));
   outputDirectory.createSync(recursive: true);
   final screenshotFile = File(p.join(outputDirectory.path, fileName));
+  screenshotFile.parent.createSync(recursive: true);
   screenshotFile.writeAsBytesSync(bytes!);
 }
 

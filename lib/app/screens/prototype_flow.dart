@@ -1,3 +1,5 @@
+// ignore_for_file: curly_braces_in_flow_control_structures, use_build_context_synchronously
+
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -21,8 +23,10 @@ import '../research/broker_payload.dart' as broker;
 import '../storage/ai_research_record.dart';
 import '../storage/attachment_record.dart';
 import '../storage/artwork_collection_query.dart';
+import '../storage/artwork_group.dart';
 import '../storage/artwork_record.dart';
 import '../storage/local_attachment_store.dart';
+import '../storage/local_artwork_repository.dart';
 
 class PrototypeIntroScreen extends StatelessWidget {
   const PrototypeIntroScreen({super.key});
@@ -286,6 +290,8 @@ class _CollectionHomeScreenState extends State<CollectionHomeScreen> {
             entitlementState: data.entitlementState,
             totalRecordCount: data.totalRecordCount,
             availableLocations: data.availableLocations,
+            availableGroups: data.availableGroups,
+            groupingsEnabled: dependencies.featureFlags.groupingsEnabled,
             query: _query,
             searchController: _searchController,
             filtersExpanded: _filtersExpanded,
@@ -305,6 +311,8 @@ class _CollectionHomeScreenState extends State<CollectionHomeScreen> {
       entitlementState: EntitlementState(plan: EntitlementPlans.free),
       totalRecordCount: 0,
       availableLocations: [],
+      availableGroups: [],
+      groupingsEnabled: false,
       query: ArtworkCollectionQuery(),
     );
   }
@@ -317,6 +325,8 @@ class _CollectionHomeContent extends StatelessWidget {
     required this.entitlementState,
     required this.totalRecordCount,
     required this.availableLocations,
+    required this.availableGroups,
+    required this.groupingsEnabled,
     required this.query,
     this.searchController,
     this.filtersExpanded = false,
@@ -330,6 +340,8 @@ class _CollectionHomeContent extends StatelessWidget {
   final EntitlementState entitlementState;
   final int totalRecordCount;
   final List<String> availableLocations;
+  final List<ArtworkGroup> availableGroups;
+  final bool groupingsEnabled;
   final ArtworkCollectionQuery query;
   final TextEditingController? searchController;
   final bool filtersExpanded;
@@ -356,6 +368,8 @@ class _CollectionHomeContent extends StatelessWidget {
           _CollectionQueryControls(
             query: query,
             availableLocations: availableLocations,
+            availableGroups: availableGroups,
+            groupingsEnabled: groupingsEnabled,
             searchController: searchController,
             filtersExpanded: filtersExpanded,
             onFiltersExpandedChanged: onFiltersExpandedChanged,
@@ -407,6 +421,8 @@ class _CollectionQueryControls extends StatelessWidget {
   const _CollectionQueryControls({
     required this.query,
     required this.availableLocations,
+    required this.availableGroups,
+    required this.groupingsEnabled,
     required this.searchController,
     required this.filtersExpanded,
     required this.onFiltersExpandedChanged,
@@ -416,6 +432,8 @@ class _CollectionQueryControls extends StatelessWidget {
 
   final ArtworkCollectionQuery query;
   final List<String> availableLocations;
+  final List<ArtworkGroup> availableGroups;
+  final bool groupingsEnabled;
   final TextEditingController? searchController;
   final bool filtersExpanded;
   final ValueChanged<bool>? onFiltersExpandedChanged;
@@ -503,6 +521,8 @@ class _CollectionQueryControls extends StatelessWidget {
           _CollectionFilterChoices(
             query: query,
             availableLocations: availableLocations,
+            availableGroups: availableGroups,
+            groupingsEnabled: groupingsEnabled,
             onQueryChanged: onQueryChanged,
           ),
         ],
@@ -526,11 +546,15 @@ class _CollectionFilterChoices extends StatelessWidget {
   const _CollectionFilterChoices({
     required this.query,
     required this.availableLocations,
+    required this.availableGroups,
+    required this.groupingsEnabled,
     required this.onQueryChanged,
   });
 
   final ArtworkCollectionQuery query;
   final List<String> availableLocations;
+  final List<ArtworkGroup> availableGroups;
+  final bool groupingsEnabled;
   final ValueChanged<ArtworkCollectionQuery>? onQueryChanged;
 
   @override
@@ -558,6 +582,52 @@ class _CollectionFilterChoices extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 8),
+        ],
+        if (groupingsEnabled) ...[
+          const SizedBox(height: 8),
+          Text('Groups', style: Theme.of(context).textTheme.labelLarge),
+          const SizedBox(height: 4),
+          FilterChip(
+            key: const ValueKey('favorites-filter'),
+            avatar: const Icon(Icons.star_outline, size: 18),
+            label: const Text('Favorites'),
+            selected: query.favoritesOnly,
+            onSelected: (selected) =>
+                onQueryChanged?.call(query.copyWith(favoritesOnly: selected)),
+          ),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton.icon(
+              key: const ValueKey('manage-groups-action'),
+              onPressed: () =>
+                  Navigator.of(context).pushNamed(AppRoutes.collectionGroups),
+              icon: const Icon(Icons.folder_outlined),
+              label: const Text('Manage groups'),
+            ),
+          ),
+          if (availableGroups.isNotEmpty) ...[
+            const SizedBox(height: 4),
+            Wrap(
+              spacing: 6,
+              runSpacing: 4,
+              children: [
+                for (final group in availableGroups)
+                  FilterChip(
+                    key: ValueKey('group-filter-${group.id}'),
+                    label: Text(group.name),
+                    selected: query.selectedGroupIds.contains(group.id),
+                    onSelected: (_) => onQueryChanged?.call(
+                      query.copyWith(
+                        selectedGroupIds: _toggledSelection(
+                          query.selectedGroupIds,
+                          group.id,
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ],
         ],
         Text('Record state', style: Theme.of(context).textTheme.labelLarge),
         const SizedBox(height: 4),
@@ -608,6 +678,249 @@ class _CollectionFilterChoices extends StatelessWidget {
           onSelected: (selected) => onQueryChanged?.call(
             query.copyWith(missingSupportingRecords: selected),
           ),
+        ),
+      ],
+    );
+  }
+}
+
+class GroupManagementScreen extends StatefulWidget {
+  const GroupManagementScreen({super.key});
+
+  @override
+  State<GroupManagementScreen> createState() => _GroupManagementScreenState();
+}
+
+class _GroupManagementScreenState extends State<GroupManagementScreen> {
+  Future<List<ArtworkGroup>>? _groups;
+  int _nextId = 1;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _groups ??= _load();
+  }
+
+  Future<List<ArtworkGroup>> _load() async =>
+      AppDependencyScope.of(context).artworkRepository.listGroups();
+  void _reload() {
+    if (mounted) {
+      setState(() {
+        _groups = _load();
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final enabled = AppDependencyScope.of(
+      context,
+    ).featureFlags.groupingsEnabled;
+    if (!enabled)
+      return const PrototypeScreenFrame(
+        title: 'Groups unavailable',
+        subtitle: 'Local organization is off in this app build.',
+        child: SizedBox.shrink(),
+      );
+    return PrototypeScreenFrame(
+      title: 'Manage groups',
+      subtitle:
+          'Local organization only. Groups do not change factual location.',
+      child: FutureBuilder<List<ArtworkGroup>>(
+        future: _groups,
+        builder: (context, snapshot) {
+          final groups = snapshot.data ?? const [];
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              OutlinedButton.icon(
+                key: const ValueKey('create-group-action'),
+                onPressed: _create,
+                icon: const Icon(Icons.create_new_folder_outlined),
+                label: const Text('Create group'),
+              ),
+              const SizedBox(height: 12),
+              if (groups.isEmpty)
+                const _StatusPanel(
+                  icon: Icons.folder_open_outlined,
+                  title: 'No groups yet',
+                  body:
+                      'Create a local group when it helps you find records. Empty groups are kept until you delete them.',
+                ),
+              for (final item in groups.indexed)
+                ListTile(
+                  key: ValueKey('group-row-${item.$2.id}'),
+                  title: Text(item.$2.name),
+                  subtitle: Text(
+                    '${item.$2.memberCount} artwork${item.$2.memberCount == 1 ? '' : 's'}',
+                  ),
+                  trailing: Wrap(
+                    children: [
+                      IconButton(
+                        tooltip: 'Rename group',
+                        onPressed: () => _rename(item.$2),
+                        icon: const Icon(Icons.edit_outlined),
+                      ),
+                      IconButton(
+                        tooltip: 'Move group earlier',
+                        onPressed: item.$1 == 0
+                            ? null
+                            : () => _move(groups, item.$1, item.$1 - 1),
+                        icon: const Icon(Icons.arrow_upward),
+                      ),
+                      IconButton(
+                        tooltip: 'Move group later',
+                        onPressed: item.$1 == groups.length - 1
+                            ? null
+                            : () => _move(groups, item.$1, item.$1 + 1),
+                        icon: const Icon(Icons.arrow_downward),
+                      ),
+                      IconButton(
+                        tooltip: 'Delete group',
+                        onPressed: () => _delete(item.$2),
+                        icon: const Icon(Icons.delete_outline),
+                      ),
+                    ],
+                  ),
+                ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  Future<void> _create() async {
+    final name = await showDialog<String>(
+      context: context,
+      builder: (_) => const _GroupNameDialog(title: 'Create group'),
+    );
+    if (name == null) return;
+    try {
+      await AppDependencyScope.of(context).artworkRepository.createGroup(
+        id: 'group-${DateTime.now().microsecondsSinceEpoch}-${_nextId++}',
+        name: name,
+      );
+      _reload();
+    } on ArtworkGroupNameException catch (error) {
+      if (mounted)
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(error.message)));
+    }
+  }
+
+  Future<void> _delete(ArtworkGroup group) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete group?'),
+        content: Text(
+          'Delete ${group.name} and its ${group.memberCount} local membership${group.memberCount == 1 ? '' : 's'}? Artwork records, facts, documents, favorites, and other groups stay unchanged.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) {
+      await AppDependencyScope.of(
+        context,
+      ).artworkRepository.deleteGroup(group.id);
+      _reload();
+    }
+  }
+
+  Future<void> _rename(ArtworkGroup group) async {
+    final name = await showDialog<String>(
+      context: context,
+      builder: (_) => _GroupNameDialog(
+        title: 'Rename group',
+        initialName: group.name,
+        submitLabel: 'Save',
+      ),
+    );
+    if (name == null) return;
+    try {
+      await AppDependencyScope.of(
+        context,
+      ).artworkRepository.renameGroup(groupId: group.id, name: name);
+      _reload();
+    } on ArtworkGroupNameException catch (error) {
+      if (mounted)
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(error.message)));
+    }
+  }
+
+  Future<void> _move(List<ArtworkGroup> groups, int from, int to) async {
+    final requested = groups.map((group) => group.id).toList();
+    final moved = requested.removeAt(from);
+    requested.insert(to, moved);
+    final result = await AppDependencyScope.of(context).artworkRepository
+        .replaceGroupOrder(
+          requestedOrder: requested,
+          expectedCurrentOrder: groups.map((group) => group.id).toList(),
+        );
+    if (result == GroupOrderReplaceResult.stale && mounted)
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Group order changed. Please try again.')),
+      );
+    _reload();
+  }
+}
+
+class _GroupNameDialog extends StatefulWidget {
+  const _GroupNameDialog({
+    required this.title,
+    this.initialName = '',
+    this.submitLabel = 'Create',
+  });
+
+  final String title;
+  final String initialName;
+  final String submitLabel;
+
+  @override
+  State<_GroupNameDialog> createState() => _GroupNameDialogState();
+}
+
+class _GroupNameDialogState extends State<_GroupNameDialog> {
+  late final TextEditingController _controller = TextEditingController(
+    text: widget.initialName,
+  );
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text(widget.title),
+      content: TextField(
+        controller: _controller,
+        autofocus: true,
+        decoration: const InputDecoration(labelText: 'Group name'),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.pop(context, _controller.text),
+          child: Text(widget.submitLabel),
         ),
       ],
     );
@@ -2014,6 +2327,8 @@ class _ArtworkDetailsScreenState extends State<ArtworkDetailsScreen> {
             },
           ),
           const SizedBox(height: 16),
+          _ArtworkOrganizationPanel(artworkId: artwork.id),
+          const SizedBox(height: 16),
           _CompletenessPanel(
             fields: completenessFields,
             recordStateLabel: recordStateLabel,
@@ -2129,6 +2444,153 @@ class _ArtworkDetailsScreenState extends State<ArtworkDetailsScreen> {
       });
     }
   }
+}
+
+class _ArtworkOrganizationPanel extends StatefulWidget {
+  const _ArtworkOrganizationPanel({required this.artworkId});
+  final String artworkId;
+  @override
+  State<_ArtworkOrganizationPanel> createState() =>
+      _ArtworkOrganizationPanelState();
+}
+
+class _ArtworkOrganizationPanelState extends State<_ArtworkOrganizationPanel> {
+  Future<_ArtworkOrganizationData>? _data;
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_maybeDependencies(context) != null) _data ??= _load();
+  }
+
+  Future<_ArtworkOrganizationData> _load() async {
+    final dependencies = _maybeDependencies(context);
+    if (dependencies == null) {
+      return const _ArtworkOrganizationData(
+        groups: [],
+        memberships: {},
+        favorite: false,
+      );
+    }
+    final repository = dependencies.artworkRepository;
+    return _ArtworkOrganizationData(
+      groups: await repository.listGroups(),
+      memberships: await repository.groupIdsForArtwork(widget.artworkId),
+      favorite: await repository.isFavorite(widget.artworkId),
+    );
+  }
+
+  void _reload() {
+    if (mounted) {
+      setState(() {
+        _data = _load();
+      });
+    }
+  }
+
+  Future<void> _toggleGroupMembership(
+    LocalArtworkRepository repository,
+    _ArtworkOrganizationData data,
+    String groupId,
+  ) async {
+    final next = Set<String>.of(data.memberships);
+    if (!next.add(groupId)) {
+      next.remove(groupId);
+    }
+    await repository.replaceArtworkGroupMemberships(
+      artworkId: widget.artworkId,
+      groupIds: next,
+    );
+    if (mounted) _reload();
+  }
+
+  Future<void> _manageGroups() async {
+    await Navigator.of(context).pushNamed(AppRoutes.collectionGroups);
+    if (mounted) _reload();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final dependencies = _maybeDependencies(context);
+    if (dependencies == null || !dependencies.featureFlags.groupingsEnabled)
+      return const SizedBox.shrink();
+    return FutureBuilder<_ArtworkOrganizationData>(
+      future: _data,
+      builder: (context, snapshot) {
+        final data = snapshot.data;
+        if (data == null)
+          return const SizedBox(
+            height: 32,
+            child: Center(child: CircularProgressIndicator()),
+          );
+        final repository = dependencies.artworkRepository;
+        return _Panel(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Local organization',
+                style: Theme.of(context).textTheme.titleSmall,
+              ),
+              const SizedBox(height: 4),
+              const Text(
+                'Groups are separate from the factual current location.',
+              ),
+              Material(
+                color: Colors.transparent,
+                child: CheckboxListTile(
+                  key: const ValueKey('artwork-favorite-toggle'),
+                  contentPadding: EdgeInsets.zero,
+                  value: data.favorite,
+                  title: const Text('Favorite'),
+                  onChanged: (value) async {
+                    await repository.setFavorite(
+                      artworkId: widget.artworkId,
+                      isFavorite: value ?? false,
+                    );
+                    _reload();
+                  },
+                ),
+              ),
+              if (data.groups.isEmpty)
+                const Text('No local groups yet.')
+              else
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 4,
+                  children: [
+                    for (final group in data.groups)
+                      FilterChip(
+                        key: ValueKey('artwork-group-${group.id}'),
+                        label: Text(group.name),
+                        selected: data.memberships.contains(group.id),
+                        onSelected: (_) =>
+                            _toggleGroupMembership(repository, data, group.id),
+                      ),
+                  ],
+                ),
+              TextButton.icon(
+                key: const ValueKey('artwork-manage-groups'),
+                onPressed: _manageGroups,
+                icon: const Icon(Icons.folder_outlined),
+                label: const Text('Manage groups'),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _ArtworkOrganizationData {
+  const _ArtworkOrganizationData({
+    required this.groups,
+    required this.memberships,
+    required this.favorite,
+  });
+  final List<ArtworkGroup> groups;
+  final Set<String> memberships;
+  final bool favorite;
 }
 
 class ArtworkEditScreen extends StatefulWidget {
@@ -2919,7 +3381,7 @@ class ExportPreviewScreen extends StatelessWidget {
             icon: Icons.archive_outlined,
             title: 'Every local artwork record',
             body:
-                'The ZIP contains every local artwork record, source-labeled fields and external references, attachment outcomes, and available original supporting files.',
+                'The ZIP contains local artwork records, source-labeled fields, local groups and favorites, external references, attachment outcomes, and available original supporting files.',
           ),
           const SizedBox(height: 12),
           const _StatusPanel(
@@ -5806,6 +6268,7 @@ class _CollectionHomeData {
     required this.entitlementState,
     required this.totalRecordCount,
     required this.availableLocations,
+    required this.availableGroups,
   });
 
   static const empty = _CollectionHomeData(
@@ -5814,6 +6277,7 @@ class _CollectionHomeData {
     entitlementState: EntitlementState(plan: EntitlementPlans.free),
     totalRecordCount: 0,
     availableLocations: [],
+    availableGroups: [],
   );
 
   final List<_LocalArtworkSummary> records;
@@ -5821,6 +6285,7 @@ class _CollectionHomeData {
   final EntitlementState entitlementState;
   final int totalRecordCount;
   final List<String> availableLocations;
+  final List<ArtworkGroup> availableGroups;
 }
 
 class _CreationGate {
@@ -5859,6 +6324,7 @@ Future<_CollectionHomeData> _loadCollectionHomeData(
     entitlementState: entitlementState,
     totalRecordCount: snapshot.totalRecordCount,
     availableLocations: snapshot.availableLocations,
+    availableGroups: snapshot.availableGroups,
   );
 }
 

@@ -10,6 +10,7 @@ class AppRoutes {
   static const collectionIncomplete = '/collection/incomplete';
   static const collectionReport = '/collection/report';
   static const collectionSettings = '/collection/settings';
+  static const collectionGroups = '/collection/groups';
 
   static const capture = '/capture';
   static const import = '/import';

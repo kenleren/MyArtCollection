@@ -1,3 +1,5 @@
+// ignore_for_file: curly_braces_in_flow_control_structures
+
 import 'dart:convert';
 
 import 'package:path/path.dart' as p;
@@ -7,6 +9,7 @@ import 'package:sqflite/sqflite.dart';
 import 'ai_research_record.dart';
 import 'attachment_record.dart';
 import 'artwork_collection_query.dart';
+import 'artwork_group.dart';
 import 'artwork_record.dart';
 import 'external_reference.dart';
 import '../external_references/external_reference_url_codec.dart';
@@ -54,7 +57,7 @@ class LocalArtworkRepository {
   externalReferenceTransactionObserver;
 
   static const _databaseName = 'my_art_collection.db';
-  static const _schemaVersion = 9;
+  static const _schemaVersion = 10;
 
   static Future<LocalArtworkRepository> open() async {
     final directory = await getApplicationDocumentsDirectory();
@@ -115,6 +118,7 @@ class LocalArtworkRepository {
     await _createAttachmentsSchema(db);
     await _createAiResearchSchema(db);
     await _createExternalReferencesSchema(db);
+    await _createArtworkGroupsSchema(db);
   }
 
   static Future<void> _upgradeSchema(
@@ -169,6 +173,35 @@ class LocalArtworkRepository {
     if (oldVersion < 9) {
       await _createExternalReferencesSchema(db);
     }
+    if (oldVersion < 10) {
+      await _createArtworkGroupsSchema(db);
+    }
+  }
+
+  static Future<void> _createArtworkGroupsSchema(DatabaseExecutor db) async {
+    await db.execute('''CREATE TABLE artwork_groups (
+      group_id TEXT PRIMARY KEY, name TEXT NOT NULL, normalized_name TEXT NOT NULL UNIQUE,
+      sort_order INTEGER NOT NULL UNIQUE CHECK(sort_order >= 0),
+      created_at TEXT NOT NULL, updated_at TEXT NOT NULL)''');
+    await db.execute(
+      '''CREATE TABLE artwork_group_memberships (
+      artwork_id TEXT NOT NULL, group_id TEXT NOT NULL, created_at TEXT NOT NULL,
+      PRIMARY KEY (artwork_id, group_id),
+      FOREIGN KEY (artwork_id) REFERENCES artworks (artwork_id) ON DELETE CASCADE,
+      FOREIGN KEY (group_id) REFERENCES artwork_groups (group_id) ON DELETE CASCADE)''',
+    );
+    await db.execute(
+      'CREATE INDEX artwork_group_memberships_group_artwork_idx ON artwork_group_memberships (group_id, artwork_id)',
+    );
+    await db.execute(
+      'CREATE INDEX artwork_group_memberships_artwork_group_idx ON artwork_group_memberships (artwork_id, group_id)',
+    );
+    await db.execute(
+      '''CREATE TABLE artwork_preferences (
+      artwork_id TEXT PRIMARY KEY, is_favorite INTEGER NOT NULL DEFAULT 0,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (artwork_id) REFERENCES artworks (artwork_id) ON DELETE CASCADE)''',
+    );
   }
 
   static Future<void> _createAttachmentsSchema(Database db) async {
@@ -440,6 +473,270 @@ class LocalArtworkRepository {
         .toList(growable: false);
   }
 
+  Future<List<ArtworkGroup>> listGroups() async {
+    final rows = await _database.rawQuery('''
+      SELECT g.*, COUNT(m.artwork_id) AS member_count FROM artwork_groups g
+      LEFT JOIN artwork_group_memberships m ON m.group_id = g.group_id
+      GROUP BY g.group_id ORDER BY g.sort_order ASC, g.normalized_name ASC, g.group_id ASC
+    ''');
+    return List.unmodifiable(rows.map(_groupFromRow));
+  }
+
+  Future<ArtworkGroupingExportData> groupingExportData() async {
+    final groups = await listGroups();
+    final memberships = await _database.query(
+      'artwork_group_memberships',
+      orderBy: 'artwork_id ASC, group_id ASC',
+    );
+    final preferences = await _database.query(
+      'artwork_preferences',
+      orderBy: 'artwork_id ASC',
+    );
+    return ArtworkGroupingExportData(
+      groups: groups,
+      memberships: List.unmodifiable(memberships),
+      preferences: List.unmodifiable(preferences),
+    );
+  }
+
+  Future<ArtworkGroup> createGroup({
+    required String id,
+    required String name,
+    DateTime? now,
+  }) async {
+    final display = normalizeArtworkGroupDisplayName(name);
+    final normalized = normalizeArtworkGroupName(display);
+    final timestamp = (now ?? DateTime.now()).toUtc().toIso8601String();
+    try {
+      return await _database.transaction((txn) async {
+        final count = Sqflite.firstIntValue(
+          await txn.rawQuery('SELECT COUNT(*) FROM artwork_groups'),
+        )!;
+        await txn.insert('artwork_groups', {
+          'group_id': id,
+          'name': display,
+          'normalized_name': normalized,
+          'sort_order': count,
+          'created_at': timestamp,
+          'updated_at': timestamp,
+        });
+        final row = (await txn.query(
+          'artwork_groups',
+          where: 'group_id = ?',
+          whereArgs: [id],
+        )).single;
+        return _groupFromRow(row);
+      });
+    } on DatabaseException catch (error) {
+      if (error.isUniqueConstraintError())
+        throw const ArtworkGroupNameException(
+          'A group with that name already exists.',
+        );
+      rethrow;
+    }
+  }
+
+  Future<void> renameGroup({
+    required String groupId,
+    required String name,
+    DateTime? now,
+  }) async {
+    final display = normalizeArtworkGroupDisplayName(name);
+    final normalized = normalizeArtworkGroupName(display);
+    try {
+      final updated = await _database.update(
+        'artwork_groups',
+        {
+          'name': display,
+          'normalized_name': normalized,
+          'updated_at': (now ?? DateTime.now()).toUtc().toIso8601String(),
+        },
+        where: 'group_id = ?',
+        whereArgs: [groupId],
+      );
+      if (updated != 1) throw StateError('Group was not found.');
+    } on DatabaseException catch (error) {
+      if (error.isUniqueConstraintError())
+        throw const ArtworkGroupNameException(
+          'A group with that name already exists.',
+        );
+      rethrow;
+    }
+  }
+
+  Future<int> groupMemberCount(String groupId) async =>
+      Sqflite.firstIntValue(
+        await _database.rawQuery(
+          'SELECT COUNT(*) FROM artwork_group_memberships WHERE group_id = ?',
+          [groupId],
+        ),
+      ) ??
+      0;
+
+  Future<void> deleteGroup(String groupId) async {
+    await _database.transaction((txn) async {
+      final groups = await _orderedGroupIds(txn);
+      if (!groups.contains(groupId)) throw StateError('Group was not found.');
+      await txn.delete(
+        'artwork_groups',
+        where: 'group_id = ?',
+        whereArgs: [groupId],
+      );
+      await _writeDenseGroupOrder(
+        txn,
+        groups.where((id) => id != groupId).toList(),
+        DateTime.now(),
+      );
+    });
+  }
+
+  Future<Set<String>> groupIdsForArtwork(String artworkId) async =>
+      (await _database.query(
+        'artwork_group_memberships',
+        columns: ['group_id'],
+        where: 'artwork_id = ?',
+        whereArgs: [artworkId],
+      )).map((row) => row['group_id'] as String).toSet();
+
+  Future<void> replaceArtworkGroupMemberships({
+    required String artworkId,
+    required Set<String> groupIds,
+    DateTime? now,
+  }) async {
+    await _database.transaction((txn) async {
+      if (groupIds.isNotEmpty) {
+        final found = await txn.query(
+          'artwork_groups',
+          columns: ['group_id'],
+          where: 'group_id IN (${List.filled(groupIds.length, '?').join(',')})',
+          whereArgs: groupIds.toList(),
+        );
+        if (found.length != groupIds.length)
+          throw StateError('One or more groups were not found.');
+      }
+      await txn.delete(
+        'artwork_group_memberships',
+        where: 'artwork_id = ?',
+        whereArgs: [artworkId],
+      );
+      final created = (now ?? DateTime.now()).toUtc().toIso8601String();
+      for (final groupId in groupIds) {
+        await txn.insert('artwork_group_memberships', {
+          'artwork_id': artworkId,
+          'group_id': groupId,
+          'created_at': created,
+        });
+      }
+    });
+  }
+
+  Future<bool> isFavorite(String artworkId) async =>
+      (Sqflite.firstIntValue(
+            await _database.rawQuery(
+              'SELECT is_favorite FROM artwork_preferences WHERE artwork_id = ?',
+              [artworkId],
+            ),
+          ) ??
+          0) ==
+      1;
+
+  Future<void> setFavorite({
+    required String artworkId,
+    required bool isFavorite,
+    DateTime? now,
+  }) async {
+    final timestamp = (now ?? DateTime.now()).toUtc().toIso8601String();
+    await _database.insert('artwork_preferences', {
+      'artwork_id': artworkId,
+      'is_favorite': isFavorite ? 1 : 0,
+      'updated_at': timestamp,
+    }, conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  Future<GroupOrderReplaceResult> replaceGroupOrder({
+    required List<String> requestedOrder,
+    required List<String> expectedCurrentOrder,
+    DateTime? now,
+  }) async {
+    return _database.transaction((txn) async {
+      final current = await _orderedGroupIds(txn);
+      if (!_isExactGroupPermutation(current, requestedOrder) ||
+          !_isExactGroupPermutation(current, expectedCurrentOrder))
+        throw ArgumentError(
+          'Order must be an exact duplicate-free group permutation.',
+        );
+      if (_sameIds(current, requestedOrder))
+        return GroupOrderReplaceResult.unchanged;
+      if (!_sameIds(current, expectedCurrentOrder))
+        return GroupOrderReplaceResult.stale;
+      await _writeDenseGroupOrder(txn, requestedOrder, now ?? DateTime.now());
+      return GroupOrderReplaceResult.applied;
+    });
+  }
+
+  bool _isExactGroupPermutation(List<String> current, List<String> candidate) {
+    if (current.length != candidate.length ||
+        candidate.toSet().length != candidate.length) {
+      return false;
+    }
+    return current.toSet().containsAll(candidate);
+  }
+
+  Future<List<String>> _orderedGroupIds(DatabaseExecutor db) async {
+    final rows = await db.query(
+      'artwork_groups',
+      columns: ['group_id', 'sort_order'],
+      orderBy: 'sort_order ASC',
+    );
+    for (var index = 0; index < rows.length; index++) {
+      if (rows[index]['sort_order'] != index)
+        throw StateError('Group order is not dense.');
+    }
+    return rows.map((row) => row['group_id'] as String).toList();
+  }
+
+  Future<void> _writeDenseGroupOrder(
+    DatabaseExecutor db,
+    List<String> ids,
+    DateTime now,
+  ) async {
+    final stamp = now.toUtc().toIso8601String();
+    for (var index = 0; index < ids.length; index++) {
+      await db.update(
+        'artwork_groups',
+        {'sort_order': ids.length + index},
+        where: 'group_id = ?',
+        whereArgs: [ids[index]],
+      );
+    }
+    for (var index = 0; index < ids.length; index++) {
+      await db.update(
+        'artwork_groups',
+        {'sort_order': index, 'updated_at': stamp},
+        where: 'group_id = ?',
+        whereArgs: [ids[index]],
+      );
+    }
+  }
+
+  ArtworkGroup _groupFromRow(Map<String, Object?> row) => ArtworkGroup(
+    id: row['group_id'] as String,
+    name: row['name'] as String,
+    normalizedName: row['normalized_name'] as String,
+    sortOrder: row['sort_order'] as int,
+    createdAt: DateTime.parse(row['created_at'] as String).toLocal(),
+    updatedAt: DateTime.parse(row['updated_at'] as String).toLocal(),
+    memberCount: (row['member_count'] as int?) ?? 0,
+  );
+
+  bool _sameIds(List<String> left, List<String> right) {
+    if (left.length != right.length) return false;
+    for (var index = 0; index < left.length; index++) {
+      if (left[index] != right[index]) return false;
+    }
+    return true;
+  }
+
   Future<ArtworkCollectionSnapshot> queryCollection({
     ArtworkCollectionQuery query = const ArtworkCollectionQuery(),
   }) async {
@@ -479,6 +776,24 @@ class LocalArtworkRepository {
       ],
       orderBy: 'artwork_id ASC, imported_at DESC',
     );
+    collectionSnapshotObserver?.onRead(
+      ArtworkCollectionSnapshotRead.groupMemberships,
+    );
+    final membershipRows = await _database.query(
+      'artwork_group_memberships',
+      where: 'artwork_id IN ($placeholders)',
+      whereArgs: artworkIds,
+      orderBy: 'artwork_id ASC, group_id ASC',
+    );
+    collectionSnapshotObserver?.onRead(
+      ArtworkCollectionSnapshotRead.preferences,
+    );
+    final preferenceRows = await _database.query(
+      'artwork_preferences',
+      columns: ['artwork_id', 'is_favorite'],
+      where: 'artwork_id IN ($placeholders)',
+      whereArgs: artworkIds,
+    );
 
     final fieldsByArtwork = <String, Map<String, ArtworkFieldValue>>{};
     for (final row in fieldRows) {
@@ -495,6 +810,16 @@ class LocalArtworkRepository {
           .putIfAbsent(artworkId, () => [])
           .add(_attachmentFromRow(row));
     }
+    final groupIdsByArtwork = <String, Set<String>>{};
+    for (final row in membershipRows) {
+      groupIdsByArtwork
+          .putIfAbsent(row['artwork_id'] as String, () => <String>{})
+          .add(row['group_id'] as String);
+    }
+    final favorites = <String>{
+      for (final row in preferenceRows)
+        if (row['is_favorite'] == 1) row['artwork_id'] as String,
+    };
 
     final allEntries = artworkRows
         .map((row) {
@@ -507,6 +832,10 @@ class LocalArtworkRepository {
             acceptedAttachments: List.unmodifiable(
               attachmentsByArtwork[artworkId] ?? const [],
             ),
+            groupIds: Set.unmodifiable(
+              groupIdsByArtwork[artworkId] ?? const <String>{},
+            ),
+            isFavorite: favorites.contains(artworkId),
           );
         })
         .toList(growable: false);
@@ -528,6 +857,7 @@ class LocalArtworkRepository {
           )
           .length,
       availableLocations: availableLocations,
+      availableGroups: await listGroups(),
     );
   }
 
@@ -1260,6 +1590,11 @@ bool _matchesCollectionQuery(
     return false;
   }
   if (query.missingSupportingRecords && !entry.isMissingSupportingRecords) {
+    return false;
+  }
+  if (query.favoritesOnly && !entry.isFavorite) return false;
+  if (query.selectedGroupIds.isNotEmpty &&
+      entry.groupIds.intersection(query.selectedGroupIds).isEmpty) {
     return false;
   }
   return true;

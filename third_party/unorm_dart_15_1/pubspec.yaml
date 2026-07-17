@@ -1,0 +1,10 @@
+name: unorm_dart
+description: Vendored Unicode 15.1 normalization tables for Archivale local group identity.
+version: 15.1.0
+homepage: https://github.com/yshrsmz/unorm-dart
+
+environment:
+  sdk: '>=2.12.0 <4.0.0'
+
+dev_dependencies:
+  path: ^1.9.1
