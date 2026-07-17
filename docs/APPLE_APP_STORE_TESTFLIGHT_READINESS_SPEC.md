@@ -33,7 +33,7 @@ Repo and issue evidence:
   runtime proof depended on the deployment-target fix in `#82`.
 - `#82` has a pushed compatibility fix at commit `1f8185a` on branch
   `codex/issue-82-ios-target`: it raises the effective iOS deployment target to
-  `15.0` and has worker-reported `flutter build ios --simulator` evidence. The
+  `15.0` and has worker-reported unsigned simulator-build evidence. The
   branch still needs independent review before it should be treated as a
   completed Apple readiness prerequisite.
 - iOS project metadata today:

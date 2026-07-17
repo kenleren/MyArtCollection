@@ -23,6 +23,7 @@ ruleset handoff described below; this change does not mutate repository rules.
   changes retain the anchored unchanged-source path;
 - static-site validation with Python 3.12.13;
 - mobile broker-bypass guard and its negative fixtures; and
+- safe Apple build wrapper regressions and the tracked raw-command guard; and
 - a full-history, redacted Gitleaks scan plus repository secret-path guard.
 
 The final `Release readiness` job always runs and fails unless each listed job

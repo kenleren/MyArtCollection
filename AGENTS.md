@@ -33,6 +33,11 @@ credentials or secrets. This includes:
 Keep secret handling aligned with `docs/SECRET_HYGIENE.md`. If a task needs a
 secret, record the human-owned blocker instead of inspecting the file.
 
+For local Apple build validation, use `scripts/safe_apple_build.sh` as the
+required entrypoint. Do not run raw verbose Apple build commands with the
+caller's full environment; a documented controlled-CI exception is the only
+exception.
+
 ## AI And Provider Boundaries
 
 - Do not put provider keys in the mobile app.

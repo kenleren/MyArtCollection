@@ -68,8 +68,14 @@ Platform build checks:
 
 ```sh
 flutter build apk --debug
-flutter build ios --simulator --debug --no-codesign
+flutter_bin="$(command -v flutter)"
+scripts/safe_apple_build.sh flutter-ios-simulator-debug --flutter-bin "$flutter_bin"
+test -d build/ios/iphonesimulator/Runner.app
 ```
+
+For local Apple validation, always use `scripts/safe_apple_build.sh`; it starts
+the child build with a minimal environment and quiet output. Do not invoke raw
+Apple build tools from a full local environment.
 
 If no simulator or emulator is booted, use `flutter emulators` and your local
 device tooling to start one before `flutter run`.
