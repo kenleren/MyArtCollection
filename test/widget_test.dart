@@ -4318,6 +4318,7 @@ void main() {
       required String id,
       required String fileName,
       required AppFeatureFlags flags,
+      required Finder settledState,
       OnlineResearchClient? client,
       bool openConsent = false,
       bool startResearch = false,
@@ -4353,8 +4354,8 @@ void main() {
       }
       if (startResearch) {
         await tapVisible(tester, find.text('Start source-backed research'));
-        await tester.pump();
       }
+      await waitForFinder(tester, settledState, attempts: 80);
       final panel = find.byKey(const ValueKey('online-research-panel'));
       await Scrollable.ensureVisible(
         tester.element(panel),
@@ -4381,12 +4382,14 @@ void main() {
       id: 'issue189-gated',
       fileName: 'issue-189-gated-unavailable-light.png',
       flags: const AppFeatureFlags(),
+      settledState: find.text('Research unavailable'),
     );
     expect(find.text('Research unavailable'), findsOneWidget);
     await captureState(
       id: 'issue189-consent',
       fileName: 'issue-189-consent-light.png',
       flags: enabled,
+      settledState: find.text('Research consent'),
       client: FixtureProfessionalSourceResearchClient(),
       openConsent: true,
     );
@@ -4395,6 +4398,7 @@ void main() {
       id: 'issue189-loading',
       fileName: 'issue-189-loading-light.png',
       flags: enabled,
+      settledState: find.text('Researching...'),
       client: _PendingResearchClient(),
       startResearch: true,
     );
@@ -4430,6 +4434,7 @@ void main() {
         id: 'issue189-${entry.$1}',
         fileName: 'issue-189-${entry.$2}-light.png',
         flags: enabled,
+        settledState: find.text('Research unavailable'),
         client: _ThrowingResearchClient(
           BrokerResearchFailureException.fromFailure(
             BrokerClientFailure(
@@ -4475,6 +4480,7 @@ void main() {
       id: 'issue189-consent-stale',
       fileName: 'issue-189-consent-stale-light.png',
       flags: enabled,
+      settledState: find.text('Research consent'),
       client: _ThrowingResearchClient(
         BrokerResearchFailureException.fromFailure(
           const BrokerClientFailure(
@@ -4491,6 +4497,7 @@ void main() {
       id: 'issue189-results',
       fileName: 'issue-189-cited-results-light.png',
       flags: enabled,
+      settledState: find.text('Source-backed candidates'),
       client: FixtureProfessionalSourceResearchClient(),
       startResearch: true,
     );
@@ -4501,12 +4508,14 @@ void main() {
       id: 'issue189-dark-gated',
       fileName: 'issue-189-gated-unavailable-dark.png',
       flags: const AppFeatureFlags(),
+      settledState: find.text('Research unavailable'),
       themeMode: ThemeMode.dark,
     );
     await captureState(
       id: 'issue189-dark-results',
       fileName: 'issue-189-cited-results-dark.png',
       flags: enabled,
+      settledState: find.text('Source-backed candidates'),
       client: FixtureProfessionalSourceResearchClient(),
       startResearch: true,
       themeMode: ThemeMode.dark,
@@ -4515,6 +4524,7 @@ void main() {
       id: 'issue189-dark-consent',
       fileName: 'issue-189-consent-dark.png',
       flags: enabled,
+      settledState: find.text('Research consent'),
       client: FixtureProfessionalSourceResearchClient(),
       openConsent: true,
       themeMode: ThemeMode.dark,
@@ -4523,6 +4533,7 @@ void main() {
       id: 'issue189-dark-loading',
       fileName: 'issue-189-loading-dark.png',
       flags: enabled,
+      settledState: find.text('Researching...'),
       client: _PendingResearchClient(),
       startResearch: true,
       themeMode: ThemeMode.dark,
@@ -4531,6 +4542,7 @@ void main() {
       id: 'issue189-dark-request-in-flight',
       fileName: 'issue-189-request-in-flight-dark.png',
       flags: enabled,
+      settledState: find.text('Research unavailable'),
       client: _ThrowingResearchClient(
         BrokerResearchFailureException.fromFailure(
           const BrokerClientFailure(
@@ -4548,6 +4560,7 @@ void main() {
       id: 'issue189-dark-conflict',
       fileName: 'issue-189-conflict-dark.png',
       flags: enabled,
+      settledState: find.text('Research unavailable'),
       client: _ThrowingResearchClient(
         BrokerResearchFailureException.fromFailure(
           const BrokerClientFailure(
