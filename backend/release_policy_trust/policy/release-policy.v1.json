@@ -28,6 +28,7 @@
   "schema_version": 1,
   "selectors": {
     "baseline_exact": [
+      ".gitleaksignore",
       ".gitleaks.toml",
       "analysis_options.yaml",
       "android/.gitignore",

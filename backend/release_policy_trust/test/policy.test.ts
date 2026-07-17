@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import test from "node:test";
 import { sha256 } from "../src/canonical.js";
 import { assertCanonicalPolicy, loadCanonicalPolicy } from "../src/policy.js";
+import { isProtected } from "../src/paths.js";
 import * as policyRuntime from "../src/policy.js";
 
 const bytes = readFileSync(resolve(process.cwd(), "policy/release-policy.v1.json"));
@@ -15,6 +16,8 @@ test("canonical policy computes its own raw-byte digest and owns every runtime i
   assert.equal(policy.checkName, "Archivale release policy trust");
   assert.equal(policy.limits.fileRows, policy.limits.filePages * policy.limits.pageSize);
   assert.ok(policy.pathPolicy.prefixes.includes(".github/"));
+  assert.equal(policy.pathPolicy.exact.filter((path) => path === ".gitleaksignore").length, 1);
+  assert.equal(isProtected(".gitleaksignore", policy.pathPolicy), true);
   assert.doesNotThrow(() => assertCanonicalPolicy(policy));
   assert.throws(() => assertCanonicalPolicy({ ...policy }), /canonical policy bytes/);
 });
