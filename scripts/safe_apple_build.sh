@@ -101,8 +101,8 @@ env_args=(
   "PATH=$child_path"
   "HOME=$home_dir"
   "TMPDIR=$tmp_dir"
-  "LANG=C"
-  "LC_ALL=C"
+  "LANG=en_US.UTF-8"
+  "LC_ALL=en_US.UTF-8"
   "COCOAPODS_DISABLE_STATS=true"
 )
 if [[ -n "$developer_dir" ]]; then

@@ -68,9 +68,9 @@ check and its no-credential debug-package boundary.
 
 Use `scripts/safe_apple_build.sh` for every repository-guided local Apple
 build validation. It launches the fixed Flutter simulator build or focused
-native build with a minimal environment and quiet output by default. The
-wrapper does not forward the caller's credentials, signing inputs, provider
-variables, CI state, or unrelated environment values.
+native build with a minimal environment, a fixed UTF-8 locale, and quiet output
+by default. The wrapper does not forward the caller's credentials, signing
+inputs, provider variables, CI state, or unrelated environment values.
 
 Do not run raw Apple build commands from a full local environment, especially
 not verbose variants. The sole exception is a documented controlled-CI command
