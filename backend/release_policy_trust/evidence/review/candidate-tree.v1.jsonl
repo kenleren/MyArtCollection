@@ -1,11 +1,11 @@
 {"blob_oid":"dd56ec11688bbd692f165b78709bfbf44538c79a","class":"evaluated-input","mode":"100644","path":".env.local.example"}
 {"blob_oid":"ddf9c84c334257795e4ac20bbda78ae269bde885","class":"protected-control","mode":"100644","path":".github/CODEOWNERS"}
-{"blob_oid":"b50fdc7609582c9088ca9fcbc1f8f05af7da4b66","class":"protected-control","mode":"100644","path":".github/workflows/release-readiness.yml"}
+{"blob_oid":"8fddc61ebdc7673e9c27537eae55b06c1e2f5819","class":"protected-control","mode":"100644","path":".github/workflows/release-readiness.yml"}
 {"blob_oid":"d1398907f923d1f23e593092d0ed0dbe78471243","class":"evaluated-input","mode":"100644","path":".gitignore"}
 {"blob_oid":"db887dde90662d8f6e31a95d15d03c0afa59f648","class":"protected-control","mode":"100644","path":".gitleaks.toml"}
 {"blob_oid":"954d6716a2082cf91479b0c7d0a07d5614328503","class":"evaluated-input","mode":"100644","path":".metadata"}
-{"blob_oid":"edb94efac87d7cec2c2b1ebad8a2554962bb54d5","class":"evaluated-input","mode":"100644","path":"AGENTS.md"}
-{"blob_oid":"1e89848b8182d45e48721abe7957aadf0d6410d5","class":"evaluated-input","mode":"100644","path":"README.md"}
+{"blob_oid":"0357efd7d6816ada7f2678d90d03bd0dd8787023","class":"evaluated-input","mode":"100644","path":"AGENTS.md"}
+{"blob_oid":"99ddac73f7c3dfcb48c59ae35020f084135075a4","class":"evaluated-input","mode":"100644","path":"README.md"}
 {"blob_oid":"72b1948cdf49979b738f6917485a91f13a148dc5","class":"protected-control","mode":"100644","path":"analysis_options.yaml"}
 {"blob_oid":"4aa1a539f8ab80a1ec070dbd5c91c573fac34a46","class":"protected-control","mode":"100644","path":"android/.gitignore"}
 {"blob_oid":"498be2b62170b50a5acceb8aa20fd27f9ba59cec","class":"protected-control","mode":"100644","path":"android/app/build.gradle.kts"}
@@ -513,7 +513,7 @@
 {"blob_oid":"cc7ee92c13cce7606b9ea7b79d218314c0a33ec3","class":"evaluated-input","mode":"100644","path":"docs/AI_BROKER_PAYLOAD_AND_TELEMETRY_SPEC.md"}
 {"blob_oid":"6e007debe9e2352c45439507f5b0a5a0afb043bf","class":"evaluated-input","mode":"100644","path":"docs/AI_FAKE_BROKER_RUNBOOK.md"}
 {"blob_oid":"50df186070c3354eca5abd8403eb046dc5384174","class":"evaluated-input","mode":"100644","path":"docs/AI_PROVIDER_DATA_AND_SOURCE_RIGHTS_SPEC.md"}
-{"blob_oid":"4551099e147c9ebefe27b156cda70dc552b6f2f3","class":"evaluated-input","mode":"100644","path":"docs/APPLE_APP_STORE_TESTFLIGHT_READINESS_SPEC.md"}
+{"blob_oid":"8d372ba0d1b94e42de393e71a52a7d931a0dfec9","class":"evaluated-input","mode":"100644","path":"docs/APPLE_APP_STORE_TESTFLIGHT_READINESS_SPEC.md"}
 {"blob_oid":"2be56bb573108a2ad4c769eaa9f2a7ccf0f35b9d","class":"evaluated-input","mode":"100644","path":"docs/ARCHITECTURE.md"}
 {"blob_oid":"2d730f7dc1f9232370af7beb67ca84be110444af","class":"evaluated-input","mode":"100644","path":"docs/ARCHIVALE_ARCHIVE_V1.md"}
 {"blob_oid":"1b8e77b33be74b0cb7906378dfa5415a8e6998f8","class":"evaluated-input","mode":"100644","path":"docs/ARCHIVALE_BLOG_EDITORIAL_PLAN.md"}
@@ -536,8 +536,8 @@
 {"blob_oid":"a3906a53cc4cc465cde9393701bdab4ca7b8b57b","class":"evaluated-input","mode":"100644","path":"docs/PRODUCT_PLAN.md"}
 {"blob_oid":"1fa1d77dd8779487f8dfdb1ab344a8177af2fda4","class":"evaluated-input","mode":"100644","path":"docs/PROTOTYPE_STORYBOARD.md"}
 {"blob_oid":"c1e52f4cd69b6376f2da29813eb155727c59adf2","class":"protected-control","mode":"100644","path":"docs/RELEASE_POLICY_TRUST.md"}
-{"blob_oid":"8e1d20fb5433e027a61192411b20f42893048f2f","class":"protected-control","mode":"100644","path":"docs/RELEASE_READINESS_CI.md"}
-{"blob_oid":"f5baecf785cb3c55659c6a9b70c5adc819ebee51","class":"protected-control","mode":"100644","path":"docs/SECRET_HYGIENE.md"}
+{"blob_oid":"d28fdcb898cdf159b04418e965b0ef69dc0e386a","class":"protected-control","mode":"100644","path":"docs/RELEASE_READINESS_CI.md"}
+{"blob_oid":"26fda9628b5a0e6dc7c7732f8031943f0a05dd76","class":"protected-control","mode":"100644","path":"docs/SECRET_HYGIENE.md"}
 {"blob_oid":"b6a773ff31d53903bd86af3cedb4625d63b0f4d3","class":"evaluated-input","mode":"100644","path":"docs/SUPPORTING_RECORD_ATTACHMENT_EXPORT_CONTRACT_V1.md"}
 {"blob_oid":"d5662d39dd9bb4fd724fffa674013111fd6dbac9","class":"evaluated-input","mode":"100644","path":"docs/VALUE_TAXONOMY_SPEC.md"}
 {"blob_oid":"07ee0c64e00f6f0611dcb2ec1ff7097383a1efcc","class":"evaluated-input","mode":"100644","path":"docs/adr/0001-local-first-flutter-google-drive.md"}
@@ -684,10 +684,12 @@
 {"blob_oid":"bb9b31ea36b906b49b6689fc8bc301be243be27f","class":"evaluated-input","mode":"100644","path":"pubspec.yaml"}
 {"blob_oid":"1bfcf483934a21d05aba7814fe2b0f5bfa23c0a3","class":"evaluated-input","mode":"100644","path":"release-notes/internal-testers.md"}
 {"blob_oid":"8dfd43ba5d123f5662b80af98cabba65149e9746","class":"protected-control","mode":"100644","path":"scripts/check_android_ci_inputs.sh"}
+{"blob_oid":"01e37e2323c3904f6cc5a7d5744fea347f571504","class":"evaluated-input","mode":"100755","path":"scripts/check_apple_build_commands.sh"}
 {"blob_oid":"70784aa159f90b1ac8b92487821c9ca6559bcc51","class":"protected-control","mode":"100644","path":"scripts/check_broker_audit.mjs"}
 {"blob_oid":"63c0dc560be1b85b1131024d8a8005220c058d8f","class":"evaluated-input","mode":"100755","path":"scripts/firebase_app_distribution_upload.sh"}
 {"blob_oid":"ca7a5c7d996c246f60be3a5553f99404af94afd1","class":"protected-control","mode":"100644","path":"scripts/generate_sitemap.py"}
 {"blob_oid":"ef866a2466d2efb55e08acf89132ef9e973686e2","class":"protected-control","mode":"100755","path":"scripts/mobile_broker_bypass_guard.mjs"}
+{"blob_oid":"3d965d9c0414c2928d50396393db9de149b27df9","class":"evaluated-input","mode":"100755","path":"scripts/safe_apple_build.sh"}
 {"blob_oid":"adb9ccb051feef363d06d85c2a2accf3a6ec6c89","class":"protected-control","mode":"100755","path":"scripts/secret_scan.sh"}
 {"blob_oid":"d3777d9ff67f148f14b150878290ef3be5b76269","class":"protected-control","mode":"100755","path":"scripts/validate_static_site.py"}
 {"blob_oid":"78343417dd75800b9dff401941d450e093b6f00f","class":"protected-control","mode":"100644","path":"scripts/verify_gradle_wrapper.sh"}
@@ -722,6 +724,7 @@
 {"blob_oid":"66e39580a19331524f5c809b727c232f67205068","class":"protected-control","mode":"100644","path":"test/android_ci_input_guard_test.sh"}
 {"blob_oid":"225f38860c3abbfb56a2f0c1598cf2df39947750","class":"evaluated-input","mode":"100644","path":"test/app_currency_formatter_test.dart"}
 {"blob_oid":"bcd64b9a5417aae8bdcf0e9bdb60ab922192b8fa","class":"evaluated-input","mode":"100644","path":"test/app_feature_flags_test.dart"}
+{"blob_oid":"1b307437845e6c3756ddab35e460814ea56bc9bc","class":"evaluated-input","mode":"100755","path":"test/apple_build_command_guard_test.sh"}
 {"blob_oid":"cbfb0f7867dc8ac0c515888e61537f9bf45b931c","class":"evaluated-input","mode":"100644","path":"test/artwork_intake_service_test.dart"}
 {"blob_oid":"b4808a7b855e82adf2b24f4e7ebe24ac4e2d1886","class":"evaluated-input","mode":"100644","path":"test/attachment_custody_bridge_test.dart"}
 {"blob_oid":"6a9dc4c4e9f2456572ae79ebc62ba74ede725be5","class":"protected-control","mode":"100755","path":"test/attachment_custody_instrumentation_contract_test.sh"}
@@ -767,6 +770,7 @@
 {"blob_oid":"6a43236fbc5414f21532517b10f8e3769347c244","class":"evaluated-input","mode":"100644","path":"test/online_research_service_test.dart"}
 {"blob_oid":"b201e734ff2f3b235b9af11e26ab340e202597a5","class":"evaluated-input","mode":"100644","path":"test/play_billing_adapter_test.dart"}
 {"blob_oid":"ea2fdb3d3e288f05f45286d72d7acbbe524eb248","class":"evaluated-input","mode":"100644","path":"test/real_export_service_test.dart"}
+{"blob_oid":"a0f730724884a88f17e432c96810f812085e49f1","class":"evaluated-input","mode":"100755","path":"test/safe_apple_build_test.sh"}
 {"blob_oid":"cd1b2cdbb8475c435209ad620759cbb31cb22f8e","class":"evaluated-input","mode":"100644","path":"test/supporting_attachment_service_test.dart"}
 {"blob_oid":"af369489bb1a8a92eec539b83ee9786a59cf7e92","class":"evaluated-input","mode":"100644","path":"test/supporting_record_attachment_export_contract_test.dart"}
 {"blob_oid":"74f34c2cfdb74ddca52f87f88cf88374a0307873","class":"protected-control","mode":"100644","path":"test/validate_static_site_test.py"}
