@@ -3275,7 +3275,10 @@ void main() {
       );
 
       await tapVisible(tester, find.widgetWithText(ActionChip, 'Sold'));
-      await pumpLiveData(tester);
+      await waitForFinder(
+        tester,
+        find.text('This record stays in your archive and is marked sold.'),
+      );
       expect(
         find.text('This record stays in your archive and is marked sold.'),
         findsOneWidget,
@@ -3301,6 +3304,7 @@ void main() {
       expect(saved?.lifecycleStatus, ArtworkLifecycleStatus.stolen);
 
       await tapVisible(tester, find.widgetWithText(ActionChip, 'Removed'));
+      await waitForFinder(tester, find.text('Remove from current holdings?'));
       expect(find.text('Remove from current holdings?'), findsOneWidget);
       await tester.tap(find.text('Cancel'));
       await pumpReady(tester);
@@ -3310,6 +3314,7 @@ void main() {
       expect(saved?.lifecycleStatus, ArtworkLifecycleStatus.stolen);
 
       await tapVisible(tester, find.widgetWithText(ActionChip, 'Removed'));
+      await waitForFinder(tester, find.text('Remove from current holdings?'));
       expect(find.text('Remove from current holdings?'), findsOneWidget);
       await tester.tap(find.text('Mark as removed'));
       await pumpLiveData(tester);
