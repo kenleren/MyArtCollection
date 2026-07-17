@@ -1,6 +1,6 @@
 {"blob_oid":"dd56ec11688bbd692f165b78709bfbf44538c79a","class":"evaluated-input","mode":"100644","path":".env.local.example"}
 {"blob_oid":"ddf9c84c334257795e4ac20bbda78ae269bde885","class":"protected-control","mode":"100644","path":".github/CODEOWNERS"}
-{"blob_oid":"5b422f3654583bd95faa1cade9ff44e478d944e6","class":"protected-control","mode":"100644","path":".github/workflows/release-readiness.yml"}
+{"blob_oid":"b50fdc7609582c9088ca9fcbc1f8f05af7da4b66","class":"protected-control","mode":"100644","path":".github/workflows/release-readiness.yml"}
 {"blob_oid":"d1398907f923d1f23e593092d0ed0dbe78471243","class":"evaluated-input","mode":"100644","path":".gitignore"}
 {"blob_oid":"db887dde90662d8f6e31a95d15d03c0afa59f648","class":"protected-control","mode":"100644","path":".gitleaks.toml"}
 {"blob_oid":"954d6716a2082cf91479b0c7d0a07d5614328503","class":"evaluated-input","mode":"100644","path":".metadata"}
@@ -464,7 +464,7 @@
 {"blob_oid":"996d9e0875f1901d463a50564f4f2ca2060d19fb","class":"protected-control","mode":"100644","path":"backend/release_policy_trust/evidence/base/history-occurrences.v1.jsonl"}
 {"blob_oid":"53258440ffe047376cfa62d0ef04c011a6b030fe","class":"protected-control","mode":"100644","path":"backend/release_policy_trust/evidence/base/history-only.v1.jsonl"}
 {"blob_oid":"39c4e65311a7b10854fb84cb168ab88b94712026","class":"protected-control","mode":"100644","path":"backend/release_policy_trust/evidence/base/history-relations.v1.jsonl"}
-{"blob_oid":"354063bbe052948e40b7cc5d88a3c30d9104f8cd","class":"protected-control","mode":"100644","path":"backend/release_policy_trust/evidence/claim-matrix.v1.json"}
+{"blob_oid":"9deb0dc20c61f2c489f7c69de515bf09de1dcd5e","class":"protected-control","mode":"100644","path":"backend/release_policy_trust/evidence/claim-matrix.v1.json"}
 {"blob_oid":"65fab569f3ea362aa150876ccbbe950b7066ac99","class":"protected-control","mode":"100644","path":"backend/release_policy_trust/package-lock.json"}
 {"blob_oid":"327a3cff6f7679499f7e8fac1738f752d7605e9e","class":"protected-control","mode":"100644","path":"backend/release_policy_trust/package.json"}
 {"blob_oid":"de41dc35c03f82bbe4fb92e18a969be4e885bc02","class":"protected-control","mode":"100644","path":"backend/release_policy_trust/policy/external-inputs.v1.jsonl"}
@@ -495,7 +495,7 @@
 {"blob_oid":"3338a830be6779edd4cb0acaf501ac14d6aa7e35","class":"protected-control","mode":"100644","path":"backend/release_policy_trust/src/webhook.ts"}
 {"blob_oid":"cdc94776bd98142c005a6c6d55a8b39785401de9","class":"protected-control","mode":"100644","path":"backend/release_policy_trust/test/api_boundary.test.ts"}
 {"blob_oid":"b2afacfdc312789452f87a16bdc2e128458a7f6e","class":"protected-control","mode":"100644","path":"backend/release_policy_trust/test/canonical.test.ts"}
-{"blob_oid":"e69f9ebff90b24dc3afd7f0c82e29abce9b7fa55","class":"protected-control","mode":"100644","path":"backend/release_policy_trust/test/ci_checkout.test.ts"}
+{"blob_oid":"3d8c68ec14b4c66e22e90e84615ca25a79bfc5cf","class":"protected-control","mode":"100644","path":"backend/release_policy_trust/test/ci_checkout.test.ts"}
 {"blob_oid":"b5b8a76baf8bc968f1a2e16c53ab728445797117","class":"protected-control","mode":"100644","path":"backend/release_policy_trust/test/conformance.test.ts"}
 {"blob_oid":"4ca8c94e34039b49dba93335ab52252f9285cde9","class":"protected-control","mode":"100644","path":"backend/release_policy_trust/test/evidence_summary.test.ts"}
 {"blob_oid":"c63f90444f014264cd818246ccf94aa079bcea99","class":"protected-control","mode":"100644","path":"backend/release_policy_trust/test/external.test.ts"}
@@ -535,7 +535,7 @@
 {"blob_oid":"f08f5147aef94f5cfc89363c80f3ae1a43948b1e","class":"evaluated-input","mode":"100644","path":"docs/PLAY_BILLING_GATE_SPEC.md"}
 {"blob_oid":"a3906a53cc4cc465cde9393701bdab4ca7b8b57b","class":"evaluated-input","mode":"100644","path":"docs/PRODUCT_PLAN.md"}
 {"blob_oid":"1fa1d77dd8779487f8dfdb1ab344a8177af2fda4","class":"evaluated-input","mode":"100644","path":"docs/PROTOTYPE_STORYBOARD.md"}
-{"blob_oid":"6a68e5e1340d1ea1109b3c1945633744a2cbf0c0","class":"protected-control","mode":"100644","path":"docs/RELEASE_POLICY_TRUST.md"}
+{"blob_oid":"c1e52f4cd69b6376f2da29813eb155727c59adf2","class":"protected-control","mode":"100644","path":"docs/RELEASE_POLICY_TRUST.md"}
 {"blob_oid":"8e1d20fb5433e027a61192411b20f42893048f2f","class":"protected-control","mode":"100644","path":"docs/RELEASE_READINESS_CI.md"}
 {"blob_oid":"f5baecf785cb3c55659c6a9b70c5adc819ebee51","class":"protected-control","mode":"100644","path":"docs/SECRET_HYGIENE.md"}
 {"blob_oid":"b6a773ff31d53903bd86af3cedb4625d63b0f4d3","class":"evaluated-input","mode":"100644","path":"docs/SUPPORTING_RECORD_ATTACHMENT_EXPORT_CONTRACT_V1.md"}
