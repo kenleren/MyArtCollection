@@ -1,6 +1,6 @@
 {"blob_oid":"dd56ec11688bbd692f165b78709bfbf44538c79a","class":"evaluated-input","mode":"100644","path":".env.local.example"}
 {"blob_oid":"6831600a09d7f6587949571b1e19139dd157c73d","class":"protected-control","mode":"100644","path":".github/CODEOWNERS"}
-{"blob_oid":"2255dc516cb267483653f04f37ee171861ff02e4","class":"protected-control","mode":"100644","path":".github/workflows/release-readiness.yml"}
+{"blob_oid":"0bc68b6f3f0c43329c50af74ab1d928ca79cb966","class":"protected-control","mode":"100644","path":".github/workflows/release-readiness.yml"}
 {"blob_oid":"6072541dc263f0837c590af755ce5593ebcea7d9","class":"evaluated-input","mode":"100644","path":".gitignore"}
 {"blob_oid":"db887dde90662d8f6e31a95d15d03c0afa59f648","class":"protected-control","mode":"100644","path":".gitleaks.toml"}
 {"blob_oid":"954d6716a2082cf91479b0c7d0a07d5614328503","class":"evaluated-input","mode":"100644","path":".metadata"}
