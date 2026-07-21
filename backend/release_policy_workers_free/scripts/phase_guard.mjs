@@ -1,7 +1,9 @@
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, isAbsolute, relative, resolve } from "node:path";
+import { copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { tmpdir } from "node:os";
+import { pathToFileURL } from "node:url";
 
 const option = (name) => { const index = process.argv.indexOf(`--${name}`); return index < 0 ? undefined : process.argv[index + 1]; };
 const phase = option("phase");
@@ -18,6 +20,46 @@ const pathFromRoot = (path) => { const result = relative(root, resolve(path)); i
 const startBytes = (oid, path) => Buffer.from(git("show", `${oid}:${path}`));
 const hashAt = (oid, path) => hash(startBytes(oid, path));
 const writeCanonical = (path, value) => writeFileSync(path, `${JSON.stringify(value)}\n`, { flag: "wx" });
+const reproductionPath = "backend/release_policy_trust/evidence/review/reproducibility.v1.json";
+export const mandatoryBDelta = [
+  "M\tbackend/release_policy_trust/evidence/review/candidate-tree.v1.jsonl",
+  "M\tbackend/release_policy_trust/evidence/review/final-candidate.v1.json",
+  "D\tbackend/release_policy_workers_free/evidence/artifact-manifest.v1.json",
+  "M\tbackend/release_policy_workers_free/evidence/artifact-manifest.v2.json",
+  "M\tbackend/release_policy_workers_free/evidence/sbom.spdx.json",
+];
+const reproductionDelta = `M\t${reproductionPath}`;
+
+export function expectedBDelta(reproductionDiffers) {
+  return reproductionDiffers
+    ? [mandatoryBDelta[0], mandatoryBDelta[1], reproductionDelta, ...mandatoryBDelta.slice(2)]
+    : mandatoryBDelta;
+}
+
+export function assertBDelta(delta, reproductionDiffers) {
+  if (JSON.stringify(delta) !== JSON.stringify(expectedBDelta(reproductionDiffers))) fail("B path set rejected");
+}
+
+function reproductionDiffersFromAnchor(anchor) {
+  const temporary = mkdtempSync(join(tmpdir(), "release-policy-phase-guard-"));
+  try {
+    const output = resolve(temporary, "reproducibility.v1.json");
+    execFileSync("npm", ["--prefix", "backend/release_policy_trust", "run", "reproduce", "--", "--source-commit", anchor, "--output", output], {
+      cwd: root,
+      env: { ...process.env, TZ: "UTC", LC_ALL: "C", LANG: "C" },
+      stdio: "inherit",
+    });
+    const regenerated = readFileSync(output);
+    const differs = !regenerated.equals(startBytes(anchor, reproductionPath));
+    if (differs) {
+      const worktreeRecord = resolve(root, reproductionPath);
+      if (!regular(worktreeRecord) || !readFileSync(worktreeRecord).equals(regenerated)) fail("regenerated reproduction record is not staged truth");
+    }
+    return differs;
+  } finally {
+    rmSync(temporary, { recursive: true, force: true });
+  }
+}
 
 function preservationDirectory() {
   const directory = required(option("preservation-dir"), "preservation directory");
@@ -71,6 +113,7 @@ function verifyPreservation() {
   if (state === "final-clean") cleanIndex();
 }
 
+function main() {
 if (phase === "preserve-sbom") preserve();
 else if (phase === "verify-sbom-preservation") verifyPreservation();
 else if (["prepared", "a-worktree", "a-index", "b-worktree", "b-index", "final"].includes(phase)) {
@@ -81,7 +124,9 @@ else if (["prepared", "a-worktree", "a-index", "b-worktree", "b-index", "final"]
   if (phase === "a-worktree") cleanIndex();
   if (phase === "a-index") { const staged = git("diff", "--cached", "--name-only").trim().split("\n").filter(Boolean); if (staged.some((path) => bPaths.includes(path))) fail("B path staged in A"); }
   if (phase === "b-worktree") cleanIndex();
-  const exactB = ["M\tbackend/release_policy_trust/evidence/review/candidate-tree.v1.jsonl", "M\tbackend/release_policy_trust/evidence/review/final-candidate.v1.json", "D\tbackend/release_policy_workers_free/evidence/artifact-manifest.v1.json", "M\tbackend/release_policy_workers_free/evidence/artifact-manifest.v2.json", "M\tbackend/release_policy_workers_free/evidence/sbom.spdx.json"];
-  if (phase === "b-index") { const anchor = required(option("anchor"), "anchor"); const staged = git("diff", "--cached", "--name-status", anchor).trim().split("\n").filter(Boolean); if (JSON.stringify(staged) !== JSON.stringify(exactB)) fail("B staged path set rejected"); }
-  if (phase === "final") { const anchor = required(option("anchor"), "anchor"); const candidate = required(option("candidate"), "candidate"); if (git("rev-parse", `${candidate}^`).trim() !== anchor) fail("B parent rejected"); const delta = git("diff", "--name-status", anchor, candidate).trim().split("\n").filter(Boolean); if (JSON.stringify(delta) !== JSON.stringify(exactB)) fail("B path set rejected"); cleanIndex(); }
+  if (phase === "b-index") { const anchor = required(option("anchor"), "anchor"); const staged = git("diff", "--cached", "--name-status", anchor).trim().split("\n").filter(Boolean); assertBDelta(staged, reproductionDiffersFromAnchor(anchor)); }
+  if (phase === "final") { const anchor = required(option("anchor"), "anchor"); const candidate = required(option("candidate"), "candidate"); if (git("rev-parse", `${candidate}^`).trim() !== anchor) fail("B parent rejected"); const delta = git("diff", "--name-status", anchor, candidate).trim().split("\n").filter(Boolean); assertBDelta(delta, reproductionDiffersFromAnchor(anchor)); cleanIndex(); }
 } else fail("phase rejected");
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main();

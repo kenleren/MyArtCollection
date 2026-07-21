@@ -285,26 +285,88 @@ jobs:
             --cache "$forms_audit_cache"
       - name: Reject high-severity Play Billing dependencies
         run: npm --prefix backend/play_billing audit --package-lock-only --audit-level=high
-      - name: Test backend packages
+      - name: Install broker dependencies
         shell: bash
         run: |
           set -euo pipefail
           npm --prefix backend/broker ci
+      - name: Test broker package
+        shell: bash
+        run: |
+          set -euo pipefail
           npm --prefix backend/broker test
+      - name: Install forms dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
           npm --prefix backend/forms ci
+      - name: Test forms package
+        shell: bash
+        run: |
+          set -euo pipefail
           npm --prefix backend/forms test
+      - name: Install Play Billing dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
           npm --prefix backend/play_billing ci
+      - name: Test Play Billing package
+        shell: bash
+        run: |
+          set -euo pipefail
           npm --prefix backend/play_billing test
+      - name: Install Workers Free dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
           npm --prefix backend/release_policy_workers_free ci --ignore-scripts
+      - name: Audit Workers Free production dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
           npm --prefix backend/release_policy_workers_free audit --package-lock-only --omit=dev --audit-level=moderate
+      - name: Audit Workers Free complete lockfile
+        shell: bash
+        run: |
+          set -euo pipefail
           npm --prefix backend/release_policy_workers_free audit --package-lock-only --audit-level=high
+      - name: Test Workers Free package
+        shell: bash
+        run: |
+          set -euo pipefail
           npm --prefix backend/release_policy_workers_free test
+      - name: Test Workers Free runtime contract
+        shell: bash
+        run: |
+          set -euo pipefail
           npm --prefix backend/release_policy_workers_free run test:runtime-contract
+      - name: Test Workers Free SQLite conformance
+        shell: bash
+        run: |
+          set -euo pipefail
           npm --prefix backend/release_policy_workers_free run test:sqlite-conformance
+      - name: Generate Workers Free SPDX evidence
+        shell: bash
+        run: |
+          set -euo pipefail
           A="$(git rev-parse HEAD^)"
           npm --prefix backend/release_policy_workers_free run sbom:generate -- --anchor "$A" --output "$RUNNER_TEMP/sbom.spdx.json"
+      - name: Verify Workers Free SPDX evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          A="$(git rev-parse HEAD^)"
           npm --prefix backend/release_policy_workers_free run sbom:verify -- --anchor "$A" --input "$RUNNER_TEMP/sbom.spdx.json"
+      - name: Verify Workers Free artifact manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          A="$(git rev-parse HEAD^)"
           npm --prefix backend/release_policy_workers_free run artifact:verify -- --anchor "$A" --sbom "$RUNNER_TEMP/sbom.spdx.json" --output backend/release_policy_workers_free/evidence/artifact-manifest.v2.json
+      - name: Rehearse Workers Free restore
+        shell: bash
+        run: |
+          set -euo pipefail
           npm --prefix backend/release_policy_workers_free run restore:rehearsal
       - name: Run pinned Play Billing Firestore emulator evidence
         run: npm --prefix backend/play_billing run test:emulator:ci
