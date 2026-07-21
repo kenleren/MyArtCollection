@@ -1,0 +1,26 @@
+{
+  "name": "@archivale/release-policy-workers-free",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": "22.23.1" },
+  "scripts": {
+    "build": "node scripts/clean.mjs && tsc -p tsconfig.json",
+    "test": "npm run build --silent && node --test dist/test/*.test.js",
+    "bundle:worker": "node scripts/bundle_worker.mjs",
+    "test:runtime-contract": "npm run bundle:worker && node scripts/runtime_contract.mjs",
+    "artifact:generate": "node dist/scripts/artifact.js generate",
+    "artifact:verify": "node dist/scripts/artifact.js verify",
+    "sbom:generate": "node dist/scripts/sbom.js",
+    "restore:rehearsal": "node dist/scripts/restore_rehearsal.js"
+  },
+  "dependencies": {
+    "@archivale/release-policy-trust": "file:vendor/release-policy-trust-0.1.0.tgz"
+  },
+  "devDependencies": {
+    "@types/node": "22.15.3",
+    "esbuild": "0.25.9",
+    "miniflare": "4.20260714.0",
+    "typescript": "5.8.3"
+  }
+}

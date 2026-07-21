@@ -24,6 +24,7 @@
 /backend/play_billing/package.json @kenleren
 /backend/play_billing/tsconfig.json @kenleren
 /backend/release_policy_trust/ @kenleren
+/backend/release_policy_workers_free/ @kenleren
 /docs/RELEASE_POLICY_TRUST.md @kenleren
 /docs/RELEASE_READINESS_CI.md @kenleren
 /docs/SECRET_HYGIENE.md @kenleren

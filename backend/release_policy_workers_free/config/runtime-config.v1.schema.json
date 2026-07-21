@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "app_id": { "minimum": 1, "type": "integer" },
+    "github_api_origin": { "const": "https://api.github.com", "type": "string" },
+    "installation_id": { "minimum": 1, "type": "integer" },
+    "repository_id": { "const": 1288597824, "type": "integer" }
+  },
+  "required": ["repository_id", "app_id", "installation_id", "github_api_origin"],
+  "type": "object"
+}

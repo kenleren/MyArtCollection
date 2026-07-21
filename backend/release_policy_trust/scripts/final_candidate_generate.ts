@@ -9,6 +9,7 @@ function hashBytes(bytes: Buffer): string {
 }
 
 const trackedPackagePaths = (git(["ls-files", "backend/release_policy_trust"], { encoding: "utf8" }) as string).trim().split("\n").filter(Boolean);
+const trackedAdapterPaths = (git(["ls-files", "backend/release_policy_workers_free"], { encoding: "utf8" }) as string).trim().split("\n").filter(Boolean);
 let testCaseCount = 0;
 for (const path of trackedPackagePaths.filter((value) => value.startsWith("backend/release_policy_trust/test/"))) {
   if (!path.endsWith(".test.ts")) continue;
@@ -31,7 +32,9 @@ const summary = {
   package_file_count: trackedPackagePaths.length,
   package_lock_sha256: hashFile(resolve(packageRoot, "package-lock.json")),
   policy_sha256: hashFile(policyPath),
-  protected_file_count: 52 + trackedPackagePaths.length,
+  // The fixed baseline predates the two protected packages; each package is
+  // covered by a canonical prefix and therefore contributes every tracked row.
+  protected_file_count: 52 + trackedPackagePaths.length + trackedAdapterPaths.length,
   reproducibility_sha256: hashFile(reproductionPath),
   schema_version: 1,
   test_case_count: testCaseCount,

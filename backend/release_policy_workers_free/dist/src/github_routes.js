@@ -1,0 +1,5 @@
+import { githubApiOrigin } from "./config.js";
+const routes = {
+    installationToken: { method: "POST", path: ([id]) => `/app/installations/${id}/access_tokens` }, pullRequest: { method: "GET", path: ([repo, pr]) => `/repositories/${repo}/pulls/${pr}` }, mainRef: { method: "GET", path: ([repo]) => `/repositories/${repo}/git/ref/heads/main` }, pullFiles: { method: "GET", path: ([repo, pr]) => `/repositories/${repo}/pulls/${pr}/files` }, openMainPulls: { method: "GET", path: ([repo]) => `/repositories/${repo}/pulls` }, appChecks: { method: "GET", path: ([repo, sha]) => `/repositories/${repo}/commits/${sha}/check-runs` }, createCheck: { method: "POST", path: ([repo]) => `/repositories/${repo}/check-runs` }, updateCheck: { method: "PATCH", path: ([repo, id]) => `/repositories/${repo}/check-runs/${id}` }
+};
+export function githubRoute(route, args, query = "") { const spec = routes[route]; const url = new URL(spec.path(args), githubApiOrigin); url.search = query; return new Request(url, { method: spec.method, redirect: "error", headers: { Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28" } }); }
