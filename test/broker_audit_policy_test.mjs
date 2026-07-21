@@ -21,6 +21,21 @@ test('accepts the exact current npm audit and lock graph before expiry', async (
   assert.match(result.stdout, /5 exact uuid@9\.0\.1 paths/);
 });
 
+test('rejects a stale Firebase Admin remediation target', async () => {
+  const temporaryDirectory = await mkdtemp(path.join(os.tmpdir(), 'broker-stale-fix-'));
+  try {
+    const audit = await readJsonFixture('allowed-audit.json');
+    audit.vulnerabilities['@google-cloud/firestore'].fixAvailable.version = '14.1.0';
+    const auditPath = path.join(temporaryDirectory, 'audit.json');
+    await writeFile(auditPath, JSON.stringify(audit));
+    const result = await run(auditPath, fixture('allowed-lock.json'));
+    assert.notEqual(result.code, 0);
+    assert.match(result.stderr, /@google-cloud\/firestore full audit fix metadata changed/);
+  } finally {
+    await rm(temporaryDirectory, { recursive: true, force: true });
+  }
+});
+
 test('accepts only the exact known full-audit peer metadata edge', async () => {
   const temporaryDirectory = await mkdtemp(path.join(os.tmpdir(), 'broker-peer-audit-'));
   try {

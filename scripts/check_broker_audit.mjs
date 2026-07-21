@@ -20,7 +20,7 @@ const advisory = {
 
 const firebaseAdminFix = {
   name: 'firebase-admin',
-  version: '14.1.0',
+  version: '14.2.0',
   isSemVerMajor: true,
 };
 
