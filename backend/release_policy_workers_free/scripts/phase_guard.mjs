@@ -206,8 +206,15 @@ function assertAllowedACommit(parent, commit) {
     if (!finalAPaths.includes(path) || !["A", "D", "M"].includes(status) || (status !== "D" && treeMode(commit, path) !== "100644")) fail("A commit path or mode rejected");
   }
 }
-function assertFinalAChain(startOid, anchor) {
-  if (startOid !== "303125410ee00d21ae17108037e327373f57d10a" || git("rev-parse", "HEAD^{commit}").trim() !== anchor) fail("final A anchor rejected");
+function assertCumulativeAHead(startOid, head) {
+  const allowed = new Set([`A\t${overlayPaths[1]}`, `D\t${overlayPaths[2]}`, "M\tbackend/release_policy_workers_free/scripts/phase_guard.mjs"]);
+  const delta = nameStatus(startOid, head);
+  if (delta.some((row) => !allowed.has(row))) fail("intermediate A cumulative path or mode rejected");
+  if (treeMode(head, overlayPaths[1]) && treeMode(head, overlayPaths[1]) !== "100644") fail("intermediate A v1 mode rejected");
+  if (treeMode(head, finalAPaths[2]) !== "100644") fail("intermediate A guard mode rejected");
+}
+function assertFinalAChain(startOid, anchor, requireHead = true) {
+  if (startOid !== "303125410ee00d21ae17108037e327373f57d10a" || (requireHead && git("rev-parse", "HEAD^{commit}").trim() !== anchor)) fail("final A anchor rejected");
   try { git("merge-base", "--is-ancestor", startOid, anchor); } catch { fail("final A ancestry rejected"); }
   const chain = git("rev-list", "--reverse", "--ancestry-path", `${startOid}..${anchor}`).trim().split("\n").filter(Boolean);
   if (!chain.length) fail("final A chain missing");
@@ -216,17 +223,24 @@ function assertFinalAChain(startOid, anchor) {
     const parents = git("rev-list", "--parents", "-n", "1", commit).trim().split(/\s+/);
     if (parents.length !== 2 || parents[1] !== parent) fail("final A topology rejected");
     assertAllowedACommit(parent, commit);
+    assertCumulativeAHead(startOid, commit);
     parent = commit;
   }
   const expected = [`A\t${overlayPaths[1]}`, `D\t${overlayPaths[2]}`, "M\tbackend/release_policy_workers_free/scripts/phase_guard.mjs"];
   if (JSON.stringify(nameStatus(startOid, anchor)) !== JSON.stringify(expected) || treeMode(anchor, overlayPaths[1]) !== "100644" || treeMode(anchor, overlayPaths[2]) || treeMode(anchor, finalAPaths[2]) !== "100644") fail("final A cumulative path or mode rejected");
   if (hashAt(anchor, overlayPaths[1]) !== finalAV1Sha256 || !startBytes(startOid, artifactPath).equals(startBytes(anchor, artifactPath)) || hashAt(startOid, "backend/release_policy_workers_free/config/phase-b-overlay.v1.json") !== hashAt(anchor, "backend/release_policy_workers_free/config/phase-b-overlay.v1.json")) fail("final A placeholder or overlay drift rejected");
 }
+function assertProductionEvidenceBinding(anchor, sbomBytes, artifactBytes, lockBytes, guardSha256) {
+  let sbom; let artifact; try { sbom = JSON.parse(sbomBytes.toString("utf8")); artifact = JSON.parse(artifactBytes.toString("utf8")); } catch { fail("production evidence JSON rejected"); }
+  const namespace = `https://archivale.app/spdx/release-policy-workers-free/${anchor}/${hash(lockBytes)}`;
+  if (sbom.spdxVersion !== "SPDX-2.3" || sbom.documentNamespace !== namespace || !Number.isSafeInteger(Date.parse(sbom.creationInfo?.created)) || artifact.schema_version !== 2 || artifact.source_git_sha !== anchor || artifact.derived_files?.["evidence/sbom.spdx.json"] !== hash(sbomBytes) || artifact.source_files?.["scripts/phase_guard.mjs"] !== guardSha256) fail("production final-A evidence binding rejected");
+}
 function syntheticEvidence(oid, fixtureGit, guardBytes, lockBytes) {
   const epoch = Number(fixtureGit(["show", "-s", "--format=%ct", oid]));
   const namespace = `https://archivale.app/spdx/release-policy-workers-free/${oid}/${hash(lockBytes)}`;
-  const sbom = Buffer.from(`${JSON.stringify({ namespace, epoch, source_git_sha: oid, guard_sha256: hash(guardBytes) })}\n`);
-  return { source_git_sha: oid, sbom_namespace: namespace, sbom_epoch: epoch, sbom_sha256: hash(sbom), guard_sha256: hash(guardBytes) };
+  const sbom = Buffer.from(`${JSON.stringify({ SPDXID: "SPDXRef-DOCUMENT", spdxVersion: "SPDX-2.3", dataLicense: "CC0-1.0", name: "fixture", documentNamespace: namespace, creationInfo: { created: new Date(epoch * 1000).toISOString().replace(".000", ""), creators: ["Tool: Archivale release-policy SBOM generator"] }, packages: [{ SPDXID: "SPDXRef-Package-0", name: "fixture", versionInfo: "1", downloadLocation: "NOASSERTION", filesAnalyzed: false, licenseConcluded: "NOASSERTION", licenseDeclared: "NOASSERTION", copyrightText: "NOASSERTION" }], relationships: [{ spdxElementId: "SPDXRef-DOCUMENT", relationshipType: "DESCRIBES", relatedSpdxElement: "SPDXRef-Package-0" }] })}\n`);
+  const artifact = Buffer.from(`${JSON.stringify({ schema_version: 2, source_git_sha: oid, source_files: { "scripts/phase_guard.mjs": hash(guardBytes) }, derived_files: { "evidence/sbom.spdx.json": hash(sbom) } })}\n`);
+  return { sbom, artifact, guard_sha256: hash(guardBytes) };
 }
 function assertSyntheticProvisionalFinalRegression() {
   const directory = mkdtempSync(join(tmpdir(), "release-policy-pf-fixture-"));
@@ -247,19 +261,57 @@ function assertSyntheticProvisionalFinalRegression() {
     const lock = readFileSync(resolve(directory, "package-lock.json"));
     const pEvidence = syntheticEvidence(provisional, fixtureGit, Buffer.from("provisional\n"), lock);
     const fEvidence = syntheticEvidence(final, fixtureGit, Buffer.from("final\n"), lock);
-    const mismatches = (evidence) => Object.keys(fEvidence).filter((key) => evidence[key] !== fEvidence[key]);
-    const requiredMismatches = ["source_git_sha", "sbom_namespace", "sbom_epoch", "sbom_sha256", "guard_sha256"];
-    if (JSON.stringify(mismatches(pEvidence)) !== JSON.stringify(requiredMismatches) || mismatches(fEvidence).length) fail("synthetic stale evidence rejected");
+    try { assertProductionEvidenceBinding(final, pEvidence.sbom, pEvidence.artifact, lock, fEvidence.guard_sha256); fail("synthetic P evidence unexpectedly accepted at F"); } catch (error) { if (!(error instanceof Error) || !error.message.includes("production final-A evidence binding rejected")) throw error; }
+    assertProductionEvidenceBinding(final, fEvidence.sbom, fEvidence.artifact, lock, fEvidence.guard_sha256);
     const syntheticB = fixtureGit(["commit-tree", fixtureGit(["write-tree"]), "-p", final], { GIT_AUTHOR_DATE: "2000-01-01T00:00:03Z", GIT_COMMITTER_DATE: "2000-01-01T00:00:03Z" });
     if (fixtureGit(["rev-parse", `${syntheticB}^`]) !== final) fail("synthetic B parent rejected");
   } finally { rmSync(directory, { recursive: true, force: true }); }
+}
+function assertReachableHistoricalStaleRegression() {
+  const b10 = "303125410ee00d21ae17108037e327373f57d10a"; const finalA10 = "1c9919414330aadb5b77e6e8da7e173e0d4520a9";
+  const staleArtifact = startBytes(b10, overlayPaths[2]); const staleSbom = startBytes(b10, artifactPath); const lock = startBytes(b10, "backend/release_policy_workers_free/package-lock.json");
+  let manifest; let sbom; try { manifest = JSON.parse(staleArtifact.toString("utf8")); sbom = JSON.parse(staleSbom.toString("utf8")); } catch { fail("reachable stale evidence rejected"); }
+  if (manifest.source_git_sha !== "5410bf14b25b006664dc8e9a0398d3fb2f2ee2a5" || manifest.source_files?.["scripts/phase_guard.mjs"] !== "9c4d6b891040860d008da6fed082a8687de9ca58d0d8346b10df516090474281" || manifest.derived_files?.["evidence/sbom.spdx.json"] !== "4f4e253d7e472d07747d81e6bb5a13c9a7d0a3c24e7d0966023c168d14966893" || sbom.documentNamespace !== `https://archivale.app/spdx/release-policy-workers-free/${manifest.source_git_sha}/${hash(lock)}`) fail("reachable stale constants rejected");
+  if (hashAt(finalA10, finalAPaths[2]) !== "73f47a6969f170c4f910825f71a6e369d55e919bca25f02f70fd8d9e316fe897" || hashAt(finalA10, artifactPath) !== "115f3e9dcd6478bee4e79dd58f690dd60247edba5d89582e32aec8e364ac439c") fail("reachable final A10 constants rejected");
+  try { assertProductionEvidenceBinding(finalA10, staleSbom, staleArtifact, lock, hashAt(finalA10, finalAPaths[2])); fail("reachable stale evidence unexpectedly accepted"); } catch (error) { if (!(error instanceof Error) || !error.message.includes("production final-A evidence binding rejected")) throw error; }
+}
+function assertTransientCumulativeModeRegression() {
+  const directory = mkdtempSync(join(tmpdir(), "release-policy-a-chain-fixture-"));
+  const fixtureGit = (args, env = {}) => execFileSync("git", ["-C", directory, ...args], { encoding: "utf8", env: { ...process.env, TZ: "UTC", LC_ALL: "C", LANG: "C", ...env } }).trim();
+  const commit = (message, date) => { fixtureGit(["add", "."]); fixtureGit(["commit", "--no-gpg-sign", "-m", message], { GIT_AUTHOR_DATE: date, GIT_COMMITTER_DATE: date }); return fixtureGit(["rev-parse", "HEAD"]); };
+  try {
+    fixtureGit(["init", "--quiet"]); fixtureGit(["config", "user.name", "fixture"]); fixtureGit(["config", "user.email", "fixture@example.invalid"]);
+    mkdirSync(resolve(directory, "evidence")); mkdirSync(resolve(directory, "scripts")); writeFileSync(resolve(directory, "evidence/v2"), "base\n"); writeFileSync(resolve(directory, "scripts/guard"), "base\n");
+    const base = commit("C", "2000-01-01T00:00:00Z"); writeFileSync(resolve(directory, "evidence/v2"), "transient\n"); const provisional = commit("P", "2000-01-01T00:00:01Z"); fixtureGit(["update-ref", "refs/fixture/transient", provisional]);
+    fixtureGit(["checkout", "--quiet", "--detach", base]); writeFileSync(resolve(directory, "evidence/v1"), "placeholder\n"); rmSync(resolve(directory, "evidence/v2")); writeFileSync(resolve(directory, "scripts/guard"), "final\n"); const final = commit("F", "2000-01-01T00:00:02Z");
+    const allowed = new Set(["A\tevidence/v1", "D\tevidence/v2", "M\tscripts/guard"]); const provisionalDelta = fixtureGit(["diff", "--name-status", base, provisional]).split("\n").filter(Boolean); const finalDelta = fixtureGit(["diff", "--name-status", base, final]).split("\n").filter(Boolean);
+    if (!provisionalDelta.includes("M\tevidence/v2") || provisionalDelta.every((row) => allowed.has(row)) || finalDelta.some((row) => !allowed.has(row))) fail("transient A cumulative mode regression rejected");
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+}
+function assertPreCommitBSeal() {
+  const anchor = required(option("anchor"), "anchor"); const startOid = required(start, "start");
+  assertFinalAChain(startOid, anchor);
+  if (!readFileSync(resolve(root, finalAPaths[2])).equals(startBytes(anchor, finalAPaths[2]))) fail("pre-commit B source drift rejected");
+  return anchor;
+}
+function assertStagedProductionBinding(anchor) {
+  const sbom = Buffer.from(git("show", `:${artifactPath}`)); const artifact = Buffer.from(git("show", `:${overlayPaths[2]}`));
+  assertProductionEvidenceBinding(anchor, sbom, artifact, startBytes(anchor, "backend/release_policy_workers_free/package-lock.json"), hashAt(anchor, finalAPaths[2]));
+}
+function assertCommittedBSeal() {
+  const candidate = required(option("candidate"), "candidate"); const supplied = required(option("anchor"), "anchor"); const actual = git("rev-parse", `${candidate}^`).trim();
+  if (supplied !== actual || git("rev-parse", "HEAD^{commit}").trim() !== candidate) fail("committed B anchor rejected");
+  assertFinalAChain(required(start, "start"), actual, false);
+  const sbom = startBytes(candidate, artifactPath); const artifact = startBytes(candidate, overlayPaths[2]);
+  assertProductionEvidenceBinding(actual, sbom, artifact, startBytes(actual, "backend/release_policy_workers_free/package-lock.json"), hashAt(actual, finalAPaths[2]));
+  return { actual, candidate };
 }
 function assertFinalASeal() {
   const anchor = required(option("anchor"), "anchor"); const startOid = required(start, "start");
   cleanIndex(); requireCleanWorktree(); assertFinalAChain(startOid, anchor);
   const runningGuard = readFileSync(resolve(root, finalAPaths[2]));
   if (!runningGuard.equals(startBytes(anchor, finalAPaths[2]))) fail("running guard differs from committed final A");
-  assertSyntheticProvisionalFinalRegression();
+  assertReachableHistoricalStaleRegression(); assertSyntheticProvisionalFinalRegression(); assertTransientCumulativeModeRegression();
 }
 
 function main() {
@@ -280,10 +332,10 @@ else if (["prepared", "a-worktree", "a-index", "a10-index", "b-worktree", "overl
     if (hash(Buffer.from(git("show", `:${overlayPaths[1]}`))) !== "53055b0aceb861392fbf97daa35819c1a30a5916e9fb5ee1680a8c8aad608fe8" || existsSync(resolve(root, overlayPaths[2])) || !readFileSync(resolve(root, overlayPaths[0])).equals(startBytes(parent, overlayPaths[0]))) fail("A10 placeholder topology rejected");
   }
   if (phase === "b-worktree") cleanIndex();
-  if (phase === "overlay-index") { const anchor = required(option("anchor"), "anchor"); assertOverlayIndex(anchor); }
-  if (phase === "evidence-ready") { const anchor = required(option("anchor"), "anchor"); assertOverlayIndex(anchor, true); const before = git("diff", "--cached", "--name-status", anchor); regenerateOverlayEvidence(anchor, candidatePath, summaryPath); if (git("diff", "--cached", "--name-status", anchor) !== before) fail("overlay index drifted"); }
-  if (phase === "b-index") { const anchor = required(option("anchor"), "anchor"); const staged = git("diff", "--cached", "--name-status", anchor).trim().split("\n").filter(Boolean); assertBDelta(staged, reproductionDiffersFromAnchor(anchor)); regenerateOverlayEvidence(anchor, candidatePath, summaryPath); }
-  if (phase === "final") { const anchor = required(option("anchor"), "anchor"); const candidate = required(option("candidate"), "candidate"); if (git("rev-parse", `${candidate}^`).trim() !== anchor) fail("B parent rejected"); const delta = git("diff", "--name-status", anchor, candidate).trim().split("\n").filter(Boolean); assertBDelta(delta, reproductionDiffersFromAnchor(anchor)); regenerateOverlayEvidence(anchor, candidatePath, summaryPath); cleanIndex(); }
+  if (phase === "overlay-index") { const anchor = assertPreCommitBSeal(); assertOverlayIndex(anchor); assertStagedProductionBinding(anchor); }
+  if (phase === "evidence-ready") { const anchor = assertPreCommitBSeal(); assertOverlayIndex(anchor, true); assertStagedProductionBinding(anchor); const before = git("diff", "--cached", "--name-status", anchor); regenerateOverlayEvidence(anchor, candidatePath, summaryPath); if (git("diff", "--cached", "--name-status", anchor) !== before) fail("overlay index drifted"); }
+  if (phase === "b-index") { const anchor = assertPreCommitBSeal(); const staged = git("diff", "--cached", "--name-status", anchor).trim().split("\n").filter(Boolean); assertBDelta(staged, reproductionDiffersFromAnchor(anchor)); assertStagedProductionBinding(anchor); regenerateOverlayEvidence(anchor, candidatePath, summaryPath); }
+  if (phase === "final") { const { actual: anchor, candidate } = assertCommittedBSeal(); const delta = git("diff", "--name-status", anchor, candidate).trim().split("\n").filter(Boolean); assertBDelta(delta, reproductionDiffersFromAnchor(anchor)); regenerateOverlayEvidence(anchor, candidatePath, summaryPath); cleanIndex(); }
 } else fail("phase rejected");
 }
 
