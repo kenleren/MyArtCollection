@@ -226,12 +226,55 @@ jobs:
   backend-and-audit:
     name: Backend and audit policy
     runs-on: ubuntu-24.04
+    env:
+      EVENT_NAME: ${{ github.event_name }}
+      EVENT_SHA: ${{ github.sha }}
+      PULL_REQUEST_HEAD_SHA: ${{ github.event.pull_request.head.sha || '' }}
     steps:
       - name: Check out repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
           persist-credentials: false
+      - name: Resolve immutable Workers candidate
+        id: immutable-workers-candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "$EVENT_NAME" in
+            pull_request)
+              candidate_head="$PULL_REQUEST_HEAD_SHA"
+              ;;
+            push|workflow_dispatch)
+              candidate_head="$EVENT_SHA"
+              ;;
+            *)
+              echo "Unsupported backend event" >&2
+              exit 1
+              ;;
+          esac
+          if [[ ! "$candidate_head" =~ ^[0-9a-f]{40}$ ]] || [[ "$candidate_head" == 0000000000000000000000000000000000000000 ]]; then
+            echo "Immutable candidate is missing or invalid" >&2
+            exit 1
+          fi
+          resolved_candidate="$(git rev-parse --verify "${candidate_head}^{commit}")"
+          checked_out="$(git rev-parse --verify HEAD^{commit})"
+          if [[ "$resolved_candidate" != "$candidate_head" ]] || [[ "$checked_out" != "$candidate_head" ]]; then
+            echo "Immutable candidate checkout mismatch" >&2
+            exit 1
+          fi
+          read -r -a candidate_parents <<< "$(git rev-list --parents -n 1 "$candidate_head")"
+          if [[ "${#candidate_parents[@]}" -ne 2 ]]; then
+            echo "Immutable candidate must have exactly one parent" >&2
+            exit 1
+          fi
+          artifact_anchor="${candidate_parents[1]}"
+          if [[ ! "$artifact_anchor" =~ ^[0-9a-f]{40}$ ]] || [[ "$artifact_anchor" == 0000000000000000000000000000000000000000 ]] || [[ "$(git rev-parse --verify "${artifact_anchor}^{commit}")" != "$artifact_anchor" ]]; then
+            echo "Immutable artifact anchor is missing or invalid" >&2
+            exit 1
+          fi
+          printf 'candidate_head=%s\nartifact_anchor=%s\n' "$candidate_head" "$artifact_anchor" >> "$GITHUB_OUTPUT"
       - name: Set up Node
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
         with:
@@ -349,19 +392,19 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          A="$(git rev-parse HEAD^)"
+          A="${{ steps.immutable-workers-candidate.outputs.artifact_anchor }}"
           npm --prefix backend/release_policy_workers_free run sbom:generate -- --anchor "$A" --output "$RUNNER_TEMP/sbom.spdx.json"
       - name: Verify Workers Free SPDX evidence
         shell: bash
         run: |
           set -euo pipefail
-          A="$(git rev-parse HEAD^)"
+          A="${{ steps.immutable-workers-candidate.outputs.artifact_anchor }}"
           npm --prefix backend/release_policy_workers_free run sbom:verify -- --anchor "$A" --input "$RUNNER_TEMP/sbom.spdx.json"
       - name: Verify Workers Free artifact manifest
         shell: bash
         run: |
           set -euo pipefail
-          A="$(git rev-parse HEAD^)"
+          A="${{ steps.immutable-workers-candidate.outputs.artifact_anchor }}"
           npm --prefix backend/release_policy_workers_free run artifact:verify -- --anchor "$A" --sbom "$RUNNER_TEMP/sbom.spdx.json" --output backend/release_policy_workers_free/evidence/artifact-manifest.v2.json
       - name: Rehearse Workers Free restore
         shell: bash

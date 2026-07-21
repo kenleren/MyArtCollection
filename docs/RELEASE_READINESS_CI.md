@@ -45,6 +45,20 @@ dedicated external App is deployed or that its distinct check is required.
 That operational boundary is documented in
 [Release policy trust](RELEASE_POLICY_TRUST.md).
 
+## Immutable Workers evidence candidate
+
+The backend job checks out and validates one immutable candidate commit before
+running package commands. Pull requests use the event's `pull_request.head.sha`;
+push and manual-dispatch runs use their captured `github.sha`. The synthetic
+pull-request merge, branch names, remote refs, and later ref resolution are not
+candidate authority. The checked-out commit must equal that event-derived OID,
+have exactly one fetched parent, and produce the immutable artifact anchor used
+by SPDX generation, SPDX verification, and artifact verification. This prevents
+the pull-request merge's first parent from silently replacing the reviewed
+candidate. A push or manual event whose immutable commit is not a direct
+candidate/evidence pair fails closed; post-merge evidence needs its own reviewed
+contract.
+
 ## Reproducibility and cache boundary
 
 All GitHub Actions are pinned to immutable commits. Checkout 7.0.0, cache

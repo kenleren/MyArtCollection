@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import test from "node:test";
 const root = resolve(process.cwd(), "../..");
@@ -18,6 +19,51 @@ function phaseGuardAssertions() {
     ].join("\n");
     execFileSync("node", ["--input-type=module", "--eval", source], { cwd: resolve(root, "backend/release_policy_workers_free"), stdio: "inherit" });
 }
+function git(cwd, args) {
+    return execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+}
+function resolveCandidate(cwd, eventName, eventSha, pullRequestHeadSha, checkedOut) {
+    const candidateHead = eventName === "pull_request" ? pullRequestHeadSha : (eventName === "push" || eventName === "workflow_dispatch" ? eventSha : "");
+    if (!/^[0-9a-f]{40}$/.test(candidateHead) || /^0{40}$/.test(candidateHead))
+        throw new Error("candidate rejected");
+    if (git(cwd, ["rev-parse", "--verify", `${candidateHead}^{commit}`]) !== candidateHead)
+        throw new Error("candidate object rejected");
+    if (checkedOut !== candidateHead)
+        throw new Error("checkout rejected");
+    const parents = git(cwd, ["rev-list", "--parents", "-n", "1", candidateHead]).split(" ");
+    if (parents.length !== 2)
+        throw new Error("parent topology rejected");
+    const artifactAnchor = parents[1];
+    if (!/^[0-9a-f]{40}$/.test(artifactAnchor) || /^0{40}$/.test(artifactAnchor) || git(cwd, ["rev-parse", "--verify", `${artifactAnchor}^{commit}`]) !== artifactAnchor)
+        throw new Error("anchor rejected");
+    return { candidateHead, artifactAnchor };
+}
+test("immutable candidate fixture rejects synthetic merges and invalid event topology", () => {
+    const fixture = mkdtempSync(join(tmpdir(), "workers-candidate-fixture-"));
+    try {
+        git(fixture, ["init", "--initial-branch=main"]);
+        git(fixture, ["config", "user.name", "Fixture"]);
+        git(fixture, ["config", "user.email", "fixture@example.invalid"]);
+        writeFileSync(join(fixture, "fixture.txt"), "A\n");
+        git(fixture, ["add", "."]);
+        git(fixture, ["commit", "-m", "A"]);
+        const anchor = git(fixture, ["rev-parse", "HEAD"]);
+        writeFileSync(join(fixture, "fixture.txt"), "B\n");
+        git(fixture, ["commit", "-am", "B"]);
+        const candidate = git(fixture, ["rev-parse", "HEAD"]);
+        const merge = git(fixture, ["commit-tree", git(fixture, ["rev-parse", `${candidate}^{tree}`]), "-p", anchor, "-p", candidate, "-m", "synthetic merge"]);
+        assert.deepEqual(resolveCandidate(fixture, "pull_request", merge, candidate, candidate), { candidateHead: candidate, artifactAnchor: anchor });
+        assert.deepEqual(resolveCandidate(fixture, "push", candidate, "", candidate), { candidateHead: candidate, artifactAnchor: anchor });
+        assert.deepEqual(resolveCandidate(fixture, "workflow_dispatch", candidate, "", candidate), { candidateHead: candidate, artifactAnchor: anchor });
+        const rejectedCases = [["pull_request", merge, candidate, merge], ["unsupported", candidate, "", candidate], ["pull_request", merge, "", candidate], ["push", "A".repeat(40), "", candidate], ["push", "0".repeat(40), "", candidate], ["push", "f".repeat(40), "", candidate], ["push", candidate, "", merge], ["push", merge, "", merge], ["push", anchor, "", anchor], ["push", "refs/heads/main", "", candidate]];
+        for (const [event, eventSha, prHead, checkout] of rejectedCases) {
+            assert.throws(() => resolveCandidate(fixture, event, eventSha, prHead, checkout));
+        }
+    }
+    finally {
+        rmSync(fixture, { recursive: true, force: true });
+    }
+});
 test("Release Readiness partitions backend commands into strict, ordered observability steps", () => {
     const workflow = readFileSync(workflowPath, "utf8");
     const backend = workflow.slice(workflow.indexOf("  backend-and-audit:"), workflow.indexOf("  static-site:"));
@@ -48,6 +94,20 @@ test("Release Readiness partitions backend commands into strict, ordered observa
         previous = index;
     }
     assert.ok(backend.indexOf("      - name: Run pinned Play Billing Firestore emulator evidence") > previous);
+    const resolver = `      - name: Resolve immutable Workers candidate\n        id: immutable-workers-candidate\n        shell: bash\n        run: |\n          set -euo pipefail`;
+    assert.ok(backend.indexOf("ref: ${{ github.event.pull_request.head.sha || github.sha }}") < backend.indexOf(resolver));
+    assert.ok(backend.indexOf(resolver) < backend.indexOf("      - name: Install broker dependencies"));
+    assert.match(backend, /EVENT_NAME: \$\{\{ github\.event_name \}\}/);
+    assert.match(backend, /EVENT_SHA: \$\{\{ github\.sha \}\}/);
+    assert.match(backend, /PULL_REQUEST_HEAD_SHA: \$\{\{ github\.event\.pull_request\.head\.sha \|\| '' \}\}/);
+    assert.match(backend, /pull_request\)\s+candidate_head="\$PULL_REQUEST_HEAD_SHA"/);
+    assert.match(backend, /push\|workflow_dispatch\)\s+candidate_head="\$EVENT_SHA"/);
+    assert.match(backend, /git rev-parse --verify "\$\{candidate_head\}\^\{commit\}"/);
+    assert.match(backend, /git rev-parse --verify HEAD\^\{commit\}/);
+    assert.match(backend, /git rev-list --parents -n 1 "\$candidate_head"/);
+    assert.match(backend, /candidate_head=%s\\nartifact_anchor=%s\\n/);
+    assert.doesNotMatch(backend.slice(backend.indexOf("Generate Workers Free SPDX evidence"), backend.indexOf("Rehearse Workers Free restore")), /git rev-parse HEAD\^|GITHUB_SHA\^/);
+    assert.equal((backend.match(/\$\{\{ steps\.immutable-workers-candidate\.outputs\.artifact_anchor \}\}/g) ?? []).length, 3);
     assert.doesNotMatch(backend, /Test backend packages|continue-on-error|if:\s*always\(\)|set -x|ACTIONS_STEP_DEBUG|upload-artifact/);
 });
 test("phase guard accepts only the computed five or six evidence deltas", () => {
