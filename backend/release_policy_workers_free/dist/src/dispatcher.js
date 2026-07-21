@@ -1,4 +1,4 @@
-import { AmbiguousCreateError, AmbiguousUpdateError, DefinitiveNotSentError, beginReceiptSnapshot, commitDecision, prepareCheckBinding, runCreateCheck, runUpdateCheck, settlePullReceipt, snapshotPullRequest, snapshotPushTargets, atomicEnqueuePull, atomicEnqueuePush, atomicEnqueuePushChild, leasePushChild, settlePushChild, recoverEvaluationLease, recoverAbandonedEffect, } from "@archivale/release-policy-trust";
+import { AmbiguousCreateError, AmbiguousUpdateError, DefinitiveNotSentError, beginReceiptSnapshot, commitDecision, prepareCheckBinding, runCreateCheck, reconcileCreateCheckOnce, runUpdateCheck, settlePullReceipt, snapshotPullRequest, snapshotPushTargets, atomicEnqueuePull, atomicEnqueuePush, atomicEnqueuePushChild, leasePushChild, settlePushChild, recoverEvaluationLease, recoverAbandonedEffect, } from "@archivale/release-policy-trust";
 import { boundedBucket, sanitizeTelemetry } from "./telemetry.js";
 const RETRY_SECONDS = [1, 5, 30, 120, 600];
 const targetMetaKey = (installationId, deliveryId) => `target/${installationId}/${deliveryId}`;
@@ -57,17 +57,29 @@ export class AlarmDispatcher {
     rememberTarget(receipt, target) { const key = targetMetaKey(receipt.installationId, receipt.deliveryId); if (this.store.readMeta(key) === undefined)
         this.store.writeMeta(key, { ...target, received_at: Date.now() }); }
     async alarm() {
+        const quota = typeof this.store.reserveQuota === "function" ? this.store.reserveQuota(Date.now(), { alarms: 1 }) : { admitted: true, rolloverAt: Date.now() + 25 };
+        if (!quota.admitted) {
+            await this.storage.setAlarm(quota.rolloverAt);
+            return;
+        }
         const port = this.runtime.portFactory?.() ?? this.runtime.port;
         if (!port)
             throw new Error("alarm GitHub port unavailable");
         const priorAlarmCount = this.store.readMeta("alarm_count/v1") ?? 0;
-        this.store.writeMeta("alarm_count/v1", Math.min(priorAlarmCount + 1, 9));
+        this.store.writeMeta("alarm_count/v1", Math.min(priorAlarmCount + 1, 10_001));
         this.store.writeMeta("alarm_runtime/v1", { running: true, started_at: Date.now() });
         const pullSnapshots = new Map();
         try {
             let retryAt;
             for (const row of this.store.entries("receipt/")) {
                 const receipt = row.value;
+                const retry = this.store.readMeta(`retry/${receipt.installationId}/${receipt.deliveryId}`);
+                if (retry?.state === "quarantined")
+                    continue;
+                if (typeof retry?.retry_at === "number" && retry.retry_at > Date.now()) {
+                    retryAt = Math.min(retryAt ?? Infinity, retry.retry_at);
+                    continue;
+                }
                 try {
                     await this.advanceReceipt(receipt, port, pullSnapshots);
                 }
@@ -163,13 +175,38 @@ export class AlarmDispatcher {
         if (afterEvaluation?.state === "decision_ready")
             await prepareCheckBinding(this.store, generationId, this.runtime.identity);
         const afterBinding = await this.store.read(`generation/${generationId}`);
-        if (afterBinding?.state === "decision_ready")
-            await runCreateCheck({ clock: this.runtime.clock, generationId, port, store: this.store, worker });
+        if (afterBinding?.state === "decision_ready") {
+            const reconcileKey = `reconcile/${generationId}/v1`;
+            const reconciliation = this.store.readMeta(reconcileKey);
+            if (reconciliation && !reconciliation.cleared) {
+                if (reconciliation.due_at > Date.now())
+                    return;
+                const result = await reconcileCreateCheckOnce({ generationId, port, store: this.store, worker, finalAttempt: reconciliation.attempt >= 5 });
+                if (result === "not_visible") {
+                    const delay = [1, 2, 4, 8, 16, 32][reconciliation.attempt + 1] ?? 32;
+                    this.store.writeMeta(reconcileKey, { attempt: reconciliation.attempt + 1, due_at: Date.now() + delay * 1000 });
+                }
+                else
+                    this.store.writeMeta(reconcileKey, { attempt: reconciliation.attempt, due_at: 0, cleared: true });
+            }
+            else {
+                try {
+                    await runCreateCheck({ clock: this.runtime.clock, generationId, port, store: this.store, worker });
+                }
+                catch (error) {
+                    if (error instanceof AmbiguousCreateError) {
+                        this.store.writeMeta(reconcileKey, { attempt: 0, due_at: Date.now() + 1000 });
+                        return;
+                    }
+                    throw error;
+                }
+            }
+        }
         const completing = await this.store.read(`generation/${generationId}`);
         if (completing?.state === "completing")
             await runUpdateCheck({ generationId, port, store: this.store, worker });
     }
-    hasPendingWork() { return this.store.entries("receipt/").some(({ value }) => !["terminal_success", "terminal_failure", "conflict"].includes(value.state)); }
+    hasPendingWork() { return this.store.entries("receipt/").some(({ value }) => { const receipt = value; const retry = this.store.readMeta(`retry/${receipt.installationId}/${receipt.deliveryId}`); return !["terminal_success", "terminal_failure", "conflict"].includes(receipt.state) && retry?.state !== "quarantined"; }); }
     recordRetry(receipt, error) {
         // Error text is deliberately not persisted: it may contain provider material.
         const key = `retry/${receipt.installationId}/${receipt.deliveryId}`;
@@ -177,7 +214,7 @@ export class AlarmDispatcher {
         const attempts = Math.min(previous + 1, RETRY_SECONDS.length);
         const retryAt = Date.now() + RETRY_SECONDS[attempts - 1] * 1000;
         const errorClass = error instanceof AmbiguousCreateError || error instanceof AmbiguousUpdateError ? "ambiguous" : "transient";
-        this.store.writeMeta(key, { attempts, error_class: errorClass, retry_at: retryAt });
+        this.store.writeMeta(key, attempts >= RETRY_SECONDS.length ? { attempts, error_class: errorClass, state: "quarantined" } : { attempts, error_class: errorClass, retry_at: retryAt });
         return retryAt;
     }
 }

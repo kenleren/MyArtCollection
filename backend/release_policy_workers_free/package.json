@@ -13,7 +13,10 @@
     "artifact:generate": "node dist/scripts/artifact.js generate",
     "artifact:verify": "node dist/scripts/artifact.js verify",
     "sbom:generate": "node dist/scripts/sbom.js",
-    "restore:rehearsal": "node --disable-warning=ExperimentalWarning dist/scripts/restore_rehearsal.js"
+    "sbom:verify": "node dist/scripts/validate_spdx.js",
+    "restore:rehearsal": "node --disable-warning=ExperimentalWarning dist/scripts/restore_rehearsal.js",
+    "phase:guard": "node scripts/phase_guard.mjs",
+    "dist:verify": "node scripts/verify_dist.mjs"
   },
   "dependencies": {
     "@archivale/release-policy-trust": "file:vendor/release-policy-trust-0.1.0.tgz"

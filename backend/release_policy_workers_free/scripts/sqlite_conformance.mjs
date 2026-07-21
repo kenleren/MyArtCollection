@@ -29,7 +29,7 @@ const INSTALLATION_ID = 1;
 const BASE_SHA = "a".repeat(40);
 const HEAD_SHA = "b".repeat(40);
 const CHECK_ID = 7001;
-const CONFIG = JSON.stringify({ repository_id: REPOSITORY_ID, app_id: APP_ID, installation_id: INSTALLATION_ID, github_api_origin: "https://api.github.com" });
+const CONFIG = JSON.stringify({ contract_version: 1, repository_id: REPOSITORY_ID, repository_name: "kenleren/MyArtCollection", app_id: APP_ID, installation_id: INSTALLATION_ID, github_api_origin: "https://api.github.com", github_api_version: "2022-11-28", policy_sha256: "a443af2eb86fa310ea8705826e70d1b178a4d8d231060440ed522d3069b9a80d", egress_manifest_sha256: "4076541b10ad17bd6e300d838032c49538cb4aa9a172685fe9f0cef02fd4c368", permissions: { checks: "write", contents: "read", metadata: "read", pull_requests: "read" }, quota: { window_seconds: 86400, warning_units: 1000, hard_units: 10000 } });
 const sleep = (ms) => new Promise((resolveSleep) => setTimeout(resolveSleep, ms));
 const sha256 = (value) => createHash("sha256").update(value).digest("hex");
 
@@ -149,7 +149,7 @@ class SyntheticEgress {
     const path = url.pathname; const method = request.method;
     if (method === "POST" && path === `/app/installations/${INSTALLATION_ID}/access_tokens` && !url.search) {
       if (this.fixture.definiteTokenFailure && this.tokenFailures === 0) { this.tokenFailures += 1; this.record("installationToken", null, "transient"); return this.response({}, { status: 503 }); }
-      this.record("installationToken"); return this.response({ token: this.creds.token });
+      this.record("installationToken"); return this.response({ token: this.creds.token, expires_at: new Date((Math.floor(Date.now() / 1000) + 120) * 1000).toISOString().replace(".000", ""), permissions: { checks: "write", contents: "read", metadata: "read", pull_requests: "read" }, repository_selection: "selected", repositories: [{ id: REPOSITORY_ID, name: "MyArtCollection", full_name: "kenleren/MyArtCollection" }] }, { status: 201 });
     }
     if (method === "GET" && path === `/repositories/${REPOSITORY_ID}/pulls/1` && !url.search) {
       this.record("pullRequest");
@@ -259,7 +259,7 @@ function stoppedInspection(caseId, persistRoot, objectId, creds) {
     const tables = db.prepare("SELECT name,sql FROM sqlite_master WHERE type='table' ORDER BY name").all();
     const applicationTables = tables.filter((row) => !String(row.name).startsWith("_cf_")).map((row) => row.name);
     ensure(JSON.stringify(applicationTables) === JSON.stringify(["kv", "meta"]), caseId, "sqlite_schema");
-    const schemaVersion = JSON.parse(db.prepare("SELECT value_json FROM meta WHERE key=?").get("schema_version")?.value_json ?? "null"); ensure(schemaVersion === 1, caseId, "schema_version");
+    const schemaVersion = JSON.parse(db.prepare("SELECT value_json FROM meta WHERE key=?").get("schema/version")?.value_json ?? "null"); ensure(schemaVersion === 2, caseId, "schema_version");
     const kv = db.prepare("SELECT key,version,value_json FROM kv ORDER BY key").all(); const meta = db.prepare("SELECT key,value_json FROM meta ORDER BY key").all();
     const parsed = kv.map((row) => ({ key: row.key, version: row.version, value: JSON.parse(row.value_json) }));
     const metaParsed = meta.map((row) => ({ key: row.key, value: JSON.parse(row.value_json) }));

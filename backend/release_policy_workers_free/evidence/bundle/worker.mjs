@@ -812,6 +812,26 @@ function expectedIdentity(generation) {
 function exactCheck(check, binding) {
   return Number.isSafeInteger(check.checkId) && check.checkId > 0 && check.appId === binding.appId && check.repositoryId === binding.repositoryId && check.headSha === binding.headSha && check.name === binding.checkName && check.externalId === binding.externalId;
 }
+async function reconcileCreateCheckOnce(input) {
+  const generation = await readGeneration(input.store, input.generationId);
+  const binding = await readBinding(input.store, input.generationId);
+  if (generation.state !== "decision_ready" || generation.decision?.digest !== binding.decisionDigest || binding.policyDigest !== generation.policy.digest)
+    fail("cas_lost", "create cannot reconcile without immutable durable decision");
+  const lease = await leaseEffect(input.store, input.generationId, "create_check", input.worker);
+  if (lease.mode !== "reconcile")
+    fail("cas_lost", "create reconciliation is not durable");
+  const matches = await enumerateMatchingChecks(input.port, expectedIdentity(generation), binding.headSha, binding.checkName, binding.externalId, generation.policy.limits);
+  if (matches.length === 1) {
+    await bindCreatedCheck(input.store, lease, matches[0]);
+    return matches[0];
+  }
+  if (matches.length > 1 || input.finalAttempt) {
+    await releaseEffect(input.store, lease, "blocked");
+    return fail("ambiguous_api", matches.length > 1 ? "multiple App-owned checks match immutable generation" : "ambiguous create remained invisible; recreation forbidden");
+  }
+  await releaseEffect(input.store, lease, "ambiguous");
+  return "not_visible";
+}
 async function runCreateCheck(input) {
   const generation = await readGeneration(input.store, input.generationId);
   const binding = await readBinding(input.store, input.generationId);
@@ -820,20 +840,13 @@ async function runCreateCheck(input) {
   const identity = expectedIdentity(generation);
   const lease = await leaseEffect(input.store, input.generationId, "create_check", input.worker);
   if (lease.mode === "reconcile") {
-    for (const delay of generation.policy.limits.reconcileDelaysSeconds) {
-      await input.clock.delay(delay);
-      const matches = await enumerateMatchingChecks(input.port, identity, binding.headSha, binding.checkName, binding.externalId, generation.policy.limits);
-      if (matches.length === 1) {
-        await bindCreatedCheck(input.store, lease, matches[0]);
-        return matches[0];
-      }
-      if (matches.length > 1) {
-        await releaseEffect(input.store, lease, "blocked");
-        return fail("ambiguous_api", "multiple App-owned checks match immutable generation");
-      }
+    const matches = await enumerateMatchingChecks(input.port, identity, binding.headSha, binding.checkName, binding.externalId, generation.policy.limits);
+    if (matches.length === 1) {
+      await bindCreatedCheck(input.store, lease, matches[0]);
+      return matches[0];
     }
     await releaseEffect(input.store, lease, "blocked");
-    return fail("ambiguous_api", "ambiguous create remained invisible; recreation forbidden");
+    return fail("ambiguous_api", matches.length > 1 ? "multiple App-owned checks match immutable generation" : "ambiguous create remained invisible; recreation forbidden");
   }
   await markEffectPossibleSend(input.store, lease);
   let created;
@@ -960,8 +973,8 @@ function validIntegrityDigest(algorithm, digest2) {
     return /^sha256-[A-Za-z0-9+/]{43}=$/.test(digest2);
   return false;
 }
-function exactKeys(value, keys) {
-  return Object.keys(value).sort().join("\0") === [...keys].sort().join("\0");
+function exactKeys(value, keys2) {
+  return Object.keys(value).sort().join("\0") === [...keys2].sort().join("\0");
 }
 function validateExternalInputs(rows) {
   const ids = /* @__PURE__ */ new Set();
@@ -1148,7 +1161,7 @@ var init_strict_json = __esm({
       object(depth) {
         this.index += 1;
         const output = {};
-        const keys = /* @__PURE__ */ new Set();
+        const keys2 = /* @__PURE__ */ new Set();
         this.space();
         if (this.text[this.index] === "}") {
           this.index += 1;
@@ -1159,9 +1172,9 @@ var init_strict_json = __esm({
           if (this.text[this.index] !== '"')
             fail("invalid_input", "object key must be a string");
           const key = this.string();
-          if (keys.has(key))
+          if (keys2.has(key))
             fail("invalid_input", "duplicate JSON key");
-          keys.add(key);
+          keys2.add(key);
           this.space();
           if (this.text[this.index] !== ":")
             fail("invalid_input", "missing JSON colon");
@@ -1611,6 +1624,7 @@ __export(src_exports, {
   readGeneration: () => readGeneration,
   receiptKey: () => receiptKey,
   receive: () => receive,
+  reconcileCreateCheckOnce: () => reconcileCreateCheckOnce,
   recoverAbandonedEffect: () => recoverAbandonedEffect,
   recoverEvaluationLease: () => recoverEvaluationLease,
   recoverPushChildLease: () => recoverPushChildLease,
@@ -1652,9 +1666,24 @@ var init_src = __esm({
 init_src();
 
 // src/config.ts
+init_src();
 var REPOSITORY_ID = 1288597824;
+var REPOSITORY_NAME = "kenleren/MyArtCollection";
 var MAX_WEBHOOK_BYTES = 26214400;
 var githubApiOrigin = "https://api.github.com";
+var GITHUB_API_VERSION = "2022-11-28";
+var POLICY_SHA256 = "a443af2eb86fa310ea8705826e70d1b178a4d8d231060440ed522d3069b9a80d";
+var EGRESS_MANIFEST_SHA256 = "4076541b10ad17bd6e300d838032c49538cb4aa9a172685fe9f0cef02fd4c368";
+var SQLITE_COMPATIBILITY_SHA256 = "1d5246c2a0f056208b2652129023c8f99ce33a17a5156ce27d63c982681b9ff2";
+var FIXED_PERMISSIONS = Object.freeze({ checks: "write", contents: "read", metadata: "read", pull_requests: "read" });
+var FIXED_QUOTA = Object.freeze({ window_seconds: 86400, warning_units: 1e3, hard_units: 1e4 });
+var keys = ["app_id", "contract_version", "egress_manifest_sha256", "github_api_origin", "github_api_version", "installation_id", "permissions", "policy_sha256", "quota", "repository_id", "repository_name"];
+var positive4 = (value) => typeof value === "number" && Number.isSafeInteger(value) && value > 0;
+var exactRecord = (value, expected) => value !== null && typeof value === "object" && !Array.isArray(value) && JSON.stringify(Object.keys(value).sort()) === JSON.stringify(Object.keys(expected).sort()) && Object.entries(expected).every(([key, wanted]) => value[key] === wanted);
+function canonicalActivation(input) {
+  const normalized = { contract_version: input.contractVersion, repository_id: input.repositoryId, repository_name: input.repositoryName, app_id: input.appId, installation_id: input.installationId, github_api_origin: input.githubApiOrigin, github_api_version: input.githubApiVersion, policy_sha256: input.policySha256, egress_manifest_sha256: input.egressManifestSha256, permissions: input.permissions, quota: input.quota };
+  return `sha256:${sha256(JSON.stringify({ config: normalized, sqlite_compatibility_sha256: SQLITE_COMPATIBILITY_SHA256 }))}`;
+}
 function parseRuntimeConfig(value) {
   let parsed;
   try {
@@ -1662,12 +1691,11 @@ function parseRuntimeConfig(value) {
   } catch {
     throw new Error("runtime configuration is invalid");
   }
-  if (parsed === null || Array.isArray(parsed) || typeof parsed !== "object") throw new Error("runtime configuration is invalid");
+  if (parsed === null || Array.isArray(parsed) || typeof parsed !== "object" || JSON.stringify(Object.keys(parsed).sort()) !== JSON.stringify(keys)) throw new Error("runtime configuration keys mismatch");
   const input = parsed;
-  if (Object.keys(input).sort().join(",") !== "app_id,github_api_origin,installation_id,repository_id") throw new Error("runtime configuration keys mismatch");
-  const positive4 = (value2) => typeof value2 === "number" && Number.isSafeInteger(value2) && value2 > 0;
-  if (input.repository_id !== REPOSITORY_ID || input.github_api_origin !== githubApiOrigin || !positive4(input.app_id) || !positive4(input.installation_id)) throw new Error("runtime identity is invalid");
-  return Object.freeze({ repositoryId: REPOSITORY_ID, appId: input.app_id, installationId: input.installation_id, githubApiOrigin });
+  if (input.contract_version !== 1 || input.repository_id !== REPOSITORY_ID || input.repository_name !== REPOSITORY_NAME || input.github_api_origin !== githubApiOrigin || input.github_api_version !== GITHUB_API_VERSION || input.policy_sha256 !== POLICY_SHA256 || input.egress_manifest_sha256 !== EGRESS_MANIFEST_SHA256 || !positive4(input.app_id) || !positive4(input.installation_id) || !exactRecord(input.permissions, FIXED_PERMISSIONS) || !exactRecord(input.quota, FIXED_QUOTA)) throw new Error("runtime identity is invalid");
+  const base = { contractVersion: 1, repositoryId: REPOSITORY_ID, repositoryName: REPOSITORY_NAME, appId: input.app_id, installationId: input.installation_id, githubApiOrigin, githubApiVersion: GITHUB_API_VERSION, policySha256: POLICY_SHA256, egressManifestSha256: EGRESS_MANIFEST_SHA256, permissions: FIXED_PERMISSIONS, quota: FIXED_QUOTA };
+  return Object.freeze({ ...base, activationDigest: canonicalActivation(base) });
 }
 function repositoryObjectName(repositoryId) {
   if (repositoryId !== REPOSITORY_ID) throw new Error("repository outside frozen policy");
@@ -1755,16 +1783,27 @@ var AlarmDispatcher = class {
     if (this.store.readMeta(key) === void 0) this.store.writeMeta(key, { ...target, received_at: Date.now() });
   }
   async alarm() {
+    const quota = typeof this.store.reserveQuota === "function" ? this.store.reserveQuota(Date.now(), { alarms: 1 }) : { admitted: true, rolloverAt: Date.now() + 25 };
+    if (!quota.admitted) {
+      await this.storage.setAlarm(quota.rolloverAt);
+      return;
+    }
     const port = this.runtime.portFactory?.() ?? this.runtime.port;
     if (!port) throw new Error("alarm GitHub port unavailable");
     const priorAlarmCount = this.store.readMeta("alarm_count/v1") ?? 0;
-    this.store.writeMeta("alarm_count/v1", Math.min(priorAlarmCount + 1, 9));
+    this.store.writeMeta("alarm_count/v1", Math.min(priorAlarmCount + 1, 10001));
     this.store.writeMeta("alarm_runtime/v1", { running: true, started_at: Date.now() });
     const pullSnapshots = /* @__PURE__ */ new Map();
     try {
       let retryAt;
       for (const row of this.store.entries("receipt/")) {
         const receipt = row.value;
+        const retry = this.store.readMeta(`retry/${receipt.installationId}/${receipt.deliveryId}`);
+        if (retry?.state === "quarantined") continue;
+        if (typeof retry?.retry_at === "number" && retry.retry_at > Date.now()) {
+          retryAt = Math.min(retryAt ?? Infinity, retry.retry_at);
+          continue;
+        }
         try {
           await this.advanceReceipt(receipt, port, pullSnapshots);
         } catch (error) {
@@ -1841,12 +1880,37 @@ var AlarmDispatcher = class {
     const afterEvaluation = await this.store.read(`generation/${generationId2}`);
     if (afterEvaluation?.state === "decision_ready") await prepareCheckBinding(this.store, generationId2, this.runtime.identity);
     const afterBinding = await this.store.read(`generation/${generationId2}`);
-    if (afterBinding?.state === "decision_ready") await runCreateCheck({ clock: this.runtime.clock, generationId: generationId2, port, store: this.store, worker });
+    if (afterBinding?.state === "decision_ready") {
+      const reconcileKey = `reconcile/${generationId2}/v1`;
+      const reconciliation = this.store.readMeta(reconcileKey);
+      if (reconciliation && !reconciliation.cleared) {
+        if (reconciliation.due_at > Date.now()) return;
+        const result = await reconcileCreateCheckOnce({ generationId: generationId2, port, store: this.store, worker, finalAttempt: reconciliation.attempt >= 5 });
+        if (result === "not_visible") {
+          const delay = [1, 2, 4, 8, 16, 32][reconciliation.attempt + 1] ?? 32;
+          this.store.writeMeta(reconcileKey, { attempt: reconciliation.attempt + 1, due_at: Date.now() + delay * 1e3 });
+        } else this.store.writeMeta(reconcileKey, { attempt: reconciliation.attempt, due_at: 0, cleared: true });
+      } else {
+        try {
+          await runCreateCheck({ clock: this.runtime.clock, generationId: generationId2, port, store: this.store, worker });
+        } catch (error) {
+          if (error instanceof AmbiguousCreateError) {
+            this.store.writeMeta(reconcileKey, { attempt: 0, due_at: Date.now() + 1e3 });
+            return;
+          }
+          throw error;
+        }
+      }
+    }
     const completing = await this.store.read(`generation/${generationId2}`);
     if (completing?.state === "completing") await runUpdateCheck({ generationId: generationId2, port, store: this.store, worker });
   }
   hasPendingWork() {
-    return this.store.entries("receipt/").some(({ value }) => !["terminal_success", "terminal_failure", "conflict"].includes(value.state));
+    return this.store.entries("receipt/").some(({ value }) => {
+      const receipt = value;
+      const retry = this.store.readMeta(`retry/${receipt.installationId}/${receipt.deliveryId}`);
+      return !["terminal_success", "terminal_failure", "conflict"].includes(receipt.state) && retry?.state !== "quarantined";
+    });
   }
   recordRetry(receipt, error) {
     const key = `retry/${receipt.installationId}/${receipt.deliveryId}`;
@@ -1854,7 +1918,7 @@ var AlarmDispatcher = class {
     const attempts = Math.min(previous + 1, RETRY_SECONDS.length);
     const retryAt = Date.now() + RETRY_SECONDS[attempts - 1] * 1e3;
     const errorClass = error instanceof AmbiguousCreateError || error instanceof AmbiguousUpdateError ? "ambiguous" : "transient";
-    this.store.writeMeta(key, { attempts, error_class: errorClass, retry_at: retryAt });
+    this.store.writeMeta(key, attempts >= RETRY_SECONDS.length ? { attempts, error_class: errorClass, state: "quarantined" } : { attempts, error_class: errorClass, retry_at: retryAt });
     return retryAt;
   }
 };
@@ -1863,37 +1927,133 @@ var AlarmDispatcher = class {
 init_src();
 
 // src/sqlite_store.ts
+init_src();
+
+// src/quota.ts
+var QUOTA_HARD = 1e4;
+var QUOTA_SENTINEL = 10001;
+var day = 864e5;
+var names = ["worker_events", "do_fetches", "alarms", "outbound_attempts"];
+var empty = (start) => ({ window_start_utc_ms: start, worker_events: 0, do_fetches: 0, alarms: 0, outbound_attempts: 0, total_units: 0, stopped: false });
+var valid = (value, start) => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const row = value;
+  if (JSON.stringify(Object.keys(row)) !== JSON.stringify(["window_start_utc_ms", ...names, "total_units", "stopped"]) || row.window_start_utc_ms !== start || typeof row.stopped !== "boolean") return false;
+  if (names.some((key) => !Number.isSafeInteger(row[key]) || row[key] < 0 || row[key] > QUOTA_SENTINEL) || !Number.isSafeInteger(row.total_units) || row.total_units < 0 || row.total_units > QUOTA_SENTINEL) return false;
+  const sum = names.reduce((total, key) => total + row[key], 0);
+  return row.total_units === (sum > QUOTA_HARD ? QUOTA_SENTINEL : sum) && row.stopped === row.total_units >= QUOTA_HARD;
+};
+function reserveQuota(storage, now, vector) {
+  if (!Number.isSafeInteger(now) || now < 0 || names.some((name) => vector[name] !== void 0 && (!Number.isSafeInteger(vector[name]) || vector[name] < 0))) return { admitted: false, rolloverAt: now + day, record: { ...empty(0), stopped: true } };
+  const start = Math.floor(now / day) * day;
+  const rollout = start + day + 100;
+  return storage.transactionSync(() => {
+    const raw = storage.sql.exec("SELECT value_json FROM meta WHERE key='quota/v1'").toArray()[0];
+    let record3;
+    try {
+      record3 = raw === void 0 ? empty(start) : JSON.parse(raw.value_json);
+    } catch {
+      return { admitted: false, rolloverAt: rollout, record: { ...empty(start), stopped: true } };
+    }
+    if (raw !== void 0 && record3.window_start_utc_ms > start) return { admitted: false, rolloverAt: rollout, record: { ...record3, stopped: true } };
+    if (record3.window_start_utc_ms < start) record3 = empty(start);
+    else if (!valid(record3, start)) return { admitted: false, rolloverAt: rollout, record: { ...empty(start), stopped: true } };
+    const increment = names.reduce((total, name) => total + (vector[name] ?? 0), 0);
+    const attempted = Math.min(QUOTA_SENTINEL, record3.total_units + increment);
+    const next = { ...record3 };
+    for (const name of names) next[name] = Math.min(QUOTA_SENTINEL, next[name] + (vector[name] ?? 0));
+    next.total_units = attempted > QUOTA_HARD ? QUOTA_SENTINEL : attempted;
+    next.stopped = attempted >= QUOTA_HARD;
+    storage.sql.exec("INSERT INTO meta(key,value_json) VALUES('quota/v1',?) ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json", JSON.stringify(next));
+    return { admitted: attempted < QUOTA_HARD, rolloverAt: rollout, record: next };
+  });
+}
+
+// src/sqlite_store.ts
 var CasConflict = class extends Error {
 };
+var IncompatibleSqliteSchema = class extends Error {
+};
+var SQLITE_SCHEMA_ID = "archivale-release-policy-workers-free/sqlite-v2";
+var KV_DDL = "CREATE TABLE kv(key TEXT NOT NULL PRIMARY KEY,version INTEGER NOT NULL CHECK(version>=1),value_json TEXT NOT NULL CHECK(json_valid(value_json))) STRICT, WITHOUT ROWID";
+var META_DDL = "CREATE TABLE meta(key TEXT NOT NULL PRIMARY KEY,value_json TEXT NOT NULL CHECK(json_valid(value_json))) STRICT, WITHOUT ROWID";
+var SCHEMA_PREIMAGE = `schema_id=${SQLITE_SCHEMA_ID}
+schema_version=2
+object.1=table|kv|${KV_DDL}
+object.2=table|meta|${META_DDL}
+application_indexes=none
+application_triggers=none
+application_views=none
+metadata.1=activation/digest|json-string|sha256:<64-lower-hex>
+metadata.2=compatibility/digest|json-string|sha256:<64-lower-hex>
+metadata.3=schema/digest|json-string|sha256:<64-lower-hex>
+metadata.4=schema/id|json-string|${SQLITE_SCHEMA_ID}
+metadata.5=schema/state|json-string|ready
+metadata.6=schema/version|json-integer|2
+`;
+var SQLITE_SCHEMA_DIGEST = `sha256:${sha256(SCHEMA_PREIMAGE)}`;
+var expectedMetadata = (activationDigest, compatibilityDigest) => ({ "schema/id": JSON.stringify(SQLITE_SCHEMA_ID), "schema/version": "2", "schema/state": JSON.stringify("ready"), "schema/digest": JSON.stringify(SQLITE_SCHEMA_DIGEST), "compatibility/digest": JSON.stringify(compatibilityDigest), "activation/digest": JSON.stringify(activationDigest) });
+var rowArray = (storage, sql, ...values) => storage.sql.exec(sql, ...values).toArray();
 var SqliteStore = class {
   constructor(storage) {
     this.storage = storage;
-    this.storage.sql.exec("CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, version INTEGER NOT NULL, value_json TEXT NOT NULL)");
-    this.storage.sql.exec("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value_json TEXT NOT NULL)");
-    this.storage.sql.exec("INSERT INTO meta(key,value_json) VALUES('schema_version','1') ON CONFLICT(key) DO NOTHING");
+  }
+  /** This must run in blockConcurrencyWhile before a dispatcher or port exists. */
+  initialize(activationDigest, compatibilityDigest) {
+    if (!/^sha256:[0-9a-f]{64}$/.test(activationDigest) || !/^sha256:[0-9a-f]{64}$/.test(compatibilityDigest)) throw new IncompatibleSqliteSchema("activation identity rejected");
+    this.storage.transactionSync(() => {
+      const objects = rowArray(this.storage, "SELECT type,name,sql FROM sqlite_schema WHERE name NOT LIKE '_cf_%' ORDER BY type,name");
+      if (objects.length === 0) {
+        this.storage.sql.exec(KV_DDL);
+        this.storage.sql.exec(META_DDL);
+        for (const [key, value] of Object.entries(expectedMetadata(activationDigest, compatibilityDigest))) this.storage.sql.exec("INSERT INTO meta(key,value_json) VALUES(?,?)", key, value);
+        this.assertCompatible(activationDigest, compatibilityDigest);
+        return;
+      }
+      this.assertCompatible(activationDigest, compatibilityDigest);
+    });
+  }
+  assertCompatible(activationDigest, compatibilityDigest) {
+    const objects = rowArray(this.storage, "SELECT type,name,sql FROM sqlite_schema WHERE name NOT LIKE '_cf_%' ORDER BY type,name");
+    const tables = objects.filter((row) => row.type === "table");
+    const expected = [{ type: "table", name: "kv", sql: KV_DDL }, { type: "table", name: "meta", sql: META_DDL }];
+    if (JSON.stringify(tables) !== JSON.stringify(expected) || objects.some((row) => row.type !== "table")) throw new IncompatibleSqliteSchema("application schema rejected");
+    for (const table of ["kv", "meta"]) {
+      const columns = rowArray(this.storage, `PRAGMA table_xinfo(${table})`);
+      const expectedColumns = table === "kv" ? ["key", "version", "value_json"] : ["key", "value_json"];
+      if (columns.length !== expectedColumns.length || columns.some((row, index) => row.name !== expectedColumns[index] || row.hidden !== 0) || rowArray(this.storage, `PRAGMA foreign_key_list(${table})`).length !== 0) throw new IncompatibleSqliteSchema("application columns rejected");
+      const indexes = rowArray(this.storage, `PRAGMA index_list(${table})`);
+      if (indexes.length !== 1 || indexes[0]?.name !== `sqlite_autoindex_${table}_1` || indexes[0]?.unique !== 1 || indexes[0]?.origin !== "pk" || indexes[0]?.partial !== 0) throw new IncompatibleSqliteSchema("application index rejected");
+    }
+    const values = Object.fromEntries(rowArray(this.storage, "SELECT key,value_json FROM meta WHERE key IN ('schema/id','schema/version','schema/state','schema/digest','compatibility/digest','activation/digest') ORDER BY key").map((row) => [row.key, row.value_json]));
+    const wanted = expectedMetadata(activationDigest, compatibilityDigest);
+    const wantedSorted = Object.fromEntries(Object.entries(wanted).sort(([a], [b]) => a.localeCompare(b)));
+    if (JSON.stringify(values) !== JSON.stringify(wantedSorted)) throw new IncompatibleSqliteSchema("application metadata rejected");
   }
   async transact(work) {
     return this.storage.transactionSync(() => work(new SqliteTransaction(this.storage)));
   }
   async read(key) {
-    const row = this.storage.sql.exec("SELECT value_json FROM kv WHERE key=?", key).toArray()[0];
+    const row = rowArray(this.storage, "SELECT value_json FROM kv WHERE key=?", key)[0];
     return row === void 0 ? void 0 : JSON.parse(row.value_json);
   }
-  /** Internal scheduler inventory. Core durable keys/values remain unchanged. */
   entries(prefix) {
     if (!/^(receipt|generation|outbox|push-child|binding|current)\/$/.test(prefix)) throw new Error("scheduler prefix rejected");
-    return this.storage.sql.exec("SELECT key,value_json FROM kv WHERE key LIKE ? ORDER BY key", `${prefix}%`).toArray().map((row) => ({ key: row.key, value: JSON.parse(row.value_json) }));
+    return rowArray(this.storage, "SELECT key,value_json FROM kv WHERE key LIKE ? ORDER BY key", `${prefix}%`).map((row) => ({ key: row.key, value: JSON.parse(row.value_json) }));
   }
   rowCount() {
-    return Number(this.storage.sql.exec("SELECT count(*) AS count FROM kv").toArray()[0].count);
+    return Number(rowArray(this.storage, "SELECT count(*) AS count FROM kv")[0].count);
   }
   databaseBytes() {
     const bytes = this.storage.sql.databaseSize;
     if (!Number.isSafeInteger(bytes) || bytes < 0) throw new Error("SQLite storage measurement unavailable");
     return bytes;
   }
+  reserveQuota(now, vector) {
+    return reserveQuota(this.storage, now, vector);
+  }
   readMeta(key) {
-    const row = this.storage.sql.exec("SELECT value_json FROM meta WHERE key=?", key).toArray()[0];
+    const row = rowArray(this.storage, "SELECT value_json FROM meta WHERE key=?", key)[0];
     return row === void 0 ? void 0 : JSON.parse(row.value_json);
   }
   writeMeta(key, value) {
@@ -1912,12 +2072,11 @@ var SqliteTransaction = class {
     this.storage = storage;
   }
   get(key) {
-    const row = this.storage.sql.exec("SELECT value_json FROM kv WHERE key=?", key).toArray()[0];
+    const row = rowArray(this.storage, "SELECT value_json FROM kv WHERE key=?", key)[0];
     return row === void 0 ? void 0 : JSON.parse(row.value_json);
   }
   putIfAbsent(key, value) {
-    const encoded = JSON.stringify(value);
-    const row = this.storage.sql.exec("INSERT INTO kv(key,version,value_json) VALUES(?,1,?) ON CONFLICT(key) DO NOTHING RETURNING key", key, encoded).toArray()[0];
+    const row = this.storage.sql.exec("INSERT INTO kv(key,version,value_json) VALUES(?,1,?) ON CONFLICT(key) DO NOTHING RETURNING key", key, JSON.stringify(value)).toArray()[0];
     if (row === void 0) throw new CasConflict("unique key already exists");
   }
   compareAndSwap(key, version, value) {
@@ -1930,6 +2089,15 @@ var SqliteTransaction = class {
 init_src();
 
 // src/github_routes.ts
+var positive5 = (value) => typeof value === "number" ? Number.isSafeInteger(value) && value > 0 : /^[0-9a-f]{40}$/.test(value);
+function requireIdentity(identity, route, args) {
+  if (!Number.isSafeInteger(identity.installationId) || identity.installationId <= 0 || identity.repositoryId !== REPOSITORY_ID || args.some((arg) => !positive5(arg))) throw new Error("github route rejected");
+  if (route === "installationToken") {
+    if (args.length !== 1 || args[0] !== identity.installationId) throw new Error("github route rejected");
+    return;
+  }
+  if (args[0] !== identity.repositoryId) throw new Error("github route rejected");
+}
 var routes = {
   installationToken: { method: "POST", path: ([id]) => `/app/installations/${id}/access_tokens` },
   pullRequest: { method: "GET", path: ([repo, pr]) => `/repositories/${repo}/pulls/${pr}` },
@@ -1940,12 +2108,22 @@ var routes = {
   createCheck: { method: "POST", path: ([repo]) => `/repositories/${repo}/check-runs` },
   updateCheck: { method: "PATCH", path: ([repo, id]) => `/repositories/${repo}/check-runs/${id}` }
 };
-function githubRoute(route, args, query = "") {
+function githubRoute(identity, route, args, query = "") {
+  requireIdentity(identity, route, args);
+  if (query && !/^[A-Za-z0-9_=&-]+$/.test(query)) throw new Error("github route rejected");
   const spec = routes[route];
-  if (!spec) throw new Error("github route rejected");
   const url = new URL(spec.path(args), githubApiOrigin);
   url.search = query;
-  return new Request(url.toString(), { method: spec.method, redirect: "manual", headers: { Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28" } });
+  return new Request(url.toString(), { method: spec.method, redirect: "manual", headers: { Accept: "application/vnd.github+json", "X-GitHub-Api-Version": GITHUB_API_VERSION } });
+}
+function isExactGithubRequest(identity, request) {
+  const url = new URL(request.url);
+  if (url.origin !== githubApiOrigin || url.username || url.password || url.hash || request.redirect !== "manual" || request.headers.get("accept") !== "application/vnd.github+json" || request.headers.get("x-github-api-version") !== GITHUB_API_VERSION) return false;
+  const prefix = `/repositories/${identity.repositoryId}`;
+  const patterns = [["POST", new RegExp(`^/app/installations/${identity.installationId}/access_tokens$`)], ["GET", new RegExp(`^${prefix}/pulls/[1-9][0-9]*$`)], ["GET", new RegExp(`^${prefix}/git/ref/heads/main$`)], ["GET", new RegExp(`^${prefix}/pulls/[1-9][0-9]*/files$`)], ["GET", new RegExp(`^${prefix}/pulls$`)], ["GET", new RegExp(`^${prefix}/commits/[0-9a-f]{40}/check-runs$`)], ["POST", new RegExp(`^${prefix}/check-runs$`)], ["PATCH", new RegExp(`^${prefix}/check-runs/[1-9][0-9]*$`)]];
+  if (!patterns.some(([method, path]) => request.method === method && path.test(url.pathname))) return false;
+  if (url.search && !/^\?(?:page=[1-9][0-9]*&per_page=100|state=open&base=main&page=[1-9][0-9]*&per_page=100)$/.test(url.search)) return false;
+  return true;
 }
 
 // src/github_app_port.ts
@@ -2056,7 +2234,8 @@ var GitHubAppPort = class {
     this.measure = measure;
   }
   async json(route, args, query = "", body, page) {
-    const base = githubRoute(route, args, query);
+    if (route !== "installationToken" && args[0] !== this.identity.repositoryId) throw new DefinitiveNotSentError("github repository rejected");
+    const base = githubRoute({ installationId: this.identity.installationId, repositoryId: this.identity.repositoryId }, route, args, query);
     const token = await this.authorization();
     if (!token || /[\r\n]/.test(token)) throw new Error("github authorization unavailable");
     const headers = new Headers(base.headers);
@@ -2164,34 +2343,38 @@ function githubInstallationAuthorization(input) {
     const claims = base64Url(new TextEncoder().encode(JSON.stringify({ iat: now - 30, exp: now + 540, iss: input.appId })));
     const key = await globalThis.crypto.subtle.importKey("pkcs8", pemBytes(input.privateKeyPem), { hash: "SHA-256", name: "RSASSA-PKCS1-v1_5" }, false, ["sign"]);
     const signature = new Uint8Array(await globalThis.crypto.subtle.sign("RSASSA-PKCS1-v1_5", key, new TextEncoder().encode(`${header}.${claims}`)));
-    const request = githubRoute("installationToken", [input.installationId]);
+    const identity = { installationId: input.installationId, repositoryId: input.repositoryId };
+    const request = githubRoute(identity, "installationToken", [input.installationId]);
     const headers = new Headers(request.headers);
     headers.set("Authorization", `Bearer ${header}.${claims}.${base64Url(signature)}`);
-    const response = await callFetch(input.fetcher, new Request(request.url, { method: request.method, redirect: "manual", headers }));
-    if (response.redirected || !response.ok || !/^application\/json(?:;|$)/i.test(response.headers.get("content-type") ?? "")) throw new Error("github installation token rejected");
+    headers.set("Content-Type", "application/json");
+    const bodyText = JSON.stringify({ repository_ids: [input.repositoryId], permissions: { checks: "write", contents: "read", metadata: "read", pull_requests: "read" } });
+    const outbound = new Request(request.url, { method: request.method, redirect: "manual", headers, body: bodyText });
+    const response = await callFetch(input.fetcher, outbound);
+    if (response.redirected || response.status !== 201 || !/^application\/json(?:;|$)/i.test(response.headers.get("content-type") ?? "")) throw new Error("github installation token rejected");
     const body = await boundedJson(response, MAX_RESPONSE_BYTES.installationToken);
-    if (typeof body.token !== "string" || body.token.length === 0 || /[\r\n]/.test(body.token)) throw new Error("github installation token malformed");
+    const wantedKeys = ["expires_at", "permissions", "repositories", "repository_selection", "token"];
+    if (JSON.stringify(Object.keys(body).sort()) !== JSON.stringify(wantedKeys) || typeof body.token !== "string" || body.token.length < 1 || body.token.length > 512 || !/^[\x21-\x7e]+$/.test(body.token) || body.repository_selection !== "selected") throw new Error("github installation token malformed");
+    const permissions = body.permissions;
+    if (!permissions || typeof permissions !== "object" || Array.isArray(permissions) || JSON.stringify(permissions) !== JSON.stringify({ checks: "write", contents: "read", metadata: "read", pull_requests: "read" })) throw new Error("github installation scope rejected");
+    const repositories = body.repositories;
+    if (!Array.isArray(repositories) || repositories.length !== 1 || !repositories[0] || typeof repositories[0] !== "object") throw new Error("github installation scope rejected");
+    const repository = repositories[0];
+    if (JSON.stringify(Object.keys(repository).sort()) !== JSON.stringify(["full_name", "id", "name"]) || repository.id !== input.repositoryId || repository.name !== "MyArtCollection" || repository.full_name !== "kenleren/MyArtCollection") throw new Error("github installation scope rejected");
+    if (typeof body.expires_at !== "string" || !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/.test(body.expires_at)) throw new Error("github installation expiry rejected");
+    const expiry = Date.parse(body.expires_at);
+    const nowMs = input.now?.() ?? Date.now();
+    if (!Number.isSafeInteger(expiry) || expiry < nowMs + 6e4 || expiry > nowMs + 65 * 6e4) throw new Error("github installation expiry rejected");
     return body.token;
   };
 }
-function classifyGitHubEgress(request) {
+function classifyGitHubEgress(identity, request) {
   const url = new URL(request.url);
-  if (url.origin !== "https://api.github.com" || url.username || url.password || url.hash) return "forbidden";
   if (/^\/repositories\/[1-9][0-9]*\/statuses\/[0-9a-f]{40}$/.test(url.pathname)) return "status";
-  const allowed = [
-    ["POST", /^\/app\/installations\/[1-9][0-9]*\/access_tokens$/],
-    ["GET", /^\/repositories\/[1-9][0-9]*\/pulls\/[1-9][0-9]*$/],
-    ["GET", /^\/repositories\/[1-9][0-9]*\/git\/ref\/heads\/main$/],
-    ["GET", /^\/repositories\/[1-9][0-9]*\/pulls\/[1-9][0-9]*\/files$/],
-    ["GET", /^\/repositories\/[1-9][0-9]*\/pulls$/],
-    ["GET", /^\/repositories\/[1-9][0-9]*\/commits\/[0-9a-f]{40}\/check-runs$/],
-    ["POST", /^\/repositories\/[1-9][0-9]*\/check-runs$/],
-    ["PATCH", /^\/repositories\/[1-9][0-9]*\/check-runs\/[1-9][0-9]*$/]
-  ];
-  return allowed.some(([method, path]) => request.method === method && path.test(url.pathname)) ? "allowed" : "forbidden";
+  return isExactGithubRequest(identity, request) ? "allowed" : "forbidden";
 }
-function enforceGitHubEgress(request, measure) {
-  const classification = classifyGitHubEgress(request);
+function enforceGitHubEgress(identity, request, measure) {
+  const classification = classifyGitHubEgress(identity, request);
   if (classification === "allowed") return;
   measure({ metric: classification === "status" ? "status_egress" : "forbidden_egress", value: 1 });
   throw new DefinitiveNotSentError("github egress route rejected");
@@ -2200,8 +2383,13 @@ function githubAlarmPort(input) {
   let outboundCalls = 0;
   const budgetedFetch = async (request, init) => {
     const outbound = request instanceof Request ? request : new Request(request, init);
-    enforceGitHubEgress(outbound, input.measure ?? (() => {
+    const identity = { installationId: input.installationId, repositoryId: input.repositoryId };
+    enforceGitHubEgress(identity, outbound, input.measure ?? (() => {
     }));
+    if (input.reserveOutbound && !input.reserveOutbound()) {
+      input.measure?.({ metric: "exceeded_resource", value: 1 });
+      throw new DefinitiveNotSentError("github quota exhausted");
+    }
     outboundCalls += 1;
     input.measure?.({ metric: "request_high_water", value: outboundCalls });
     if (outboundCalls > 50) {
@@ -2220,22 +2408,36 @@ var RepositoryDurableObject = class {
   constructor(state, env) {
     this.state = state;
     this.store = new SqliteStore(state.storage);
-    this.store.writeMeta("alarm_runtime/v1", { running: false, started_at: 0 });
     const config = parseRuntimeConfig(env.RELEASE_TRUST_CONFIG_V1);
+    this.ready = state.blockConcurrencyWhile(async () => {
+      this.store.initialize(config.activationDigest, `sha256:${SQLITE_COMPATIBILITY_SHA256}`);
+    });
     this.dispatcher = new AlarmDispatcher(state.storage, this.store, {
       clock: { delay: async () => {
       } },
       identity: { appId: config.appId, baseRef: "main", installationId: config.installationId, repositoryId: config.repositoryId, repositoryName: "kenleren/MyArtCollection" },
       policy: loadCanonicalPolicy(CANONICAL_POLICY_BYTES),
-      portFactory: () => githubAlarmPort({ appId: config.appId, installationId: config.installationId, repositoryId: config.repositoryId, repositoryName: "kenleren/MyArtCollection", privateKeyPem: env.GITHUB_APP_PRIVATE_KEY_PEM, fetcher: fetch, measure: (measurement) => this.recordEgress(measurement) })
+      portFactory: () => githubAlarmPort({ appId: config.appId, installationId: config.installationId, repositoryId: config.repositoryId, repositoryName: "kenleren/MyArtCollection", privateKeyPem: env.GITHUB_APP_PRIVATE_KEY_PEM, fetcher: fetch, measure: (measurement) => this.recordEgress(measurement), reserveOutbound: () => this.store.reserveQuota(Date.now(), { outbound_attempts: 1 }).admitted })
     });
   }
   store;
   dispatcher;
+  ready;
   async fetch(request) {
+    try {
+      await this.ready;
+    } catch {
+      return new Response("repository state unavailable", { status: 503 });
+    }
     this.store.incrementMeta("do_request_count/v1");
     const path = new URL(request.url).pathname;
     if (request.method !== "POST") return new Response("not found", { status: 404 });
+    const quota = this.store.reserveQuota(Date.now(), { worker_events: 1, do_fetches: 1 });
+    if (!quota.admitted) {
+      await this.state.storage.setAlarm(quota.rolloverAt);
+      const retryAfter = String(Math.max(1, Math.ceil((quota.rolloverAt - Date.now()) / 1e3)));
+      return new Response("repository quota unavailable", { status: 503, headers: { "retry-after": retryAfter } });
+    }
     if (path === "/watchdog") {
       await this.watchdog();
       return new Response(null, { status: 202 });
@@ -2250,9 +2452,11 @@ var RepositoryDurableObject = class {
     return new Response(null, { status: 202 });
   }
   async alarm() {
+    await this.ready;
     await this.dispatcher.alarm();
   }
   async watchdog() {
+    await this.ready;
     await this.dispatcher.watchdog();
   }
   recordEgress(measurement) {

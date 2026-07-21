@@ -1,0 +1,6 @@
+backend/release_policy_workers_free/evidence/sbom.spdx.json
+backend/release_policy_workers_free/evidence/artifact-manifest.v1.json
+backend/release_policy_workers_free/evidence/artifact-manifest.v2.json
+backend/release_policy_trust/evidence/review/candidate-tree.v1.jsonl
+backend/release_policy_trust/evidence/review/reproducibility.v1.json
+backend/release_policy_trust/evidence/review/final-candidate.v1.json

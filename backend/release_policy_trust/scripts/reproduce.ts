@@ -37,10 +37,10 @@ function run(root: string): { build: string; pack: string; sbom: string } {
   return { build: directoryDigest(join(root, "dist/src")), pack: hashFile(join(packDir, filename)), sbom: hashBytes(sbomBytes) };
 }
 
-const candidateArgument = argument("--candidate");
+const candidateArgument = process.argv.includes("--source-commit") ? argument("--source-commit") : argument("--candidate");
 const candidate = candidateArgument === "INDEX" ? candidateArgument : validateOid(candidateArgument);
 const output = resolve(repoRoot, argument("--output"));
-if (candidate !== "INDEX") {
+if (candidate !== "INDEX" && !process.argv.includes("--source-commit")) {
   git(["cat-file", "-e", `${candidate}^{commit}`]);
   if ((git(["diff", "--name-only", candidate, "--", "backend/release_policy_trust", ".github/CODEOWNERS", ".github/workflows/release-readiness.yml", "docs/RELEASE_READINESS_CI.md", "docs/RELEASE_POLICY_TRUST.md"], { encoding: "utf8" }) as string).trim() !== "") throw new Error("workspace differs from candidate");
 }

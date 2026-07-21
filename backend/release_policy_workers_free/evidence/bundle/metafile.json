@@ -54,7 +54,7 @@
       "format": "esm"
     },
     "node_modules/@archivale/release-policy-trust/dist/src/checks.js": {
-      "bytes": 5821,
+      "bytes": 7023,
       "imports": [
         {
           "path": "node_modules/@archivale/release-policy-trust/dist/src/canonical.js",
@@ -293,8 +293,14 @@
       "format": "esm"
     },
     "src/config.ts": {
-      "bytes": 1487,
-      "imports": [],
+      "bytes": 4442,
+      "imports": [
+        {
+          "path": "node_modules/@archivale/release-policy-trust/dist/src/index.js",
+          "kind": "import-statement",
+          "original": "@archivale/release-policy-trust"
+        }
+      ],
       "format": "esm"
     },
     "src/generated/canonical_policy_bytes.ts": {
@@ -308,7 +314,7 @@
       "format": "esm"
     },
     "src/dispatcher.ts": {
-      "bytes": 12737,
+      "bytes": 14674,
       "imports": [
         {
           "path": "node_modules/@archivale/release-policy-trust/dist/src/index.js",
@@ -338,13 +344,29 @@
       ],
       "format": "esm"
     },
-    "src/sqlite_store.ts": {
-      "bytes": 3922,
+    "src/quota.ts": {
+      "bytes": 3590,
       "imports": [],
       "format": "esm"
     },
+    "src/sqlite_store.ts": {
+      "bytes": 8095,
+      "imports": [
+        {
+          "path": "node_modules/@archivale/release-policy-trust/dist/src/index.js",
+          "kind": "import-statement",
+          "original": "@archivale/release-policy-trust"
+        },
+        {
+          "path": "src/quota.ts",
+          "kind": "import-statement",
+          "original": "./quota.js"
+        }
+      ],
+      "format": "esm"
+    },
     "src/github_routes.ts": {
-      "bytes": 1655,
+      "bytes": 3736,
       "imports": [
         {
           "path": "src/config.ts",
@@ -355,7 +377,7 @@
       "format": "esm"
     },
     "src/github_app_port.ts": {
-      "bytes": 17049,
+      "bytes": 19041,
       "imports": [
         {
           "path": "node_modules/@archivale/release-policy-trust/dist/src/index.js",
@@ -371,7 +393,7 @@
       "format": "esm"
     },
     "src/repository_durable_object.ts": {
-      "bytes": 4068,
+      "bytes": 4692,
       "imports": [
         {
           "path": "src/dispatcher.ts",
@@ -466,19 +488,19 @@
           "bytesInOutput": 38524
         },
         "node_modules/@archivale/release-policy-trust/dist/src/checks.js": {
-          "bytesInOutput": 5472
+          "bytesInOutput": 6511
         },
         "node_modules/@archivale/release-policy-trust/dist/src/delivery.js": {
           "bytesInOutput": 2288
         },
         "node_modules/@archivale/release-policy-trust/dist/src/external.js": {
-          "bytesInOutput": 4397
+          "bytesInOutput": 4399
         },
         "node_modules/@archivale/release-policy-trust/dist/src/paths.js": {
           "bytesInOutput": 2749
         },
         "node_modules/@archivale/release-policy-trust/dist/src/strict_json.js": {
-          "bytesInOutput": 4707
+          "bytesInOutput": 4710
         },
         "node_modules/@archivale/release-policy-trust/dist/src/policy.js": {
           "bytesInOutput": 7640
@@ -493,37 +515,40 @@
           "bytesInOutput": 3557
         },
         "node_modules/@archivale/release-policy-trust/dist/src/index.js": {
-          "bytesInOutput": 3112
+          "bytesInOutput": 3172
         },
         "src/worker.ts": {
           "bytesInOutput": 2801
         },
         "src/config.ts": {
-          "bytesInOutput": 1218
+          "bytesInOutput": 3422
         },
         "src/generated/canonical_policy_bytes.ts": {
           "bytesInOutput": 13693
         },
         "src/dispatcher.ts": {
-          "bytesInOutput": 10055
+          "bytesInOutput": 11987
         },
         "src/telemetry.ts": {
           "bytesInOutput": 693
         },
         "src/repository_durable_object.ts": {
-          "bytesInOutput": 2921
+          "bytesInOutput": 3676
         },
         "src/sqlite_store.ts": {
-          "bytesInOutput": 3113
+          "bytesInOutput": 7131
+        },
+        "src/quota.ts": {
+          "bytesInOutput": 2811
         },
         "src/github_app_port.ts": {
-          "bytesInOutput": 14567
+          "bytesInOutput": 16342
         },
         "src/github_routes.ts": {
-          "bytesInOutput": 1165
+          "bytesInOutput": 3075
         }
       },
-      "bytes": 134839
+      "bytes": 151389
     }
   }
 }

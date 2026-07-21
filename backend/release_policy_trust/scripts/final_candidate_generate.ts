@@ -22,8 +22,9 @@ for (const path of trackedPackagePaths.filter((value) => value.startsWith("backe
   visit(tree);
 }
 
-const inventoryPath = resolve(packageRoot, "evidence/review/candidate-tree.v1.jsonl");
-const reproductionPath = resolve(packageRoot, "evidence/review/reproducibility.v1.json");
+const arg = (name: string, fallback: string) => { const index = process.argv.indexOf(name); return index < 0 ? fallback : resolve(repoRoot, process.argv[index + 1]!); };
+const inventoryPath = arg("--candidate-inventory", resolve(packageRoot, "evidence/review/candidate-tree.v1.jsonl"));
+const reproductionPath = arg("--reproducibility", resolve(packageRoot, "evidence/review/reproducibility.v1.json"));
 const summary = {
   base_commit: "f42582c8eb0d1405cd5e214f6b9c80980225b5f1",
   candidate_inventory_sha256: hashBytes(readFileSync(inventoryPath)),
@@ -39,4 +40,4 @@ const summary = {
   schema_version: 1,
   test_case_count: testCaseCount,
 };
-writeFileSync(resolve(packageRoot, "evidence/review/final-candidate.v1.json"), `${JSON.stringify(summary, null, 2)}\n`);
+writeFileSync(arg("--output", resolve(packageRoot, "evidence/review/final-candidate.v1.json")), `${JSON.stringify(summary, null, 2)}\n`);

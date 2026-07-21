@@ -2,7 +2,7 @@
  * Check Runs port: callers cannot construct URLs, send statuses, or use GraphQL. */
 import { DefinitiveNotSentError, type AppCheck, type CreateCheckInput, type ExpectedIdentity, type GitHubCheckRunsPort, type MainRefSnapshot, type OpenMainPullRequest, type Page, type PullRequestSnapshot, type UpdateCheckInput } from "@archivale/release-policy-trust";
 import type { ChangedFile } from "@archivale/release-policy-trust";
-import { githubRoute, type Route } from "./github_routes.js";
+import { githubRoute, isExactGithubRequest, type FrozenEgressIdentity, type Route } from "./github_routes.js";
 import type { EgressMeasurement } from "./telemetry.js";
 
 type Json = Record<string, unknown> | unknown[];
@@ -49,7 +49,8 @@ async function boundedJson(response: Response, limit: number): Promise<Json> {
 export class GitHubAppPort implements GitHubCheckRunsPort {
   constructor(private readonly fetcher: typeof fetch, private readonly authorization: () => Promise<string>, private readonly identity: ExpectedIdentity, private readonly measure: (measurement: EgressMeasurement) => void = () => {}) {}
   private async json(route: Route, args: readonly (string | number)[], query = "", body?: unknown, page?: number): Promise<{ value: Json; nextPage: number | null }> {
-    const base = githubRoute(route, args, query);
+    if (route !== "installationToken" && args[0] !== this.identity.repositoryId) throw new DefinitiveNotSentError("github repository rejected");
+    const base = githubRoute({ installationId: this.identity.installationId, repositoryId: this.identity.repositoryId as 1288597824 }, route, args, query);
     const token = await this.authorization();
     if (!token || /[\r\n]/.test(token)) throw new Error("github authorization unavailable");
     const headers = new Headers(base.headers);
@@ -93,45 +94,49 @@ function pemBytes(pem: string): Uint8Array {
   return Uint8Array.from(binary, (character) => character.charCodeAt(0));
 }
 /** Builds an App JWT and installation token only in memory for the one fixed route. */
-export function githubInstallationAuthorization(input: { appId: number; installationId: number; privateKeyPem: string; fetcher: typeof fetch; now?: () => number }): () => Promise<string> {
+export function githubInstallationAuthorization(input: { appId: number; installationId: number; repositoryId: number; privateKeyPem: string; fetcher: typeof fetch; now?: () => number }): () => Promise<string> {
   return async () => {
     const now = Math.floor((input.now?.() ?? Date.now()) / 1000);
     const header = base64Url(new TextEncoder().encode(JSON.stringify({ alg: "RS256", typ: "JWT" })));
     const claims = base64Url(new TextEncoder().encode(JSON.stringify({ iat: now - 30, exp: now + 540, iss: input.appId })));
     const key = await globalThis.crypto.subtle.importKey("pkcs8", pemBytes(input.privateKeyPem), { hash: "SHA-256", name: "RSASSA-PKCS1-v1_5" }, false, ["sign"]);
     const signature = new Uint8Array(await globalThis.crypto.subtle.sign("RSASSA-PKCS1-v1_5", key, new TextEncoder().encode(`${header}.${claims}`)));
-    const request = githubRoute("installationToken", [input.installationId]);
+    const identity: FrozenEgressIdentity = { installationId: input.installationId, repositoryId: input.repositoryId as 1288597824 };
+    const request = githubRoute(identity, "installationToken", [input.installationId]);
     const headers = new Headers(request.headers); headers.set("Authorization", `Bearer ${header}.${claims}.${base64Url(signature)}`);
-    const response = await callFetch(input.fetcher, new Request(request.url, { method: request.method, redirect: "manual", headers }));
-    if (response.redirected || !response.ok || !/^application\/json(?:;|$)/i.test(response.headers.get("content-type") ?? "")) throw new Error("github installation token rejected");
-    const body = await boundedJson(response, MAX_RESPONSE_BYTES.installationToken) as { token?: unknown };
-    if (typeof body.token !== "string" || body.token.length === 0 || /[\r\n]/.test(body.token)) throw new Error("github installation token malformed");
+    headers.set("Content-Type", "application/json");
+    const bodyText = JSON.stringify({ repository_ids: [input.repositoryId], permissions: { checks: "write", contents: "read", metadata: "read", pull_requests: "read" } });
+    const outbound = new Request(request.url, { method: request.method, redirect: "manual", headers, body: bodyText });
+    const response = await callFetch(input.fetcher, outbound);
+    if (response.redirected || response.status !== 201 || !/^application\/json(?:;|$)/i.test(response.headers.get("content-type") ?? "")) throw new Error("github installation token rejected");
+    const body = await boundedJson(response, MAX_RESPONSE_BYTES.installationToken) as Record<string, unknown>;
+    const wantedKeys = ["expires_at", "permissions", "repositories", "repository_selection", "token"];
+    if (JSON.stringify(Object.keys(body).sort()) !== JSON.stringify(wantedKeys) || typeof body.token !== "string" || body.token.length < 1 || body.token.length > 512 || !/^[\x21-\x7e]+$/.test(body.token) || body.repository_selection !== "selected") throw new Error("github installation token malformed");
+    const permissions = body.permissions; if (!permissions || typeof permissions !== "object" || Array.isArray(permissions) || JSON.stringify(permissions) !== JSON.stringify({ checks: "write", contents: "read", metadata: "read", pull_requests: "read" })) throw new Error("github installation scope rejected");
+    const repositories = body.repositories; if (!Array.isArray(repositories) || repositories.length !== 1 || !repositories[0] || typeof repositories[0] !== "object") throw new Error("github installation scope rejected");
+    const repository = repositories[0] as Record<string, unknown>; if (JSON.stringify(Object.keys(repository).sort()) !== JSON.stringify(["full_name", "id", "name"]) || repository.id !== input.repositoryId || repository.name !== "MyArtCollection" || repository.full_name !== "kenleren/MyArtCollection") throw new Error("github installation scope rejected");
+    if (typeof body.expires_at !== "string" || !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/.test(body.expires_at)) throw new Error("github installation expiry rejected");
+    const expiry = Date.parse(body.expires_at); const nowMs = (input.now?.() ?? Date.now()); if (!Number.isSafeInteger(expiry) || expiry < nowMs + 60_000 || expiry > nowMs + 65 * 60_000) throw new Error("github installation expiry rejected");
     return body.token;
   };
 }
 
 /** One alarm owns one transient authorization/session budget. Nothing from the
  * session is persisted or reused by a later event. */
-export function classifyGitHubEgress(request: Request): "allowed" | "status" | "forbidden" {
-  const url = new URL(request.url); if (url.origin !== "https://api.github.com" || url.username || url.password || url.hash) return "forbidden";
-  if (/^\/repositories\/[1-9][0-9]*\/statuses\/[0-9a-f]{40}$/.test(url.pathname)) return "status";
-  const allowed = [
-    ["POST", /^\/app\/installations\/[1-9][0-9]*\/access_tokens$/], ["GET", /^\/repositories\/[1-9][0-9]*\/pulls\/[1-9][0-9]*$/],
-    ["GET", /^\/repositories\/[1-9][0-9]*\/git\/ref\/heads\/main$/], ["GET", /^\/repositories\/[1-9][0-9]*\/pulls\/[1-9][0-9]*\/files$/],
-    ["GET", /^\/repositories\/[1-9][0-9]*\/pulls$/], ["GET", /^\/repositories\/[1-9][0-9]*\/commits\/[0-9a-f]{40}\/check-runs$/],
-    ["POST", /^\/repositories\/[1-9][0-9]*\/check-runs$/], ["PATCH", /^\/repositories\/[1-9][0-9]*\/check-runs\/[1-9][0-9]*$/],
-  ] as const;
-  return allowed.some(([method, path]) => request.method === method && path.test(url.pathname)) ? "allowed" : "forbidden";
+export function classifyGitHubEgress(identity: FrozenEgressIdentity, request: Request): "allowed" | "status" | "forbidden" {
+  const url = new URL(request.url); if (/^\/repositories\/[1-9][0-9]*\/statuses\/[0-9a-f]{40}$/.test(url.pathname)) return "status";
+  return isExactGithubRequest(identity, request) ? "allowed" : "forbidden";
 }
-export function enforceGitHubEgress(request: Request, measure: (measurement: EgressMeasurement) => void): void {
-  const classification = classifyGitHubEgress(request); if (classification === "allowed") return;
+export function enforceGitHubEgress(identity: FrozenEgressIdentity, request: Request, measure: (measurement: EgressMeasurement) => void): void {
+  const classification = classifyGitHubEgress(identity, request); if (classification === "allowed") return;
   measure({ metric: classification === "status" ? "status_egress" : "forbidden_egress", value: 1 }); throw new DefinitiveNotSentError("github egress route rejected");
 }
 
-export function githubAlarmPort(input: { appId: number; installationId: number; repositoryId: number; repositoryName: string; privateKeyPem: string; fetcher: typeof fetch; measure?: (measurement: EgressMeasurement) => void }): GitHubCheckRunsPort {
+export function githubAlarmPort(input: { appId: number; installationId: number; repositoryId: number; repositoryName: string; privateKeyPem: string; fetcher: typeof fetch; measure?: (measurement: EgressMeasurement) => void; reserveOutbound?: () => boolean }): GitHubCheckRunsPort {
   let outboundCalls = 0;
   const budgetedFetch: typeof fetch = async (request, init) => {
-    const outbound = request instanceof Request ? request : new Request(request, init); enforceGitHubEgress(outbound, input.measure ?? (() => {}));
+    const outbound = request instanceof Request ? request : new Request(request, init); const identity = { installationId: input.installationId, repositoryId: input.repositoryId as 1288597824 }; enforceGitHubEgress(identity, outbound, input.measure ?? (() => {}));
+    if (input.reserveOutbound && !input.reserveOutbound()) { input.measure?.({ metric: "exceeded_resource", value: 1 }); throw new DefinitiveNotSentError("github quota exhausted"); }
     outboundCalls += 1;
     input.measure?.({ metric: "request_high_water", value: outboundCalls });
     if (outboundCalls > 50) { input.measure?.({ metric: "exceeded_resource", value: 1 }); throw new DefinitiveNotSentError("github alarm subrequest budget exhausted"); }
