@@ -273,8 +273,8 @@ function stoppedInspection(caseId, persistRoot, objectId, creds) {
     const alarmCount = metaParsed.find((row) => row.key === "alarm_count/v1")?.value ?? 0;
     const retries = metaParsed.filter((row) => row.key.startsWith("retry/")); const retryClasses = retries.map((row) => row.value?.error_class).filter((value) => typeof value === "string").sort(); const retryAttempts = Math.max(0, ...retries.map((row) => Number(row.value?.attempts) || 0));
     const restoreRows = captureRestoreFixture ? {
-      kv: kv.map((row) => ({ key: row.key, version: Number(row.version), value_json: String(row.value_json) })),
-      meta: meta.filter((row) => String(row.key).startsWith("target/")).map((row) => { const value = JSON.parse(String(row.value_json)); if (value && typeof value === "object" && "received_at" in value) value.received_at = 0; return { key: row.key, value_json: JSON.stringify(value) }; }),
+      kv: kv.map((row) => ({ durable_row: row.key, version: Number(row.version), value_json: String(row.value_json) })),
+      meta: meta.filter((row) => String(row.key).startsWith("target/")).map((row) => { const value = JSON.parse(String(row.value_json)); if (value && typeof value === "object" && "received_at" in value) value.received_at = 0; return { meta_row: row.key, value_json: JSON.stringify(value) }; }),
     } : undefined;
     return { quick_check: true, schema_version: schemaVersion, schema_sha256: sha256(tables.filter((row) => applicationTables.includes(row.name)).map((row) => row.sql).join("\n")), rows: parsed.length + metaParsed.length, kv_rows: parsed.length, meta_rows: metaParsed.length, prefix_counts: prefixCounts, states, stale_leases: staleLeases, watchdog_fields: watchdogFields, watchdog, watchdog_reasserted: watchdog?.alarm_reasserted === true, alarm_count: alarmCount, retry_classes: retryClasses, retry_attempts: retryAttempts, page_count: pageCount, page_size: pageSize, database_bytes: fileBytes, redaction_scan: true, restore_rows: restoreRows };
   } finally { db.close(); }
@@ -403,8 +403,8 @@ function validateRestoreFixture(bytes) {
   ensure(fixture?.schema_version === 1 && fixture.checkpoint === "ambiguous_create_possible_send" && Array.isArray(fixture.kv) && Array.isArray(fixture.meta), "restore.rehearsal", "fixture_schema");
   const keys = new Set(); const states = new Set();
   const containsForbiddenField = (value) => { if (!value || typeof value !== "object") return false; return Object.entries(value).some(([key, child]) => /^(?:authorization|cookie|secret|token|private.?key|x-hub-signature|headers?|body)$/i.test(key) || containsForbiddenField(child)); };
-  for (const row of fixture.kv) { ensure(row && typeof row.key === "string" && /^(binding|current|generation|outbox|receipt)\//.test(row.key) && Number.isSafeInteger(row.version) && row.version >= 1 && typeof row.value_json === "string" && !keys.has(row.key), "restore.rehearsal", "fixture_row"); keys.add(row.key); const value = JSON.parse(row.value_json); ensure(!containsForbiddenField(value), "restore.rehearsal", "fixture_redaction"); if (typeof value?.state === "string") states.add(value.state); }
-  for (const row of fixture.meta) { ensure(row && typeof row.key === "string" && /^target\//.test(row.key) && typeof row.value_json === "string" && !keys.has(row.key), "restore.rehearsal", "fixture_meta"); keys.add(row.key); JSON.parse(row.value_json); }
+  for (const row of fixture.kv) { ensure(row && typeof row.durable_row === "string" && /^(binding|current|generation|outbox|receipt)\//.test(row.durable_row) && Number.isSafeInteger(row.version) && row.version >= 1 && typeof row.value_json === "string" && !keys.has(row.durable_row), "restore.rehearsal", "fixture_row"); keys.add(row.durable_row); const value = JSON.parse(row.value_json); ensure(!containsForbiddenField(value), "restore.rehearsal", "fixture_redaction"); if (typeof value?.state === "string") states.add(value.state); }
+  for (const row of fixture.meta) { ensure(row && typeof row.meta_row === "string" && /^target\//.test(row.meta_row) && typeof row.value_json === "string" && !keys.has(row.meta_row), "restore.rehearsal", "fixture_meta"); keys.add(row.meta_row); JSON.parse(row.value_json); }
   ensure(["possible_send", "create_possible", "decision_ready", "enqueued", "delivered"].every((state) => states.has(state)), "restore.rehearsal", "fixture_checkpoint");
   ensure(!/BEGIN PRIVATE KEY/.test(bytes.toString("utf8")), "restore.rehearsal", "fixture_redaction");
   return fixture;
@@ -425,13 +425,14 @@ async function restoreRehearsal() {
     const restored = new DatabaseSync(dbPath); restored.exec("BEGIN IMMEDIATE");
     try {
       restored.exec("DELETE FROM kv; DELETE FROM meta");
-      const insertKv = restored.prepare("INSERT INTO kv(key,version,value_json) VALUES(?,?,?)"); for (const row of fixture.kv) insertKv.run(row.key, row.version, row.value_json);
-      const insertMeta = restored.prepare("INSERT INTO meta(key,value_json) VALUES(?,?)"); insertMeta.run("schema_version", "1"); for (const row of fixture.meta) insertMeta.run(row.key, row.value_json);
+      const insertKv = restored.prepare("INSERT INTO kv(key,version,value_json) VALUES(?,?,?)"); for (const row of fixture.kv) insertKv.run(row.durable_row, row.version, row.value_json);
+      const insertMeta = restored.prepare("INSERT INTO meta(key,value_json) VALUES(?,?)"); insertMeta.run("schema_version", "1"); for (const row of fixture.meta) insertMeta.run(row.meta_row, row.value_json);
       restored.exec("COMMIT");
     } catch (error) { restored.exec("ROLLBACK"); throw error; } finally { restored.close(); }
     const restoredReadOnly = new DatabaseSync(dbPath, { readOnly: true }); restoredReadOnly.exec("PRAGMA query_only=ON");
     const restoredKv = restoredReadOnly.prepare("SELECT key,version,value_json FROM kv ORDER BY key").all(); const restoredMeta = restoredReadOnly.prepare("SELECT key,value_json FROM meta WHERE key LIKE 'target/%' ORDER BY key").all(); restoredReadOnly.close();
-    exactRowMatch = JSON.stringify(restoredKv) === JSON.stringify([...fixture.kv].sort((a, b) => a.key.localeCompare(b.key))) && JSON.stringify(restoredMeta) === JSON.stringify([...fixture.meta].sort((a, b) => a.key.localeCompare(b.key))); ensure(exactRowMatch, caseId, "restore_exact_rows");
+    const expectedKv = fixture.kv.map((row) => ({ key: row.durable_row, version: row.version, value_json: row.value_json })).sort((a, b) => a.key.localeCompare(b.key)); const expectedMeta = fixture.meta.map((row) => ({ key: row.meta_row, value_json: row.value_json })).sort((a, b) => a.key.localeCompare(b.key));
+    exactRowMatch = JSON.stringify(restoredKv) === JSON.stringify(expectedKv) && JSON.stringify(restoredMeta) === JSON.stringify(expectedMeta); ensure(exactRowMatch, caseId, "restore_exact_rows");
     mf = new Miniflare(makeOptions(creds, egress, persistRoot)); await runScheduledStep(mf, record, "restore-reconcile"); await waitFor(caseId, () => egress.count("updateCheck") === 1, "restore_reconcile_timeout");
     ensure(egress.count("createCheck") === 0, caseId, "restore_duplicate_create");
     const beforeReplay = egress.total(); const status = await dispatchWebhook(mf, creds, "recovery.ambiguous_create-delivery", makeBody(), record); ensure(status === 202, caseId, "restore_replay_status"); await runScheduledStep(mf, record, "restore-replay"); await sleep(250);
