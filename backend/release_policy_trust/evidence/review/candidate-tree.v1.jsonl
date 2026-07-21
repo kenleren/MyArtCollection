@@ -560,7 +560,7 @@
 {"blob_oid":"84f35d75f10cfd36d1ff36f326acc4190e2bb7c3","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/scripts/bundle_worker.mjs"}
 {"blob_oid":"698ddc23c40029df5c5efc627054b4eb336a5b48","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/scripts/clean.mjs"}
 {"blob_oid":"a982e7c980d63fa3342bc60e23df492a4cabb90f","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/scripts/generate_canonical_policy.mjs"}
-{"blob_oid":"2d5b498cfa6bc23ae6d6230c920f3e11e031f71d","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/scripts/phase_guard.mjs"}
+{"blob_oid":"9f4561e5c2457991ae02322577769dbfdd769561","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/scripts/phase_guard.mjs"}
 {"blob_oid":"daf17fcff8f546d31cd789f9e086b8b49adda26a","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/scripts/restore_rehearsal.ts"}
 {"blob_oid":"d29da3776b763b0a9749aab68bacc57c8d2f455d","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/scripts/runtime_contract.mjs"}
 {"blob_oid":"8622a47d7d56f80858b439826264aba1984414a0","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/scripts/sbom.ts"}
