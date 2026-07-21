@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { pathToFileURL } from "node:url";
@@ -72,44 +72,77 @@ function expectedRecord(record) {
   return record && typeof record === "object" && !Array.isArray(record) && JSON.stringify(Object.keys(record)) === JSON.stringify(keys) && record.schema_version === 1 && record.repository_path === artifactPath && record.mode === "100644" && record.byte_reproduced === true;
 }
 
+const sbomNamespace = /^https:\/\/archivale\.app\/spdx\/release-policy-workers-free\/([0-9a-f]{40})\/([0-9a-f]{64})$/;
+const within = (parent, child) => child === parent || child.startsWith(`${parent}/`);
+const regularInput = (path, label) => { if (!regular(path)) fail(`${label} must be a regular nonsymlink file`); return readFileSync(path); };
+function assertPreservationTree(directory, state) {
+  const expected = new Set(["KEEP_UNTIL_FINAL_B", "current.spdx.json", "record.v1.json", "repro/evidence/sbom.spdx.json", "repro/package-lock.json", "start.spdx.json", ...(state === "generated-b" || state === "final-clean" ? ["final-reproduced.spdx.json"] : [])]);
+  const seen = [];
+  const visit = (relativePath = "") => {
+    for (const entry of readdirSync(resolve(directory, relativePath), { withFileTypes: true })) {
+      const child = relativePath ? `${relativePath}/${entry.name}` : entry.name; const stat = lstatSync(resolve(directory, child));
+      if (stat.isSymbolicLink()) fail("preservation symlink rejected");
+      if (stat.isDirectory()) visit(child); else if (stat.isFile()) seen.push(child); else fail("preservation type rejected");
+    }
+  };
+  visit();
+  if (JSON.stringify(seen.sort()) !== JSON.stringify([...expected].sort())) fail("preservation file allowlist rejected");
+  for (const path of expected) regularInput(resolve(directory, path), "preservation input");
+}
+function parseSpdx(bytes, lockBytes) {
+  let doc; try { doc = JSON.parse(bytes.toString("utf8")); } catch { fail("SBOM document rejected"); }
+  const match = typeof doc?.documentNamespace === "string" ? doc.documentNamespace.match(sbomNamespace) : null;
+  if (!match || hash(lockBytes) !== match[2]) fail("SBOM namespace rejected");
+  const anchor = match[1]; try { git("cat-file", "-e", `${anchor}^{commit}`); } catch { fail("SBOM anchor rejected"); }
+  const epoch = Number(git("show", "-s", "--format=%ct", anchor).trim());
+  if (!Number.isSafeInteger(epoch) || doc.spdxVersion !== "SPDX-2.3" || doc.SPDXID !== "SPDXRef-DOCUMENT" || doc.dataLicense !== "CC0-1.0" || doc.creationInfo?.created !== new Date(epoch * 1000).toISOString().replace(".000", "") || !Array.isArray(doc.packages) || doc.packages.length === 0 || !Array.isArray(doc.relationships)) fail("SBOM document rejected");
+  const ids = new Set(); for (const pkg of doc.packages) { if (!pkg || typeof pkg !== "object" || typeof pkg.SPDXID !== "string" || ids.has(pkg.SPDXID) || typeof pkg.name !== "string" || typeof pkg.versionInfo !== "string" || pkg.downloadLocation !== "NOASSERTION" || pkg.filesAnalyzed !== false || pkg.licenseConcluded !== "NOASSERTION" || pkg.licenseDeclared !== "NOASSERTION" || pkg.copyrightText !== "NOASSERTION") fail("SBOM package rejected"); ids.add(pkg.SPDXID); }
+  if (!doc.relationships.some((row) => row && typeof row === "object" && row.spdxElementId === "SPDXRef-DOCUMENT" && row.relationshipType === "DESCRIBES" && ids.has(row.relatedSpdxElement))) fail("SBOM relationship rejected");
+  for (const row of doc.relationships) if (!row || typeof row !== "object" || (!ids.has(row.spdxElementId) && row.spdxElementId !== "SPDXRef-DOCUMENT") || !ids.has(row.relatedSpdxElement)) fail("SBOM relationship rejected");
+  return { anchor, namespace: doc.documentNamespace, created: doc.creationInfo.created, package_count: doc.packages.length, relationship_count: doc.relationships.length };
+}
+function runGenerator(anchor, output, lock) {
+  execFileSync(process.execPath, [resolve(root, "backend/release_policy_workers_free/dist/scripts/sbom.js"), "--anchor", anchor, "--output", output, "--lock", lock], { cwd: resolve(root, "backend/release_policy_workers_free"), env: { ...process.env, TZ: "UTC", LC_ALL: "C", LANG: "C" }, stdio: "inherit" });
+}
+function canonicalRecord(start, startBytes, currentBytes, lockBytes, reproducedBytes, document) {
+  return { schema_version: 1, repository_path: artifactPath, mode: "100644", start_oid: start, start_epoch: Number(git("show", "-s", "--format=%ct", start).trim()), start_sha256: hash(startBytes), start_bytes: startBytes.length, current_sha256: hash(currentBytes), current_bytes: currentBytes.length, lock_sha256: hash(lockBytes), lock_bytes: lockBytes.length, source_generator_sha256: hash(readFileSync(resolve(root, "backend/release_policy_workers_free/scripts/sbom.ts"))), compiled_generator_sha256: hash(readFileSync(resolve(root, "backend/release_policy_workers_free/dist/scripts/sbom.js"))), reproduced_sha256: hash(reproducedBytes), reproduced_bytes: reproducedBytes.length, namespace: document.namespace, created: document.created, package_count: document.package_count, relationship_count: document.relationship_count, byte_reproduced: currentBytes.equals(reproducedBytes) };
+}
+
 function preserve() {
   const oid = required(start, "start"); const path = required(option("path"), "path"); const directory = preservationDirectory();
   if (path !== artifactPath || git("rev-parse", "HEAD").trim() !== oid || !/^[0-9a-f]{40}$/.test(oid)) fail("preservation start rejected");
   cleanIndex();
-  const worktree = resolve(root, path); const startSnapshot = startBytes(oid, path); const current = readFileSync(worktree);
-  if (hash(startSnapshot) !== "a75297dec1cb0a698f395e0c4560b104f6bfd500d0094423261fc8a60cd4a6a4" || hash(current) !== "a5876a8213e890b65ae23bb8564b222341ae42fa2f9c3302f8e5610579c099fb") fail("preservation bytes drifted");
+  const worktree = resolve(root, path); if (!regular(worktree)) fail("SBOM worktree input rejected");
+  const parent = realpathSync(dirname(directory)); if (within(root, parent)) fail("preservation directory must be external");
+  const startSnapshot = startBytes(oid, path); const current = regularInput(worktree, "SBOM worktree input"); const lock = resolve(root, "backend/release_policy_workers_free/package-lock.json"); const lockBytes = regularInput(lock, "lock input");
+  const tree = git("ls-tree", "-r", oid, "--", path).trim().split(/\s+/); if (tree[0] !== "100644") fail("SBOM mode rejected");
   if (existsSync(directory)) fail("preservation directory must not exist");
   mkdirSync(resolve(directory, "repro", "evidence"), { recursive: true, mode: 0o700 });
-  copyFileSync(worktree, resolve(directory, "current.spdx.json"));
-  writeFileSync(resolve(directory, "start.spdx.json"), startSnapshot, { flag: "wx" });
-  const packageRoot = resolve(root, "backend/release_policy_workers_free");
-  const lock = resolve(packageRoot, "package-lock.json"); const source = resolve(packageRoot, "scripts/sbom.ts"); const compiled = resolve(packageRoot, "dist/scripts/sbom.js");
-  copyFileSync(lock, resolve(directory, "repro/package-lock.json"));
-  // The preserved compiled generator is executed with its root set to the external
-  // repro directory. GIT_DIR/WORK_TREE retain only immutable START identity.
-  execFileSync(process.execPath, [compiled], { cwd: resolve(directory, "repro"), env: { ...process.env, GIT_DIR: resolve(root, ".git"), GIT_WORK_TREE: root, TZ: "UTC", LC_ALL: "C", LANG: "C" }, stdio: "inherit" });
-  const reproduced = readFileSync(resolve(directory, "repro/evidence/sbom.spdx.json"));
-  if (!current.equals(reproduced)) fail("preserved SBOM did not byte reproduce");
-  const doc = JSON.parse(current.toString("utf8"));
-  if (!doc || !Array.isArray(doc.packages) || !Array.isArray(doc.relationships) || typeof doc.documentNamespace !== "string" || typeof doc.creationInfo?.created !== "string") fail("preserved SBOM structure rejected");
-  const epoch = Number(git("show", "-s", "--format=%ct", oid).trim());
-  const record = { schema_version: 1, repository_path: path, mode: "100644", start_oid: oid, start_epoch: epoch, start_sha256: hash(startSnapshot), start_bytes: startSnapshot.length, current_sha256: hash(current), current_bytes: current.length, lock_sha256: hash(readFileSync(lock)), lock_bytes: readFileSync(lock).length, source_generator_sha256: hash(readFileSync(source)), compiled_generator_sha256: hash(readFileSync(compiled)), reproduced_sha256: hash(reproduced), reproduced_bytes: reproduced.length, namespace: doc.documentNamespace, created: doc.creationInfo.created, package_count: doc.packages.length, relationship_count: doc.relationships.length, byte_reproduced: true };
+  const canonicalDirectory = realpathSync(directory); if (within(root, canonicalDirectory)) fail("preservation directory redirection rejected");
+  writeFileSync(resolve(directory, "current.spdx.json"), current, { flag: "wx" }); writeFileSync(resolve(directory, "start.spdx.json"), startSnapshot, { flag: "wx" }); writeFileSync(resolve(directory, "repro/package-lock.json"), lockBytes, { flag: "wx" });
+  const document = parseSpdx(current, lockBytes); const reproducedPath = resolve(directory, "repro/evidence/sbom.spdx.json"); runGenerator(document.anchor, reproducedPath, resolve(directory, "repro/package-lock.json"));
+  const reproduced = regularInput(reproducedPath, "reproduced SBOM"); if (!current.equals(reproduced)) fail("preserved SBOM did not byte reproduce");
+  if (!regularInput(worktree, "SBOM worktree input").equals(current)) fail("preservation capture drift");
+  const record = canonicalRecord(oid, startSnapshot, current, lockBytes, reproduced, document);
   writeCanonical(resolve(directory, "record.v1.json"), record);
   writeFileSync(resolve(directory, "KEEP_UNTIL_FINAL_B"), `${hash(readFileSync(resolve(directory, "record.v1.json")))}\n`, { flag: "wx" });
+  assertPreservationTree(directory, "dirty");
 }
 
 function verifyPreservation() {
   const oid = required(start, "start"); const path = required(option("path"), "path"); const directory = preservationDirectory(); const state = required(option("expected-state"), "expected state");
-  if (path !== artifactPath || !regular(resolve(directory, "KEEP_UNTIL_FINAL_B")) || !regular(resolve(directory, "record.v1.json")) || !regular(resolve(directory, "current.spdx.json")) || !regular(resolve(directory, "start.spdx.json")) || !regular(resolve(directory, "repro/package-lock.json")) || !regular(resolve(directory, "repro/evidence/sbom.spdx.json"))) fail("preservation files missing");
-  const recordBytes = readFileSync(resolve(directory, "record.v1.json")); const record = JSON.parse(recordBytes.toString("utf8"));
-  if (!expectedRecord(record) || record.start_oid !== oid || hash(recordBytes) !== readFileSync(resolve(directory, "KEEP_UNTIL_FINAL_B"), "utf8").trim()) fail("preservation record rejected");
-  const current = readFileSync(resolve(directory, "current.spdx.json")); const copiedStart = readFileSync(resolve(directory, "start.spdx.json")); const repro = readFileSync(resolve(directory, "repro/evidence/sbom.spdx.json"));
-  if (hash(current) !== record.current_sha256 || !current.equals(repro) || hash(copiedStart) !== record.start_sha256 || !copiedStart.equals(startBytes(oid, path))) fail("preservation byte drift");
-  const worktree = readFileSync(resolve(root, path));
+  if (path !== artifactPath || !/^[0-9a-f]{40}$/.test(oid) || !["dirty", "restored", "anchored-a", "generated-b", "final-clean"].includes(state)) fail("preservation verification rejected");
+  const parent = realpathSync(dirname(directory)); if (within(root, parent) || !lstatSync(directory).isDirectory() || lstatSync(directory).isSymbolicLink()) fail("preservation directory rejected");
+  assertPreservationTree(directory, state);
+  const recordBytes = regularInput(resolve(directory, "record.v1.json"), "record"); let record; try { record = JSON.parse(recordBytes.toString("utf8")); } catch { fail("preservation record rejected"); }
+  const current = regularInput(resolve(directory, "current.spdx.json"), "current snapshot"); const copiedStart = regularInput(resolve(directory, "start.spdx.json"), "start snapshot"); const lock = regularInput(resolve(directory, "repro/package-lock.json"), "lock snapshot"); const repro = regularInput(resolve(directory, "repro/evidence/sbom.spdx.json"), "reproduction"); if (!lock.equals(regularInput(resolve(root, "backend/release_policy_workers_free/package-lock.json"), "lock input"))) fail("preservation lock drift"); const document = parseSpdx(current, lock);
+  const expected = canonicalRecord(oid, copiedStart, current, lock, repro, document);
+  if (!expectedRecord(record) || JSON.stringify(record) !== JSON.stringify(expected) || hash(recordBytes) !== regularInput(resolve(directory, "KEEP_UNTIL_FINAL_B"), "marker").toString("utf8").trim() || !copiedStart.equals(startBytes(oid, path)) || !current.equals(repro)) fail("preservation byte drift");
+  const worktree = regularInput(resolve(root, path), "SBOM worktree input");
   if (state === "dirty" && !worktree.equals(current)) fail("dirty SBOM unexpectedly changed");
   if (["restored", "anchored-a"].includes(state) && !worktree.equals(copiedStart)) fail("START SBOM not retained");
   if (state === "anchored-a") { const anchor = required(option("anchor"), "anchor"); if (!startBytes(anchor, path).equals(copiedStart)) fail("A SBOM not START placeholder"); }
-  if (["generated-b", "final-clean"].includes(state)) { const anchor = required(option("anchor"), "anchor"); const final = worktree; const reproducedFinal = resolve(directory, "final-reproduced.spdx.json"); if (!regular(reproducedFinal) || !final.equals(readFileSync(reproducedFinal)) || final.equals(current)) fail("final SBOM preservation semantics rejected"); const doc = JSON.parse(final.toString("utf8")); const epoch = Number(git("show", "-s", "--format=%ct", anchor).trim()); if (!doc.documentNamespace.includes(anchor) || doc.creationInfo?.created !== new Date(epoch * 1000).toISOString().replace(".000", "")) fail("final SBOM anchor rejected"); }
+  if (["generated-b", "final-clean"].includes(state)) { const anchor = required(option("anchor"), "anchor"); const final = worktree; const reproducedFinal = regularInput(resolve(directory, "final-reproduced.spdx.json"), "final reproduction"); const finalDocument = parseSpdx(final, lock); if (finalDocument.anchor !== anchor || !final.equals(reproducedFinal) || final.equals(current)) fail("final SBOM preservation semantics rejected"); }
   if (state === "final-clean") cleanIndex();
 }
 
