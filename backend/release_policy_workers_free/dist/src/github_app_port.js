@@ -1,4 +1,43 @@
 import { githubRoute } from "./github_routes.js";
+const MAX_RESPONSE_BYTES = { installationToken: 16_384, pullRequest: 131_072, mainRef: 16_384, pullFiles: 1_048_576, openMainPulls: 1_048_576, appChecks: 1_048_576, createCheck: 131_072, updateCheck: 131_072 };
+async function boundedJson(response, limit) {
+    const declared = response.headers.get("content-length");
+    if (declared !== null && (!/^\d+$/.test(declared) || Number(declared) > limit))
+        throw new Error("github response exceeds bound");
+    const reader = response.body?.getReader();
+    if (!reader)
+        throw new Error("github response missing body");
+    const chunks = [];
+    let size = 0;
+    try {
+        for (;;) {
+            const next = await reader.read();
+            if (next.done)
+                break;
+            size += next.value.byteLength;
+            if (size > limit) {
+                await reader.cancel();
+                throw new Error("github response exceeds bound");
+            }
+            chunks.push(next.value);
+        }
+    }
+    finally {
+        reader.releaseLock();
+    }
+    const bytes = new Uint8Array(size);
+    let offset = 0;
+    for (const chunk of chunks) {
+        bytes.set(chunk, offset);
+        offset += chunk.byteLength;
+    }
+    try {
+        return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+    }
+    catch {
+        throw new Error("github JSON rejected");
+    }
+}
 export class GitHubAppPort {
     fetcher;
     authorization;
@@ -15,7 +54,7 @@ export class GitHubAppPort {
         const response = await this.fetcher(new Request(base, init));
         if (response.redirected || !response.ok || !/^application\/json(?:;|$)/i.test(response.headers.get("content-type") ?? ""))
             throw new Error("github route rejected");
-        return await response.json();
+        return boundedJson(response, MAX_RESPONSE_BYTES[route]);
     }
     async getPullRequest(repositoryId, number) { return this.json("pullRequest", [repositoryId, number]).then((v) => this.pr(v)); }
     async getMainRef(repositoryId) { const v = await this.json("mainRef", [repositoryId]); return { repositoryId, ref: "refs/heads/main", sha: this.string(v.object && v.object.sha) }; }
@@ -59,7 +98,7 @@ export function githubInstallationAuthorization(input) {
         const response = await input.fetcher(new Request(request, { headers: { ...Object.fromEntries(request.headers), Authorization: `Bearer ${header}.${claims}.${base64Url(signature)}` } }));
         if (response.redirected || !response.ok || !/^application\/json(?:;|$)/i.test(response.headers.get("content-type") ?? ""))
             throw new Error("github installation token rejected");
-        const body = await response.json();
+        const body = await boundedJson(response, MAX_RESPONSE_BYTES.installationToken);
         if (typeof body.token !== "string" || body.token.length === 0 || /[\r\n]/.test(body.token))
             throw new Error("github installation token malformed");
         return body.token;

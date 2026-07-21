@@ -7,6 +7,7 @@ import {
 } from "@archivale/release-policy-trust";
 import type { DurableStorage } from "./platform.js";
 import type { SqliteStore } from "./sqlite_store.js";
+import { sanitizeTelemetry } from "./telemetry.js";
 
 export type DeliveryTarget = { kind: "pull_request"; pullRequestNumber: number } | { kind: "push"; after: string };
 export interface EffectRuntime {
@@ -23,7 +24,14 @@ const targetMetaKey = (installationId: number, deliveryId: string) => `target/${
 export class AlarmDispatcher {
   constructor(private readonly storage: DurableStorage, private readonly store: SqliteStore, private readonly runtime: EffectRuntime) {}
   async requestDrain(at = Date.now()): Promise<void> { if (await this.storage.getAlarm() === null) await this.storage.setAlarm(at); }
-  async watchdog(): Promise<void> { await this.requestDrain(); }
+  async watchdog(): Promise<void> {
+    const pending = this.store.entries("receipt/").filter(({ value }) => !["terminal_success", "terminal_failure", "conflict"].includes((value as Receipt).state)).length;
+    const alarm = await this.storage.getAlarm();
+    // Persist only bounded, non-sensitive operational buckets; never payloads,
+    // headers, credentials, provider errors, or raw quota values.
+    this.store.writeMeta("watchdog/v1", sanitizeTelemetry({ alarm_present: alarm !== null, pending_bucket: pending === 0 ? 0 : pending < 10 ? 1 : 2, forbidden_egress_count: 0, status_egress_count: 0 }));
+    await this.requestDrain();
+  }
   rememberTarget(receipt: Pick<Receipt, "installationId" | "deliveryId">, target: DeliveryTarget): void { this.store.writeMeta(targetMetaKey(receipt.installationId, receipt.deliveryId), target); }
   async alarm(): Promise<void> {
     let retryAt: number | undefined;

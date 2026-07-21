@@ -5,6 +5,14 @@ import type { ChangedFile } from "@archivale/release-policy-trust";
 import { githubRoute, type Route } from "./github_routes.js";
 
 type Json = Record<string, unknown> | unknown[];
+const MAX_RESPONSE_BYTES: Record<Route, number> = { installationToken: 16_384, pullRequest: 131_072, mainRef: 16_384, pullFiles: 1_048_576, openMainPulls: 1_048_576, appChecks: 1_048_576, createCheck: 131_072, updateCheck: 131_072 };
+async function boundedJson(response: Response, limit: number): Promise<Json> {
+  const declared = response.headers.get("content-length"); if (declared !== null && (!/^\d+$/.test(declared) || Number(declared) > limit)) throw new Error("github response exceeds bound");
+  const reader = response.body?.getReader(); if (!reader) throw new Error("github response missing body"); const chunks: Uint8Array[] = []; let size = 0;
+  try { for (;;) { const next = await reader.read(); if (next.done) break; size += next.value.byteLength; if (size > limit) { await reader.cancel(); throw new Error("github response exceeds bound"); } chunks.push(next.value); } } finally { reader.releaseLock(); }
+  const bytes = new Uint8Array(size); let offset = 0; for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
+  try { return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as Json; } catch { throw new Error("github JSON rejected"); }
+}
 export class GitHubAppPort implements GitHubCheckRunsPort {
   constructor(private readonly fetcher: typeof fetch, private readonly authorization: () => Promise<string>) {}
   private async json(route: Route, args: readonly (string | number)[], query = "", body?: unknown): Promise<Json> {
@@ -14,7 +22,7 @@ export class GitHubAppPort implements GitHubCheckRunsPort {
     const init = body === undefined ? { headers: { ...Object.fromEntries(base.headers), Authorization: `Bearer ${token}` } } : { headers: { ...Object.fromEntries(base.headers), Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify(body) };
     const response = await this.fetcher(new Request(base, init));
     if (response.redirected || !response.ok || !/^application\/json(?:;|$)/i.test(response.headers.get("content-type") ?? "")) throw new Error("github route rejected");
-    return await response.json() as Json;
+    return boundedJson(response, MAX_RESPONSE_BYTES[route]);
   }
   async getPullRequest(repositoryId: number, number: number): Promise<PullRequestSnapshot> { return this.json("pullRequest", [repositoryId, number]).then((v) => this.pr(v)); }
   async getMainRef(repositoryId: number): Promise<MainRefSnapshot> { const v = await this.json("mainRef", [repositoryId]) as Record<string, unknown>; return { repositoryId, ref: "refs/heads/main", sha: this.string(v.object && (v.object as Record<string, unknown>).sha) }; }
@@ -51,7 +59,7 @@ export function githubInstallationAuthorization(input: { appId: number; installa
     const request = githubRoute("installationToken", [input.installationId]);
     const response = await input.fetcher(new Request(request, { headers: { ...Object.fromEntries(request.headers), Authorization: `Bearer ${header}.${claims}.${base64Url(signature)}` } }));
     if (response.redirected || !response.ok || !/^application\/json(?:;|$)/i.test(response.headers.get("content-type") ?? "")) throw new Error("github installation token rejected");
-    const body = await response.json() as { token?: unknown };
+    const body = await boundedJson(response, MAX_RESPONSE_BYTES.installationToken) as { token?: unknown };
     if (typeof body.token !== "string" || body.token.length === 0 || /[\r\n]/.test(body.token)) throw new Error("github installation token malformed");
     return body.token;
   };
