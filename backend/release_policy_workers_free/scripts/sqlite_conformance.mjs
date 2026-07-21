@@ -8,6 +8,8 @@ import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { Log, LogLevel, Miniflare, NoOpLog } from "miniflare";
+import { parseRuntimeConfig, SQLITE_COMPATIBILITY_SHA256 } from "../dist/src/config.js";
+import { SQLITE_SCHEMA_DIGEST, SQLITE_SCHEMA_ID } from "../dist/src/sqlite_store.js";
 
 const CASE_IDS = [
   "race.duplicate_same_generation", "race.delivery_conflict", "replay.after_restart",
@@ -58,6 +60,18 @@ const captureRestoreFixture = process.argv.includes("--capture-restore-fixture")
 const runRestoreOnly = process.argv.includes("--restore-rehearsal");
 let bundleHash;
 let importManifestHash;
+
+function restoreIdentityRows() {
+  const activationDigest = parseRuntimeConfig(CONFIG).activationDigest;
+  return [
+    ["schema/id", JSON.stringify(SQLITE_SCHEMA_ID)],
+    ["schema/version", "2"],
+    ["schema/state", JSON.stringify("ready")],
+    ["schema/digest", JSON.stringify(SQLITE_SCHEMA_DIGEST)],
+    ["compatibility/digest", JSON.stringify(`sha256:${SQLITE_COMPATIBILITY_SHA256}`)],
+    ["activation/digest", JSON.stringify(activationDigest)],
+  ].map(([meta_row, value_json]) => ({ meta_row, value_json }));
+}
 
 function preflight() {
   ensure(process.version === "v22.23.1", "harness", "node_version");
@@ -274,7 +288,7 @@ function stoppedInspection(caseId, persistRoot, objectId, creds) {
     const retries = metaParsed.filter((row) => row.key.startsWith("retry/")); const retryClasses = retries.map((row) => row.value?.error_class).filter((value) => typeof value === "string").sort(); const retryAttempts = Math.max(0, ...retries.map((row) => Number(row.value?.attempts) || 0));
     const restoreRows = captureRestoreFixture ? {
       kv: kv.map((row) => ({ durable_row: row.key, version: Number(row.version), value_json: String(row.value_json) })),
-      meta: meta.filter((row) => String(row.key).startsWith("target/")).map((row) => { const value = JSON.parse(String(row.value_json)); if (value && typeof value === "object" && "received_at" in value) value.received_at = 0; return { meta_row: row.key, value_json: JSON.stringify(value) }; }),
+      meta: [...restoreIdentityRows(), ...meta.filter((row) => String(row.key).startsWith("target/")).map((row) => { const value = JSON.parse(String(row.value_json)); if (value && typeof value === "object" && "received_at" in value) value.received_at = 0; return { meta_row: row.key, value_json: JSON.stringify(value) }; })].sort((left, right) => left.meta_row.localeCompare(right.meta_row)),
     } : undefined;
     return { quick_check: true, schema_version: schemaVersion, schema_sha256: sha256(tables.filter((row) => applicationTables.includes(row.name)).map((row) => row.sql).join("\n")), rows: parsed.length + metaParsed.length, kv_rows: parsed.length, meta_rows: metaParsed.length, prefix_counts: prefixCounts, states, stale_leases: staleLeases, watchdog_fields: watchdogFields, watchdog, watchdog_reasserted: watchdog?.alarm_reasserted === true, alarm_count: alarmCount, retry_classes: retryClasses, retry_attempts: retryAttempts, page_count: pageCount, page_size: pageSize, database_bytes: fileBytes, redaction_scan: true, restore_rows: restoreRows };
   } finally { db.close(); }
@@ -399,19 +413,47 @@ async function main() {
 }
 
 function validateRestoreFixture(bytes) {
-  const fixture = JSON.parse(bytes.toString("utf8"));
+  let fixture;
+  try { fixture = JSON.parse(bytes.toString("utf8")); } catch { throw new HarnessFailure("restore.rehearsal", "fixture_schema"); }
   ensure(fixture?.schema_version === 1 && fixture.checkpoint === "ambiguous_create_possible_send" && Array.isArray(fixture.kv) && Array.isArray(fixture.meta), "restore.rehearsal", "fixture_schema");
   const keys = new Set(); const states = new Set();
   const containsForbiddenField = (value) => { if (!value || typeof value !== "object") return false; return Object.entries(value).some(([key, child]) => /^(?:authorization|cookie|secret|token|private.?key|x-hub-signature|headers?|body)$/i.test(key) || containsForbiddenField(child)); };
-  for (const row of fixture.kv) { ensure(row && typeof row.durable_row === "string" && /^(binding|current|generation|outbox|receipt)\//.test(row.durable_row) && Number.isSafeInteger(row.version) && row.version >= 1 && typeof row.value_json === "string" && !keys.has(row.durable_row), "restore.rehearsal", "fixture_row"); keys.add(row.durable_row); const value = JSON.parse(row.value_json); ensure(!containsForbiddenField(value), "restore.rehearsal", "fixture_redaction"); if (typeof value?.state === "string") states.add(value.state); }
-  for (const row of fixture.meta) { ensure(row && typeof row.meta_row === "string" && /^target\//.test(row.meta_row) && typeof row.value_json === "string" && !keys.has(row.meta_row), "restore.rehearsal", "fixture_meta"); keys.add(row.meta_row); JSON.parse(row.value_json); }
+  const parseCanonical = (value, failureClass) => { try { const parsed = JSON.parse(value); ensure(JSON.stringify(parsed) === value, "restore.rehearsal", failureClass); return parsed; } catch (error) { if (error instanceof HarnessFailure) throw error; throw new HarnessFailure("restore.rehearsal", failureClass); } };
+  for (const row of fixture.kv) { ensure(row && typeof row.durable_row === "string" && /^(binding|current|generation|outbox|receipt)\//.test(row.durable_row) && Number.isSafeInteger(row.version) && row.version >= 1 && typeof row.value_json === "string" && !keys.has(row.durable_row), "restore.rehearsal", "fixture_row"); keys.add(row.durable_row); const value = parseCanonical(row.value_json, "fixture_row"); ensure(!containsForbiddenField(value), "restore.rehearsal", "fixture_redaction"); if (typeof value?.state === "string") states.add(value.state); }
+  const expectedIdentity = new Map(restoreIdentityRows().map((row) => [row.meta_row, row.value_json])); const metadata = new Map();
+  for (const row of fixture.meta) { ensure(row && typeof row.meta_row === "string" && typeof row.value_json === "string" && !metadata.has(row.meta_row), "restore.rehearsal", "fixture_meta"); const value = parseCanonical(row.value_json, "fixture_meta"); ensure(!containsForbiddenField(value), "restore.rehearsal", "fixture_redaction"); metadata.set(row.meta_row, row.value_json); }
+  const targetKeys = [...metadata.keys()].filter((key) => /^target\//.test(key));
+  ensure(targetKeys.length === 1 && metadata.size === expectedIdentity.size + 1 && [...expectedIdentity].every(([key, value]) => metadata.get(key) === value) && targetKeys.every((key) => !expectedIdentity.has(key)), "restore.rehearsal", "fixture_identity");
   ensure(["possible_send", "create_possible", "decision_ready", "enqueued", "delivered"].every((state) => states.has(state)), "restore.rehearsal", "fixture_checkpoint");
   ensure(!/BEGIN PRIVATE KEY/.test(bytes.toString("utf8")), "restore.rehearsal", "fixture_redaction");
   return fixture;
 }
 
+function assertRestoreFixtureNegatives(fixtureBytes) {
+  const fixture = JSON.parse(fixtureBytes.toString("utf8"));
+  const rejected = [];
+  const expectRejected = (mutate) => {
+    const candidate = JSON.parse(JSON.stringify(fixture)); mutate(candidate);
+    try { validateRestoreFixture(Buffer.from(JSON.stringify(candidate))); } catch (error) { if (error instanceof HarnessFailure && /^fixture_(?:schema|meta|identity|redaction)$/.test(error.failureClass)) { rejected.push(error.failureClass); return; } }
+    throw new HarnessFailure("restore.rehearsal", "fixture_negative_accepted");
+  };
+  for (const key of restoreIdentityRows().map((row) => row.meta_row)) expectRejected((candidate) => { candidate.meta = candidate.meta.filter((row) => row.meta_row !== key); });
+  expectRejected((candidate) => { candidate.meta.push({ meta_row: "schema_version", value_json: "1" }); });
+  expectRejected((candidate) => { candidate.meta.find((row) => row.meta_row === "schema/version").value_json = "3"; });
+  expectRejected((candidate) => { candidate.meta.find((row) => row.meta_row === "schema/state").value_json = JSON.stringify("pending"); });
+  expectRejected((candidate) => { candidate.meta.find((row) => row.meta_row === "schema/id").value_json = JSON.stringify("other"); });
+  expectRejected((candidate) => { candidate.meta.find((row) => row.meta_row === "schema/digest").value_json = JSON.stringify("sha256:" + "0".repeat(64)); });
+  expectRejected((candidate) => { candidate.meta.find((row) => row.meta_row === "compatibility/digest").value_json = JSON.stringify("sha256:" + "0".repeat(64)); });
+  expectRejected((candidate) => { candidate.meta.find((row) => row.meta_row === "activation/digest").value_json = JSON.stringify("sha256:" + "0".repeat(64)); });
+  expectRejected((candidate) => { candidate.meta.push({ ...candidate.meta[0] }); });
+  expectRejected((candidate) => { candidate.meta.push({ meta_row: "extra/v1", value_json: "0" }); });
+  expectRejected((candidate) => { candidate.meta.find((row) => /^target\//.test(row.meta_row)).value_json = "{"; });
+  expectRejected((candidate) => { candidate.meta.find((row) => /^target\//.test(row.meta_row)).value_json = JSON.stringify({ token: "synthetic" }); });
+  ensure(rejected.length === 17, "restore.rehearsal", "fixture_negative_coverage");
+}
+
 async function restoreRehearsal() {
-  preflight(); const fixtureBytes = readFileSync(restoreFixturePath); const fixture = validateRestoreFixture(fixtureBytes); const caseId = "restore.rehearsal";
+  preflight(); const fixtureBytes = readFileSync(restoreFixturePath); const fixture = validateRestoreFixture(fixtureBytes); assertRestoreFixtureNegatives(fixtureBytes); const caseId = "restore.rehearsal";
   const persistRoot = mkdtempSync(join(tempRoot, "archivale-245-restore-")); chmodSync(persistRoot, 0o700); const creds = credentials(); const record = newRecord(caseId);
   let mf; let objectId; let dbPath; let quickCheck = false; let duplicateBindings = -1; let exactRowMatch = false;
   const binding = fixture.kv.map((row) => JSON.parse(row.value_json)).find((value) => value?.state === "create_possible");
@@ -426,16 +468,16 @@ async function restoreRehearsal() {
     try {
       restored.exec("DELETE FROM kv; DELETE FROM meta");
       const insertKv = restored.prepare("INSERT INTO kv(key,version,value_json) VALUES(?,?,?)"); for (const row of fixture.kv) insertKv.run(row.durable_row, row.version, row.value_json);
-      const insertMeta = restored.prepare("INSERT INTO meta(key,value_json) VALUES(?,?)"); insertMeta.run("schema_version", "1"); for (const row of fixture.meta) insertMeta.run(row.meta_row, row.value_json);
+      const insertMeta = restored.prepare("INSERT INTO meta(key,value_json) VALUES(?,?)"); for (const row of fixture.meta) insertMeta.run(row.meta_row, row.value_json);
       restored.exec("COMMIT");
     } catch (error) { restored.exec("ROLLBACK"); throw error; } finally { restored.close(); }
     const restoredReadOnly = new DatabaseSync(dbPath, { readOnly: true }); restoredReadOnly.exec("PRAGMA query_only=ON");
-    const restoredKv = restoredReadOnly.prepare("SELECT key,version,value_json FROM kv ORDER BY key").all(); const restoredMeta = restoredReadOnly.prepare("SELECT key,value_json FROM meta WHERE key LIKE 'target/%' ORDER BY key").all(); restoredReadOnly.close();
+    const restoredKv = restoredReadOnly.prepare("SELECT key,version,value_json FROM kv ORDER BY key").all(); const restoredMeta = restoredReadOnly.prepare("SELECT key,value_json FROM meta ORDER BY key").all(); restoredReadOnly.close();
     const expectedKv = fixture.kv.map((row) => ({ key: row.durable_row, version: row.version, value_json: row.value_json })).sort((a, b) => a.key.localeCompare(b.key)); const expectedMeta = fixture.meta.map((row) => ({ key: row.meta_row, value_json: row.value_json })).sort((a, b) => a.key.localeCompare(b.key));
     exactRowMatch = JSON.stringify(restoredKv) === JSON.stringify(expectedKv) && JSON.stringify(restoredMeta) === JSON.stringify(expectedMeta); ensure(exactRowMatch, caseId, "restore_exact_rows");
-    mf = new Miniflare(makeOptions(creds, egress, persistRoot)); await runScheduledStep(mf, record, "restore-reconcile"); await waitFor(caseId, () => egress.count("updateCheck") === 1, "restore_reconcile_timeout");
+    mf = new Miniflare(makeOptions(creds, egress, persistRoot)); await Promise.all([runScheduledStep(mf, record, "restore-watchdog-1"), runScheduledStep(mf, record, "restore-watchdog-2")]); await waitFor(caseId, () => egress.count("updateCheck") === 1, "restore_reconcile_timeout");
     ensure(egress.count("createCheck") === 0, caseId, "restore_duplicate_create");
-    const beforeReplay = egress.total(); const status = await dispatchWebhook(mf, creds, "recovery.ambiguous_create-delivery", makeBody(), record); ensure(status === 202, caseId, "restore_replay_status"); await runScheduledStep(mf, record, "restore-replay"); await sleep(250);
+    const beforeReplay = egress.total(); const status = await dispatchWebhook(mf, creds, "recovery.ambiguous_create-delivery", makeBody(), record); ensure(status === 202, caseId, "restore_replay_status"); await Promise.all([runScheduledStep(mf, record, "restore-replay-watchdog-1"), runScheduledStep(mf, record, "restore-replay-watchdog-2")]); await sleep(250);
     ensure(egress.total() === beforeReplay && egress.count("createCheck") === 0 && egress.count("updateCheck") === 1, caseId, "restore_replay_egress");
     await mf.dispose(); mf = null;
     const inspection = stoppedInspection(caseId, persistRoot, objectId, creds); quickCheck = inspection.quick_check;
@@ -445,7 +487,7 @@ async function restoreRehearsal() {
     ensure(inspection.states.terminal_success === 2 && inspection.stale_leases === 0 && duplicateBindings === 0 && bindingRows.length === 1 && bindingRows[0].checkId === CHECK_ID, caseId, "restore_terminal_binding");
   } finally { if (mf) await mf.dispose(); rmSync(persistRoot, { recursive: true, force: true }); }
   ensure(!existsSync(persistRoot), caseId, "temp_cleanup");
-  const evidence = { schema_version: 1, fixture_sha256: sha256(fixtureBytes), bundle_sha256: bundleHash, import_manifest_sha256: importManifestHash, checkpoint: fixture.checkpoint, restored_kv_rows: fixture.kv.length, restored_meta_rows: fixture.meta.length, exact_row_match_before_boot: exactRowMatch, exact_bundle_recovery: true, ambiguous_create_reconciled: true, replay_accepted: true, create_count: egress.count("createCheck"), update_count: egress.count("updateCheck"), duplicate_check_count: 0, duplicate_binding_count: duplicateBindings, sqlite_quick_check: quickCheck, forbidden_egress_count: egress.unmatched, redaction_scan: true, temp_cleanup: true };
+  const evidence = { schema_version: 1, fixture_sha256: sha256(fixtureBytes), bundle_sha256: bundleHash, import_manifest_sha256: importManifestHash, checkpoint: fixture.checkpoint, restored_kv_rows: fixture.kv.length, restored_meta_rows: fixture.meta.length, restored_schema_v2_identity: Object.fromEntries(restoreIdentityRows().map((row) => [row.meta_row, JSON.parse(row.value_json)])), exact_row_match_before_boot: exactRowMatch, exact_bundle_recovery: true, concurrent_watchdogs_alarm_only: true, ambiguous_create_reconciled: true, replay_accepted: true, create_count: egress.count("createCheck"), update_count: egress.count("updateCheck"), duplicate_check_count: 0, duplicate_binding_count: duplicateBindings, sqlite_quick_check: quickCheck, forbidden_egress_count: egress.unmatched, redaction_scan: true, temp_cleanup: true };
   writeFileSync(resolve(packageRoot, "evidence/restore-rehearsal.v1.json"), JSON.stringify(evidence) + "\n"); process.stdout.write(`restore rehearsal passed (${fixture.kv.length} durable rows through exact bundle)\n`);
 }
 
