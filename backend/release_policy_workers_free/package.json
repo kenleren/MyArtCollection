@@ -9,6 +9,7 @@
     "test": "npm run build --silent && node --test dist/test/*.test.js",
     "bundle:worker": "node scripts/bundle_worker.mjs",
     "test:runtime-contract": "npm run bundle:worker && node scripts/runtime_contract.mjs",
+    "test:sqlite-conformance": "npm run bundle:worker --silent && node --disable-warning=ExperimentalWarning scripts/sqlite_conformance.mjs",
     "artifact:generate": "node dist/scripts/artifact.js generate",
     "artifact:verify": "node dist/scripts/artifact.js verify",
     "sbom:generate": "node dist/scripts/sbom.js",

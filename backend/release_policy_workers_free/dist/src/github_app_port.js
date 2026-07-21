@@ -1,5 +1,79 @@
 import { githubRoute } from "./github_routes.js";
 const MAX_RESPONSE_BYTES = { installationToken: 16_384, pullRequest: 131_072, mainRef: 16_384, pullFiles: 1_048_576, openMainPulls: 1_048_576, appChecks: 1_048_576, createCheck: 131_072, updateCheck: 131_072 };
+const PAGE_CEILING = { pullFiles: 30, openMainPulls: 10, appChecks: 30 };
+function paginationRejected() { throw new Error("github pagination rejected"); }
+function canonicalPage(value, ceiling) { if (!/^[1-9][0-9]*$/.test(value))
+    return paginationRejected(); const page = Number(value); if (!Number.isSafeInteger(page) || page > ceiling)
+    return paginationRejected(); return page; }
+function exactQuery(url, request, page, route) {
+    if (!url.search || /%/.test(url.search))
+        return paginationRejected();
+    const expected = request.search.slice(1).split("&");
+    const actual = url.search.slice(1).split("&");
+    if (actual.length !== expected.length || new Set(actual.map((x) => x.split("=")[0])).size !== actual.length)
+        return paginationRejected();
+    const values = new Map(actual.map((entry) => { const pieces = entry.split("="); if (pieces.length !== 2 || !pieces[0] || !pieces[1])
+        return paginationRejected(); return [pieces[0], pieces[1]]; }));
+    for (const entry of expected) {
+        const [key, value] = entry.split("=");
+        if (!key || !value || !values.has(key))
+            return paginationRejected();
+        if (key === "page") {
+            if (canonicalPage(values.get(key), PAGE_CEILING[route]) !== page)
+                return paginationRejected();
+        }
+        else if (values.get(key) !== value)
+            return paginationRejected();
+    }
+}
+function parsePagination(link, request, route, current) {
+    if (link === null)
+        return null;
+    const bytes = new TextEncoder().encode(link);
+    if (bytes.length === 0 || bytes.length > 8192 || !/^[\x20\x09-\x7e]+$/.test(link))
+        return paginationRejected();
+    const members = link.split(",");
+    if (members.length > 4 || members.some((member) => new TextEncoder().encode(member).length === 0 || new TextEncoder().encode(member).length > 2048))
+        return paginationRejected();
+    const relations = new Map();
+    for (const member of members) {
+        const match = /^[ \t]*<(https:\/\/api\.github\.com\/[^<>"\s]+)>[ \t]*;[ \t]*rel="(next|prev|first|last)"[ \t]*$/.exec(member);
+        if (!match)
+            return paginationRejected();
+        const [, targetText, relation] = match;
+        if (!targetText || !relation || relations.has(relation))
+            return paginationRejected();
+        let target;
+        try {
+            target = new URL(targetText);
+        }
+        catch {
+            return paginationRejected();
+        }
+        if (target.origin !== "https://api.github.com" || target.username || target.password || target.hash || target.pathname !== request.pathname)
+            return paginationRejected();
+        const targetPage = canonicalPage(target.searchParams.get("page") ?? "", PAGE_CEILING[route]);
+        exactQuery(target, request, targetPage, route);
+        relations.set(relation, targetPage);
+    }
+    const first = relations.get("first");
+    const prev = relations.get("prev");
+    const next = relations.get("next");
+    const last = relations.get("last");
+    if (first !== undefined && first !== 1)
+        return paginationRejected();
+    if (prev !== undefined && (current === 1 || prev !== current - 1))
+        return paginationRejected();
+    if (next !== undefined && next !== current + 1)
+        return paginationRejected();
+    if (last !== undefined && (last < current || last > PAGE_CEILING[route]))
+        return paginationRejected();
+    if (next === undefined && last !== undefined && last !== current)
+        return paginationRejected();
+    if (next !== undefined && last !== undefined && last < next)
+        return paginationRejected();
+    return next ?? null;
+}
 async function boundedJson(response, limit) {
     const declared = response.headers.get("content-length");
     if (declared !== null && (!/^\d+$/.test(declared) || Number(declared) > limit))
@@ -45,7 +119,7 @@ export class GitHubAppPort {
         this.fetcher = fetcher;
         this.authorization = authorization;
     }
-    async json(route, args, query = "", body) {
+    async json(route, args, query = "", body, page) {
         const base = githubRoute(route, args, query);
         const token = await this.authorization();
         if (!token || /[\r\n]/.test(token))
@@ -54,14 +128,15 @@ export class GitHubAppPort {
         const response = await this.fetcher(new Request(base, init));
         if (response.redirected || !response.ok || !/^application\/json(?:;|$)/i.test(response.headers.get("content-type") ?? ""))
             throw new Error("github route rejected");
-        return boundedJson(response, MAX_RESPONSE_BYTES[route]);
+        const nextPage = page === undefined ? null : parsePagination(response.headers.get("link"), new URL(base.url), route, page);
+        return { value: await boundedJson(response, MAX_RESPONSE_BYTES[route]), nextPage };
     }
-    async getPullRequest(repositoryId, number) { return this.json("pullRequest", [repositoryId, number]).then((v) => this.pr(v)); }
-    async getMainRef(repositoryId) { const v = await this.json("mainRef", [repositoryId]); return { repositoryId, ref: "refs/heads/main", sha: this.string(v.object && v.object.sha) }; }
-    async listPullRequestFiles(repositoryId, number, page, perPage) { const v = await this.json("pullFiles", [repositoryId, number], `page=${page}&per_page=${perPage}`); return { items: this.array(v).map((x) => ({ path: this.string(x.filename), status: this.string(x.status), ...(typeof x.previous_filename === "string" ? { previousPath: x.previous_filename } : {}) })), nextPage: this.next(v, page) }; }
-    async listOpenMainPullRequests(repositoryId, page, perPage) { const v = await this.json("openMainPulls", [repositoryId], `state=open&base=main&page=${page}&per_page=${perPage}`); return { items: this.array(v).map((x) => ({ ...this.pr(x), createdAt: this.string(x.created_at) })), nextPage: this.next(v, page) }; }
-    async listAppChecks(repositoryId, headSha, page, perPage) { const v = await this.json("appChecks", [repositoryId, headSha], `page=${page}&per_page=${perPage}`); return { items: this.array(v.check_runs).map((x) => this.check(repositoryId, x)), nextPage: this.next(v.check_runs ?? [], page) }; }
-    async createCheck(input) { return this.json("createCheck", [input.repositoryId], "", { name: input.name, head_sha: input.headSha, external_id: input.externalId, status: "in_progress" }).then((v) => this.check(input.repositoryId, v)); }
+    async getPullRequest(repositoryId, number) { return this.json("pullRequest", [repositoryId, number]).then(({ value }) => this.pr(value)); }
+    async getMainRef(repositoryId) { const { value } = await this.json("mainRef", [repositoryId]); const v = value; return { repositoryId, ref: "refs/heads/main", sha: this.string(v.object && v.object.sha) }; }
+    async listPullRequestFiles(repositoryId, number, page, perPage) { const { value, nextPage } = await this.json("pullFiles", [repositoryId, number], `page=${page}&per_page=${perPage}`, undefined, page); return { items: this.array(value).map((x) => ({ path: this.string(x.filename), status: this.string(x.status), ...(typeof x.previous_filename === "string" ? { previousPath: x.previous_filename } : {}) })), nextPage }; }
+    async listOpenMainPullRequests(repositoryId, page, perPage) { const { value, nextPage } = await this.json("openMainPulls", [repositoryId], `state=open&base=main&page=${page}&per_page=${perPage}`, undefined, page); return { items: this.array(value).map((x) => ({ ...this.pr(x), createdAt: this.string(x.created_at) })), nextPage }; }
+    async listAppChecks(repositoryId, headSha, page, perPage) { const { value, nextPage } = await this.json("appChecks", [repositoryId, headSha], `page=${page}&per_page=${perPage}`, undefined, page); const v = value; return { items: this.array(v.check_runs).map((x) => this.check(repositoryId, x)), nextPage }; }
+    async createCheck(input) { return this.json("createCheck", [input.repositoryId], "", { name: input.name, head_sha: input.headSha, external_id: input.externalId, status: "in_progress" }).then(({ value }) => this.check(input.repositoryId, value)); }
     async updateCheck(input) { await this.json("updateCheck", [input.repositoryId, input.checkId], "", { status: "completed", conclusion: input.conclusion, output: { title: "Release policy", summary: input.summary } }); }
     array(v) { if (!Array.isArray(v))
         throw new Error("github schema rejected"); return v.map((x) => { if (!x || typeof x !== "object" || Array.isArray(x))
@@ -70,7 +145,6 @@ export class GitHubAppPort {
         throw new Error("github schema rejected"); return v; }
     number(v) { if (typeof v !== "number" || !Number.isSafeInteger(v) || v <= 0)
         throw new Error("github schema rejected"); return v; }
-    next(v, page) { return this.array(v).length === 0 ? null : page + 1; }
     pr(v) { const x = v; const base = x.base; const head = x.head; const repo = x.base_repo; return { appId: this.number(x.app?.id), baseRef: this.string(base?.ref), baseSha: this.string(base?.sha), changedFiles: this.number(x.changed_files), headRepositoryId: this.number(head?.repo?.id), headSha: this.string(head?.sha), installationId: this.number(x.installation?.id), number: this.number(x.number), repositoryId: this.number(repo?.id), repositoryName: this.string(repo?.full_name), state: "open" }; }
     check(repositoryId, v) { const x = v; return { appId: this.number(x.app?.id), checkId: this.number(x.id), externalId: this.string(x.external_id), headSha: this.string(x.head_sha), name: this.string(x.name), repositoryId }; }
 }
