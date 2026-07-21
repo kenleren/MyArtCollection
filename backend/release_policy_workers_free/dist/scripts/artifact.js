@@ -29,7 +29,11 @@ if (process.argv[2] === "generate")
     writeFileSync(target, canonicalManifest(fileHashes, currentSha));
 else {
     const recorded = JSON.parse(readFileSync(target, "utf8"));
-    if (!recorded.git_sha || !/^[0-9a-f]{40}$/.test(recorded.git_sha) || JSON.stringify(recorded.files) !== JSON.stringify(Object.fromEntries(Object.entries(fileHashes).sort(([a], [b]) => a.localeCompare(b)))))
-        throw new Error("artifact manifest drift");
+    if (!recorded.git_sha || !/^[0-9a-f]{40}$/.test(recorded.git_sha))
+        throw new Error("artifact manifest git anchor drift");
+    const expected = Object.fromEntries(Object.entries(fileHashes).sort(([a], [b]) => a.localeCompare(b)));
+    const drift = [...new Set([...Object.keys(expected), ...Object.keys(recorded.files ?? {})])].filter((path) => recorded.files?.[path] !== expected[path]).sort();
+    if (drift.length > 0)
+        throw new Error(`artifact manifest drift: ${drift.join(",")}`);
     execFileSync("git", ["-C", root, "merge-base", "--is-ancestor", recorded.git_sha, currentSha]);
 }

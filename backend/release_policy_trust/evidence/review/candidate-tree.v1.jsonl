@@ -520,7 +520,7 @@
 {"blob_oid":"9aa32abfc86f54c92c394d59b15ee22d84d28ef5","class":"protected-control","mode":"100644","path":"backend/release_policy_trust/tsconfig.json"}
 {"blob_oid":"fcae0c4bad38ce8ba107e1c872e766e97ee5943c","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/README.md"}
 {"blob_oid":"e97bb2e4140b6bbc4ab058a1d78ab9253e758476","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/config/runtime-config.v1.schema.json"}
-{"blob_oid":"b171347f6363479cfe00ba5b4160b5c22326b69c","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/dist/scripts/artifact.js"}
+{"blob_oid":"60b7de09ccef2812667620678a77c08b6b8f32a8","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/dist/scripts/artifact.js"}
 {"blob_oid":"86a8202172aa62e5ee1107efe45aa901eef50c46","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/dist/scripts/restore_rehearsal.js"}
 {"blob_oid":"072000de862a6b3681f32ed3931bb25edc9411fc","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/dist/scripts/sbom.js"}
 {"blob_oid":"5e359664f34be0bc57be03f333c811f8ec5133f2","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/dist/src/artifact.js"}
@@ -537,14 +537,14 @@
 {"blob_oid":"86a7f5d329c3a47556eacfb3539090fa54a87a52","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/dist/test/boundaries.test.js"}
 {"blob_oid":"298ccd3e2e0ec4b0120282570e9202f8ff0ac1c2","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/dist/test/dispatcher.test.js"}
 {"blob_oid":"7185949d798d3a02df85fc245c1f5890b0ab4c00","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/dist/test/github_pagination.test.js"}
-{"blob_oid":"1487ca314e4c97c05f674b01f8cb5298338e8866","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/evidence/artifact-manifest.v1.json"}
+{"blob_oid":"f10cb3b5ad909ebc704584fc2854b3a362613ac0","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/evidence/artifact-manifest.v1.json"}
 {"blob_oid":"12f76178a617fbe9d4992725d87a1c2f31bcf1dc","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/evidence/restore-fixture.v1.json"}
 {"blob_oid":"a4b8fda501478cbe43582c4b15f0d93b2591feb4","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/evidence/restore-rehearsal.v1.json"}
 {"blob_oid":"6424d06e5d81d164c5fcb60b9f4354b2ac67205c","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/evidence/sbom.spdx.json"}
 {"blob_oid":"4520917202accc7cd37e389aa7d7f98fb705c3af","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/evidence/sqlite-conformance.v1.json"}
 {"blob_oid":"66468d124f57bd2bec04c7d438808394c3090633","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/package-lock.json"}
 {"blob_oid":"082963d2d67f39e44d073be61d3e321822aba819","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/package.json"}
-{"blob_oid":"ca6ace66e655ca8bb115365978f32b290d805b1f","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/scripts/artifact.ts"}
+{"blob_oid":"52bac05ee76aff76fc219ec810c7a0752ef0f26c","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/scripts/artifact.ts"}
 {"blob_oid":"9aec6bf6b8a91e1d1f720e95993ea5bd8e6e04f8","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/scripts/bundle_worker.mjs"}
 {"blob_oid":"698ddc23c40029df5c5efc627054b4eb336a5b48","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/scripts/clean.mjs"}
 {"blob_oid":"a982e7c980d63fa3342bc60e23df492a4cabb90f","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/scripts/generate_canonical_policy.mjs"}
