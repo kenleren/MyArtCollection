@@ -5,6 +5,7 @@ import { SqliteStore } from "./sqlite_store.js";
 import { parseRuntimeConfig } from "./config.js";
 import { CANONICAL_POLICY_BYTES } from "./generated/canonical_policy_bytes.js";
 import { githubAlarmPort } from "./github_app_port.js";
+import type { EgressMeasurement } from "./telemetry.js";
 
 interface RuntimeEnv { RELEASE_TRUST_CONFIG_V1: string; GITHUB_APP_PRIVATE_KEY_PEM: string }
 
@@ -21,10 +22,11 @@ export class RepositoryDurableObject {
       clock: { delay: async () => {} },
       identity: { appId: config.appId, baseRef: "main", installationId: config.installationId, repositoryId: config.repositoryId, repositoryName: "kenleren/MyArtCollection" },
       policy: loadCanonicalPolicy(CANONICAL_POLICY_BYTES),
-      portFactory: () => githubAlarmPort({ appId: config.appId, installationId: config.installationId, privateKeyPem: env.GITHUB_APP_PRIVATE_KEY_PEM, fetcher: fetch }),
+      portFactory: () => githubAlarmPort({ appId: config.appId, installationId: config.installationId, repositoryId: config.repositoryId, repositoryName: "kenleren/MyArtCollection", privateKeyPem: env.GITHUB_APP_PRIVATE_KEY_PEM, fetcher: fetch, measure: (measurement) => this.recordEgress(measurement) }),
     });
   }
   async fetch(request: Request): Promise<Response> {
+    this.store.incrementMeta("do_request_count/v1");
     const path = new URL(request.url).pathname;
     if (request.method !== "POST") return new Response("not found", { status: 404 });
     if (path === "/watchdog") { await this.watchdog(); return new Response(null, { status: 202 }); }
@@ -41,4 +43,10 @@ export class RepositoryDurableObject {
   }
   async alarm(): Promise<void> { await this.dispatcher.alarm(); }
   async watchdog(): Promise<void> { await this.dispatcher.watchdog(); }
+  private recordEgress(measurement: EgressMeasurement): void {
+    const key = `egress/${measurement.metric}/v1`;
+    if (!Number.isSafeInteger(measurement.value) || measurement.value < 0) { this.store.writeMeta(key, 1_000_000); return; }
+    if (measurement.metric === "request_high_water") { const prior = this.store.readMeta<number>(key) ?? 0; this.store.writeMeta(key, Math.min(Math.max(prior, measurement.value), 1_000_000)); }
+    else this.store.incrementMeta(key, measurement.value);
+  }
 }

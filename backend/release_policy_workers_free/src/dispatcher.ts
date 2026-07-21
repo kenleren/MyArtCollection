@@ -1,5 +1,5 @@
 import {
-  AmbiguousCreateError, AmbiguousUpdateError, beginReceiptSnapshot, commitDecision,
+  AmbiguousCreateError, AmbiguousUpdateError, DefinitiveNotSentError, beginReceiptSnapshot, commitDecision,
   prepareCheckBinding, receive, runCreateCheck, runUpdateCheck, settlePullReceipt,
   snapshotPullRequest, snapshotPushTargets, atomicEnqueuePull, atomicEnqueuePush, atomicEnqueuePushChild, leasePushChild, settlePushChild, recoverEvaluationLease, recoverAbandonedEffect,
   type CanonicalReleasePolicy, type ExpectedIdentity, type GitHubCheckRunsPort,
@@ -7,7 +7,7 @@ import {
 } from "@archivale/release-policy-trust";
 import type { DurableStorage } from "./platform.js";
 import type { SqliteStore } from "./sqlite_store.js";
-import { sanitizeTelemetry } from "./telemetry.js";
+import { boundedBucket, sanitizeTelemetry } from "./telemetry.js";
 
 export type DeliveryTarget = { kind: "pull_request"; pullRequestNumber: number } | { kind: "push"; after: string };
 export interface EffectRuntime {
@@ -38,8 +38,19 @@ export class AlarmDispatcher {
     const oldestWorkBucket = oldestReceivedAt === undefined ? 0 : Date.now() - oldestReceivedAt < 60_000 ? 1 : 2;
     const bindings = this.store.entries("binding/").map(({ value }) => value as { checkId?: number; externalId?: string }); const seen = new Set<string>(); let duplicates = 0;
     for (const binding of bindings) { if (binding.checkId === undefined || binding.externalId === undefined) continue; const identity = `${binding.checkId}:${binding.externalId}`; if (seen.has(identity)) duplicates += 1; else seen.add(identity); }
-    const rows = this.store.rowCount();
-    this.store.writeMeta("watchdog/v1", sanitizeTelemetry({ alarm_present: alarm !== null, alarm_reasserted: alarmReasserted, duplicate_binding_bucket: duplicates === 0 ? 0 : duplicates < 3 ? 1 : 2, forbidden_egress_count: 0, oldest_work_bucket: oldestWorkBucket, pending_bucket: pending === 0 ? 0 : pending < 10 ? 1 : 2, row_headroom_bucket: rows < 50 ? 0 : rows < 100 ? 1 : 2, status_egress_count: 0 }));
+    const rows = this.store.rowCount(); const bytes = this.store.databaseBytes();
+    const metric = (name: string): number => this.store.readMeta<number>(`${name}/v1`) ?? 0;
+    const doInvocations = metric("do_request_count") + metric("alarm_count");
+    this.store.writeMeta("watchdog/v1", sanitizeTelemetry({
+      alarm_present: alarm !== null, alarm_reasserted: alarmReasserted,
+      do_headroom_bucket: boundedBucket(doInvocations, 1_000, 10_000),
+      duplicate_binding_bucket: boundedBucket(duplicates, 1, 3), duplicate_check_bucket: boundedBucket(metric("egress/duplicate_check"), 1, 3),
+      exceeded_resource_bucket: boundedBucket(metric("egress/exceeded_resource"), 1, 3), forbidden_egress_bucket: boundedBucket(metric("egress/forbidden_egress"), 1, 3),
+      oldest_work_bucket: oldestWorkBucket, pending_bucket: boundedBucket(pending, 10, 100),
+      provider_error_bucket: boundedBucket(metric("egress/provider_error"), 1, 3), request_headroom_bucket: boundedBucket(metric("egress/request_high_water"), 40, 51),
+      row_headroom_bucket: boundedBucket(rows, 50, 100), status_egress_bucket: boundedBucket(metric("egress/status_egress"), 1, 3),
+      storage_headroom_bucket: boundedBucket(bytes, 524_288, 1_048_576), worker_error_bucket: boundedBucket(metric("worker_error_count"), 1, 3),
+    }));
   }
   rememberTarget(receipt: Pick<Receipt, "installationId" | "deliveryId">, target: DeliveryTarget): void { const key = targetMetaKey(receipt.installationId, receipt.deliveryId); if (this.store.readMeta(key) === undefined) this.store.writeMeta(key, { ...target, received_at: Date.now() }); }
   async alarm(): Promise<void> {
@@ -54,7 +65,7 @@ export class AlarmDispatcher {
       for (const row of this.store.entries("receipt/")) {
         const receipt = row.value as Receipt;
         try { await this.advanceReceipt(receipt, port, pullSnapshots); }
-        catch (error) { retryAt = Math.min(retryAt ?? Infinity, this.recordRetry(receipt, error)); }
+        catch (error) { this.store.incrementMeta("worker_error_count/v1"); if (error instanceof DefinitiveNotSentError) this.store.incrementMeta("egress/exceeded_resource/v1"); retryAt = Math.min(retryAt ?? Infinity, this.recordRetry(receipt, error)); }
       }
       // A future alarm is required whenever durable non-terminal work remains.
       if (this.hasPendingWork()) await this.storage.setAlarm(retryAt ?? Date.now() + 25);

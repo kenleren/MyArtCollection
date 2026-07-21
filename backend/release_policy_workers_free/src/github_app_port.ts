@@ -1,8 +1,9 @@
 /** The sole network-capable module.  Its public shape is the core's closed
  * Check Runs port: callers cannot construct URLs, send statuses, or use GraphQL. */
-import { DefinitiveNotSentError, type AppCheck, type CreateCheckInput, type GitHubCheckRunsPort, type MainRefSnapshot, type OpenMainPullRequest, type Page, type PullRequestSnapshot, type UpdateCheckInput } from "@archivale/release-policy-trust";
+import { DefinitiveNotSentError, type AppCheck, type CreateCheckInput, type ExpectedIdentity, type GitHubCheckRunsPort, type MainRefSnapshot, type OpenMainPullRequest, type Page, type PullRequestSnapshot, type UpdateCheckInput } from "@archivale/release-policy-trust";
 import type { ChangedFile } from "@archivale/release-policy-trust";
 import { githubRoute, type Route } from "./github_routes.js";
+import type { EgressMeasurement } from "./telemetry.js";
 
 type Json = Record<string, unknown> | unknown[];
 const MAX_RESPONSE_BYTES: Record<Route, number> = { installationToken: 16_384, pullRequest: 131_072, mainRef: 16_384, pullFiles: 1_048_576, openMainPulls: 1_048_576, appChecks: 1_048_576, createCheck: 131_072, updateCheck: 131_072 };
@@ -46,7 +47,7 @@ async function boundedJson(response: Response, limit: number): Promise<Json> {
   try { return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as Json; } catch { throw new Error("github JSON rejected"); }
 }
 export class GitHubAppPort implements GitHubCheckRunsPort {
-  constructor(private readonly fetcher: typeof fetch, private readonly authorization: () => Promise<string>) {}
+  constructor(private readonly fetcher: typeof fetch, private readonly authorization: () => Promise<string>, private readonly identity: ExpectedIdentity, private readonly measure: (measurement: EgressMeasurement) => void = () => {}) {}
   private async json(route: Route, args: readonly (string | number)[], query = "", body?: unknown, page?: number): Promise<{ value: Json; nextPage: number | null }> {
     const base = githubRoute(route, args, query);
     const token = await this.authorization();
@@ -55,8 +56,8 @@ export class GitHubAppPort implements GitHubCheckRunsPort {
     headers.set("Authorization", `Bearer ${token}`);
     if (body !== undefined) headers.set("Content-Type", "application/json");
     const outbound = new Request(base.url, { method: base.method, redirect: "manual", headers, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
-    const response = await callFetch(this.fetcher, outbound);
-    if (response.redirected || !response.ok || !/^application\/json(?:;|$)/i.test(response.headers.get("content-type") ?? "")) throw new Error("github route rejected");
+    let response: Response; try { response = await callFetch(this.fetcher, outbound); } catch (error) { if (!(error instanceof DefinitiveNotSentError)) this.measure({ metric: "provider_error", value: 1 }); throw error; }
+    if (response.redirected || !response.ok || !/^application\/json(?:;|$)/i.test(response.headers.get("content-type") ?? "")) { this.measure({ metric: "provider_error", value: 1 }); throw new Error("github route rejected"); }
     const nextPage = page === undefined ? null : parsePagination(response.headers.get("link"), new URL(base.url), route as PaginatedRoute, page);
     return { value: await boundedJson(response, MAX_RESPONSE_BYTES[route]), nextPage };
   }
@@ -64,13 +65,21 @@ export class GitHubAppPort implements GitHubCheckRunsPort {
   async getMainRef(repositoryId: number): Promise<MainRefSnapshot> { const { value } = await this.json("mainRef", [repositoryId]); const v = value as Record<string, unknown>; return { repositoryId, ref: "refs/heads/main", sha: this.string(v.object && (v.object as Record<string, unknown>).sha) }; }
   async listPullRequestFiles(repositoryId: number, number: number, page: number, perPage: number): Promise<Page<ChangedFile>> { const { value, nextPage } = await this.json("pullFiles", [repositoryId, number], `page=${page}&per_page=${perPage}`, undefined, page); return { items: this.array(value).map((x) => ({ path: this.string(x.filename), status: this.string(x.status) as ChangedFile["status"], ...(typeof x.previous_filename === "string" ? { previousPath: x.previous_filename } : {}) })), nextPage }; }
   async listOpenMainPullRequests(repositoryId: number, page: number, perPage: number): Promise<Page<OpenMainPullRequest>> { const { value, nextPage } = await this.json("openMainPulls", [repositoryId], `state=open&base=main&page=${page}&per_page=${perPage}`, undefined, page); return { items: this.array(value).map((x) => ({ ...this.pr(x), createdAt: this.string(x.created_at) })), nextPage }; }
-  async listAppChecks(repositoryId: number, headSha: string, page: number, perPage: number): Promise<Page<AppCheck>> { const { value, nextPage } = await this.json("appChecks", [repositoryId, headSha], `page=${page}&per_page=${perPage}`, undefined, page); const v = value as Record<string, unknown>; return { items: this.array(v.check_runs).map((x) => this.check(repositoryId, x)), nextPage }; }
+  async listAppChecks(repositoryId: number, headSha: string, page: number, perPage: number): Promise<Page<AppCheck>> { const { value, nextPage } = await this.json("appChecks", [repositoryId, headSha], `page=${page}&per_page=${perPage}`, undefined, page); const v = value as Record<string, unknown>; const items = this.array(v.check_runs).map((x) => this.check(repositoryId, x)); const seen = new Set<string>(); let duplicates = 0; for (const item of items) { const key = `${item.appId}:${item.checkId}:${item.externalId}`; if (seen.has(key)) duplicates += 1; else seen.add(key); } if (duplicates > 0) this.measure({ metric: "duplicate_check", value: duplicates }); return { items, nextPage }; }
   async createCheck(input: CreateCheckInput): Promise<AppCheck> { return this.json("createCheck", [input.repositoryId], "", { name: input.name, head_sha: input.headSha, external_id: input.externalId, status: "in_progress" }).then(({ value }) => this.check(input.repositoryId, value)); }
   async updateCheck(input: UpdateCheckInput): Promise<void> { await this.json("updateCheck", [input.repositoryId, input.checkId], "", { status: "completed", conclusion: input.conclusion, output: { title: "Release policy", summary: input.summary } }); }
   private array(v: unknown): Record<string, unknown>[] { if (!Array.isArray(v)) throw new Error("github schema rejected"); return v.map((x) => { if (!x || typeof x !== "object" || Array.isArray(x)) throw new Error("github schema rejected"); return x as Record<string, unknown>; }); }
   private string(v: unknown): string { if (typeof v !== "string" || v.length === 0) throw new Error("github schema rejected"); return v; }
   private number(v: unknown): number { if (typeof v !== "number" || !Number.isSafeInteger(v) || v <= 0) throw new Error("github schema rejected"); return v; }
-  private pr(v: unknown): PullRequestSnapshot { const x = v as Record<string, unknown>; const base = x.base as Record<string, unknown>; const head = x.head as Record<string, unknown>; const repo = x.base_repo as Record<string, unknown> | undefined; return { appId: this.number((x.app as Record<string, unknown>)?.id), baseRef: this.string(base?.ref), baseSha: this.string(base?.sha), changedFiles: this.number(x.changed_files), headRepositoryId: this.number((head?.repo as Record<string, unknown>)?.id), headSha: this.string(head?.sha), installationId: this.number((x.installation as Record<string, unknown>)?.id), number: this.number(x.number), repositoryId: this.number(repo?.id), repositoryName: this.string(repo?.full_name), state: "open" }; }
+  private pr(v: unknown): PullRequestSnapshot {
+    if (!v || typeof v !== "object" || Array.isArray(v)) throw new Error("github schema rejected");
+    const x = v as Record<string, unknown>; const base = x.base as Record<string, unknown> | undefined; const head = x.head as Record<string, unknown> | undefined;
+    const baseRepo = base?.repo as Record<string, unknown> | undefined; const headRepo = head?.repo as Record<string, unknown> | undefined;
+    const repositoryId = this.number(baseRepo?.id); const repositoryName = this.string(baseRepo?.full_name);
+    const state = this.string(x.state); const baseRef = this.string(base?.ref);
+    if (repositoryId !== this.identity.repositoryId || repositoryName !== this.identity.repositoryName || baseRef !== this.identity.baseRef || state !== "open") throw new Error("github PR identity rejected");
+    return { appId: this.identity.appId, baseRef, baseSha: this.string(base?.sha), changedFiles: this.number(x.changed_files), headRepositoryId: this.number(headRepo?.id), headSha: this.string(head?.sha), installationId: this.identity.installationId, number: this.number(x.number), repositoryId, repositoryName, state };
+  }
   private check(repositoryId: number, v: unknown): AppCheck { const x = v as Record<string, unknown>; return { appId: this.number((x.app as Record<string, unknown>)?.id), checkId: this.number(x.id), externalId: this.string(x.external_id), headSha: this.string(x.head_sha), name: this.string(x.name), repositoryId }; }
 }
 
@@ -103,14 +112,32 @@ export function githubInstallationAuthorization(input: { appId: number; installa
 
 /** One alarm owns one transient authorization/session budget. Nothing from the
  * session is persisted or reused by a later event. */
-export function githubAlarmPort(input: { appId: number; installationId: number; privateKeyPem: string; fetcher: typeof fetch }): GitHubCheckRunsPort {
+export function classifyGitHubEgress(request: Request): "allowed" | "status" | "forbidden" {
+  const url = new URL(request.url); if (url.origin !== "https://api.github.com" || url.username || url.password || url.hash) return "forbidden";
+  if (/^\/repositories\/[1-9][0-9]*\/statuses\/[0-9a-f]{40}$/.test(url.pathname)) return "status";
+  const allowed = [
+    ["POST", /^\/app\/installations\/[1-9][0-9]*\/access_tokens$/], ["GET", /^\/repositories\/[1-9][0-9]*\/pulls\/[1-9][0-9]*$/],
+    ["GET", /^\/repositories\/[1-9][0-9]*\/git\/ref\/heads\/main$/], ["GET", /^\/repositories\/[1-9][0-9]*\/pulls\/[1-9][0-9]*\/files$/],
+    ["GET", /^\/repositories\/[1-9][0-9]*\/pulls$/], ["GET", /^\/repositories\/[1-9][0-9]*\/commits\/[0-9a-f]{40}\/check-runs$/],
+    ["POST", /^\/repositories\/[1-9][0-9]*\/check-runs$/], ["PATCH", /^\/repositories\/[1-9][0-9]*\/check-runs\/[1-9][0-9]*$/],
+  ] as const;
+  return allowed.some(([method, path]) => request.method === method && path.test(url.pathname)) ? "allowed" : "forbidden";
+}
+export function enforceGitHubEgress(request: Request, measure: (measurement: EgressMeasurement) => void): void {
+  const classification = classifyGitHubEgress(request); if (classification === "allowed") return;
+  measure({ metric: classification === "status" ? "status_egress" : "forbidden_egress", value: 1 }); throw new DefinitiveNotSentError("github egress route rejected");
+}
+
+export function githubAlarmPort(input: { appId: number; installationId: number; repositoryId: number; repositoryName: string; privateKeyPem: string; fetcher: typeof fetch; measure?: (measurement: EgressMeasurement) => void }): GitHubCheckRunsPort {
   let outboundCalls = 0;
   const budgetedFetch: typeof fetch = async (request, init) => {
+    const outbound = request instanceof Request ? request : new Request(request, init); enforceGitHubEgress(outbound, input.measure ?? (() => {}));
     outboundCalls += 1;
-    if (outboundCalls > 50) throw new DefinitiveNotSentError("github alarm subrequest budget exhausted");
-    return callFetch(input.fetcher, request instanceof Request ? request : new Request(request, init), request instanceof Request ? init : undefined);
+    input.measure?.({ metric: "request_high_water", value: outboundCalls });
+    if (outboundCalls > 50) { input.measure?.({ metric: "exceeded_resource", value: 1 }); throw new DefinitiveNotSentError("github alarm subrequest budget exhausted"); }
+    return callFetch(input.fetcher, outbound, request instanceof Request ? init : undefined);
   };
   const issueAuthorization = githubInstallationAuthorization({ ...input, fetcher: budgetedFetch });
   let authorization: Promise<string> | undefined;
-  return new GitHubAppPort(budgetedFetch, () => authorization ??= issueAuthorization());
+  return new GitHubAppPort(budgetedFetch, () => authorization ??= issueAuthorization(), { appId: input.appId, baseRef: "main", installationId: input.installationId, repositoryId: input.repositoryId, repositoryName: input.repositoryName }, input.measure);
 }

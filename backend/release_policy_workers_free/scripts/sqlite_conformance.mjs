@@ -19,7 +19,7 @@ const CASE_IDS = [
   "budget.call_51", "telemetry.watchdog", "protected.add", "protected.modify",
   "protected.delete", "protected.copy", "protected.rename", "protected.case_fold",
 ];
-const CASE_SET = new Set(CASE_IDS);
+const CASE_SET = new Set([...CASE_IDS, "restore.rehearsal"]);
 const FLAGS = ["nodejs_compat", "nodejs_compat_v2", "nodejs_compat_do_not_populate_process_env", "disallow_importable_env"];
 const FIXED_SCHEDULED_TIME_MS = 1784603820000;
 const FIXED_CRON = "17 3 * * *";
@@ -53,6 +53,9 @@ const bundleRoot = resolve(repositoryRoot, ".work/release-policy-workers-free/bu
 const bundlePath = resolve(bundleRoot, "worker.mjs");
 const scriptPath = relative(repositoryRoot, bundlePath).split(sep).join("/");
 const evidencePath = resolve(packageRoot, "evidence/sqlite-conformance.v1.json");
+const restoreFixturePath = resolve(packageRoot, "evidence/restore-fixture.v1.json");
+const captureRestoreFixture = process.argv.includes("--capture-restore-fixture");
+const runRestoreOnly = process.argv.includes("--restore-rehearsal");
 let bundleHash;
 let importManifestHash;
 
@@ -151,7 +154,7 @@ class SyntheticEgress {
     if (method === "GET" && path === `/repositories/${REPOSITORY_ID}/pulls/1` && !url.search) {
       this.record("pullRequest");
       if (this.fixture.gate && this.count("pullRequest") === 1) { this.gateTriggered = true; this.resolveGate(); await this.gateRelease; }
-      return this.response({ app: { id: APP_ID }, base: { ref: "main", sha: BASE_SHA, repo: { id: REPOSITORY_ID } }, base_repo: { id: REPOSITORY_ID, full_name: "kenleren/MyArtCollection" }, head: { sha: HEAD_SHA, repo: { id: REPOSITORY_ID } }, installation: { id: INSTALLATION_ID }, changed_files: this.fixture.declaredCount ?? this.fixture.files.length, number: 1 });
+      return this.response({ base: { ref: "main", sha: BASE_SHA, repo: { id: REPOSITORY_ID, full_name: "kenleren/MyArtCollection" } }, head: { sha: HEAD_SHA, repo: { id: REPOSITORY_ID, full_name: "kenleren/MyArtCollection" } }, changed_files: this.fixture.declaredCount ?? this.fixture.files.length, number: 1, state: "open" });
     }
     if (method === "GET" && path === `/repositories/${REPOSITORY_ID}/git/ref/heads/main` && !url.search) { this.record("mainRef"); return this.response({ object: { sha: BASE_SHA } }); }
     if (method === "GET" && path === `/repositories/${REPOSITORY_ID}/pulls/1/files`) return this.pullFiles(url);
@@ -192,6 +195,7 @@ class SyntheticEgress {
     if (!Number.isSafeInteger(page) || url.searchParams.get("per_page") !== "100") { this.unmatched += 1; return new Response(null, { status: 403 }); }
     if (this.fixture.budgetCall51) {
       const rows = Array.from({ length: 100 }, (_, index) => ({ app: { id: APP_ID + 1 }, id: page * 1000 + index + 1, external_id: `other-${page}-${index}`, head_sha: HEAD_SHA, name: "other" }));
+      rows[1] = { ...rows[0] };
       this.record("appChecks", page, "ok", rows.length);
       return this.response({ check_runs: rows }, { link: exactLink(`/repositories/${REPOSITORY_ID}/commits/${HEAD_SHA}/check-runs`, page, 30) });
     }
@@ -268,7 +272,11 @@ function stoppedInspection(caseId, persistRoot, objectId, creds) {
     const watchdog = metaParsed.find((row) => row.key === "watchdog/v1")?.value; const watchdogFields = watchdog && typeof watchdog === "object" ? Object.keys(watchdog).sort() : [];
     const alarmCount = metaParsed.find((row) => row.key === "alarm_count/v1")?.value ?? 0;
     const retries = metaParsed.filter((row) => row.key.startsWith("retry/")); const retryClasses = retries.map((row) => row.value?.error_class).filter((value) => typeof value === "string").sort(); const retryAttempts = Math.max(0, ...retries.map((row) => Number(row.value?.attempts) || 0));
-    return { quick_check: true, schema_version: schemaVersion, schema_sha256: sha256(tables.filter((row) => applicationTables.includes(row.name)).map((row) => row.sql).join("\n")), rows: parsed.length + metaParsed.length, kv_rows: parsed.length, meta_rows: metaParsed.length, prefix_counts: prefixCounts, states, stale_leases: staleLeases, watchdog_fields: watchdogFields, watchdog_reasserted: watchdog?.alarm_reasserted === true, alarm_count: alarmCount, retry_classes: retryClasses, retry_attempts: retryAttempts, page_count: pageCount, page_size: pageSize, database_bytes: fileBytes, redaction_scan: true };
+    const restoreRows = captureRestoreFixture ? {
+      kv: kv.map((row) => ({ key: row.key, version: Number(row.version), value_json: String(row.value_json) })),
+      meta: meta.filter((row) => String(row.key).startsWith("target/")).map((row) => { const value = JSON.parse(String(row.value_json)); if (value && typeof value === "object" && "received_at" in value) value.received_at = 0; return { key: row.key, value_json: JSON.stringify(value) }; }),
+    } : undefined;
+    return { quick_check: true, schema_version: schemaVersion, schema_sha256: sha256(tables.filter((row) => applicationTables.includes(row.name)).map((row) => row.sql).join("\n")), rows: parsed.length + metaParsed.length, kv_rows: parsed.length, meta_rows: metaParsed.length, prefix_counts: prefixCounts, states, stale_leases: staleLeases, watchdog_fields: watchdogFields, watchdog, watchdog_reasserted: watchdog?.alarm_reasserted === true, alarm_count: alarmCount, retry_classes: retryClasses, retry_attempts: retryAttempts, page_count: pageCount, page_size: pageSize, database_bytes: fileBytes, redaction_scan: true, restore_rows: restoreRows };
   } finally { db.close(); }
 }
 function countStaleLeases(value) {
@@ -338,7 +346,7 @@ async function runLane(caseId, kind, creds) {
       const threshold = caseId.endsWith("ambiguous_create") ? () => aggregateEgress(lane.phases).create === 1 : () => lane.egress.tokenFailures === 1;
       await runScheduledStep(lane.mf, lane.record, "initial"); await waitFor(caseId, threshold); await sleep(100);
       const seed = lane.egress.check; await lane.boundary((inspection) => {
-        if (caseId.endsWith("ambiguous_create")) ensure(inspection.states.possible_send >= 1 && inspection.retry_classes.length >= 1, caseId, "ambiguous_checkpoint");
+        if (caseId.endsWith("ambiguous_create")) { ensure(inspection.states.possible_send >= 1 && inspection.retry_classes.length >= 1, caseId, "ambiguous_checkpoint"); if (captureRestoreFixture && kind === "persistent_sqlite") writeFileSync(restoreFixturePath, JSON.stringify({ schema_version: 1, checkpoint: "ambiguous_create_possible_send", ...inspection.restore_rows }) + "\n"); }
         else ensure(inspection.states.snapshotting === 1 && inspection.retry_classes.includes("transient"), caseId, "definite_checkpoint");
       });
       if (kind === "black_box") { lane.egress.fixture.ambiguousCreate = false; lane.egress.fixture.definiteTokenFailure = false; lane.egress.check = seed; }
@@ -350,14 +358,14 @@ async function runLane(caseId, kind, creds) {
       const aggregate = aggregateEgress(lane.phases); ensure(aggregate.create === 1 && aggregate.update === 1, caseId, "sole_drainer_outcome"); await lane.finish((inspection) => ensure(inspection.alarm_count <= 8 && inspection.stale_leases === 0, caseId, "sole_drainer_sqlite"));
     } else if (caseId === "telemetry.watchdog") {
       await lane.start(); await runScheduledStep(lane.mf, lane.record, "before"); const webhook = dispatchWebhook(lane.mf, lane.creds, `${caseId}-delivery`, makeBody(), lane.record); await waitFor(caseId, () => lane.egress.gateTriggered, "gate_timeout"); await webhook; const during = runScheduledStep(lane.mf, lane.record, "during"); lane.egress.releaseGate(); await during; await waitFor(caseId, () => aggregateEgress(lane.phases).update === 1); await runScheduledStep(lane.mf, lane.record, "after"); lane.record.post_terminal = true;
-      await lane.finish((inspection) => { const allowed = ["alarm_present", "alarm_reasserted", "duplicate_binding_bucket", "forbidden_egress_count", "oldest_work_bucket", "pending_bucket", "row_headroom_bucket", "status_egress_count"]; ensure(JSON.stringify(inspection.watchdog_fields) === JSON.stringify(allowed) && inspection.redaction_scan, caseId, "telemetry_shape"); });
+      await lane.finish((inspection) => { const allowed = ["alarm_present", "alarm_reasserted", "do_headroom_bucket", "duplicate_binding_bucket", "duplicate_check_bucket", "exceeded_resource_bucket", "forbidden_egress_bucket", "oldest_work_bucket", "pending_bucket", "provider_error_bucket", "request_headroom_bucket", "row_headroom_bucket", "status_egress_bucket", "storage_headroom_bucket", "worker_error_bucket"]; ensure(JSON.stringify(inspection.watchdog_fields) === JSON.stringify(allowed) && inspection.redaction_scan, caseId, "telemetry_shape"); ensure(["duplicate_check_bucket", "exceeded_resource_bucket", "forbidden_egress_bucket", "provider_error_bucket", "status_egress_bucket", "worker_error_bucket"].every((field) => inspection.watchdog[field] === 0), caseId, "telemetry_zero_transition"); });
     } else if (caseId.startsWith("pagination.") && !["pagination.ordinary", "pagination.101", "pagination.3000"].includes(caseId) || caseId === "budget.call_51" || caseId === "protected.case_fold") {
       await lane.start(); await dispatchWebhook(lane.mf, lane.creds, `${caseId}-delivery`, makeBody(), lane.record);
       const expected = caseId === "budget.call_51" ? () => aggregateEgress(lane.phases).total === 50 : caseId === "pagination.declared_3001" ? () => lane.egress.count("pullRequest") >= 1 : () => lane.egress.count("pullFiles") >= (caseId === "pagination.page_31" ? 30 : 1);
       await waitFor(caseId, expected); await sleep(100); await runScheduledStep(lane.mf, lane.record, "recovery-watchdog"); const aggregate = aggregateEgress(lane.phases);
       ensure(aggregate.update === 0 && aggregate.filePages.filter((page) => page === 31).length === 0 && aggregate.unmatched === 0, caseId, "rejection_egress");
       if (caseId === "budget.call_51") ensure(aggregate.total === 50 && aggregate.create === 1 && aggregate.update === 0, caseId, "budget_boundary"); else ensure(aggregate.create === 0, caseId, "rejection_created");
-      lane.record.post_terminal = true; await lane.finish((inspection) => ensure(inspection.retry_classes.length >= 1 && inspection.alarm_count <= 8, caseId, "rejection_recovery"));
+      lane.record.post_terminal = true; await lane.finish((inspection) => { ensure(inspection.retry_classes.length >= 1 && inspection.alarm_count <= 8, caseId, "rejection_recovery"); if (caseId === "budget.call_51") ensure(inspection.watchdog?.duplicate_check_bucket >= 1 && inspection.watchdog?.exceeded_resource_bucket >= 1 && inspection.watchdog?.request_headroom_bucket === 2 && inspection.watchdog?.worker_error_bucket >= 1, caseId, "telemetry_nonzero_transition"); });
     } else {
       const aggregate = await standardLifecycle(lane);
       ensure(aggregate.create === 1 && aggregate.update === 1 && aggregate.unmatched === 0, caseId, "lifecycle_outcome");
@@ -374,7 +382,8 @@ async function runLane(caseId, kind, creds) {
 }
 
 function boundedEvidence(results) {
-  return { schema_version: 1, node: process.version, miniflare: "4.20260714.0", bundle_sha256: bundleHash, import_manifest_sha256: importManifestHash, paired_black_box: true, paired_persistent_sqlite: true, unsafe_live_inspection: false, scheduled_proxy: true, removed_miniflare_dispatch_absent: true, scheduled_http_trigger_count: 0, case_count: results.length, cases: results.map((result) => ({ case_id: result.caseId, external_equivalence: true, route_count: result.external.totals.all, create_count: result.external.totals.create, update_count: result.external.totals.update, forbidden_egress_count: result.external.forbidden_egress, row_count_within_bound: result.inspections.every((row) => row.rows <= 100), database_bytes_within_bound: result.inspections.every((row) => row.database_bytes <= 1_048_576), alarm_count_within_bound: result.inspections.every((row) => row.alarm_count <= 8), redaction_scan: result.inspections.every((row) => row.redaction_scan) })), temp_cleanup: true, production_config_leakage: false, deployed_cpu_quota_proof: false };
+  const bucketFields = ["do_headroom_bucket", "duplicate_binding_bucket", "duplicate_check_bucket", "exceeded_resource_bucket", "forbidden_egress_bucket", "oldest_work_bucket", "pending_bucket", "provider_error_bucket", "request_headroom_bucket", "row_headroom_bucket", "status_egress_bucket", "storage_headroom_bucket", "worker_error_bucket"];
+  return { schema_version: 1, node: process.version, miniflare: "4.20260714.0", bundle_sha256: bundleHash, import_manifest_sha256: importManifestHash, paired_black_box: true, paired_persistent_sqlite: true, unsafe_live_inspection: false, scheduled_proxy: true, removed_miniflare_dispatch_absent: true, scheduled_http_trigger_count: 0, case_count: results.length, cases: results.map((result) => { const finalWatchdog = result.inspections.at(-1)?.watchdog ?? {}; return { case_id: result.caseId, external_equivalence: true, route_count: result.external.totals.all, create_count: result.external.totals.create, update_count: result.external.totals.update, forbidden_egress_count: result.external.forbidden_egress, telemetry_buckets: Object.fromEntries(bucketFields.map((field) => [field, finalWatchdog[field] ?? 2])), row_count_within_bound: result.inspections.every((row) => row.rows <= 100), database_bytes_within_bound: result.inspections.every((row) => row.database_bytes <= 1_048_576), alarm_count_within_bound: result.inspections.every((row) => row.alarm_count <= 8), redaction_scan: result.inspections.every((row) => row.redaction_scan) }; }), temp_cleanup: true, production_config_leakage: false, deployed_cpu_quota_proof: false };
 }
 
 async function main() {
@@ -389,4 +398,54 @@ async function main() {
   writeFileSync(evidencePath, encoded); process.stdout.write(`sqlite conformance passed (${CASE_IDS.length} cases, ${CASE_IDS.length * 2} uninstrumented lanes)\n`);
 }
 
-main().catch((error) => { const failure = sanitizedFailure(error); process.stderr.write(`sqlite conformance failed (${failure.caseId}:${failure.failureClass})\n`); process.exitCode = 1; });
+function validateRestoreFixture(bytes) {
+  const fixture = JSON.parse(bytes.toString("utf8"));
+  ensure(fixture?.schema_version === 1 && fixture.checkpoint === "ambiguous_create_possible_send" && Array.isArray(fixture.kv) && Array.isArray(fixture.meta), "restore.rehearsal", "fixture_schema");
+  const keys = new Set(); const states = new Set();
+  const containsForbiddenField = (value) => { if (!value || typeof value !== "object") return false; return Object.entries(value).some(([key, child]) => /^(?:authorization|cookie|secret|token|private.?key|x-hub-signature|headers?|body)$/i.test(key) || containsForbiddenField(child)); };
+  for (const row of fixture.kv) { ensure(row && typeof row.key === "string" && /^(binding|current|generation|outbox|receipt)\//.test(row.key) && Number.isSafeInteger(row.version) && row.version >= 1 && typeof row.value_json === "string" && !keys.has(row.key), "restore.rehearsal", "fixture_row"); keys.add(row.key); const value = JSON.parse(row.value_json); ensure(!containsForbiddenField(value), "restore.rehearsal", "fixture_redaction"); if (typeof value?.state === "string") states.add(value.state); }
+  for (const row of fixture.meta) { ensure(row && typeof row.key === "string" && /^target\//.test(row.key) && typeof row.value_json === "string" && !keys.has(row.key), "restore.rehearsal", "fixture_meta"); keys.add(row.key); JSON.parse(row.value_json); }
+  ensure(["possible_send", "create_possible", "decision_ready", "enqueued", "delivered"].every((state) => states.has(state)), "restore.rehearsal", "fixture_checkpoint");
+  ensure(!/BEGIN PRIVATE KEY/.test(bytes.toString("utf8")), "restore.rehearsal", "fixture_redaction");
+  return fixture;
+}
+
+async function restoreRehearsal() {
+  preflight(); const fixtureBytes = readFileSync(restoreFixturePath); const fixture = validateRestoreFixture(fixtureBytes); const caseId = "restore.rehearsal";
+  const persistRoot = mkdtempSync(join(tempRoot, "archivale-245-restore-")); chmodSync(persistRoot, 0o700); const creds = credentials(); const record = newRecord(caseId);
+  let mf; let objectId; let dbPath; let quickCheck = false; let duplicateBindings = -1; let exactRowMatch = false;
+  const binding = fixture.kv.map((row) => JSON.parse(row.value_json)).find((value) => value?.state === "create_possible");
+  ensure(binding && typeof binding.externalId === "string", caseId, "fixture_binding");
+  const seedCheck = { app: { id: APP_ID }, id: CHECK_ID, external_id: binding.externalId, head_sha: HEAD_SHA, name: binding.checkName };
+  const egress = new SyntheticEgress(caseId, creds, fixtureFor("recovery.ambiguous_create"), seedCheck);
+  try {
+    mf = new Miniflare(makeOptions(creds, egress, persistRoot)); await runScheduledStep(mf, record, "initialize-layout");
+    const ids = await mf.listDurableObjectIds("REPOSITORY"); ensure(ids.length === 1, caseId, "durable_identity"); objectId = ids[0]; await mf.dispose(); mf = null;
+    const namespaceRoot = resolve(persistRoot, "-RepositoryDurableObject"); dbPath = resolve(namespaceRoot, `${objectId}.sqlite`);
+    const restored = new DatabaseSync(dbPath); restored.exec("BEGIN IMMEDIATE");
+    try {
+      restored.exec("DELETE FROM kv; DELETE FROM meta");
+      const insertKv = restored.prepare("INSERT INTO kv(key,version,value_json) VALUES(?,?,?)"); for (const row of fixture.kv) insertKv.run(row.key, row.version, row.value_json);
+      const insertMeta = restored.prepare("INSERT INTO meta(key,value_json) VALUES(?,?)"); insertMeta.run("schema_version", "1"); for (const row of fixture.meta) insertMeta.run(row.key, row.value_json);
+      restored.exec("COMMIT");
+    } catch (error) { restored.exec("ROLLBACK"); throw error; } finally { restored.close(); }
+    const restoredReadOnly = new DatabaseSync(dbPath, { readOnly: true }); restoredReadOnly.exec("PRAGMA query_only=ON");
+    const restoredKv = restoredReadOnly.prepare("SELECT key,version,value_json FROM kv ORDER BY key").all(); const restoredMeta = restoredReadOnly.prepare("SELECT key,value_json FROM meta WHERE key LIKE 'target/%' ORDER BY key").all(); restoredReadOnly.close();
+    exactRowMatch = JSON.stringify(restoredKv) === JSON.stringify([...fixture.kv].sort((a, b) => a.key.localeCompare(b.key))) && JSON.stringify(restoredMeta) === JSON.stringify([...fixture.meta].sort((a, b) => a.key.localeCompare(b.key))); ensure(exactRowMatch, caseId, "restore_exact_rows");
+    mf = new Miniflare(makeOptions(creds, egress, persistRoot)); await runScheduledStep(mf, record, "restore-reconcile"); await waitFor(caseId, () => egress.count("updateCheck") === 1, "restore_reconcile_timeout");
+    ensure(egress.count("createCheck") === 0, caseId, "restore_duplicate_create");
+    const beforeReplay = egress.total(); const status = await dispatchWebhook(mf, creds, "recovery.ambiguous_create-delivery", makeBody(), record); ensure(status === 202, caseId, "restore_replay_status"); await runScheduledStep(mf, record, "restore-replay"); await sleep(250);
+    ensure(egress.total() === beforeReplay && egress.count("createCheck") === 0 && egress.count("updateCheck") === 1, caseId, "restore_replay_egress");
+    await mf.dispose(); mf = null;
+    const inspection = stoppedInspection(caseId, persistRoot, objectId, creds); quickCheck = inspection.quick_check;
+    const readOnly = new DatabaseSync(dbPath, { readOnly: true }); readOnly.exec("PRAGMA query_only=ON");
+    const bindingRows = readOnly.prepare("SELECT value_json FROM kv WHERE key LIKE 'binding/%'").all().map((row) => JSON.parse(String(row.value_json)));
+    duplicateBindings = bindingRows.length - new Set(bindingRows.map((row) => `${row.checkId}:${row.externalId}`)).size; readOnly.close();
+    ensure(inspection.states.terminal_success === 2 && inspection.stale_leases === 0 && duplicateBindings === 0 && bindingRows.length === 1 && bindingRows[0].checkId === CHECK_ID, caseId, "restore_terminal_binding");
+  } finally { if (mf) await mf.dispose(); rmSync(persistRoot, { recursive: true, force: true }); }
+  ensure(!existsSync(persistRoot), caseId, "temp_cleanup");
+  const evidence = { schema_version: 1, fixture_sha256: sha256(fixtureBytes), bundle_sha256: bundleHash, import_manifest_sha256: importManifestHash, checkpoint: fixture.checkpoint, restored_kv_rows: fixture.kv.length, restored_meta_rows: fixture.meta.length, exact_row_match_before_boot: exactRowMatch, exact_bundle_recovery: true, ambiguous_create_reconciled: true, replay_accepted: true, create_count: egress.count("createCheck"), update_count: egress.count("updateCheck"), duplicate_check_count: 0, duplicate_binding_count: duplicateBindings, sqlite_quick_check: quickCheck, forbidden_egress_count: egress.unmatched, redaction_scan: true, temp_cleanup: true };
+  writeFileSync(resolve(packageRoot, "evidence/restore-rehearsal.v1.json"), JSON.stringify(evidence) + "\n"); process.stdout.write(`restore rehearsal passed (${fixture.kv.length} durable rows through exact bundle)\n`);
+}
+
+(runRestoreOnly ? restoreRehearsal() : main()).catch((error) => { const failure = sanitizedFailure(error); process.stderr.write(`${runRestoreOnly ? "restore rehearsal" : "sqlite conformance"} failed (${failure.caseId}:${failure.failureClass})\n`); process.exitCode = 1; });

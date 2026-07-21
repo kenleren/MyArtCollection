@@ -1,5 +1,5 @@
-import { AmbiguousCreateError, AmbiguousUpdateError, beginReceiptSnapshot, commitDecision, prepareCheckBinding, runCreateCheck, runUpdateCheck, settlePullReceipt, snapshotPullRequest, snapshotPushTargets, atomicEnqueuePull, atomicEnqueuePush, atomicEnqueuePushChild, leasePushChild, settlePushChild, recoverEvaluationLease, recoverAbandonedEffect, } from "@archivale/release-policy-trust";
-import { sanitizeTelemetry } from "./telemetry.js";
+import { AmbiguousCreateError, AmbiguousUpdateError, DefinitiveNotSentError, beginReceiptSnapshot, commitDecision, prepareCheckBinding, runCreateCheck, runUpdateCheck, settlePullReceipt, snapshotPullRequest, snapshotPushTargets, atomicEnqueuePull, atomicEnqueuePush, atomicEnqueuePushChild, leasePushChild, settlePushChild, recoverEvaluationLease, recoverAbandonedEffect, } from "@archivale/release-policy-trust";
+import { boundedBucket, sanitizeTelemetry } from "./telemetry.js";
 const RETRY_SECONDS = [1, 5, 30, 120, 600];
 const targetMetaKey = (installationId, deliveryId) => `target/${installationId}/${deliveryId}`;
 /** The alarm is the sole drainer. Ingress only persists and requests it. */
@@ -40,7 +40,19 @@ export class AlarmDispatcher {
                 seen.add(identity);
         }
         const rows = this.store.rowCount();
-        this.store.writeMeta("watchdog/v1", sanitizeTelemetry({ alarm_present: alarm !== null, alarm_reasserted: alarmReasserted, duplicate_binding_bucket: duplicates === 0 ? 0 : duplicates < 3 ? 1 : 2, forbidden_egress_count: 0, oldest_work_bucket: oldestWorkBucket, pending_bucket: pending === 0 ? 0 : pending < 10 ? 1 : 2, row_headroom_bucket: rows < 50 ? 0 : rows < 100 ? 1 : 2, status_egress_count: 0 }));
+        const bytes = this.store.databaseBytes();
+        const metric = (name) => this.store.readMeta(`${name}/v1`) ?? 0;
+        const doInvocations = metric("do_request_count") + metric("alarm_count");
+        this.store.writeMeta("watchdog/v1", sanitizeTelemetry({
+            alarm_present: alarm !== null, alarm_reasserted: alarmReasserted,
+            do_headroom_bucket: boundedBucket(doInvocations, 1_000, 10_000),
+            duplicate_binding_bucket: boundedBucket(duplicates, 1, 3), duplicate_check_bucket: boundedBucket(metric("egress/duplicate_check"), 1, 3),
+            exceeded_resource_bucket: boundedBucket(metric("egress/exceeded_resource"), 1, 3), forbidden_egress_bucket: boundedBucket(metric("egress/forbidden_egress"), 1, 3),
+            oldest_work_bucket: oldestWorkBucket, pending_bucket: boundedBucket(pending, 10, 100),
+            provider_error_bucket: boundedBucket(metric("egress/provider_error"), 1, 3), request_headroom_bucket: boundedBucket(metric("egress/request_high_water"), 40, 51),
+            row_headroom_bucket: boundedBucket(rows, 50, 100), status_egress_bucket: boundedBucket(metric("egress/status_egress"), 1, 3),
+            storage_headroom_bucket: boundedBucket(bytes, 524_288, 1_048_576), worker_error_bucket: boundedBucket(metric("worker_error_count"), 1, 3),
+        }));
     }
     rememberTarget(receipt, target) { const key = targetMetaKey(receipt.installationId, receipt.deliveryId); if (this.store.readMeta(key) === undefined)
         this.store.writeMeta(key, { ...target, received_at: Date.now() }); }
@@ -60,6 +72,9 @@ export class AlarmDispatcher {
                     await this.advanceReceipt(receipt, port, pullSnapshots);
                 }
                 catch (error) {
+                    this.store.incrementMeta("worker_error_count/v1");
+                    if (error instanceof DefinitiveNotSentError)
+                        this.store.incrementMeta("egress/exceeded_resource/v1");
                     retryAt = Math.min(retryAt ?? Infinity, this.recordRetry(receipt, error));
                 }
             }

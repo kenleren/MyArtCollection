@@ -1,0 +1,529 @@
+{
+  "inputs": {
+    "node_modules/@archivale/release-policy-trust/dist/src/errors.js": {
+      "bytes": 271,
+      "imports": [],
+      "format": "esm"
+    },
+    "node_modules/@archivale/release-policy-trust/dist/src/canonical.js": {
+      "bytes": 1318,
+      "imports": [
+        {
+          "path": "node:crypto",
+          "kind": "import-statement",
+          "external": true
+        },
+        {
+          "path": "node_modules/@archivale/release-policy-trust/dist/src/errors.js",
+          "kind": "import-statement",
+          "original": "./errors.js"
+        }
+      ],
+      "format": "esm"
+    },
+    "node_modules/@archivale/release-policy-trust/dist/src/pagination.js": {
+      "bytes": 4687,
+      "imports": [
+        {
+          "path": "node_modules/@archivale/release-policy-trust/dist/src/canonical.js",
+          "kind": "import-statement",
+          "original": "./canonical.js"
+        },
+        {
+          "path": "node_modules/@archivale/release-policy-trust/dist/src/errors.js",
+          "kind": "import-statement",
+          "original": "./errors.js"
+        }
+      ],
+      "format": "esm"
+    },
+    "node_modules/@archivale/release-policy-trust/dist/src/store.js": {
+      "bytes": 40200,
+      "imports": [
+        {
+          "path": "node_modules/@archivale/release-policy-trust/dist/src/canonical.js",
+          "kind": "import-statement",
+          "original": "./canonical.js"
+        },
+        {
+          "path": "node_modules/@archivale/release-policy-trust/dist/src/errors.js",
+          "kind": "import-statement",
+          "original": "./errors.js"
+        }
+      ],
+      "format": "esm"
+    },
+    "node_modules/@archivale/release-policy-trust/dist/src/checks.js": {
+      "bytes": 5821,
+      "imports": [
+        {
+          "path": "node_modules/@archivale/release-policy-trust/dist/src/canonical.js",
+          "kind": "import-statement",
+          "original": "./canonical.js"
+        },
+        {
+          "path": "node_modules/@archivale/release-policy-trust/dist/src/errors.js",
+          "kind": "import-statement",
+          "original": "./errors.js"
+        },
+        {
+          "path": "node_modules/@archivale/release-policy-trust/dist/src/pagination.js",
+          "kind": "import-statement",
+          "original": "./pagination.js"
+        },
+        {
+          "path": "node_modules/@archivale/release-policy-trust/dist/src/store.js",
+          "kind": "import-statement",
+          "original": "./store.js"
+        }
+      ],
+      "format": "esm"
+    },
+    "node_modules/@archivale/release-policy-trust/dist/src/delivery.js": {
+      "bytes": 2265,
+      "imports": [
+        {
+          "path": "node_modules/@archivale/release-policy-trust/dist/src/errors.js",
+          "kind": "import-statement",
+          "original": "./errors.js"
+        }
+      ],
+      "format": "esm"
+    },
+    "node_modules/@archivale/release-policy-trust/dist/src/external.js": {
+      "bytes": 4475,
+      "imports": [
+        {
+          "path": "node_modules/@archivale/release-policy-trust/dist/src/errors.js",
+          "kind": "import-statement",
+          "original": "./errors.js"
+        },
+        {
+          "path": "node_modules/@archivale/release-policy-trust/dist/src/canonical.js",
+          "kind": "import-statement",
+          "original": "./canonical.js"
+        }
+      ],
+      "format": "esm"
+    },
+    "node_modules/@archivale/release-policy-trust/dist/src/paths.js": {
+      "bytes": 3208,
+      "imports": [
+        {
+          "path": "node_modules/@archivale/release-policy-trust/dist/src/errors.js",
+          "kind": "import-statement",
+          "original": "./errors.js"
+        }
+      ],
+      "format": "esm"
+    },
+    "node_modules/@archivale/release-policy-trust/dist/src/strict_json.js": {
+      "bytes": 4721,
+      "imports": [
+        {
+          "path": "node_modules/@archivale/release-policy-trust/dist/src/errors.js",
+          "kind": "import-statement",
+          "original": "./errors.js"
+        }
+      ],
+      "format": "esm"
+    },
+    "node_modules/@archivale/release-policy-trust/dist/src/policy.js": {
+      "bytes": 7657,
+      "imports": [
+        {
+          "path": "node_modules/@archivale/release-policy-trust/dist/src/canonical.js",
+          "kind": "import-statement",
+          "original": "./canonical.js"
+        },
+        {
+          "path": "node_modules/@archivale/release-policy-trust/dist/src/errors.js",
+          "kind": "import-statement",
+          "original": "./errors.js"
+        },
+        {
+          "path": "node_modules/@archivale/release-policy-trust/dist/src/paths.js",
+          "kind": "import-statement",
+          "original": "./paths.js"
+        },
+        {
+          "path": "node_modules/@archivale/release-policy-trust/dist/src/strict_json.js",
+          "kind": "import-statement",
+          "original": "./strict_json.js"
+        }
+      ],
+      "format": "esm"
+    },
+    "node_modules/@archivale/release-policy-trust/dist/src/ports.js": {
+      "bytes": 11,
+      "imports": [],
+      "format": "esm"
+    },
+    "node_modules/@archivale/release-policy-trust/dist/src/snapshot.js": {
+      "bytes": 4453,
+      "imports": [
+        {
+          "path": "node_modules/@archivale/release-policy-trust/dist/src/canonical.js",
+          "kind": "import-statement",
+          "original": "./canonical.js"
+        },
+        {
+          "path": "node_modules/@archivale/release-policy-trust/dist/src/errors.js",
+          "kind": "import-statement",
+          "original": "./errors.js"
+        },
+        {
+          "path": "node_modules/@archivale/release-policy-trust/dist/src/pagination.js",
+          "kind": "import-statement",
+          "original": "./pagination.js"
+        },
+        {
+          "path": "node_modules/@archivale/release-policy-trust/dist/src/paths.js",
+          "kind": "import-statement",
+          "original": "./paths.js"
+        },
+        {
+          "path": "node_modules/@archivale/release-policy-trust/dist/src/policy.js",
+          "kind": "import-statement",
+          "original": "./policy.js"
+        }
+      ],
+      "format": "esm"
+    },
+    "node_modules/@archivale/release-policy-trust/dist/src/webhook.js": {
+      "bytes": 3818,
+      "imports": [
+        {
+          "path": "node:crypto",
+          "kind": "import-statement",
+          "external": true
+        },
+        {
+          "path": "node_modules/@archivale/release-policy-trust/dist/src/canonical.js",
+          "kind": "import-statement",
+          "original": "./canonical.js"
+        },
+        {
+          "path": "node_modules/@archivale/release-policy-trust/dist/src/errors.js",
+          "kind": "import-statement",
+          "original": "./errors.js"
+        },
+        {
+          "path": "node_modules/@archivale/release-policy-trust/dist/src/strict_json.js",
+          "kind": "import-statement",
+          "original": "./strict_json.js"
+        },
+        {
+          "path": "node_modules/@archivale/release-policy-trust/dist/src/policy.js",
+          "kind": "import-statement",
+          "original": "./policy.js"
+        }
+      ],
+      "format": "esm"
+    },
+    "node_modules/@archivale/release-policy-trust/dist/src/index.js": {
+      "bytes": 393,
+      "imports": [
+        {
+          "path": "node_modules/@archivale/release-policy-trust/dist/src/canonical.js",
+          "kind": "import-statement",
+          "original": "./canonical.js"
+        },
+        {
+          "path": "node_modules/@archivale/release-policy-trust/dist/src/checks.js",
+          "kind": "import-statement",
+          "original": "./checks.js"
+        },
+        {
+          "path": "node_modules/@archivale/release-policy-trust/dist/src/delivery.js",
+          "kind": "import-statement",
+          "original": "./delivery.js"
+        },
+        {
+          "path": "node_modules/@archivale/release-policy-trust/dist/src/errors.js",
+          "kind": "import-statement",
+          "original": "./errors.js"
+        },
+        {
+          "path": "node_modules/@archivale/release-policy-trust/dist/src/external.js",
+          "kind": "import-statement",
+          "original": "./external.js"
+        },
+        {
+          "path": "node_modules/@archivale/release-policy-trust/dist/src/pagination.js",
+          "kind": "import-statement",
+          "original": "./pagination.js"
+        },
+        {
+          "path": "node_modules/@archivale/release-policy-trust/dist/src/paths.js",
+          "kind": "import-statement",
+          "original": "./paths.js"
+        },
+        {
+          "path": "node_modules/@archivale/release-policy-trust/dist/src/policy.js",
+          "kind": "import-statement",
+          "original": "./policy.js"
+        },
+        {
+          "path": "node_modules/@archivale/release-policy-trust/dist/src/ports.js",
+          "kind": "import-statement",
+          "original": "./ports.js"
+        },
+        {
+          "path": "node_modules/@archivale/release-policy-trust/dist/src/snapshot.js",
+          "kind": "import-statement",
+          "original": "./snapshot.js"
+        },
+        {
+          "path": "node_modules/@archivale/release-policy-trust/dist/src/store.js",
+          "kind": "import-statement",
+          "original": "./store.js"
+        },
+        {
+          "path": "node_modules/@archivale/release-policy-trust/dist/src/strict_json.js",
+          "kind": "import-statement",
+          "original": "./strict_json.js"
+        },
+        {
+          "path": "node_modules/@archivale/release-policy-trust/dist/src/webhook.js",
+          "kind": "import-statement",
+          "original": "./webhook.js"
+        }
+      ],
+      "format": "esm"
+    },
+    "src/config.ts": {
+      "bytes": 1487,
+      "imports": [],
+      "format": "esm"
+    },
+    "src/generated/canonical_policy_bytes.ts": {
+      "bytes": 13900,
+      "imports": [],
+      "format": "esm"
+    },
+    "src/telemetry.ts": {
+      "bytes": 1135,
+      "imports": [],
+      "format": "esm"
+    },
+    "src/dispatcher.ts": {
+      "bytes": 12737,
+      "imports": [
+        {
+          "path": "node_modules/@archivale/release-policy-trust/dist/src/index.js",
+          "kind": "import-statement",
+          "original": "@archivale/release-policy-trust"
+        },
+        {
+          "path": "src/telemetry.ts",
+          "kind": "import-statement",
+          "original": "./telemetry.js"
+        },
+        {
+          "path": "node_modules/@archivale/release-policy-trust/dist/src/index.js",
+          "kind": "dynamic-import",
+          "original": "@archivale/release-policy-trust"
+        },
+        {
+          "path": "node_modules/@archivale/release-policy-trust/dist/src/index.js",
+          "kind": "dynamic-import",
+          "original": "@archivale/release-policy-trust"
+        },
+        {
+          "path": "node_modules/@archivale/release-policy-trust/dist/src/index.js",
+          "kind": "dynamic-import",
+          "original": "@archivale/release-policy-trust"
+        }
+      ],
+      "format": "esm"
+    },
+    "src/sqlite_store.ts": {
+      "bytes": 3922,
+      "imports": [],
+      "format": "esm"
+    },
+    "src/github_routes.ts": {
+      "bytes": 1655,
+      "imports": [
+        {
+          "path": "src/config.ts",
+          "kind": "import-statement",
+          "original": "./config.js"
+        }
+      ],
+      "format": "esm"
+    },
+    "src/github_app_port.ts": {
+      "bytes": 17049,
+      "imports": [
+        {
+          "path": "node_modules/@archivale/release-policy-trust/dist/src/index.js",
+          "kind": "import-statement",
+          "original": "@archivale/release-policy-trust"
+        },
+        {
+          "path": "src/github_routes.ts",
+          "kind": "import-statement",
+          "original": "./github_routes.js"
+        }
+      ],
+      "format": "esm"
+    },
+    "src/repository_durable_object.ts": {
+      "bytes": 4068,
+      "imports": [
+        {
+          "path": "src/dispatcher.ts",
+          "kind": "import-statement",
+          "original": "./dispatcher.js"
+        },
+        {
+          "path": "node_modules/@archivale/release-policy-trust/dist/src/index.js",
+          "kind": "import-statement",
+          "original": "@archivale/release-policy-trust"
+        },
+        {
+          "path": "src/sqlite_store.ts",
+          "kind": "import-statement",
+          "original": "./sqlite_store.js"
+        },
+        {
+          "path": "src/config.ts",
+          "kind": "import-statement",
+          "original": "./config.js"
+        },
+        {
+          "path": "src/generated/canonical_policy_bytes.ts",
+          "kind": "import-statement",
+          "original": "./generated/canonical_policy_bytes.js"
+        },
+        {
+          "path": "src/github_app_port.ts",
+          "kind": "import-statement",
+          "original": "./github_app_port.js"
+        }
+      ],
+      "format": "esm"
+    },
+    "src/worker.ts": {
+      "bytes": 3584,
+      "imports": [
+        {
+          "path": "node_modules/@archivale/release-policy-trust/dist/src/index.js",
+          "kind": "import-statement",
+          "original": "@archivale/release-policy-trust"
+        },
+        {
+          "path": "src/config.ts",
+          "kind": "import-statement",
+          "original": "./config.js"
+        },
+        {
+          "path": "src/generated/canonical_policy_bytes.ts",
+          "kind": "import-statement",
+          "original": "./generated/canonical_policy_bytes.js"
+        },
+        {
+          "path": "src/repository_durable_object.ts",
+          "kind": "import-statement",
+          "original": "./repository_durable_object.js"
+        }
+      ],
+      "format": "esm"
+    }
+  },
+  "outputs": {
+    "evidence/bundle/worker.mjs": {
+      "imports": [
+        {
+          "path": "node:crypto",
+          "kind": "import-statement",
+          "external": true
+        },
+        {
+          "path": "node:crypto",
+          "kind": "import-statement",
+          "external": true
+        }
+      ],
+      "exports": [
+        "RepositoryDurableObject",
+        "default"
+      ],
+      "entryPoint": "src/worker.ts",
+      "inputs": {
+        "node_modules/@archivale/release-policy-trust/dist/src/errors.js": {
+          "bytesInOutput": 399
+        },
+        "node_modules/@archivale/release-policy-trust/dist/src/canonical.js": {
+          "bytesInOutput": 1292
+        },
+        "node_modules/@archivale/release-policy-trust/dist/src/pagination.js": {
+          "bytesInOutput": 4508
+        },
+        "node_modules/@archivale/release-policy-trust/dist/src/store.js": {
+          "bytesInOutput": 38524
+        },
+        "node_modules/@archivale/release-policy-trust/dist/src/checks.js": {
+          "bytesInOutput": 5472
+        },
+        "node_modules/@archivale/release-policy-trust/dist/src/delivery.js": {
+          "bytesInOutput": 2288
+        },
+        "node_modules/@archivale/release-policy-trust/dist/src/external.js": {
+          "bytesInOutput": 4397
+        },
+        "node_modules/@archivale/release-policy-trust/dist/src/paths.js": {
+          "bytesInOutput": 2749
+        },
+        "node_modules/@archivale/release-policy-trust/dist/src/strict_json.js": {
+          "bytesInOutput": 4707
+        },
+        "node_modules/@archivale/release-policy-trust/dist/src/policy.js": {
+          "bytesInOutput": 7640
+        },
+        "node_modules/@archivale/release-policy-trust/dist/src/ports.js": {
+          "bytesInOutput": 104
+        },
+        "node_modules/@archivale/release-policy-trust/dist/src/snapshot.js": {
+          "bytesInOutput": 4152
+        },
+        "node_modules/@archivale/release-policy-trust/dist/src/webhook.js": {
+          "bytesInOutput": 3557
+        },
+        "node_modules/@archivale/release-policy-trust/dist/src/index.js": {
+          "bytesInOutput": 3112
+        },
+        "src/worker.ts": {
+          "bytesInOutput": 2801
+        },
+        "src/config.ts": {
+          "bytesInOutput": 1218
+        },
+        "src/generated/canonical_policy_bytes.ts": {
+          "bytesInOutput": 13693
+        },
+        "src/dispatcher.ts": {
+          "bytesInOutput": 10055
+        },
+        "src/telemetry.ts": {
+          "bytesInOutput": 693
+        },
+        "src/repository_durable_object.ts": {
+          "bytesInOutput": 2921
+        },
+        "src/sqlite_store.ts": {
+          "bytesInOutput": 3113
+        },
+        "src/github_app_port.ts": {
+          "bytesInOutput": 14567
+        },
+        "src/github_routes.ts": {
+          "bytesInOutput": 1165
+        }
+      },
+      "bytes": 134839
+    }
+  }
+}

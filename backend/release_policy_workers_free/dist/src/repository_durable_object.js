@@ -19,10 +19,11 @@ export class RepositoryDurableObject {
             clock: { delay: async () => { } },
             identity: { appId: config.appId, baseRef: "main", installationId: config.installationId, repositoryId: config.repositoryId, repositoryName: "kenleren/MyArtCollection" },
             policy: loadCanonicalPolicy(CANONICAL_POLICY_BYTES),
-            portFactory: () => githubAlarmPort({ appId: config.appId, installationId: config.installationId, privateKeyPem: env.GITHUB_APP_PRIVATE_KEY_PEM, fetcher: fetch }),
+            portFactory: () => githubAlarmPort({ appId: config.appId, installationId: config.installationId, repositoryId: config.repositoryId, repositoryName: "kenleren/MyArtCollection", privateKeyPem: env.GITHUB_APP_PRIVATE_KEY_PEM, fetcher: fetch, measure: (measurement) => this.recordEgress(measurement) }),
         });
     }
     async fetch(request) {
+        this.store.incrementMeta("do_request_count/v1");
         const path = new URL(request.url).pathname;
         if (request.method !== "POST")
             return new Response("not found", { status: 404 });
@@ -46,4 +47,17 @@ export class RepositoryDurableObject {
     }
     async alarm() { await this.dispatcher.alarm(); }
     async watchdog() { await this.dispatcher.watchdog(); }
+    recordEgress(measurement) {
+        const key = `egress/${measurement.metric}/v1`;
+        if (!Number.isSafeInteger(measurement.value) || measurement.value < 0) {
+            this.store.writeMeta(key, 1_000_000);
+            return;
+        }
+        if (measurement.metric === "request_high_water") {
+            const prior = this.store.readMeta(key) ?? 0;
+            this.store.writeMeta(key, Math.min(Math.max(prior, measurement.value), 1_000_000));
+        }
+        else
+            this.store.incrementMeta(key, measurement.value);
+    }
 }

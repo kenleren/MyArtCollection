@@ -21,8 +21,11 @@ export class SqliteStore {
         return this.storage.sql.exec("SELECT key,value_json FROM kv WHERE key LIKE ? ORDER BY key", `${prefix}%`).toArray().map((row) => ({ key: row.key, value: JSON.parse(row.value_json) }));
     }
     rowCount() { return Number(this.storage.sql.exec("SELECT count(*) AS count FROM kv").toArray()[0].count); }
+    databaseBytes() { const bytes = this.storage.sql.databaseSize; if (!Number.isSafeInteger(bytes) || bytes < 0)
+        throw new Error("SQLite storage measurement unavailable"); return bytes; }
     readMeta(key) { const row = this.storage.sql.exec("SELECT value_json FROM meta WHERE key=?", key).toArray()[0]; return row === undefined ? undefined : JSON.parse(row.value_json); }
     writeMeta(key, value) { this.storage.sql.exec("INSERT INTO meta(key,value_json) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json", key, JSON.stringify(value)); }
+    incrementMeta(key, amount = 1, ceiling = 1_000_000) { const prior = this.readMeta(key); const base = prior === undefined ? 0 : typeof prior === "number" && Number.isSafeInteger(prior) && prior >= 0 ? prior : ceiling; const next = Math.min(base + amount, ceiling); this.writeMeta(key, next); return next; }
 }
 class SqliteTransaction {
     storage;

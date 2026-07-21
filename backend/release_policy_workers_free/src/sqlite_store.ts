@@ -20,8 +20,10 @@ export class SqliteStore {
     return (this.storage.sql.exec("SELECT key,value_json FROM kv WHERE key LIKE ? ORDER BY key", `${prefix}%`).toArray() as Array<{ key: string; value_json: string }>).map((row) => ({ key: row.key, value: JSON.parse(row.value_json) }));
   }
   rowCount(): number { return Number((this.storage.sql.exec("SELECT count(*) AS count FROM kv").toArray()[0] as { count: number }).count); }
+  databaseBytes(): number { const bytes = this.storage.sql.databaseSize; if (!Number.isSafeInteger(bytes) || bytes < 0) throw new Error("SQLite storage measurement unavailable"); return bytes; }
   readMeta<T>(key: string): T | undefined { const row = this.storage.sql.exec("SELECT value_json FROM meta WHERE key=?", key).toArray()[0] as { value_json: string } | undefined; return row === undefined ? undefined : JSON.parse(row.value_json) as T; }
   writeMeta(key: string, value: unknown): void { this.storage.sql.exec("INSERT INTO meta(key,value_json) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json", key, JSON.stringify(value)); }
+  incrementMeta(key: string, amount = 1, ceiling = 1_000_000): number { const prior = this.readMeta<number>(key); const base = prior === undefined ? 0 : typeof prior === "number" && Number.isSafeInteger(prior) && prior >= 0 ? prior : ceiling; const next = Math.min(base + amount, ceiling); this.writeMeta(key, next); return next; }
 }
 class SqliteTransaction implements Transaction {
   constructor(private readonly storage: DurableStorage) {}

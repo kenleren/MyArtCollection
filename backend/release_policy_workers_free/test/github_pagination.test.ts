@@ -3,10 +3,41 @@ import assert from "node:assert/strict";
 import { GitHubAppPort } from "../src/github_app_port.js";
 
 const repositoryId = 1288597824;
+const identity = { appId: 1, baseRef: "main" as const, installationId: 2, repositoryId, repositoryName: "kenleren/MyArtCollection" };
 const pullPath = `/repositories/${repositoryId}/pulls/1/files`;
 const files = Array.from({ length: 100 }, (_, index) => ({ filename: `file-${index}.md`, status: "modified" }));
 const pageUrl = (page: number) => `https://api.github.com${pullPath}?per_page=100&page=${page}`;
-const portFor = (response: Response) => new GitHubAppPort(async () => response, async () => "synthetic");
+const portFor = (response: Response) => new GitHubAppPort(async () => response, async () => "synthetic", identity);
+
+const pull = (overrides: Record<string, unknown> = {}) => ({
+  number: 1, state: "open", changed_files: 1, created_at: "2026-07-21T00:00:00Z",
+  base: { ref: "main", sha: "a".repeat(40), repo: { id: repositoryId, full_name: "kenleren/MyArtCollection" } },
+  head: { sha: "b".repeat(40), repo: { id: repositoryId, full_name: "kenleren/MyArtCollection" } },
+  ...overrides,
+});
+
+test("official pull-request response shape uses frozen App identity and nested base.repo", async () => {
+  const port = portFor(new Response(JSON.stringify(pull()), { headers: { "content-type": "application/json" } }));
+  assert.deepEqual(await port.getPullRequest(repositoryId, 1), {
+    appId: 1, baseRef: "main", baseSha: "a".repeat(40), changedFiles: 1,
+    headRepositoryId: repositoryId, headSha: "b".repeat(40), installationId: 2,
+    number: 1, repositoryId, repositoryName: "kenleren/MyArtCollection", state: "open",
+  });
+});
+
+test("official open-main response shape parses without fictional top-level identity fields", async () => {
+  const page = await portFor(new Response(JSON.stringify([pull()]), { headers: { "content-type": "application/json" } })).listOpenMainPullRequests(repositoryId, 1, 100);
+  assert.equal(page.items[0]?.createdAt, "2026-07-21T00:00:00Z");
+  assert.equal(page.items[0]?.appId, identity.appId);
+  assert.equal(page.items[0]?.repositoryId, repositoryId);
+});
+
+test("pull-request response fails closed without the official nested base repository identity", async () => {
+  const fictional = { ...pull(), app: { id: 1 }, installation: { id: 2 }, base_repo: { id: repositoryId, full_name: identity.repositoryName }, base: { ref: "main", sha: "a".repeat(40) } };
+  await assert.rejects(() => portFor(new Response(JSON.stringify(fictional), { headers: { "content-type": "application/json" } })).getPullRequest(repositoryId, 1), /github schema rejected/);
+  await assert.rejects(() => portFor(new Response(JSON.stringify(pull({ base: { ref: "main", sha: "a".repeat(40), repo: { id: repositoryId + 1, full_name: identity.repositoryName } } })), { headers: { "content-type": "application/json" } })).getPullRequest(repositoryId, 1), /identity rejected/);
+  await assert.rejects(() => portFor(new Response(JSON.stringify([{ ...pull(), base: { ref: "main", sha: "a".repeat(40) } }]), { headers: { "content-type": "application/json" } })).listOpenMainPullRequests(repositoryId, 1, 100), /github schema rejected/);
+});
 
 test("Link absence terminates even a full final page", async () => {
   const page = await portFor(new Response(JSON.stringify(files), { headers: { "content-type": "application/json" } })).listPullRequestFiles(repositoryId, 1, 1, 100);

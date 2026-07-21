@@ -5,10 +5,13 @@ import { githubRoute } from "../src/github_routes.js";
 import { repositoryObjectName } from "../src/config.js";
 import { sanitizeTelemetry } from "../src/telemetry.js";
 import worker from "../src/worker.js";
-import { GitHubAppPort, githubAlarmPort } from "../src/github_app_port.js";
+import { classifyGitHubEgress, enforceGitHubEgress, GitHubAppPort, githubAlarmPort } from "../src/github_app_port.js";
+import { boundedBucket } from "../src/telemetry.js";
 test("github routes reject redirects and arbitrary hosts", () => { const request = githubRoute("pullRequest", [1288597824, 1]); assert.equal(request.url, "https://api.github.com/repositories/1288597824/pulls/1"); assert.equal(request.redirect, "manual"); });
 test("repository namespace is frozen", () => { assert.throws(() => repositoryObjectName(1)); });
 test("telemetry rejects authentication-shaped data", () => { assert.throws(() => sanitizeTelemetry({ authorization: "x" })); assert.deepEqual(sanitizeTelemetry({ delivery_digest: "a" }), { delivery_digest: "a" }); });
+test("telemetry thresholds fail closed and expose zero/nonzero transitions", () => { assert.equal(boundedBucket(0, 1, 3), 0); assert.equal(boundedBucket(1, 1, 3), 1); assert.equal(boundedBucket(3, 1, 3), 2); assert.equal(boundedBucket(Number.NaN, 1, 3), 2); });
+test("egress classifier measures forbidden and commit-status attempts", () => { const metrics = []; const measure = (row) => metrics.push(row.metric); assert.equal(classifyGitHubEgress(new Request("https://api.github.com/repositories/1/check-runs", { method: "POST" })), "allowed"); assert.throws(() => enforceGitHubEgress(new Request(`https://api.github.com/repositories/1/statuses/${"a".repeat(40)}`, { method: "POST" }), measure), /route rejected/); assert.throws(() => enforceGitHubEgress(new Request("https://example.invalid/"), measure), /route rejected/); assert.deepEqual(metrics, ["status_egress", "forbidden_egress"]); });
 test("oversize webhook and public watchdog never reach the Durable Object", async () => {
     let calls = 0;
     const env = { RELEASE_TRUST_CONFIG_V1: JSON.stringify({ repository_id: 1288597824, app_id: 1, installation_id: 2, github_api_origin: "https://api.github.com" }), GITHUB_WEBHOOK_SECRET: "synthetic", GITHUB_APP_PRIVATE_KEY_PEM: "synthetic", REPOSITORY: { idFromName: () => "id", get: () => { calls++; throw new Error("DO must not be reached"); } } };
@@ -17,7 +20,7 @@ test("oversize webhook and public watchdog never reach the Durable Object", asyn
     assert.equal(calls, 0);
 });
 test("GitHub JSON is byte-bounded before parsing", async () => {
-    const port = new GitHubAppPort(async () => new Response("x".repeat(20_000), { headers: { "content-type": "application/json", "content-length": "20000" } }), async () => "synthetic");
+    const port = new GitHubAppPort(async () => new Response("x".repeat(20_000), { headers: { "content-type": "application/json", "content-length": "20000" } }), async () => "synthetic", { appId: 1, baseRef: "main", installationId: 2, repositoryId: 1288597824, repositoryName: "kenleren/MyArtCollection" });
     await assert.rejects(() => port.getMainRef(1288597824), /exceeds bound/);
 });
 test("one alarm memoizes one token and rejects subrequest 51 before send", async () => {
@@ -35,7 +38,8 @@ test("one alarm memoizes one token and rejects subrequest 51 before send", async
         assert.equal(request.headers.get("authorization"), "Bearer synthetic");
         return new Response(`{"object":{"sha":"${"a".repeat(40)}"}}`, { headers: { "content-type": "application/json" } });
     };
-    const port = githubAlarmPort({ appId: 1, installationId: 2, privateKeyPem: privateKey, fetcher });
+    const measurements = [];
+    const port = githubAlarmPort({ appId: 1, installationId: 2, repositoryId: 1288597824, repositoryName: "kenleren/MyArtCollection", privateKeyPem: privateKey, fetcher, measure: (row) => measurements.push(row) });
     for (let index = 0; index < 49; index += 1)
         await port.getMainRef(1288597824);
     assert.equal(calls, 50);
@@ -43,4 +47,6 @@ test("one alarm memoizes one token and rejects subrequest 51 before send", async
     await assert.rejects(() => port.getMainRef(1288597824), /subrequest budget exhausted/);
     assert.equal(calls, 50);
     assert.equal(tokenCalls, 1);
+    assert.equal(measurements.filter((row) => row.metric === "request_high_water").at(-1)?.value, 51);
+    assert.equal(measurements.filter((row) => row.metric === "exceeded_resource").length, 1);
 });
