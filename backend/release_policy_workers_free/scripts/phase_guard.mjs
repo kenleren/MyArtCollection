@@ -25,7 +25,7 @@ export const mandatoryBDelta = [
   "M\tbackend/release_policy_trust/evidence/review/candidate-tree.v1.jsonl",
   "M\tbackend/release_policy_trust/evidence/review/final-candidate.v1.json",
   "D\tbackend/release_policy_workers_free/evidence/artifact-manifest.v1.json",
-  "M\tbackend/release_policy_workers_free/evidence/artifact-manifest.v2.json",
+  "A\tbackend/release_policy_workers_free/evidence/artifact-manifest.v2.json",
   "M\tbackend/release_policy_workers_free/evidence/sbom.spdx.json",
 ];
 const reproductionDelta = `M\t${reproductionPath}`;
@@ -146,19 +146,74 @@ function verifyPreservation() {
   if (state === "final-clean") cleanIndex();
 }
 
+const overlayPaths = [
+  "backend/release_policy_workers_free/evidence/sbom.spdx.json",
+  "backend/release_policy_workers_free/evidence/artifact-manifest.v1.json",
+  "backend/release_policy_workers_free/evidence/artifact-manifest.v2.json",
+];
+const overlayDelta = [
+  `M\t${overlayPaths[0]}`,
+  `D\t${overlayPaths[1]}`,
+  `A\t${overlayPaths[2]}`,
+];
+const candidatePath = "backend/release_policy_trust/evidence/review/candidate-tree.v1.jsonl";
+const summaryPath = "backend/release_policy_trust/evidence/review/final-candidate.v1.json";
+function stagedMode(path) {
+  const row = git("ls-files", "--stage", "--", path).trim().split(/\s+/);
+  return row.length >= 3 ? row[0] : "";
+}
+function assertOverlayIndex(anchor, allowEvidenceWorktree = false) {
+  const delta = git("diff", "--cached", "--name-status", anchor).trim().split("\n").filter(Boolean);
+  if (JSON.stringify([...delta].sort()) !== JSON.stringify([...overlayDelta].sort())) fail("overlay index rejected");
+  if (stagedMode(overlayPaths[0]) !== "100644" || stagedMode(overlayPaths[2]) !== "100644" || stagedMode(overlayPaths[1]) !== "") fail("overlay index modes rejected");
+  if (!regular(resolve(root, overlayPaths[0])) || !regular(resolve(root, overlayPaths[2])) || existsSync(resolve(root, overlayPaths[1]))) fail("overlay worktree topology rejected");
+  const overlay = JSON.parse(readFileSync(resolve(root, "backend/release_policy_workers_free/config/phase-b-overlay.v1.json"), "utf8"));
+  if (JSON.stringify(overlay.map((row) => [row.operation, row.path])) !== JSON.stringify([["replace", overlayPaths[0]], ["delete", overlayPaths[1]], ["add", overlayPaths[2]]])) fail("overlay manifest rejected");
+  for (const path of overlayPaths) {
+    if (path === overlayPaths[1]) continue;
+    const staged = Buffer.from(git("show", `:${path}`)); if (!staged.equals(readFileSync(resolve(root, path)))) fail("overlay staged bytes rejected");
+  }
+  const evidence = [candidatePath, summaryPath, reproductionPath];
+  if (evidence.some((path) => !git("diff", "--cached", "--quiet", "--", path) === false)) fail("evidence index rejected");
+  const worktreeDelta = git("diff", "--name-only").trim().split("\n").filter(Boolean);
+  const allowed = allowEvidenceWorktree ? [candidatePath, summaryPath] : [];
+  if (worktreeDelta.some((path) => !allowed.includes(path))) fail("overlay worktree rejected");
+}
+function regenerateOverlayEvidence(anchor, expectedCandidate, expectedSummary) {
+  const temporary = mkdtempSync(join(tmpdir(), "release-policy-overlay-"));
+  try {
+    const candidate = resolve(temporary, "candidate-tree.v1.jsonl"); const summary = resolve(temporary, "final-candidate.v1.json");
+    execFileSync("npm", ["--prefix", "backend/release_policy_trust", "run", "candidate:generate", "--", "--candidate-base", anchor, "--overlay-manifest", "backend/release_policy_workers_free/config/phase-b-overlay.v1.json", "--output", candidate], { cwd: root, env: { ...process.env, TZ: "UTC", LC_ALL: "C", LANG: "C" }, stdio: "inherit" });
+    execFileSync("npm", ["--prefix", "backend/release_policy_trust", "run", "candidate:summary", "--", "--candidate-inventory", candidate, "--reproducibility", reproductionPath, "--output", summary], { cwd: root, env: { ...process.env, TZ: "UTC", LC_ALL: "C", LANG: "C" }, stdio: "inherit" });
+    const inventory = regularInput(candidate, "candidate output"); const final = regularInput(summary, "summary output");
+    if (!inventory.equals(regularInput(resolve(root, expectedCandidate), "candidate evidence")) || !final.equals(regularInput(resolve(root, expectedSummary), "summary evidence"))) fail("overlay evidence regeneration rejected");
+    const rows = inventory.toString("utf8").trim().split("\n").map((row) => JSON.parse(row)); const protectedRows = rows.filter((row) => row.class === "protected-control");
+    const doc = JSON.parse(final.toString("utf8"));
+    if (protectedRows.length !== 179 || rows.some((row) => row.path === overlayPaths[1]) || rows.filter((row) => row.path === overlayPaths[2]).length !== 1 || doc.protected_file_count !== 182 || doc.package_file_count !== 59 || doc.test_case_count !== 66) fail("overlay evidence counts rejected");
+  } finally { rmSync(temporary, { recursive: true, force: true }); }
+}
+
 function main() {
 if (phase === "preserve-sbom") preserve();
 else if (phase === "verify-sbom-preservation") verifyPreservation();
-else if (["prepared", "a-worktree", "a-index", "b-worktree", "b-index", "final"].includes(phase)) {
+else if (["prepared", "a-worktree", "a-index", "a10-index", "b-worktree", "overlay-index", "evidence-ready", "b-index", "final"].includes(phase)) {
   if (git("rev-parse", "--abbrev-ref", "HEAD").trim() !== "codex/issue-245-workers-free-adapter") fail("branch rejected");
   if (option("base") && git("merge-base", option("base"), "HEAD").trim() !== option("base")) fail("base rejected");
   const bPaths = [artifactPath, "backend/release_policy_workers_free/evidence/artifact-manifest.v1.json", "backend/release_policy_workers_free/evidence/artifact-manifest.v2.json", "backend/release_policy_trust/evidence/review/candidate-tree.v1.jsonl", "backend/release_policy_trust/evidence/review/reproducibility.v1.json", "backend/release_policy_trust/evidence/review/final-candidate.v1.json"];
   if (phase === "prepared") { cleanIndex(); const oid = required(start, "start"); for (const path of bPaths) { const working = resolve(root, path); const inStart = (() => { try { startBytes(oid, path); return true; } catch { return false; } })(); if (existsSync(working) !== inStart || (inStart && !readFileSync(working).equals(startBytes(oid, path)))) fail(`pre-A B path drift: ${path}`); } }
   if (phase === "a-worktree") cleanIndex();
   if (phase === "a-index") { const staged = git("diff", "--cached", "--name-only").trim().split("\n").filter(Boolean); if (staged.some((path) => bPaths.includes(path))) fail("B path staged in A"); }
+  if (phase === "a10-index") {
+    const parent = required(start, "start"); const delta = git("diff", "--cached", "--name-status", parent).trim().split("\n").filter(Boolean);
+    const expected = [`A\t${overlayPaths[1]}`, `D\t${overlayPaths[2]}`, "M\tbackend/release_policy_workers_free/scripts/phase_guard.mjs"];
+    if (git("rev-parse", "HEAD").trim() !== parent || JSON.stringify(delta) !== JSON.stringify(expected) || stagedMode(overlayPaths[1]) !== "100644" || stagedMode(overlayPaths[2]) !== "") fail("A10 index rejected");
+    if (hash(Buffer.from(git("show", `:${overlayPaths[1]}`))) !== "53055b0aceb861392fbf97daa35819c1a30a5916e9fb5ee1680a8c8aad608fe8" || existsSync(resolve(root, overlayPaths[2])) || !readFileSync(resolve(root, overlayPaths[0])).equals(startBytes(parent, overlayPaths[0]))) fail("A10 placeholder topology rejected");
+  }
   if (phase === "b-worktree") cleanIndex();
-  if (phase === "b-index") { const anchor = required(option("anchor"), "anchor"); const staged = git("diff", "--cached", "--name-status", anchor).trim().split("\n").filter(Boolean); assertBDelta(staged, reproductionDiffersFromAnchor(anchor)); }
-  if (phase === "final") { const anchor = required(option("anchor"), "anchor"); const candidate = required(option("candidate"), "candidate"); if (git("rev-parse", `${candidate}^`).trim() !== anchor) fail("B parent rejected"); const delta = git("diff", "--name-status", anchor, candidate).trim().split("\n").filter(Boolean); assertBDelta(delta, reproductionDiffersFromAnchor(anchor)); cleanIndex(); }
+  if (phase === "overlay-index") { const anchor = required(option("anchor"), "anchor"); assertOverlayIndex(anchor); }
+  if (phase === "evidence-ready") { const anchor = required(option("anchor"), "anchor"); assertOverlayIndex(anchor, true); const before = git("diff", "--cached", "--name-status", anchor); regenerateOverlayEvidence(anchor, candidatePath, summaryPath); if (git("diff", "--cached", "--name-status", anchor) !== before) fail("overlay index drifted"); }
+  if (phase === "b-index") { const anchor = required(option("anchor"), "anchor"); const staged = git("diff", "--cached", "--name-status", anchor).trim().split("\n").filter(Boolean); assertBDelta(staged, reproductionDiffersFromAnchor(anchor)); regenerateOverlayEvidence(anchor, candidatePath, summaryPath); }
+  if (phase === "final") { const anchor = required(option("anchor"), "anchor"); const candidate = required(option("candidate"), "candidate"); if (git("rev-parse", `${candidate}^`).trim() !== anchor) fail("B parent rejected"); const delta = git("diff", "--name-status", anchor, candidate).trim().split("\n").filter(Boolean); assertBDelta(delta, reproductionDiffersFromAnchor(anchor)); regenerateOverlayEvidence(anchor, candidatePath, summaryPath); cleanIndex(); }
 } else fail("phase rejected");
 }
 
