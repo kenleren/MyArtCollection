@@ -537,11 +537,11 @@
 {"blob_oid":"86a7f5d329c3a47556eacfb3539090fa54a87a52","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/dist/test/boundaries.test.js"}
 {"blob_oid":"298ccd3e2e0ec4b0120282570e9202f8ff0ac1c2","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/dist/test/dispatcher.test.js"}
 {"blob_oid":"7185949d798d3a02df85fc245c1f5890b0ab4c00","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/dist/test/github_pagination.test.js"}
-{"blob_oid":"f10cb3b5ad909ebc704584fc2854b3a362613ac0","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/evidence/artifact-manifest.v1.json"}
+{"blob_oid":"cb4fda7b09e9fc0709d7732f15131cff18894459","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/evidence/artifact-manifest.v1.json"}
 {"blob_oid":"12f76178a617fbe9d4992725d87a1c2f31bcf1dc","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/evidence/restore-fixture.v1.json"}
 {"blob_oid":"a4b8fda501478cbe43582c4b15f0d93b2591feb4","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/evidence/restore-rehearsal.v1.json"}
 {"blob_oid":"6424d06e5d81d164c5fcb60b9f4354b2ac67205c","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/evidence/sbom.spdx.json"}
-{"blob_oid":"4520917202accc7cd37e389aa7d7f98fb705c3af","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/evidence/sqlite-conformance.v1.json"}
+{"blob_oid":"96e397756ada05a22d51a13f77cda93ad7445f60","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/evidence/sqlite-conformance.v1.json"}
 {"blob_oid":"66468d124f57bd2bec04c7d438808394c3090633","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/package-lock.json"}
 {"blob_oid":"082963d2d67f39e44d073be61d3e321822aba819","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/package.json"}
 {"blob_oid":"52bac05ee76aff76fc219ec810c7a0752ef0f26c","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/scripts/artifact.ts"}
@@ -551,7 +551,7 @@
 {"blob_oid":"fe0a08ecc6cdd8df540be6a53b82da4d4a19bfd8","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/scripts/restore_rehearsal.ts"}
 {"blob_oid":"6891543a5d8c7728d2be506db3a1a4e7b92d24d1","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/scripts/runtime_contract.mjs"}
 {"blob_oid":"9250a399c5b21668a306633af1ce34514182f80d","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/scripts/sbom.ts"}
-{"blob_oid":"c881184139e57a4a1a80d45240562d712d8453b9","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/scripts/sqlite_conformance.mjs"}
+{"blob_oid":"8fbcec8c015390d82a4669dbd659c2d55aac1291","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/scripts/sqlite_conformance.mjs"}
 {"blob_oid":"28ef00630902d71947cff2f2eda1df0ed70d23ac","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/src/artifact.ts"}
 {"blob_oid":"4f247e8baa93c4ad58753bc5e7f1d4afda211b4f","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/src/config.ts"}
 {"blob_oid":"ec225f5687c4633d538a17300e6c5db0d747a9f2","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/src/dispatcher.ts"}
