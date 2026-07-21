@@ -32,9 +32,9 @@ const summary = {
   package_file_count: trackedPackagePaths.length,
   package_lock_sha256: hashFile(resolve(packageRoot, "package-lock.json")),
   policy_sha256: hashFile(policyPath),
-  // The fixed baseline predates the two protected packages; each package is
-  // covered by a canonical prefix and therefore contributes every tracked row.
-  protected_file_count: 52 + trackedPackagePaths.length + trackedAdapterPaths.length,
+  // The fixed baseline includes the protected root-level ignore file and
+  // predates the two protected packages; each package prefix adds every row.
+  protected_file_count: 53 + trackedPackagePaths.length + trackedAdapterPaths.length,
   reproducibility_sha256: hashFile(reproductionPath),
   schema_version: 1,
   test_case_count: testCaseCount,
