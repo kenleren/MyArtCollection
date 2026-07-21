@@ -31,7 +31,7 @@ const summary = {
   package_file_count: trackedPackagePaths.length,
   package_lock_sha256: hashFile(resolve(packageRoot, "package-lock.json")),
   policy_sha256: hashFile(policyPath),
-  protected_file_count: 52 + trackedPackagePaths.length,
+  protected_file_count: 53 + trackedPackagePaths.length,
   reproducibility_sha256: hashFile(reproductionPath),
   schema_version: 1,
   test_case_count: testCaseCount,

@@ -3,6 +3,7 @@
 {"blob_oid":"455f48a5c92ebe59ed73a1219f4af17c472d1e43","class":"protected-control","mode":"100644","path":".github/workflows/release-readiness.yml"}
 {"blob_oid":"d1398907f923d1f23e593092d0ed0dbe78471243","class":"evaluated-input","mode":"100644","path":".gitignore"}
 {"blob_oid":"db887dde90662d8f6e31a95d15d03c0afa59f648","class":"protected-control","mode":"100644","path":".gitleaks.toml"}
+{"blob_oid":"28b1b31b4b5a3bf62c7946519fe8da1929b5102a","class":"protected-control","mode":"100644","path":".gitleaksignore"}
 {"blob_oid":"954d6716a2082cf91479b0c7d0a07d5614328503","class":"evaluated-input","mode":"100644","path":".metadata"}
 {"blob_oid":"0357efd7d6816ada7f2678d90d03bd0dd8787023","class":"evaluated-input","mode":"100644","path":"AGENTS.md"}
 {"blob_oid":"99ddac73f7c3dfcb48c59ae35020f084135075a4","class":"evaluated-input","mode":"100644","path":"README.md"}
