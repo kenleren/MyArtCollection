@@ -193,9 +193,79 @@ function regenerateOverlayEvidence(anchor, expectedCandidate, expectedSummary) {
   } finally { rmSync(temporary, { recursive: true, force: true }); }
 }
 
+const finalAPaths = [overlayPaths[1], overlayPaths[2], "backend/release_policy_workers_free/scripts/phase_guard.mjs"];
+const finalAV1Sha256 = "53055b0aceb861392fbf97daa35819c1a30a5916e9fb5ee1680a8c8aad608fe8";
+function nameStatus(from, to) { return git("diff", "--name-status", from, to).trim().split("\n").filter(Boolean); }
+function treeMode(oid, path) { const row = git("ls-tree", oid, "--", path).trim(); return row ? row.split(/\s+/)[0] : ""; }
+function requireCleanWorktree() { if (git("status", "--porcelain=v1", "--untracked-files=all").trim()) fail("worktree must be completely clean"); }
+function assertAllowedACommit(parent, commit) {
+  const delta = nameStatus(parent, commit);
+  if (!delta.length) fail("empty A commit rejected");
+  for (const row of delta) {
+    const [status, path] = row.split("\t");
+    if (!finalAPaths.includes(path) || !["A", "D", "M"].includes(status) || (status !== "D" && treeMode(commit, path) !== "100644")) fail("A commit path or mode rejected");
+  }
+}
+function assertFinalAChain(startOid, anchor) {
+  if (startOid !== "303125410ee00d21ae17108037e327373f57d10a" || git("rev-parse", "HEAD^{commit}").trim() !== anchor) fail("final A anchor rejected");
+  try { git("merge-base", "--is-ancestor", startOid, anchor); } catch { fail("final A ancestry rejected"); }
+  const chain = git("rev-list", "--reverse", "--ancestry-path", `${startOid}..${anchor}`).trim().split("\n").filter(Boolean);
+  if (!chain.length) fail("final A chain missing");
+  let parent = startOid;
+  for (const commit of chain) {
+    const parents = git("rev-list", "--parents", "-n", "1", commit).trim().split(/\s+/);
+    if (parents.length !== 2 || parents[1] !== parent) fail("final A topology rejected");
+    assertAllowedACommit(parent, commit);
+    parent = commit;
+  }
+  const expected = [`A\t${overlayPaths[1]}`, `D\t${overlayPaths[2]}`, "M\tbackend/release_policy_workers_free/scripts/phase_guard.mjs"];
+  if (JSON.stringify(nameStatus(startOid, anchor)) !== JSON.stringify(expected) || treeMode(anchor, overlayPaths[1]) !== "100644" || treeMode(anchor, overlayPaths[2]) || treeMode(anchor, finalAPaths[2]) !== "100644") fail("final A cumulative path or mode rejected");
+  if (hashAt(anchor, overlayPaths[1]) !== finalAV1Sha256 || !startBytes(startOid, artifactPath).equals(startBytes(anchor, artifactPath)) || hashAt(startOid, "backend/release_policy_workers_free/config/phase-b-overlay.v1.json") !== hashAt(anchor, "backend/release_policy_workers_free/config/phase-b-overlay.v1.json")) fail("final A placeholder or overlay drift rejected");
+}
+function syntheticEvidence(oid, fixtureGit, guardBytes, lockBytes) {
+  const epoch = Number(fixtureGit(["show", "-s", "--format=%ct", oid]));
+  const namespace = `https://archivale.app/spdx/release-policy-workers-free/${oid}/${hash(lockBytes)}`;
+  const sbom = Buffer.from(`${JSON.stringify({ namespace, epoch, source_git_sha: oid, guard_sha256: hash(guardBytes) })}\n`);
+  return { source_git_sha: oid, sbom_namespace: namespace, sbom_epoch: epoch, sbom_sha256: hash(sbom), guard_sha256: hash(guardBytes) };
+}
+function assertSyntheticProvisionalFinalRegression() {
+  const directory = mkdtempSync(join(tmpdir(), "release-policy-pf-fixture-"));
+  const fixtureGit = (args, env = {}) => execFileSync("git", ["-C", directory, ...args], { encoding: "utf8", env: { ...process.env, TZ: "UTC", LC_ALL: "C", LANG: "C", ...env } }).trim();
+  const commit = (label, content, date) => {
+    writeFileSync(resolve(directory, "scripts/phase_guard.mjs"), content);
+    fixtureGit(["add", "scripts/phase_guard.mjs"]); fixtureGit(["commit", "--no-gpg-sign", "-m", label], { GIT_AUTHOR_DATE: date, GIT_COMMITTER_DATE: date });
+    return fixtureGit(["rev-parse", "HEAD^{commit}"]);
+  };
+  try {
+    mkdirSync(resolve(directory, "scripts")); writeFileSync(resolve(directory, "package-lock.json"), "fixture-lock\n");
+    fixtureGit(["init", "--quiet"]); fixtureGit(["config", "user.name", "fixture"]); fixtureGit(["config", "user.email", "fixture@example.invalid"]);
+    const base = commit("C", "base\n", "2000-01-01T00:00:00Z");
+    const provisional = commit("P", "provisional\n", "2000-01-01T00:00:01Z"); fixtureGit(["update-ref", "refs/fixture/provisional", provisional]);
+    fixtureGit(["checkout", "--quiet", "--detach", base]);
+    const final = commit("F", "final\n", "2000-01-01T00:00:02Z"); fixtureGit(["update-ref", "refs/fixture/final", final]);
+    if (fixtureGit(["rev-parse", `${provisional}^`]) !== base || fixtureGit(["rev-parse", `${final}^`]) !== base || fixtureGit(["rev-parse", "refs/fixture/provisional"]) !== provisional || fixtureGit(["rev-parse", "refs/fixture/final"]) !== final) fail("synthetic P/F topology rejected");
+    const lock = readFileSync(resolve(directory, "package-lock.json"));
+    const pEvidence = syntheticEvidence(provisional, fixtureGit, Buffer.from("provisional\n"), lock);
+    const fEvidence = syntheticEvidence(final, fixtureGit, Buffer.from("final\n"), lock);
+    const mismatches = (evidence) => Object.keys(fEvidence).filter((key) => evidence[key] !== fEvidence[key]);
+    const requiredMismatches = ["source_git_sha", "sbom_namespace", "sbom_epoch", "sbom_sha256", "guard_sha256"];
+    if (JSON.stringify(mismatches(pEvidence)) !== JSON.stringify(requiredMismatches) || mismatches(fEvidence).length) fail("synthetic stale evidence rejected");
+    const syntheticB = fixtureGit(["commit-tree", fixtureGit(["write-tree"]), "-p", final], { GIT_AUTHOR_DATE: "2000-01-01T00:00:03Z", GIT_COMMITTER_DATE: "2000-01-01T00:00:03Z" });
+    if (fixtureGit(["rev-parse", `${syntheticB}^`]) !== final) fail("synthetic B parent rejected");
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+}
+function assertFinalASeal() {
+  const anchor = required(option("anchor"), "anchor"); const startOid = required(start, "start");
+  cleanIndex(); requireCleanWorktree(); assertFinalAChain(startOid, anchor);
+  const runningGuard = readFileSync(resolve(root, finalAPaths[2]));
+  if (!runningGuard.equals(startBytes(anchor, finalAPaths[2]))) fail("running guard differs from committed final A");
+  assertSyntheticProvisionalFinalRegression();
+}
+
 function main() {
 if (phase === "preserve-sbom") preserve();
 else if (phase === "verify-sbom-preservation") verifyPreservation();
+else if (phase === "final-a") assertFinalASeal();
 else if (["prepared", "a-worktree", "a-index", "a10-index", "b-worktree", "overlay-index", "evidence-ready", "b-index", "final"].includes(phase)) {
   if (git("rev-parse", "--abbrev-ref", "HEAD").trim() !== "codex/issue-245-workers-free-adapter") fail("branch rejected");
   if (option("base") && git("merge-base", option("base"), "HEAD").trim() !== option("base")) fail("base rejected");
