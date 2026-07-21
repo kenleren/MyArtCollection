@@ -296,7 +296,8 @@ jobs:
           npm --prefix backend/play_billing test
           npm --prefix backend/release_policy_workers_free ci --ignore-scripts
           npm --prefix backend/release_policy_workers_free test
-          npm --prefix backend/release_policy_workers_free run bundle:worker
+          npm --prefix backend/release_policy_workers_free run test:runtime-contract
+          npm --prefix backend/release_policy_workers_free run test:sqlite-conformance
           npm --prefix backend/release_policy_workers_free run sbom:generate
           npm --prefix backend/release_policy_workers_free run artifact:verify
           npm --prefix backend/release_policy_workers_free run restore:rehearsal

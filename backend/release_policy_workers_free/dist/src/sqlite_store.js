@@ -16,10 +16,11 @@ export class SqliteStore {
     async read(key) { const row = this.storage.sql.exec("SELECT value_json FROM kv WHERE key=?", key).toArray()[0]; return row === undefined ? undefined : JSON.parse(row.value_json); }
     /** Internal scheduler inventory. Core durable keys/values remain unchanged. */
     entries(prefix) {
-        if (!/^(receipt|generation|outbox|push-child)\/$/.test(prefix))
+        if (!/^(receipt|generation|outbox|push-child|binding|current)\/$/.test(prefix))
             throw new Error("scheduler prefix rejected");
         return this.storage.sql.exec("SELECT key,value_json FROM kv WHERE key LIKE ? ORDER BY key", `${prefix}%`).toArray().map((row) => ({ key: row.key, value: JSON.parse(row.value_json) }));
     }
+    rowCount() { return Number(this.storage.sql.exec("SELECT count(*) AS count FROM kv").toArray()[0].count); }
     readMeta(key) { const row = this.storage.sql.exec("SELECT value_json FROM meta WHERE key=?", key).toArray()[0]; return row === undefined ? undefined : JSON.parse(row.value_json); }
     writeMeta(key, value) { this.storage.sql.exec("INSERT INTO meta(key,value_json) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json", key, JSON.stringify(value)); }
 }

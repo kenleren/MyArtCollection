@@ -12,60 +12,93 @@ export class AlarmDispatcher {
         this.store = store;
         this.runtime = runtime;
     }
-    async requestDrain(at = Date.now()) { if (await this.storage.getAlarm() === null)
-        await this.storage.setAlarm(at); }
+    async requestDrain(at = Date.now(), reassert = false) { const current = await this.storage.getAlarm(); if (current === null || reassert) {
+        await this.storage.setAlarm(Math.max(at, current ?? at) + 100);
+        return true;
+    } return false; }
     async watchdog() {
-        const pending = this.store.entries("receipt/").filter(({ value }) => !["terminal_success", "terminal_failure", "conflict"].includes(value.state)).length;
+        const pendingReceipts = this.store.entries("receipt/").filter(({ value }) => !["terminal_success", "terminal_failure", "conflict"].includes(value.state));
+        const pending = pendingReceipts.length;
         const alarm = await this.storage.getAlarm();
         // Persist only bounded, non-sensitive operational buckets; never payloads,
         // headers, credentials, provider errors, or raw quota values.
-        this.store.writeMeta("watchdog/v1", sanitizeTelemetry({ alarm_present: alarm !== null, pending_bucket: pending === 0 ? 0 : pending < 10 ? 1 : 2, forbidden_egress_count: 0, status_egress_count: 0 }));
-        await this.requestDrain();
-    }
-    rememberTarget(receipt, target) { this.store.writeMeta(targetMetaKey(receipt.installationId, receipt.deliveryId), target); }
-    async alarm() {
-        let retryAt;
-        for (const row of this.store.entries("receipt/")) {
-            const receipt = row.value;
-            try {
-                await this.advanceReceipt(receipt);
-            }
-            catch (error) {
-                retryAt = Math.min(retryAt ?? Infinity, this.recordRetry(receipt, error));
-            }
+        const alarmRuntime = this.store.readMeta("alarm_runtime/v1");
+        const alarmIsActive = alarmRuntime?.running === true && Number.isFinite(alarmRuntime.started_at) && Date.now() - alarmRuntime.started_at < 60_000;
+        const alarmReasserted = pending > 0 && !alarmIsActive ? await this.requestDrain(Date.now(), true) : false;
+        const oldestReceivedAt = pendingReceipts.map(({ value }) => value).map((receipt) => this.store.readMeta(targetMetaKey(receipt.installationId, receipt.deliveryId))?.received_at).filter((value) => typeof value === "number" && Number.isFinite(value)).sort((a, b) => a - b)[0];
+        const oldestWorkBucket = oldestReceivedAt === undefined ? 0 : Date.now() - oldestReceivedAt < 60_000 ? 1 : 2;
+        const bindings = this.store.entries("binding/").map(({ value }) => value);
+        const seen = new Set();
+        let duplicates = 0;
+        for (const binding of bindings) {
+            if (binding.checkId === undefined || binding.externalId === undefined)
+                continue;
+            const identity = `${binding.checkId}:${binding.externalId}`;
+            if (seen.has(identity))
+                duplicates += 1;
+            else
+                seen.add(identity);
         }
-        // A future alarm is required whenever durable non-terminal work remains.
-        if (this.hasPendingWork())
-            await this.storage.setAlarm(retryAt ?? Date.now());
+        const rows = this.store.rowCount();
+        this.store.writeMeta("watchdog/v1", sanitizeTelemetry({ alarm_present: alarm !== null, alarm_reasserted: alarmReasserted, duplicate_binding_bucket: duplicates === 0 ? 0 : duplicates < 3 ? 1 : 2, forbidden_egress_count: 0, oldest_work_bucket: oldestWorkBucket, pending_bucket: pending === 0 ? 0 : pending < 10 ? 1 : 2, row_headroom_bucket: rows < 50 ? 0 : rows < 100 ? 1 : 2, status_egress_count: 0 }));
     }
-    async advanceReceipt(receipt) {
+    rememberTarget(receipt, target) { const key = targetMetaKey(receipt.installationId, receipt.deliveryId); if (this.store.readMeta(key) === undefined)
+        this.store.writeMeta(key, { ...target, received_at: Date.now() }); }
+    async alarm() {
+        const port = this.runtime.portFactory?.() ?? this.runtime.port;
+        if (!port)
+            throw new Error("alarm GitHub port unavailable");
+        const priorAlarmCount = this.store.readMeta("alarm_count/v1") ?? 0;
+        this.store.writeMeta("alarm_count/v1", Math.min(priorAlarmCount + 1, 9));
+        this.store.writeMeta("alarm_runtime/v1", { running: true, started_at: Date.now() });
+        const pullSnapshots = new Map();
+        try {
+            let retryAt;
+            for (const row of this.store.entries("receipt/")) {
+                const receipt = row.value;
+                try {
+                    await this.advanceReceipt(receipt, port, pullSnapshots);
+                }
+                catch (error) {
+                    retryAt = Math.min(retryAt ?? Infinity, this.recordRetry(receipt, error));
+                }
+            }
+            // A future alarm is required whenever durable non-terminal work remains.
+            if (this.hasPendingWork())
+                await this.storage.setAlarm(retryAt ?? Date.now() + 25);
+        }
+        finally {
+            this.store.writeMeta("alarm_runtime/v1", { running: false, started_at: 0 });
+        }
+    }
+    async advanceReceipt(receipt, port, pullSnapshots) {
         if (["terminal_success", "terminal_failure", "conflict"].includes(receipt.state))
             return;
         const target = this.store.readMeta(targetMetaKey(receipt.installationId, receipt.deliveryId));
         if (!target)
             throw new Error("delivery target missing");
-        if (receipt.state === "received") {
+        if (receipt.state === "received" || receipt.state === "snapshotting") {
             const snapshotting = await beginReceiptSnapshot(this.store, receipt);
             if (snapshotting.state !== "snapshotting")
                 return;
             if (target.kind === "pull_request") {
-                const evaluation = await snapshotPullRequest(this.runtime.port, this.runtime.identity, target.pullRequestNumber, this.runtime.policy);
+                const evaluation = await this.pullSnapshot(port, target.pullRequestNumber, pullSnapshots);
                 await atomicEnqueuePull(this.store, snapshotting, (await import("@archivale/release-policy-trust")).generationFromEvaluation(evaluation));
             }
             else {
-                const targets = await snapshotPushTargets(this.runtime.port, this.runtime.identity, target.after, this.runtime.policy);
+                const targets = await snapshotPushTargets(port, this.runtime.identity, target.after, this.runtime.policy);
                 await atomicEnqueuePush(this.store, snapshotting, targets.digest, targets.numbers);
             }
         }
         const current = await this.store.read(`receipt/${receipt.installationId}/${receipt.deliveryId}`);
         if (current?.kind === "push" && current.targetNumbers)
-            return this.advancePush(current);
+            return this.advancePush(current, port, pullSnapshots);
         if (!current?.generationId)
             return;
-        await this.advanceGeneration(current.generationId);
+        await this.advanceGeneration(current.generationId, port);
         await settlePullReceipt(this.store, current);
     }
-    async advancePush(receipt) {
+    async advancePush(receipt, port, pullSnapshots) {
         for (const pr of receipt.targetNumbers ?? []) {
             const child = await this.store.read(`push-child/${receipt.installationId}/${receipt.deliveryId}/${pr}`);
             if (!child || ["terminal_success", "terminal_failure"].includes(child.state))
@@ -73,17 +106,25 @@ export class AlarmDispatcher {
             if (child.state === "pending") {
                 const worker = `alarm:push:${receipt.deliveryId.slice(0, 16)}:${pr}`;
                 await leasePushChild(this.store, receipt, pr, worker);
-                const evaluation = await snapshotPullRequest(this.runtime.port, this.runtime.identity, pr, this.runtime.policy);
+                const evaluation = await this.pullSnapshot(port, pr, pullSnapshots);
                 await atomicEnqueuePushChild(this.store, receipt, (await import("@archivale/release-policy-trust")).generationFromEvaluation(evaluation), worker);
             }
             const durable = await this.store.read(`push-child/${receipt.installationId}/${receipt.deliveryId}/${pr}`);
             if (durable?.generationId) {
-                await this.advanceGeneration(durable.generationId);
+                await this.advanceGeneration(durable.generationId, port);
                 await settlePushChild(this.store, receipt, pr);
             }
         }
     }
-    async advanceGeneration(generationId) {
+    pullSnapshot(port, pullRequestNumber, cache) {
+        const prior = cache.get(pullRequestNumber);
+        if (prior)
+            return prior;
+        const pending = snapshotPullRequest(port, this.runtime.identity, pullRequestNumber, this.runtime.policy);
+        cache.set(pullRequestNumber, pending);
+        return pending;
+    }
+    async advanceGeneration(generationId, port) {
         const generation = await this.store.read(`generation/${generationId}`);
         if (!generation || ["terminal_success", "terminal_failure", "obsolete", "blocked_ambiguous"].includes(generation.state ?? ""))
             return;
@@ -108,10 +149,10 @@ export class AlarmDispatcher {
             await prepareCheckBinding(this.store, generationId, this.runtime.identity);
         const afterBinding = await this.store.read(`generation/${generationId}`);
         if (afterBinding?.state === "decision_ready")
-            await runCreateCheck({ ...this.runtime, generationId, store: this.store, worker });
+            await runCreateCheck({ clock: this.runtime.clock, generationId, port, store: this.store, worker });
         const completing = await this.store.read(`generation/${generationId}`);
         if (completing?.state === "completing")
-            await runUpdateCheck({ generationId, port: this.runtime.port, store: this.store, worker });
+            await runUpdateCheck({ generationId, port, store: this.store, worker });
     }
     hasPendingWork() { return this.store.entries("receipt/").some(({ value }) => !["terminal_success", "terminal_failure", "conflict"].includes(value.state)); }
     recordRetry(receipt, error) {

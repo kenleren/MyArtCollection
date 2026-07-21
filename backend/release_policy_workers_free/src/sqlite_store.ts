@@ -16,9 +16,10 @@ export class SqliteStore {
   async read(key: string): Promise<unknown> { const row = this.storage.sql.exec("SELECT value_json FROM kv WHERE key=?", key).toArray()[0] as { value_json: string } | undefined; return row === undefined ? undefined : JSON.parse(row.value_json); }
   /** Internal scheduler inventory. Core durable keys/values remain unchanged. */
   entries(prefix: string): Array<{ key: string; value: unknown }> {
-    if (!/^(receipt|generation|outbox|push-child)\/$/.test(prefix)) throw new Error("scheduler prefix rejected");
+    if (!/^(receipt|generation|outbox|push-child|binding|current)\/$/.test(prefix)) throw new Error("scheduler prefix rejected");
     return (this.storage.sql.exec("SELECT key,value_json FROM kv WHERE key LIKE ? ORDER BY key", `${prefix}%`).toArray() as Array<{ key: string; value_json: string }>).map((row) => ({ key: row.key, value: JSON.parse(row.value_json) }));
   }
+  rowCount(): number { return Number((this.storage.sql.exec("SELECT count(*) AS count FROM kv").toArray()[0] as { count: number }).count); }
   readMeta<T>(key: string): T | undefined { const row = this.storage.sql.exec("SELECT value_json FROM meta WHERE key=?", key).toArray()[0] as { value_json: string } | undefined; return row === undefined ? undefined : JSON.parse(row.value_json) as T; }
   writeMeta(key: string, value: unknown): void { this.storage.sql.exec("INSERT INTO meta(key,value_json) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json", key, JSON.stringify(value)); }
 }

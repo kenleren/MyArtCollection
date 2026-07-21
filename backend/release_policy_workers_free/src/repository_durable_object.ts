@@ -4,7 +4,7 @@ import type { DurableState } from "./platform.js";
 import { SqliteStore } from "./sqlite_store.js";
 import { parseRuntimeConfig } from "./config.js";
 import { CANONICAL_POLICY_BYTES } from "./generated/canonical_policy_bytes.js";
-import { GitHubAppPort, githubInstallationAuthorization } from "./github_app_port.js";
+import { githubAlarmPort } from "./github_app_port.js";
 
 interface RuntimeEnv { RELEASE_TRUST_CONFIG_V1: string; GITHUB_APP_PRIVATE_KEY_PEM: string }
 
@@ -13,9 +13,16 @@ export class RepositoryDurableObject {
   private readonly dispatcher: AlarmDispatcher;
   constructor(private readonly state: DurableState, env: RuntimeEnv) {
     this.store = new SqliteStore(state.storage);
+    // A constructor run proves the prior in-memory alarm invocation no longer
+    // exists; clear only this scheduler marker, never a core effect lease.
+    this.store.writeMeta("alarm_runtime/v1", { running: false, started_at: 0 });
     const config = parseRuntimeConfig(env.RELEASE_TRUST_CONFIG_V1);
-    const port = new GitHubAppPort(fetch, githubInstallationAuthorization({ appId: config.appId, installationId: config.installationId, privateKeyPem: env.GITHUB_APP_PRIVATE_KEY_PEM, fetcher: fetch }));
-    this.dispatcher = new AlarmDispatcher(state.storage, this.store, { clock: { delay: async () => {} }, identity: { appId: config.appId, baseRef: "main", installationId: config.installationId, repositoryId: config.repositoryId, repositoryName: "kenleren/MyArtCollection" }, policy: loadCanonicalPolicy(CANONICAL_POLICY_BYTES), port });
+    this.dispatcher = new AlarmDispatcher(state.storage, this.store, {
+      clock: { delay: async () => {} },
+      identity: { appId: config.appId, baseRef: "main", installationId: config.installationId, repositoryId: config.repositoryId, repositoryName: "kenleren/MyArtCollection" },
+      policy: loadCanonicalPolicy(CANONICAL_POLICY_BYTES),
+      portFactory: () => githubAlarmPort({ appId: config.appId, installationId: config.installationId, privateKeyPem: env.GITHUB_APP_PRIVATE_KEY_PEM, fetcher: fetch }),
+    });
   }
   async fetch(request: Request): Promise<Response> {
     const path = new URL(request.url).pathname;

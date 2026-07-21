@@ -43,7 +43,11 @@ function optionsFor(compatibilityFlags = flags) {
   if (!(log instanceof Log) || log.level !== LogLevel.NONE) throw new Error("quiet logger contract violated");
   return { rootPath: repositoryRoot, scriptPath, modules: true, modulesRoot: repositoryRoot, compatibilityDate: "2026-07-21", compatibilityFlags, bindings, durableObjects: { REPOSITORY: { className: "RepositoryDurableObject", useSQLite: true } }, durableObjectsPersist: false, kvPersist: false, cachePersist: false, log };
 }
-const runtime = new Miniflare(optionsFor());
+const runtimeOptions = optionsFor();
+for (const forbidden of ["unsafeDirectSocket", "unsafeEphemeralDurableObjects", "unsafeUniqueKey", "outboundService"]) {
+  if (forbidden in runtimeOptions || bytes.includes(forbidden)) throw new Error("unsafe runtime option present");
+}
+const runtime = new Miniflare(runtimeOptions);
 try {
   const missing = await runtime.dispatchFetch("http://runtime.invalid/not-a-route");
   if (missing.status !== 404) throw new Error("same-byte Worker did not execute");

@@ -1,6 +1,6 @@
 /** The sole network-capable module.  Its public shape is the core's closed
  * Check Runs port: callers cannot construct URLs, send statuses, or use GraphQL. */
-import type { AppCheck, CreateCheckInput, GitHubCheckRunsPort, MainRefSnapshot, OpenMainPullRequest, Page, PullRequestSnapshot, UpdateCheckInput } from "@archivale/release-policy-trust";
+import { DefinitiveNotSentError, type AppCheck, type CreateCheckInput, type GitHubCheckRunsPort, type MainRefSnapshot, type OpenMainPullRequest, type Page, type PullRequestSnapshot, type UpdateCheckInput } from "@archivale/release-policy-trust";
 import type { ChangedFile } from "@archivale/release-policy-trust";
 import { githubRoute, type Route } from "./github_routes.js";
 
@@ -8,6 +8,7 @@ type Json = Record<string, unknown> | unknown[];
 const MAX_RESPONSE_BYTES: Record<Route, number> = { installationToken: 16_384, pullRequest: 131_072, mainRef: 16_384, pullFiles: 1_048_576, openMainPulls: 1_048_576, appChecks: 1_048_576, createCheck: 131_072, updateCheck: 131_072 };
 type PaginatedRoute = "pullFiles" | "openMainPulls" | "appChecks";
 const PAGE_CEILING: Record<PaginatedRoute, number> = { pullFiles: 30, openMainPulls: 10, appChecks: 30 };
+const callFetch = (fetcher: typeof fetch, request: Request, init?: RequestInit): Promise<Response> => Reflect.apply(fetcher, globalThis, init === undefined ? [request] : [request, init]);
 function paginationRejected(): never { throw new Error("github pagination rejected"); }
 function canonicalPage(value: string, ceiling: number): number { if (!/^[1-9][0-9]*$/.test(value)) return paginationRejected(); const page = Number(value); if (!Number.isSafeInteger(page) || page > ceiling) return paginationRejected(); return page; }
 function exactQuery(url: URL, request: URL, page: number, route: PaginatedRoute): void {
@@ -19,7 +20,7 @@ function exactQuery(url: URL, request: URL, page: number, route: PaginatedRoute)
 }
 function parsePagination(link: string | null, request: URL, route: PaginatedRoute, current: number): number | null {
   if (link === null) return null;
-  const bytes = new TextEncoder().encode(link); if (bytes.length === 0 || bytes.length > 8192 || !/^[\x20\x09-\x7e]+$/.test(link)) return paginationRejected();
+  const bytes = new TextEncoder().encode(link); if (bytes.length === 0 || bytes.length > 8192 || !/^(?:[\x20-\x7e]|\t)+$/.test(link)) return paginationRejected();
   const members = link.split(","); if (members.length > 4 || members.some((member) => new TextEncoder().encode(member).length === 0 || new TextEncoder().encode(member).length > 2048)) return paginationRejected();
   const relations = new Map<string, number>();
   for (const member of members) {
@@ -50,8 +51,11 @@ export class GitHubAppPort implements GitHubCheckRunsPort {
     const base = githubRoute(route, args, query);
     const token = await this.authorization();
     if (!token || /[\r\n]/.test(token)) throw new Error("github authorization unavailable");
-    const init = body === undefined ? { headers: { ...Object.fromEntries(base.headers), Authorization: `Bearer ${token}` } } : { headers: { ...Object.fromEntries(base.headers), Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify(body) };
-    const response = await this.fetcher(new Request(base, init));
+    const headers = new Headers(base.headers);
+    headers.set("Authorization", `Bearer ${token}`);
+    if (body !== undefined) headers.set("Content-Type", "application/json");
+    const outbound = new Request(base.url, { method: base.method, redirect: "manual", headers, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+    const response = await callFetch(this.fetcher, outbound);
     if (response.redirected || !response.ok || !/^application\/json(?:;|$)/i.test(response.headers.get("content-type") ?? "")) throw new Error("github route rejected");
     const nextPage = page === undefined ? null : parsePagination(response.headers.get("link"), new URL(base.url), route as PaginatedRoute, page);
     return { value: await boundedJson(response, MAX_RESPONSE_BYTES[route]), nextPage };
@@ -85,13 +89,28 @@ export function githubInstallationAuthorization(input: { appId: number; installa
     const now = Math.floor((input.now?.() ?? Date.now()) / 1000);
     const header = base64Url(new TextEncoder().encode(JSON.stringify({ alg: "RS256", typ: "JWT" })));
     const claims = base64Url(new TextEncoder().encode(JSON.stringify({ iat: now - 30, exp: now + 540, iss: input.appId })));
-    const key = await crypto.subtle.importKey("pkcs8", pemBytes(input.privateKeyPem), { hash: "SHA-256", name: "RSASSA-PKCS1-v1_5" }, false, ["sign"]);
-    const signature = new Uint8Array(await crypto.subtle.sign("RSASSA-PKCS1-v1_5", key, new TextEncoder().encode(`${header}.${claims}`)));
+    const key = await globalThis.crypto.subtle.importKey("pkcs8", pemBytes(input.privateKeyPem), { hash: "SHA-256", name: "RSASSA-PKCS1-v1_5" }, false, ["sign"]);
+    const signature = new Uint8Array(await globalThis.crypto.subtle.sign("RSASSA-PKCS1-v1_5", key, new TextEncoder().encode(`${header}.${claims}`)));
     const request = githubRoute("installationToken", [input.installationId]);
-    const response = await input.fetcher(new Request(request, { headers: { ...Object.fromEntries(request.headers), Authorization: `Bearer ${header}.${claims}.${base64Url(signature)}` } }));
+    const headers = new Headers(request.headers); headers.set("Authorization", `Bearer ${header}.${claims}.${base64Url(signature)}`);
+    const response = await callFetch(input.fetcher, new Request(request.url, { method: request.method, redirect: "manual", headers }));
     if (response.redirected || !response.ok || !/^application\/json(?:;|$)/i.test(response.headers.get("content-type") ?? "")) throw new Error("github installation token rejected");
     const body = await boundedJson(response, MAX_RESPONSE_BYTES.installationToken) as { token?: unknown };
     if (typeof body.token !== "string" || body.token.length === 0 || /[\r\n]/.test(body.token)) throw new Error("github installation token malformed");
     return body.token;
   };
+}
+
+/** One alarm owns one transient authorization/session budget. Nothing from the
+ * session is persisted or reused by a later event. */
+export function githubAlarmPort(input: { appId: number; installationId: number; privateKeyPem: string; fetcher: typeof fetch }): GitHubCheckRunsPort {
+  let outboundCalls = 0;
+  const budgetedFetch: typeof fetch = async (request, init) => {
+    outboundCalls += 1;
+    if (outboundCalls > 50) throw new DefinitiveNotSentError("github alarm subrequest budget exhausted");
+    return callFetch(input.fetcher, request instanceof Request ? request : new Request(request, init), request instanceof Request ? init : undefined);
+  };
+  const issueAuthorization = githubInstallationAuthorization({ ...input, fetcher: budgetedFetch });
+  let authorization: Promise<string> | undefined;
+  return new GitHubAppPort(budgetedFetch, () => authorization ??= issueAuthorization());
 }
