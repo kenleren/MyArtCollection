@@ -1,6 +1,6 @@
 {
   "base_commit": "f42582c8eb0d1405cd5e214f6b9c80980225b5f1",
-  "candidate_inventory_sha256": "ddbd55d394e6b34d8fb32541105a854c4aafe21d4babc6bf82da0d65a7d7b73c",
+  "candidate_inventory_sha256": "141d28a5531d5e97f630d753cfad59801636e927e55d376e873775d01d7914e9",
   "claim_matrix_sha256": "b97e3997fde87af1b52bd5fef744f4f6d70c107ad4c41340af5a4f5869646555",
   "external_manifest_sha256": "3db7a5be1a28232ddf0d7b189e96d0299c54fbd38b6d59b9acaf50c38635bf3b",
   "package_file_count": 59,
