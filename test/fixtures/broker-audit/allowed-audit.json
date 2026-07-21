@@ -11,7 +11,7 @@
       "nodes": ["node_modules/@google-cloud/firestore"],
       "fixAvailable": {
         "name": "firebase-admin",
-        "version": "14.1.0",
+        "version": "14.2.0",
         "isSemVerMajor": true
       }
     },
@@ -25,7 +25,7 @@
       "nodes": ["node_modules/@google-cloud/storage"],
       "fixAvailable": {
         "name": "firebase-admin",
-        "version": "14.1.0",
+        "version": "14.2.0",
         "isSemVerMajor": true
       }
     },
@@ -39,7 +39,7 @@
       "nodes": ["node_modules/firebase-admin"],
       "fixAvailable": {
         "name": "firebase-admin",
-        "version": "14.1.0",
+        "version": "14.2.0",
         "isSemVerMajor": true
       }
     },
@@ -63,7 +63,7 @@
       "nodes": ["node_modules/google-gax"],
       "fixAvailable": {
         "name": "firebase-admin",
-        "version": "14.1.0",
+        "version": "14.2.0",
         "isSemVerMajor": true
       }
     },
@@ -77,7 +77,7 @@
       "nodes": ["node_modules/retry-request"],
       "fixAvailable": {
         "name": "firebase-admin",
-        "version": "14.1.0",
+        "version": "14.2.0",
         "isSemVerMajor": true
       }
     },
@@ -91,7 +91,7 @@
       "nodes": ["node_modules/teeny-request"],
       "fixAvailable": {
         "name": "firebase-admin",
-        "version": "14.1.0",
+        "version": "14.2.0",
         "isSemVerMajor": true
       }
     },
@@ -120,7 +120,7 @@
       "nodes": ["node_modules/uuid"],
       "fixAvailable": {
         "name": "firebase-admin",
-        "version": "14.1.0",
+        "version": "14.2.0",
         "isSemVerMajor": true
       }
     }
