@@ -415,8 +415,10 @@ jobs:
             exit 1
           fi
           if [[ "$expected_verification_scope" == full ]]; then
+            artifact_anchor="$(git rev-parse --verify "$CANDIDATE_SHA^")"
             npm --prefix backend/release_policy_trust run candidate:generate -- \
-              --candidate "$CANDIDATE_SHA" \
+              --candidate-base "$artifact_anchor" \
+              --overlay-manifest backend/release_policy_workers_free/config/phase-b-overlay.v1.json \
               --output "$RUNNER_TEMP/candidate-tree.v1.jsonl"
             cmp \
               backend/release_policy_trust/evidence/review/candidate-tree.v1.jsonl \
@@ -428,7 +430,7 @@ jobs:
           npm --prefix backend/release_policy_trust run codeowners:verify
           npm --prefix backend/release_policy_trust run external:verify
           npm --prefix backend/release_policy_trust run reproduce -- \
-            --candidate "$CANDIDATE_SHA" \
+            --source-commit "$(git rev-parse --verify "$CANDIDATE_SHA^")" \
             --output "$RUNNER_TEMP/reproducibility.v1.json"
           cmp \
             backend/release_policy_trust/evidence/review/reproducibility.v1.json \
