@@ -484,9 +484,9 @@
 {"blob_oid":"5a7229372d4851c916ea277ea1805aa683f99c15","class":"protected-control","mode":"100644","path":"backend/release_policy_trust/scripts/codeowners_verify.ts"}
 {"blob_oid":"eb2e28e8d79e473c09cf93cc9f3d82d269618c2d","class":"protected-control","mode":"100644","path":"backend/release_policy_trust/scripts/evidence.ts"}
 {"blob_oid":"9ea2c79a020e9792a6b4a561c04f87bba47d1b30","class":"protected-control","mode":"100644","path":"backend/release_policy_trust/scripts/external_verify.ts"}
-{"blob_oid":"297f85f3988c845fe00daf525e16dc9aef461fc2","class":"protected-control","mode":"100644","path":"backend/release_policy_trust/scripts/final_candidate_generate.ts"}
+{"blob_oid":"3e8635380d323d641bb324623f508f270e989aa1","class":"protected-control","mode":"100644","path":"backend/release_policy_trust/scripts/final_candidate_generate.ts"}
 {"blob_oid":"152746f7398c691ae1cff54adc182138804fa41c","class":"protected-control","mode":"100644","path":"backend/release_policy_trust/scripts/git_anchors.ts"}
-{"blob_oid":"4688952286fa07895433912c968675de0be9e890","class":"protected-control","mode":"100644","path":"backend/release_policy_trust/scripts/policy_verify.ts"}
+{"blob_oid":"9d0b6435a50bf4479b00710f0cc85b782e722f2d","class":"protected-control","mode":"100644","path":"backend/release_policy_trust/scripts/policy_verify.ts"}
 {"blob_oid":"48d52da0df2a8b35f5ab838a03a3b17a9242abf5","class":"protected-control","mode":"100644","path":"backend/release_policy_trust/scripts/reproduce.ts"}
 {"blob_oid":"8fc070101a2787524cf57f9ad250adbbaebfe433","class":"protected-control","mode":"100644","path":"backend/release_policy_trust/scripts/shared.ts"}
 {"blob_oid":"f8e29ab72367062e8b015510b8b1fded35c7c99d","class":"protected-control","mode":"100644","path":"backend/release_policy_trust/scripts/trust_source_scope.ts"}
