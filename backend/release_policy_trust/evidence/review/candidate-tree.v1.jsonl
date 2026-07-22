@@ -547,14 +547,14 @@
 {"blob_oid":"b2f145cc1e6f32492a1534e5f8bfcd94c162ff52","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/dist/test/ci_observability.test.js"}
 {"blob_oid":"298ccd3e2e0ec4b0120282570e9202f8ff0ac1c2","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/dist/test/dispatcher.test.js"}
 {"blob_oid":"1075f1100a04b9b2bf8f2421b9299d4c53a29ccc","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/dist/test/github_pagination.test.js"}
-{"blob_oid":"e56d15871ddde8373aa08214516ae64758f77d26","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/evidence/artifact-manifest.v2.json"}
+{"blob_oid":"2f49e81a46a81bf668eb2f878bee6afbd834ca40","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/evidence/artifact-manifest.v2.json"}
 {"blob_oid":"28758f90ef72032930eee64b16ae9008c567d291","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/evidence/bundle/bundle-evidence.v1.json"}
 {"blob_oid":"20bb3a5b626961eba1edfb44d15005ff5b11fccd","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/evidence/bundle/import-manifest.v1.json"}
 {"blob_oid":"de101324ede369e00545e2d53d8debaa338b2350","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/evidence/bundle/metafile.json"}
 {"blob_oid":"6f963a79735ba8cb22001ac1a9d95568d5822282","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/evidence/bundle/worker.mjs"}
 {"blob_oid":"95e9420696fa1dbd472d709e9290419a2b72593f","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/evidence/restore-fixture.v1.json"}
 {"blob_oid":"332114915f2c50ee935c4228b0d1d912a2537630","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/evidence/restore-rehearsal.v1.json"}
-{"blob_oid":"b6a283184155323b8158a2cbbef2ea5b7de6ec1f","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/evidence/sbom.spdx.json"}
+{"blob_oid":"edc1ca2ad17ec92dbf25517d6dcd1ac7eec00b69","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/evidence/sbom.spdx.json"}
 {"blob_oid":"2e64ec1ee64ed5d9fec8262649425ada23df53fe","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/evidence/sqlite-conformance.v1.json"}
 {"blob_oid":"a9ca2a5245cdf0a1d5aa7c5cad9840afe20035b6","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/evidence/wrangler-preflight.v1.json"}
 {"blob_oid":"81cdfebf4bf74502121fadb78f56d9e35b552c13","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/package-lock.json"}
