@@ -40,7 +40,7 @@ for (let index = 0; index < output.length; index += 1) if (output[index] === 0) 
   if (/^backend\/release_policy_trust\/test\/.*\.test\.ts$/.test(path)) candidateTestPaths.push(path);
   if (!path.startsWith("backend/release_policy_trust/evidence/review/")) candidateRows.push(JSON.stringify({ blob_oid: metadata[2], class: protectedPath ? "protected-control" : "evaluated-input", mode: metadata[0], path }));
 }
-if (protectedCount !== 52 + packageCount) throw new Error(`final protected count mismatch: ${protectedCount} != 52 + ${packageCount}`);
+if (protectedCount !== 53 + packageCount) throw new Error(`final protected count mismatch: ${protectedCount} != 53 + ${packageCount}`);
 const summaryPath = resolve(packageRoot, "evidence/review/final-candidate.v1.json");
 const summary = JSON.parse(readFileSync(summaryPath, "utf8")) as Record<string, unknown>;
 const summaryKeys = ["base_commit", "candidate_inventory_sha256", "claim_matrix_sha256", "external_manifest_sha256", "package_file_count", "package_lock_sha256", "policy_sha256", "protected_file_count", "reproducibility_sha256", "schema_version", "test_case_count"];

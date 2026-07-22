@@ -1,13 +1,13 @@
 {
   "base_commit": "f42582c8eb0d1405cd5e214f6b9c80980225b5f1",
-  "candidate_inventory_sha256": "71ee54a803150167bf59a07f9a4c31ce57e34d56df5a67752d7c94be7f9a2fd6",
+  "candidate_inventory_sha256": "dfad0b67b7543c5cf2cd1889f8d81c5e7a103e991221225e342c5b047a26ba56",
   "claim_matrix_sha256": "b97e3997fde87af1b52bd5fef744f4f6d70c107ad4c41340af5a4f5869646555",
-  "external_manifest_sha256": "a9476d7719a3dc06f30e982194b1fc4a2025ee1522dc8abffe7e9061cb7c4c44",
+  "external_manifest_sha256": "88b15d75b1c02dcf6b7ba4017798577fe5ab687f0de4f10a428fa3ac1c17d3e0",
   "package_file_count": 59,
   "package_lock_sha256": "1ae763d37b5a1a37f5451f8a1632e2f7c2e1df1a42d608ee2fcdefce4f6fa894",
   "policy_sha256": "36f46224ac040460c1399ecf8bfe9bd1f2dace08cbe20573c72529b65e62a3f5",
-  "protected_file_count": 111,
-  "reproducibility_sha256": "4eeb055cf924a322d1297d01a32ae4d97396138f1e5a8785bbe1aef9d3bdf79c",
+  "protected_file_count": 112,
+  "reproducibility_sha256": "01a2ea732c6eb7b10d36f14a5988a9a8e256a31f757777bdb89f35dcef77539f",
   "schema_version": 1,
   "test_case_count": 66
 }
