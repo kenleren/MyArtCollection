@@ -406,7 +406,7 @@
 {"blob_oid":"460a26cb43a6183d1917f7c14a121ee44dbfef5f","class":"evaluated-input","mode":"100644","path":"backend/broker/firebase.emulator.json"}
 {"blob_oid":"3dd2b06897f53397bce85334bae3e65b40972117","class":"evaluated-input","mode":"100644","path":"backend/broker/fixtures/broker-error-v1.json"}
 {"blob_oid":"5be1353090e00a54b9cd76824516ad99de498788","class":"evaluated-input","mode":"100644","path":"backend/broker/fixtures/canonical-payload-v1.json"}
-{"blob_oid":"6465bdcd3a45e2f23345f8c05c5fb37155ccc3db","class":"evaluated-input","mode":"100644","path":"backend/broker/package-lock.json"}
+{"blob_oid":"ffb2f0eb58b9748dc57def0c222cabf60aed6927","class":"evaluated-input","mode":"100644","path":"backend/broker/package-lock.json"}
 {"blob_oid":"d1d46003804096de50cdad86cf2c3c3ef4567bee","class":"protected-control","mode":"100644","path":"backend/broker/package.json"}
 {"blob_oid":"c715d01b4c9db7147a7f84b3d4ea7efd1f1bbd09","class":"evaluated-input","mode":"100644","path":"backend/broker/README.md"}
 {"blob_oid":"441f8cab08cd3c0dea1845b9baf9c1e65ba719c7","class":"evaluated-input","mode":"100644","path":"backend/broker/src/adapter.ts"}
@@ -428,7 +428,7 @@
 {"blob_oid":"3e2e84b087a77ce6eb47f2def60f705bdc5fb060","class":"evaluated-input","mode":"100644","path":"backend/forms/.gitignore"}
 {"blob_oid":"bad650ba6427aed3352b993a20750cd2a7f155f6","class":"evaluated-input","mode":"100644","path":"backend/forms/dist-test/beta_signup.test.ts"}
 {"blob_oid":"167525bb96f48b95a22dd6b0cf4859925658f35a","class":"evaluated-input","mode":"100644","path":"backend/forms/dist-test/site_analytics.test.ts"}
-{"blob_oid":"87fea44dc0ad061b99fa044e24e3f729d888bec0","class":"evaluated-input","mode":"100644","path":"backend/forms/package-lock.json"}
+{"blob_oid":"829161cad895356d514143649094e26ce092e0cb","class":"evaluated-input","mode":"100644","path":"backend/forms/package-lock.json"}
 {"blob_oid":"1ec5128dd77f813bd16e0227640fdd3fdfa1cbdc","class":"protected-control","mode":"100644","path":"backend/forms/package.json"}
 {"blob_oid":"c9835555b6a7fe62be036f74744b03087fd1f3cc","class":"evaluated-input","mode":"100644","path":"backend/forms/README.md"}
 {"blob_oid":"3ee2c98cf7a6c5e7fd42c303f76afe1bfeaf8eb8","class":"evaluated-input","mode":"100644","path":"backend/forms/src/beta_signup.ts"}
@@ -447,7 +447,7 @@
 {"blob_oid":"27be598b6e134a9f24830edf18427e404e254b00","class":"evaluated-input","mode":"100644","path":"backend/play_billing/emulator-test/persistence.test.ts"}
 {"blob_oid":"b32920c24dd0a56575c98d642c12abb6e71aa9f8","class":"evaluated-input","mode":"100644","path":"backend/play_billing/emulator-test/rules.test.ts"}
 {"blob_oid":"b492c9f6fb213ec92054d296ee7a6708becff2a4","class":"evaluated-input","mode":"100644","path":"backend/play_billing/fixtures/rollback-boundaries.json"}
-{"blob_oid":"67dd08da96fbdb365b716fa05dcc68ccb8072615","class":"evaluated-input","mode":"100644","path":"backend/play_billing/package-lock.json"}
+{"blob_oid":"3038df3326a9c36baf4622aefa825e218f500ff5","class":"evaluated-input","mode":"100644","path":"backend/play_billing/package-lock.json"}
 {"blob_oid":"302fec69bd2a0417d4cce7339c976cbb430eaeb9","class":"protected-control","mode":"100644","path":"backend/play_billing/package.json"}
 {"blob_oid":"d581b638f93034ccc0ad24928d91702650d12cd0","class":"evaluated-input","mode":"100644","path":"backend/play_billing/README.md"}
 {"blob_oid":"6946e1cf544a3eaeb25b1eba3117fbfcde27f941","class":"evaluated-input","mode":"100644","path":"backend/play_billing/src/constants.ts"}
@@ -545,14 +545,14 @@
 {"blob_oid":"99456edddf64e0a2cb3206eda81b2cba03e7195c","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/dist/test/ci_observability.test.js"}
 {"blob_oid":"298ccd3e2e0ec4b0120282570e9202f8ff0ac1c2","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/dist/test/dispatcher.test.js"}
 {"blob_oid":"c6470265d12798ecf9a93787bd5d12f02e0906dc","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/dist/test/github_pagination.test.js"}
-{"blob_oid":"133936b0e689df797fc18d6957eacc2d5a24c985","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/evidence/artifact-manifest.v2.json"}
+{"blob_oid":"51e089c8cc0ce3f0d77eb8e202939a59d53d2a93","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/evidence/artifact-manifest.v2.json"}
 {"blob_oid":"855305b95295d008279e73aba3fd6596bd708167","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/evidence/bundle/bundle-evidence.v1.json"}
 {"blob_oid":"20bb3a5b626961eba1edfb44d15005ff5b11fccd","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/evidence/bundle/import-manifest.v1.json"}
 {"blob_oid":"6223585bcbbfd605da7a0c64b667b992c3936261","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/evidence/bundle/metafile.json"}
 {"blob_oid":"845ec96de156ac94a87111a5927c3821bb60e139","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/evidence/bundle/worker.mjs"}
 {"blob_oid":"6459945782159f62a7df1f8ea83bb1e30bfbbb2b","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/evidence/restore-fixture.v1.json"}
 {"blob_oid":"7f8d122a94e066be93cd6c60178364b669217425","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/evidence/restore-rehearsal.v1.json"}
-{"blob_oid":"ea9797f5f27f9c637ed8d69bd4658b9971eba76b","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/evidence/sbom.spdx.json"}
+{"blob_oid":"2efc9f20ed8cff754d99bdcf6bb31701b13d926b","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/evidence/sbom.spdx.json"}
 {"blob_oid":"43b1ced3ca6071d4032a31081321ee18fce8059b","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/evidence/sqlite-conformance.v1.json"}
 {"blob_oid":"32d88351abd8633d3be08545cc171cbfc308d668","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/package-lock.json"}
 {"blob_oid":"d3d506737e793e82d40bca96988c8ef6cd2a0108","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/package.json"}
@@ -836,7 +836,7 @@
 {"blob_oid":"cac3c4e8977d81e48c546d526ffddcc881b67cf2","class":"evaluated-input","mode":"100644","path":"test/external_reference_repository_test.dart"}
 {"blob_oid":"c606baee551735f5f72a0283452e9ce250210922","class":"evaluated-input","mode":"100644","path":"test/external_reference_url_codec_test.dart"}
 {"blob_oid":"1ffd5c350cb82c1d4f0a432ad18d1c57248c0312","class":"evaluated-input","mode":"100644","path":"test/external_reference_web_gateway_test.dart"}
-{"blob_oid":"b332164f8c7063f29798b8caa9222b825d1e1691","class":"evaluated-input","mode":"100644","path":"test/external_references_panel_test.dart"}
+{"blob_oid":"d4e1b5022166cc1499457bdf9d77063fa160b12a","class":"evaluated-input","mode":"100644","path":"test/external_references_panel_test.dart"}
 {"blob_oid":"5c7073ec42309810646aead629d592eb940ab1d2","class":"evaluated-input","mode":"100644","path":"test/fixtures/archive_v1/artworks.golden.json"}
 {"blob_oid":"b0c72806cea335501da8aac5a4d6682458e24faf","class":"evaluated-input","mode":"100644","path":"test/fixtures/archive_v1/manifest.golden.json"}
 {"blob_oid":"0d0d11dc428f894796b924476dc811a29049454c","class":"protected-control","mode":"100644","path":"test/fixtures/broker-audit/adversarial-cases.json"}
@@ -864,7 +864,9 @@
 {"blob_oid":"cd1b2cdbb8475c435209ad620759cbb31cb22f8e","class":"evaluated-input","mode":"100644","path":"test/supporting_attachment_service_test.dart"}
 {"blob_oid":"af369489bb1a8a92eec539b83ee9786a59cf7e92","class":"evaluated-input","mode":"100644","path":"test/supporting_record_attachment_export_contract_test.dart"}
 {"blob_oid":"74f34c2cfdb74ddca52f87f88cf88374a0307873","class":"protected-control","mode":"100644","path":"test/validate_static_site_test.py"}
-{"blob_oid":"d481738bbd90efc2c50ab57d5b64b4e0f3ca381f","class":"evaluated-input","mode":"100644","path":"test/widget_test.dart"}
+{"blob_oid":"8dc484b16a0df3fa69017a4a27962f516d817a39","class":"evaluated-input","mode":"100644","path":"test/visual_evidence_output_test.dart"}
+{"blob_oid":"90da2ee3621522d011e05813ec73ea47cb90fc8a","class":"evaluated-input","mode":"100644","path":"test/visual_evidence_output.dart"}
+{"blob_oid":"59cf117ebfa7cae1891cfdcf96e8f1bf0d836fec","class":"evaluated-input","mode":"100644","path":"test/widget_test.dart"}
 {"blob_oid":"0a472c045e57007804fcd8f2d9cdfc384e2aa063","class":"evaluated-input","mode":"100644","path":"third_party/unorm_dart_15_1/lib/src/casefold_15_1.dart"}
 {"blob_oid":"20227a731840e08f728cd034be1b18cbb00b7ea0","class":"evaluated-input","mode":"100644","path":"third_party/unorm_dart_15_1/lib/src/composite_iterator.dart"}
 {"blob_oid":"9be46a57bc033ec7251b8de5e51daa5f3db3a261","class":"evaluated-input","mode":"100644","path":"third_party/unorm_dart_15_1/lib/src/decomposite_iterator.dart"}
