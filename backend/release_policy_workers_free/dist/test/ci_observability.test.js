@@ -15,7 +15,7 @@ function phaseGuardAssertions() {
     const source = [
         `import { assertEvidenceOnlyDelta, evidenceOnlyPaths } from ${JSON.stringify(phaseGuardUrl)};`,
         "const five = evidenceOnlyPaths.map((path) => `M\\t${path}`);",
-        "if (five.length !== 5) process.exit(2); assertEvidenceOnlyDelta(five);",
+        "if (five.length !== 5) process.exit(2); assertEvidenceOnlyDelta(five); assertEvidenceOnlyDelta([...five].reverse());",
         "for (const delta of [five.slice(1), [...five, 'M\\textra'], [...five.slice(0, 2), 'A\\tbackend/release_policy_trust/evidence/review/reproducibility.v1.json', ...five.slice(2)]]) { let rejected = false; try { assertEvidenceOnlyDelta(delta); } catch { rejected = true; } if (!rejected) process.exit(3); }",
     ].join("\n");
     execFileSync("node", ["--input-type=module", "--eval", source], { cwd: resolve(root, "backend/release_policy_workers_free"), stdio: "inherit" });
