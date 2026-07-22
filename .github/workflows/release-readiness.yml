@@ -34,25 +34,19 @@ jobs:
             echo "Checkout left a repository credential in local git config" >&2
             exit 1
           fi
-      - name: Install checksum-verified actionlint
+      - name: Run digest-pinned actionlint
         shell: bash
         run: |
           set -euo pipefail
-          archive=actionlint_1.7.12_linux_amd64.tar.gz
-          for attempt in 1 2 3; do
-            if curl -fsSL --output "$archive" "https://github.com/rhysd/actionlint/releases/download/v1.7.12/${archive}"; then
-              break
-            fi
-            if [[ "$attempt" == 3 ]]; then
-              exit 1
-            fi
-            sleep "$((attempt * 2))"
-          done
-          printf '%s  %s\n' \
-            '8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8' \
-            "$archive" | sha256sum -c -
-          tar -xzf "$archive" actionlint
-          ./actionlint -color
+          # rhysd/actionlint:1.7.12, pinned to the maintainer-published OCI index.
+          # Keep shellcheck out of PATH to match the released actionlint binary's
+          # standalone lint behavior; this image bundles shellcheck as an optional
+          # integration rather than a workflow policy dependency.
+          docker run --rm --read-only --cap-drop=ALL --network none \
+            --entrypoint /bin/sh \
+            -v "$GITHUB_WORKSPACE:/repo:ro" -w /repo \
+            rhysd/actionlint@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667 \
+            -ceu 'PATH=/usr/bin:/bin /usr/local/bin/actionlint -color'
 
   flutter-quality:
     name: Flutter quality
