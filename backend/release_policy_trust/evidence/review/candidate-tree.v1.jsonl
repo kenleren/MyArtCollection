@@ -1,6 +1,6 @@
 {"blob_oid":"dd56ec11688bbd692f165b78709bfbf44538c79a","class":"evaluated-input","mode":"100644","path":".env.local.example"}
 {"blob_oid":"6831600a09d7f6587949571b1e19139dd157c73d","class":"protected-control","mode":"100644","path":".github/CODEOWNERS"}
-{"blob_oid":"ea3d02c33e2ccdec96e825d06d7c1dba0993d39a","class":"protected-control","mode":"100644","path":".github/workflows/release-readiness.yml"}
+{"blob_oid":"73d35a4f0ac05a5852f27f76ee15f176362b01a2","class":"protected-control","mode":"100644","path":".github/workflows/release-readiness.yml"}
 {"blob_oid":"6072541dc263f0837c590af755ce5593ebcea7d9","class":"evaluated-input","mode":"100644","path":".gitignore"}
 {"blob_oid":"db887dde90662d8f6e31a95d15d03c0afa59f648","class":"protected-control","mode":"100644","path":".gitleaks.toml"}
 {"blob_oid":"28b1b31b4b5a3bf62c7946519fe8da1929b5102a","class":"protected-control","mode":"100644","path":".gitleaksignore"}
@@ -545,14 +545,14 @@
 {"blob_oid":"279b953265f641cb7f72961fbf671b42d248ec3c","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/dist/test/ci_observability.test.js"}
 {"blob_oid":"298ccd3e2e0ec4b0120282570e9202f8ff0ac1c2","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/dist/test/dispatcher.test.js"}
 {"blob_oid":"c6470265d12798ecf9a93787bd5d12f02e0906dc","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/dist/test/github_pagination.test.js"}
-{"blob_oid":"e22b3d126d2ee17a36fd446a238eef97c6276823","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/evidence/artifact-manifest.v2.json"}
+{"blob_oid":"9ac58fa769c3cb17dc635118cf977cd0256c8e72","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/evidence/artifact-manifest.v2.json"}
 {"blob_oid":"e050bff4bc774ef09338c040cfda6944576b1bd2","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/evidence/bundle/bundle-evidence.v1.json"}
 {"blob_oid":"20bb3a5b626961eba1edfb44d15005ff5b11fccd","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/evidence/bundle/import-manifest.v1.json"}
 {"blob_oid":"6223585bcbbfd605da7a0c64b667b992c3936261","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/evidence/bundle/metafile.json"}
 {"blob_oid":"845ec96de156ac94a87111a5927c3821bb60e139","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/evidence/bundle/worker.mjs"}
 {"blob_oid":"6459945782159f62a7df1f8ea83bb1e30bfbbb2b","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/evidence/restore-fixture.v1.json"}
 {"blob_oid":"7f8d122a94e066be93cd6c60178364b669217425","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/evidence/restore-rehearsal.v1.json"}
-{"blob_oid":"8364775c88af48ff5204805e555e5194beab9ba5","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/evidence/sbom.spdx.json"}
+{"blob_oid":"9ccfa9df2c4dde02902e6d888cdd7d06667b1c09","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/evidence/sbom.spdx.json"}
 {"blob_oid":"43b1ced3ca6071d4032a31081321ee18fce8059b","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/evidence/sqlite-conformance.v1.json"}
 {"blob_oid":"461c0b47f04d71ae2d6c16c8511578a4d0ad7329","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/package-lock.json"}
 {"blob_oid":"98bf95752807af97f0ec4f066dd9d1fb0c0a1d89","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/package.json"}
@@ -621,7 +621,7 @@
 {"blob_oid":"1fa1d77dd8779487f8dfdb1ab344a8177af2fda4","class":"evaluated-input","mode":"100644","path":"docs/PROTOTYPE_STORYBOARD.md"}
 {"blob_oid":"f60bb5794a16a201fb3a18656fe1a59518b1ecd2","class":"protected-control","mode":"100644","path":"docs/RELEASE_POLICY_TRUST.md"}
 {"blob_oid":"abea86b78c0ebba46844971864336f56697f2e15","class":"evaluated-input","mode":"100644","path":"docs/RELEASE_POLICY_WORKERS_ROLLBACK.md"}
-{"blob_oid":"7ea980057ae58527a5ae3805584f2bf5e8a622df","class":"protected-control","mode":"100644","path":"docs/RELEASE_READINESS_CI.md"}
+{"blob_oid":"ffc88a6807d83c27fe7ffb09f503bf425f67afb4","class":"protected-control","mode":"100644","path":"docs/RELEASE_READINESS_CI.md"}
 {"blob_oid":"753aec8629757def02ceff0695c71dedb24e7776","class":"protected-control","mode":"100644","path":"docs/SECRET_HYGIENE.md"}
 {"blob_oid":"b6a773ff31d53903bd86af3cedb4625d63b0f4d3","class":"evaluated-input","mode":"100644","path":"docs/SUPPORTING_RECORD_ATTACHMENT_EXPORT_CONTRACT_V1.md"}
 {"blob_oid":"d5662d39dd9bb4fd724fffa674013111fd6dbac9","class":"evaluated-input","mode":"100644","path":"docs/VALUE_TAXONOMY_SPEC.md"}
@@ -860,6 +860,7 @@
 {"blob_oid":"6a43236fbc5414f21532517b10f8e3769347c244","class":"evaluated-input","mode":"100644","path":"test/online_research_service_test.dart"}
 {"blob_oid":"b201e734ff2f3b235b9af11e26ab340e202597a5","class":"evaluated-input","mode":"100644","path":"test/play_billing_adapter_test.dart"}
 {"blob_oid":"5b7b0b198ed3a926b3601e24fc09b8edc5a5b4c8","class":"evaluated-input","mode":"100644","path":"test/real_export_service_test.dart"}
+{"blob_oid":"c75995694cbedf247b95c1b6b11120883553dd13","class":"evaluated-input","mode":"100755","path":"test/release_readiness_workflow_test.sh"}
 {"blob_oid":"d82127b1a96dc9d657e49709daeca98c4e4e6f55","class":"evaluated-input","mode":"100755","path":"test/safe_apple_build_test.sh"}
 {"blob_oid":"cd1b2cdbb8475c435209ad620759cbb31cb22f8e","class":"evaluated-input","mode":"100644","path":"test/supporting_attachment_service_test.dart"}
 {"blob_oid":"af369489bb1a8a92eec539b83ee9786a59cf7e92","class":"evaluated-input","mode":"100644","path":"test/supporting_record_attachment_export_contract_test.dart"}
