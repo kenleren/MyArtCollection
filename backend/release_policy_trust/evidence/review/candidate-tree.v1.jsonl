@@ -473,7 +473,7 @@
 {"blob_oid":"9deb0dc20c61f2c489f7c69de515bf09de1dcd5e","class":"protected-control","mode":"100644","path":"backend/release_policy_trust/evidence/claim-matrix.v1.json"}
 {"blob_oid":"65fab569f3ea362aa150876ccbbe950b7066ac99","class":"protected-control","mode":"100644","path":"backend/release_policy_trust/package-lock.json"}
 {"blob_oid":"88de6a7620f537d467b10f979457d5175e0ddf8c","class":"protected-control","mode":"100644","path":"backend/release_policy_trust/package.json"}
-{"blob_oid":"b954dde7aa9909d1339d5e25269a47719d5d5f4f","class":"protected-control","mode":"100644","path":"backend/release_policy_trust/policy/external-inputs.v1.jsonl"}
+{"blob_oid":"2f1983a3f16072ac5fab6682bde1175df0ca0c49","class":"protected-control","mode":"100644","path":"backend/release_policy_trust/policy/external-inputs.v1.jsonl"}
 {"blob_oid":"4608dc1ece32b9f4036836b24c095e3c4c9b6124","class":"protected-control","mode":"100644","path":"backend/release_policy_trust/policy/release-policy.v1.json"}
 {"blob_oid":"7969411134e9ba2f712cc880f56a1b07df36bead","class":"protected-control","mode":"100644","path":"backend/release_policy_trust/README.md"}
 {"blob_oid":"6035951122ffec2f4d5f928af810ceffdce591e8","class":"protected-control","mode":"100644","path":"backend/release_policy_trust/scripts/candidate_evidence.ts"}
@@ -545,14 +545,14 @@
 {"blob_oid":"99456edddf64e0a2cb3206eda81b2cba03e7195c","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/dist/test/ci_observability.test.js"}
 {"blob_oid":"298ccd3e2e0ec4b0120282570e9202f8ff0ac1c2","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/dist/test/dispatcher.test.js"}
 {"blob_oid":"c6470265d12798ecf9a93787bd5d12f02e0906dc","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/dist/test/github_pagination.test.js"}
-{"blob_oid":"51e089c8cc0ce3f0d77eb8e202939a59d53d2a93","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/evidence/artifact-manifest.v2.json"}
+{"blob_oid":"930cc04ea21bfd7fe94e0a9ad7dec5086d740410","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/evidence/artifact-manifest.v2.json"}
 {"blob_oid":"855305b95295d008279e73aba3fd6596bd708167","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/evidence/bundle/bundle-evidence.v1.json"}
 {"blob_oid":"20bb3a5b626961eba1edfb44d15005ff5b11fccd","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/evidence/bundle/import-manifest.v1.json"}
 {"blob_oid":"6223585bcbbfd605da7a0c64b667b992c3936261","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/evidence/bundle/metafile.json"}
 {"blob_oid":"845ec96de156ac94a87111a5927c3821bb60e139","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/evidence/bundle/worker.mjs"}
 {"blob_oid":"6459945782159f62a7df1f8ea83bb1e30bfbbb2b","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/evidence/restore-fixture.v1.json"}
 {"blob_oid":"7f8d122a94e066be93cd6c60178364b669217425","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/evidence/restore-rehearsal.v1.json"}
-{"blob_oid":"2efc9f20ed8cff754d99bdcf6bb31701b13d926b","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/evidence/sbom.spdx.json"}
+{"blob_oid":"8bba01b6391f1067b0b1c1808103257b4aeaf6e5","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/evidence/sbom.spdx.json"}
 {"blob_oid":"43b1ced3ca6071d4032a31081321ee18fce8059b","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/evidence/sqlite-conformance.v1.json"}
 {"blob_oid":"32d88351abd8633d3be08545cc171cbfc308d668","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/package-lock.json"}
 {"blob_oid":"d3d506737e793e82d40bca96988c8ef6cd2a0108","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/package.json"}
