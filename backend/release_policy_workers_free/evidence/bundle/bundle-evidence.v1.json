@@ -1,0 +1,1 @@
+{"sha256":"d534508b547aa16da67f0049b22db61e738ef26bea6b2241442b61082620bb18","bytes":151330,"esbuild":"0.25.9","miniflare":"4.20260721.0","compatibility_flags":["nodejs_compat_v2","nodejs_compat_do_not_populate_process_env","disallow_importable_env"]}

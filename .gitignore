@@ -36,6 +36,7 @@ migrate_working_dir/
 **/node_modules/
 /backend/broker/build/
 /backend/play_billing/build/
+/.work/release-policy-workers-free/
 
 # Symbolication related
 app.*.symbols

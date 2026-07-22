@@ -93,7 +93,7 @@ test("ambiguous create becomes reconcile-only; exactly one delayed App match ado
   port.checkPages = pages([{ appId: 11, checkId: 88, externalId: generation.generationId, headSha: SHA_B, name: policy().checkName, repositoryId: 33 }]);
   const delays: number[] = [];
   const adopted = await runCreateCheck({ clock: { delay: async (seconds) => { delays.push(seconds); } }, generationId: generation.generationId, port, store, worker: "reconcile" });
-  assert.equal(adopted.checkId, 88); assert.equal(port.created.length, 1); assert.deepEqual(delays, [1]);
+  assert.equal(adopted.checkId, 88); assert.equal(port.created.length, 1); assert.deepEqual(delays, []);
 });
 
 test("invisible or duplicate ambiguous create blocks without recreation", async () => {
@@ -101,7 +101,7 @@ test("invisible or duplicate ambiguous create blocks without recreation", async 
   await assert.rejects(runCreateCheck({ clock: { delay: async () => undefined }, generationId: generation.generationId, port: invisible, store: invisibleStore, worker: "send" }), AmbiguousCreateError);
   const delays: number[] = [];
   await assert.rejects(runCreateCheck({ clock: { delay: async (seconds) => { delays.push(seconds); } }, generationId: generation.generationId, port: invisible, store: invisibleStore, worker: "reconcile" }), /recreation forbidden/);
-  assert.equal(invisible.created.length, 1); assert.deepEqual(delays, policy().limits.reconcileDelaysSeconds);
+  assert.equal(invisible.created.length, 1); assert.deepEqual(delays, []);
 
   const duplicateStore = new InMemoryDurableStore(); const duplicate = new FakePort(); const second = await ready(duplicateStore, duplicate); duplicate.createBehavior = "ambiguous";
   await assert.rejects(runCreateCheck({ clock: { delay: async () => undefined }, generationId: second.generation.generationId, port: duplicate, store: duplicateStore, worker: "send" }), AmbiguousCreateError);

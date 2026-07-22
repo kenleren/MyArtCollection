@@ -16,6 +16,7 @@ export class AmbiguousCreateError extends Error {}
 export class DefinitiveNotSentError extends Error {}
 export class AmbiguousUpdateError extends Error {}
 export interface Clock { delay(seconds: number): Promise<void> }
+export type ReconcileResult = AppCheck | "not_visible";
 
 function expectedIdentity(generation: Awaited<ReturnType<typeof readGeneration>>): ExpectedIdentity {
   return {
@@ -29,6 +30,19 @@ function expectedIdentity(generation: Awaited<ReturnType<typeof readGeneration>>
 
 function exactCheck(check: AppCheck, binding: Awaited<ReturnType<typeof readBinding>>): boolean {
   return Number.isSafeInteger(check.checkId) && check.checkId > 0 && check.appId === binding.appId && check.repositoryId === binding.repositoryId && check.headSha === binding.headSha && check.name === binding.checkName && check.externalId === binding.externalId;
+}
+
+/** Performs one durable visibility observation. Scheduling belongs to the host
+ * adapter; the core never sleeps or polls multiple times in one invocation. */
+export async function reconcileCreateCheckOnce(input: { generationId: string; port: GitHubCheckRunsPort; store: DurableStorePort; worker: string; finalAttempt: boolean }): Promise<ReconcileResult> {
+  const generation = await readGeneration(input.store, input.generationId); const binding = await readBinding(input.store, input.generationId);
+  if (generation.state !== "decision_ready" || generation.decision?.digest !== binding.decisionDigest || binding.policyDigest !== generation.policy.digest) fail("cas_lost", "create cannot reconcile without immutable durable decision");
+  const lease = await leaseEffect(input.store, input.generationId, "create_check", input.worker);
+  if (lease.mode !== "reconcile") fail("cas_lost", "create reconciliation is not durable");
+  const matches = await enumerateMatchingChecks(input.port, expectedIdentity(generation), binding.headSha, binding.checkName, binding.externalId, generation.policy.limits);
+  if (matches.length === 1) { await bindCreatedCheck(input.store, lease, matches[0]!); return matches[0]!; }
+  if (matches.length > 1 || input.finalAttempt) { await releaseEffect(input.store, lease, "blocked"); return fail("ambiguous_api", matches.length > 1 ? "multiple App-owned checks match immutable generation" : "ambiguous create remained invisible; recreation forbidden"); }
+  await releaseEffect(input.store, lease, "ambiguous"); return "not_visible";
 }
 
 export async function runCreateCheck(input: {
@@ -45,17 +59,10 @@ export async function runCreateCheck(input: {
   const lease = await leaseEffect(input.store, input.generationId, "create_check", input.worker);
 
   if (lease.mode === "reconcile") {
-    for (const delay of generation.policy.limits.reconcileDelaysSeconds) {
-      await input.clock.delay(delay);
-      const matches = await enumerateMatchingChecks(input.port, identity, binding.headSha, binding.checkName, binding.externalId, generation.policy.limits);
-      if (matches.length === 1) { await bindCreatedCheck(input.store, lease, matches[0]!); return matches[0]!; }
-      if (matches.length > 1) {
-        await releaseEffect(input.store, lease, "blocked");
-        return fail("ambiguous_api", "multiple App-owned checks match immutable generation");
-      }
-    }
+    const matches = await enumerateMatchingChecks(input.port, identity, binding.headSha, binding.checkName, binding.externalId, generation.policy.limits);
+    if (matches.length === 1) { await bindCreatedCheck(input.store, lease, matches[0]!); return matches[0]!; }
     await releaseEffect(input.store, lease, "blocked");
-    return fail("ambiguous_api", "ambiguous create remained invisible; recreation forbidden");
+    return fail("ambiguous_api", matches.length > 1 ? "multiple App-owned checks match immutable generation" : "ambiguous create remained invisible; recreation forbidden");
   }
 
   await markEffectPossibleSend(input.store, lease);

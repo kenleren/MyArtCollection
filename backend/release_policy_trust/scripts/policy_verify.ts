@@ -25,8 +25,9 @@ const output = git(["ls-tree", "-rz", "--full-tree", candidate]) as Buffer;
 const finalPolicy = { exact: [...policy.selectors.baseline_exact, ...policy.selectors.final_exact_additions], prefixes: [...policy.selectors.baseline_prefixes, ...policy.selectors.final_prefix_additions] };
 let protectedCount = 0;
 let packageCount = 0;
+let adapterCount = 0;
 let start = 0;
-const candidateRows: string[] = [];
+const candidateRows: Array<{ path: string; row: string }> = [];
 const candidateTestPaths: string[] = [];
 for (let index = 0; index < output.length; index += 1) if (output[index] === 0) {
   const chunk = output.subarray(start, index); start = index + 1;
@@ -37,15 +38,21 @@ for (let index = 0; index < output.length; index += 1) if (output[index] === 0) 
   const protectedPath = isProtected(path, finalPolicy);
   if (protectedPath) protectedCount += 1;
   if (path.startsWith("backend/release_policy_trust/")) packageCount += 1;
+  if (path.startsWith("backend/release_policy_workers_free/")) adapterCount += 1;
   if (/^backend\/release_policy_trust\/test\/.*\.test\.ts$/.test(path)) candidateTestPaths.push(path);
-  if (!path.startsWith("backend/release_policy_trust/evidence/review/")) candidateRows.push(JSON.stringify({ blob_oid: metadata[2], class: protectedPath ? "protected-control" : "evaluated-input", mode: metadata[0], path }));
+  if (!path.startsWith("backend/release_policy_trust/evidence/review/")) {
+    candidateRows.push({
+      path,
+      row: JSON.stringify({ blob_oid: metadata[2], class: protectedPath ? "protected-control" : "evaluated-input", mode: metadata[0], path }),
+    });
+  }
 }
-if (protectedCount !== 53 + packageCount) throw new Error(`final protected count mismatch: ${protectedCount} != 53 + ${packageCount}`);
+if (protectedCount !== 53 + packageCount + adapterCount) throw new Error(`final protected count mismatch: ${protectedCount} != 53 + ${packageCount} + ${adapterCount}`);
 const summaryPath = resolve(packageRoot, "evidence/review/final-candidate.v1.json");
 const summary = JSON.parse(readFileSync(summaryPath, "utf8")) as Record<string, unknown>;
 const summaryKeys = ["base_commit", "candidate_inventory_sha256", "claim_matrix_sha256", "external_manifest_sha256", "package_file_count", "package_lock_sha256", "policy_sha256", "protected_file_count", "reproducibility_sha256", "schema_version", "test_case_count"];
 if (Object.keys(summary).sort().join("\0") !== summaryKeys.sort().join("\0")) throw new Error("final candidate summary keys mismatch");
-const inventoryBytes = Buffer.from(`${candidateRows.join("\n")}\n`);
+const inventoryBytes = Buffer.from(`${candidateRows.sort((a, b) => a.path.localeCompare(b.path)).map(({ row }) => row).join("\n")}\n`);
 const committedInventory = readFileSync(resolve(repoRoot, "backend/release_policy_trust/evidence/review/candidate-tree.v1.jsonl"));
 if (Buffer.compare(inventoryBytes, committedInventory) !== 0) throw new Error("candidate JSONL diverges from exact candidate");
 let testCaseCount = 0;

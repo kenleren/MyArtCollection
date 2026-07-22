@@ -7,6 +7,12 @@ source core and synthetic conformance harness. Source acceptance does not make
 the check operational and does not establish that a pull request is safe to
 merge.
 
+`backend/release_policy_workers_free/` is the protected Workers Free adapter
+candidate. It supplies a SQLite Durable Object CAS implementation, an
+alarm-only drain boundary, constrained Check Runs route construction, and
+synthetic artifact/SBOM/restore evidence. It remains source-only: no Worker,
+App, credential, webhook, or GitHub API is operated by repository CI.
+
 ## What this repository owns
 
 The package validates canonical policy bytes and computes their digest

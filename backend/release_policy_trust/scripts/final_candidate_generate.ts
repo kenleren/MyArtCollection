@@ -9,6 +9,7 @@ function hashBytes(bytes: Buffer): string {
 }
 
 const trackedPackagePaths = (git(["ls-files", "backend/release_policy_trust"], { encoding: "utf8" }) as string).trim().split("\n").filter(Boolean);
+const trackedAdapterPaths = (git(["ls-files", "backend/release_policy_workers_free"], { encoding: "utf8" }) as string).trim().split("\n").filter(Boolean);
 let testCaseCount = 0;
 for (const path of trackedPackagePaths.filter((value) => value.startsWith("backend/release_policy_trust/test/"))) {
   if (!path.endsWith(".test.ts")) continue;
@@ -21,8 +22,9 @@ for (const path of trackedPackagePaths.filter((value) => value.startsWith("backe
   visit(tree);
 }
 
-const inventoryPath = resolve(packageRoot, "evidence/review/candidate-tree.v1.jsonl");
-const reproductionPath = resolve(packageRoot, "evidence/review/reproducibility.v1.json");
+const arg = (name: string, fallback: string) => { const index = process.argv.indexOf(name); return index < 0 ? fallback : resolve(repoRoot, process.argv[index + 1]!); };
+const inventoryPath = arg("--candidate-inventory", resolve(packageRoot, "evidence/review/candidate-tree.v1.jsonl"));
+const reproductionPath = arg("--reproducibility", resolve(packageRoot, "evidence/review/reproducibility.v1.json"));
 const summary = {
   base_commit: "f42582c8eb0d1405cd5e214f6b9c80980225b5f1",
   candidate_inventory_sha256: hashBytes(readFileSync(inventoryPath)),
@@ -31,9 +33,11 @@ const summary = {
   package_file_count: trackedPackagePaths.length,
   package_lock_sha256: hashFile(resolve(packageRoot, "package-lock.json")),
   policy_sha256: hashFile(policyPath),
-  protected_file_count: 53 + trackedPackagePaths.length,
+  // The fixed baseline includes the protected root-level ignore file and
+  // predates the two protected packages; each package prefix adds every row.
+  protected_file_count: 53 + trackedPackagePaths.length + trackedAdapterPaths.length,
   reproducibility_sha256: hashFile(reproductionPath),
   schema_version: 1,
   test_case_count: testCaseCount,
 };
-writeFileSync(resolve(packageRoot, "evidence/review/final-candidate.v1.json"), `${JSON.stringify(summary, null, 2)}\n`);
+writeFileSync(arg("--output", resolve(packageRoot, "evidence/review/final-candidate.v1.json")), `${JSON.stringify(summary, null, 2)}\n`);

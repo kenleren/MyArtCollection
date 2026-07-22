@@ -1,0 +1,5 @@
+[
+  {"operation":"replace","path":"backend/release_policy_workers_free/evidence/sbom.spdx.json"},
+  {"operation":"delete","path":"backend/release_policy_workers_free/evidence/artifact-manifest.v1.json"},
+  {"operation":"add","path":"backend/release_policy_workers_free/evidence/artifact-manifest.v2.json"}
+]

@@ -9,7 +9,7 @@ const trustSourceExact = new Set([
 ]);
 
 export function isTrustSourcePath(path: string): boolean {
-  return path.startsWith("backend/release_policy_trust/") || trustSourceExact.has(path);
+  return path.startsWith("backend/release_policy_trust/") || path.startsWith("backend/release_policy_workers_free/") || trustSourceExact.has(path);
 }
 
 export function changedPaths(cwd: string, from: string, to: string): string[] {

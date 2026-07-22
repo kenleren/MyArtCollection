@@ -52,7 +52,7 @@ for (const match of workflow.matchAll(/^\s*uses:\s+([^@\s]+)@([^\s]+)\s*$/gm)) {
 for (const row of validated.filter((candidate) => candidate.kind === "action")) if (!observedActions.has(row.id)) throw new Error(`manifest Action is not consumed by workflow: ${row.id}`);
 
 const literalPins: Record<string, string[]> = {
-  "tool-actionlint": ["actionlint_1.7.12_linux_amd64.tar.gz", "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8"],
+  "tool-actionlint": ["rhysd/actionlint@sha256:", "b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667"],
   "tool-flutter": ["FLUTTER_VERSION: 3.44.4", "c853cda0312a162854c481fe6a1bc286d84fbb74bfab7037c39750061dc9b466"],
   "tool-gitleaks": ["GITLEAKS_VERSION: 8.30.1", "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb"],
 };

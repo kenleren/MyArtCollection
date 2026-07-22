@@ -8,7 +8,8 @@ ruleset handoff described below; this change does not mutate repository rules.
 
 ## Included checks
 
-- actionlint, installed from actionlint 1.7.12 after checksum verification;
+- actionlint 1.7.12, run from the maintainer-published OCI image pinned by
+  immutable digest (`rhysd/actionlint@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667`);
 - Flutter 3.44.4 / Dart 3.12.2 formatting, analysis, and tests;
 - a debug-only Android APK build with Temurin 17.0.19+10 after protected-input,
   checksum-pinned Gradle wrapper, native attachment policy, and focused Android
@@ -45,11 +46,25 @@ dedicated external App is deployed or that its distinct check is required.
 That operational boundary is documented in
 [Release policy trust](RELEASE_POLICY_TRUST.md).
 
+## Immutable Workers evidence candidate
+
+The backend job checks out and validates one immutable candidate commit before
+running package commands. Pull requests use the event's `pull_request.head.sha`;
+push and manual-dispatch runs use their captured `github.sha`. The synthetic
+pull-request merge, branch names, remote refs, and later ref resolution are not
+candidate authority. The checked-out commit must equal that event-derived OID,
+have exactly one fetched parent, and produce the immutable artifact anchor used
+by SPDX generation, SPDX verification, and artifact verification. This prevents
+the pull-request merge's first parent from silently replacing the reviewed
+candidate. A push or manual event whose immutable commit is not a direct
+candidate/evidence pair fails closed; post-merge evidence needs its own reviewed
+contract.
+
 ## Reproducibility and cache boundary
 
 All GitHub Actions are pinned to immutable commits. Checkout 7.0.0, cache
 6.1.0, setup-node 6.4.0, setup-java 5.5.0, and setup-python 6 use their native
-Node 24 runtimes. Flutter, Gitleaks, and actionlint are downloaded at fixed
+Node 24 runtimes. Flutter and Gitleaks are downloaded at fixed
 versions and verified against checked-in SHA-256 values. Node is pinned to
 22.23.1, Java to Temurin 17.0.19+10, and Python to 3.12.13 through immutable
 action commits.

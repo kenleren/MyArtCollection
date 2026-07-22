@@ -4,6 +4,12 @@
   "private": true,
   "description": "Provider-neutral, credential-free release policy trust core",
   "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/src/index.d.ts",
+      "default": "./dist/src/index.js"
+    }
+  },
   "engines": {
     "node": "22.23.1"
   },
