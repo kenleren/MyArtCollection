@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync, spawnSync } from "node:child_process";
+import { closeSync, mkdirSync, mkdtempSync, openSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
@@ -185,4 +185,20 @@ test("pull-request workflow passes the true head SHA to candidate gates", () => 
   assert.match(workflow, /"\$change_base" == 0000000000000000000000000000000000000000/);
   assert.match(workflow, /if \[\[ "\$verification_scope" != "\$expected_verification_scope" \]\]; then/);
   assert.match(workflow, /if \[\[ "\$expected_verification_scope" == full \]\]; then/);
+});
+
+test("exact-tree archive fixture exceeds Node's default buffer without changing the source identity", () => {
+  const root = mkdtempSync(join(tmpdir(), "release-policy-large-archive-"));
+  try {
+    git(root, ["init", "--initial-branch=main"]);
+    git(root, ["config", "user.name", "Synthetic Test"]); git(root, ["config", "user.email", "synthetic@example.invalid"]);
+    mkdirSync(join(root, "backend/release_policy_trust"), { recursive: true });
+    writeFileSync(join(root, "backend/release_policy_trust", "large.bin"), Buffer.alloc(1_100_000, 7));
+    git(root, ["add", "."]); git(root, ["commit", "-m", "large exact tree"]);
+    const candidate = git(root, ["rev-parse", "HEAD"]);
+    const archivePath = join(root, "fixture.tar"); const fd = openSync(archivePath, "wx", 0o600);
+    try { assert.equal(spawnSync("git", ["archive", "--format=tar", candidate, "backend/release_policy_trust"], { cwd: root, stdio: ["ignore", fd, "pipe"] }).status, 0); } finally { closeSync(fd); }
+    assert.ok(statSync(archivePath).size > 1_048_576);
+    assert.equal(git(root, ["rev-parse", `${candidate}:backend/release_policy_trust/large.bin`]).length, 40);
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });

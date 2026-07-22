@@ -1,6 +1,6 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { closeSync, mkdirSync, openSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { argument, git, hashBytes, hashFile, repoRoot, validateOid } from "./shared.js";
@@ -46,8 +46,16 @@ try {
   // Materialize exact named-tree bytes twice. The ambient checkout is never an input.
   for (const destination of [firstRoot, secondRoot]) {
     mkdirSync(destination, { recursive: true });
-    const archive = execFileSync("git", ["archive", "--format=tar", candidate, "backend/release_policy_trust"], { cwd: repoRoot });
-    execFileSync("tar", ["-x", "-C", destination], { input: archive });
+    // Do not buffer the archive in memory: a valid exact source tree may be
+    // larger than Node's default execFile buffer. The temporary root is private
+    // and removed in finally, while tar still receives only named-tree bytes.
+    const archivePath = join(destination, "source.tar");
+    const archiveFd = openSync(archivePath, "wx", 0o600);
+    try {
+      const archived = spawnSync("git", ["archive", "--format=tar", candidate, "backend/release_policy_trust"], { cwd: repoRoot, stdio: ["ignore", archiveFd, "pipe"] });
+      if (archived.status !== 0 || archived.error) throw new Error("candidate archive materialization failed");
+    } finally { closeSync(archiveFd); }
+    execFileSync("tar", ["-x", "-f", archivePath, "-C", destination]);
     const materialized = join(destination, "backend/release_policy_trust");
     for (const name of ["node_modules", "dist", "review"]) rmSync(join(materialized, name), { recursive: true, force: true });
     if (!statSync(join(materialized, "package-lock.json")).isFile()) throw new Error("candidate trust package is incomplete");
