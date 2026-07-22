@@ -24,7 +24,10 @@
   "devDependencies": {
     "@types/node": "22.15.3",
     "esbuild": "0.25.9",
-    "miniflare": "4.20260714.0",
+    "miniflare": "4.20260721.0",
     "typescript": "5.8.3"
+  },
+  "overrides": {
+    "sharp": "0.35.3"
   }
 }

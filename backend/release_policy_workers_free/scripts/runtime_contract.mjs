@@ -14,7 +14,7 @@ const bundleRoot = resolve(repositoryRoot, ".work/release-policy-workers-free/bu
 const bundle = resolve(bundleRoot, "worker.mjs");
 const scriptPath = relative(repositoryRoot, bundle).split(sep).join("/");
 if (scriptPath !== ".work/release-policy-workers-free/bundle/worker.mjs" || !scriptPath || scriptPath.startsWith("/") || scriptPath.split("/").includes("..")) throw new Error("bundle script path escapes repository root");
-const expectedVersion = "4.20260714.0";
+const expectedVersion = "4.20260721.0";
 const installed = JSON.parse(readFileSync(resolve(packageRoot, "node_modules/miniflare/package.json"), "utf8"));
 const lock = JSON.parse(readFileSync(resolve(packageRoot, "package-lock.json"), "utf8"));
 if (installed.version !== expectedVersion || lock.packages?.["node_modules/miniflare"]?.version !== expectedVersion) throw new Error("miniflare version drift");

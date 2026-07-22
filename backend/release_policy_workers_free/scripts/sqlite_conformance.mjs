@@ -78,7 +78,7 @@ function preflight() {
   ensure(scriptPath === ".work/release-policy-workers-free/bundle/worker.mjs" && !scriptPath.split("/").includes(".."), "harness", "bundle_path");
   const installed = JSON.parse(readFileSync(resolve(packageRoot, "node_modules/miniflare/package.json"), "utf8"));
   const lock = JSON.parse(readFileSync(resolve(packageRoot, "package-lock.json"), "utf8"));
-  ensure(installed.version === "4.20260714.0" && lock.packages?.["node_modules/miniflare"]?.version === "4.20260714.0", "harness", "miniflare_version");
+  ensure(installed.version === "4.20260721.0" && lock.packages?.["node_modules/miniflare"]?.version === "4.20260721.0", "harness", "miniflare_version");
   const bundle = readFileSync(bundlePath); bundleHash = sha256(bundle);
   const bundleEvidence = JSON.parse(readFileSync(resolve(bundleRoot, "bundle-evidence.v1.json"), "utf8"));
   ensure(bundleEvidence.sha256 === bundleHash && bundleEvidence.bytes === bundle.byteLength && bundleEvidence.miniflare === installed.version, "harness", "bundle_evidence");
