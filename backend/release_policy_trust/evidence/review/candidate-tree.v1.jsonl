@@ -408,8 +408,8 @@
 {"blob_oid":"460a26cb43a6183d1917f7c14a121ee44dbfef5f","class":"evaluated-input","mode":"100644","path":"backend/broker/firebase.emulator.json"}
 {"blob_oid":"3dd2b06897f53397bce85334bae3e65b40972117","class":"evaluated-input","mode":"100644","path":"backend/broker/fixtures/broker-error-v1.json"}
 {"blob_oid":"5be1353090e00a54b9cd76824516ad99de498788","class":"evaluated-input","mode":"100644","path":"backend/broker/fixtures/canonical-payload-v1.json"}
-{"blob_oid":"339c7768d89fbd1f96c36a6d98786154272f5f64","class":"evaluated-input","mode":"100644","path":"backend/broker/package-lock.json"}
-{"blob_oid":"7bee9c074b9f2d82ee2b094e0429a645ac95b8fb","class":"protected-control","mode":"100644","path":"backend/broker/package.json"}
+{"blob_oid":"ffb2f0eb58b9748dc57def0c222cabf60aed6927","class":"evaluated-input","mode":"100644","path":"backend/broker/package-lock.json"}
+{"blob_oid":"d1d46003804096de50cdad86cf2c3c3ef4567bee","class":"protected-control","mode":"100644","path":"backend/broker/package.json"}
 {"blob_oid":"441f8cab08cd3c0dea1845b9baf9c1e65ba719c7","class":"evaluated-input","mode":"100644","path":"backend/broker/src/adapter.ts"}
 {"blob_oid":"a4592cd1945ffd12a9a66d4ec9141b3d65732cdd","class":"evaluated-input","mode":"100644","path":"backend/broker/src/broker.ts"}
 {"blob_oid":"00b12d1976ec24070e9c7850c5769a4c21615f56","class":"evaluated-input","mode":"100644","path":"backend/broker/src/canonical_payload.ts"}
@@ -430,8 +430,8 @@
 {"blob_oid":"c9835555b6a7fe62be036f74744b03087fd1f3cc","class":"evaluated-input","mode":"100644","path":"backend/forms/README.md"}
 {"blob_oid":"bad650ba6427aed3352b993a20750cd2a7f155f6","class":"evaluated-input","mode":"100644","path":"backend/forms/dist-test/beta_signup.test.ts"}
 {"blob_oid":"167525bb96f48b95a22dd6b0cf4859925658f35a","class":"evaluated-input","mode":"100644","path":"backend/forms/dist-test/site_analytics.test.ts"}
-{"blob_oid":"29b4cd637aa9b633774ccf78da3db869ab32d2ec","class":"evaluated-input","mode":"100644","path":"backend/forms/package-lock.json"}
-{"blob_oid":"16aa45f679fb236efe10cbbca695a62d95e8dd09","class":"protected-control","mode":"100644","path":"backend/forms/package.json"}
+{"blob_oid":"829161cad895356d514143649094e26ce092e0cb","class":"evaluated-input","mode":"100644","path":"backend/forms/package-lock.json"}
+{"blob_oid":"1ec5128dd77f813bd16e0227640fdd3fdfa1cbdc","class":"protected-control","mode":"100644","path":"backend/forms/package.json"}
 {"blob_oid":"3ee2c98cf7a6c5e7fd42c303f76afe1bfeaf8eb8","class":"evaluated-input","mode":"100644","path":"backend/forms/src/beta_signup.ts"}
 {"blob_oid":"ec66d15672b781f7d4397238124635e702ea8ab4","class":"evaluated-input","mode":"100644","path":"backend/forms/src/contracts.ts"}
 {"blob_oid":"03e4ef7c7105907335f5d4971b510912c033f7e1","class":"evaluated-input","mode":"100644","path":"backend/forms/src/firebase.ts"}
@@ -449,7 +449,7 @@
 {"blob_oid":"27be598b6e134a9f24830edf18427e404e254b00","class":"evaluated-input","mode":"100644","path":"backend/play_billing/emulator-test/persistence.test.ts"}
 {"blob_oid":"b32920c24dd0a56575c98d642c12abb6e71aa9f8","class":"evaluated-input","mode":"100644","path":"backend/play_billing/emulator-test/rules.test.ts"}
 {"blob_oid":"b492c9f6fb213ec92054d296ee7a6708becff2a4","class":"evaluated-input","mode":"100644","path":"backend/play_billing/fixtures/rollback-boundaries.json"}
-{"blob_oid":"67dd08da96fbdb365b716fa05dcc68ccb8072615","class":"evaluated-input","mode":"100644","path":"backend/play_billing/package-lock.json"}
+{"blob_oid":"3038df3326a9c36baf4622aefa825e218f500ff5","class":"evaluated-input","mode":"100644","path":"backend/play_billing/package-lock.json"}
 {"blob_oid":"302fec69bd2a0417d4cce7339c976cbb430eaeb9","class":"protected-control","mode":"100644","path":"backend/play_billing/package.json"}
 {"blob_oid":"6946e1cf544a3eaeb25b1eba3117fbfcde27f941","class":"evaluated-input","mode":"100644","path":"backend/play_billing/src/constants.ts"}
 {"blob_oid":"634f8a3b3dac48e4f634119af243e18e4642be9b","class":"evaluated-input","mode":"100644","path":"backend/play_billing/src/contracts.ts"}
@@ -703,7 +703,7 @@
 {"blob_oid":"1bfcf483934a21d05aba7814fe2b0f5bfa23c0a3","class":"evaluated-input","mode":"100644","path":"release-notes/internal-testers.md"}
 {"blob_oid":"8dfd43ba5d123f5662b80af98cabba65149e9746","class":"protected-control","mode":"100644","path":"scripts/check_android_ci_inputs.sh"}
 {"blob_oid":"01e37e2323c3904f6cc5a7d5744fea347f571504","class":"evaluated-input","mode":"100755","path":"scripts/check_apple_build_commands.sh"}
-{"blob_oid":"70784aa159f90b1ac8b92487821c9ca6559bcc51","class":"protected-control","mode":"100644","path":"scripts/check_broker_audit.mjs"}
+{"blob_oid":"eb53eb7d0a61bbb35f1569356c77a9911e9be9b4","class":"protected-control","mode":"100644","path":"scripts/check_broker_audit.mjs"}
 {"blob_oid":"63c0dc560be1b85b1131024d8a8005220c058d8f","class":"evaluated-input","mode":"100755","path":"scripts/firebase_app_distribution_upload.sh"}
 {"blob_oid":"ca7a5c7d996c246f60be3a5553f99404af94afd1","class":"protected-control","mode":"100644","path":"scripts/generate_sitemap.py"}
 {"blob_oid":"ef866a2466d2efb55e08acf89132ef9e973686e2","class":"protected-control","mode":"100755","path":"scripts/mobile_broker_bypass_guard.mjs"}
@@ -752,7 +752,7 @@
 {"blob_oid":"cb4066cf58741c3f9db77cefc8436c196159435d","class":"protected-control","mode":"100644","path":"test/attachment_native_viewer_policy_guard.py"}
 {"blob_oid":"a9e75c643eb04817d62c1bf1adf11d3754e9d396","class":"protected-control","mode":"100755","path":"test/attachment_native_viewer_policy_test.sh"}
 {"blob_oid":"ec0c086698af570c8ee15c9e6db13f7da2fa5578","class":"evaluated-input","mode":"100644","path":"test/billing_plan_screen_test.dart"}
-{"blob_oid":"5f7d317369de6c9da543c20335ebccab821666c9","class":"protected-control","mode":"100644","path":"test/broker_audit_policy_test.mjs"}
+{"blob_oid":"2d15793590b3e5acb0fb97fae8be0180c37e2aee","class":"protected-control","mode":"100644","path":"test/broker_audit_policy_test.mjs"}
 {"blob_oid":"aa1672f973ce88bda76a79fd9caf8128c80539ee","class":"evaluated-input","mode":"100644","path":"test/broker_http_client_test.dart"}
 {"blob_oid":"85edf50e99e03f7ca3aa166968acc0cf5ef3cd12","class":"evaluated-input","mode":"100644","path":"test/broker_online_research_client_test.dart"}
 {"blob_oid":"312d1756143ff341d3eddb226889a73626fc5b5c","class":"evaluated-input","mode":"100644","path":"test/broker_payload_test.dart"}
@@ -769,7 +769,7 @@
 {"blob_oid":"5c7073ec42309810646aead629d592eb940ab1d2","class":"evaluated-input","mode":"100644","path":"test/fixtures/archive_v1/artworks.golden.json"}
 {"blob_oid":"b0c72806cea335501da8aac5a4d6682458e24faf","class":"evaluated-input","mode":"100644","path":"test/fixtures/archive_v1/manifest.golden.json"}
 {"blob_oid":"0d0d11dc428f894796b924476dc811a29049454c","class":"protected-control","mode":"100644","path":"test/fixtures/broker-audit/adversarial-cases.json"}
-{"blob_oid":"620d0f0baf5dade419d68956e919c3dfb6d8fd6a","class":"protected-control","mode":"100644","path":"test/fixtures/broker-audit/allowed-audit.json"}
+{"blob_oid":"4ad4cf963265dfed1e96445f374a2410f6ec926b","class":"protected-control","mode":"100644","path":"test/fixtures/broker-audit/allowed-audit.json"}
 {"blob_oid":"bf6bb2cc7061ba3bc75833035c1ea42735b7fd79","class":"protected-control","mode":"100644","path":"test/fixtures/broker-audit/allowed-lock.json"}
 {"blob_oid":"6738d9226d23ce34ef99af76d5a4c9fc55784c53","class":"protected-control","mode":"100644","path":"test/fixtures/broker-audit/allowed-peer-metadata.json"}
 {"blob_oid":"8cf1bc36ca3459d036d6ad9bdedf5137a966246b","class":"protected-control","mode":"100644","path":"test/fixtures/broker-audit/malformed-audit.json"}
