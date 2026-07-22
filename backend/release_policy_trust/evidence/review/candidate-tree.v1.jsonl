@@ -475,7 +475,7 @@
 {"blob_oid":"9deb0dc20c61f2c489f7c69de515bf09de1dcd5e","class":"protected-control","mode":"100644","path":"backend/release_policy_trust/evidence/claim-matrix.v1.json"}
 {"blob_oid":"65fab569f3ea362aa150876ccbbe950b7066ac99","class":"protected-control","mode":"100644","path":"backend/release_policy_trust/package-lock.json"}
 {"blob_oid":"4c42036df607fcd0be33e6af33a8dcad2e292f0a","class":"protected-control","mode":"100644","path":"backend/release_policy_trust/package.json"}
-{"blob_oid":"da72e3a4488e6f83417b809800e9ae0b28c7a4b9","class":"protected-control","mode":"100644","path":"backend/release_policy_trust/policy/external-inputs.v1.jsonl"}
+{"blob_oid":"2f1983a3f16072ac5fab6682bde1175df0ca0c49","class":"protected-control","mode":"100644","path":"backend/release_policy_trust/policy/external-inputs.v1.jsonl"}
 {"blob_oid":"fd81a939e5e1dec9cb12b5d869ceb74d0c17ffd9","class":"protected-control","mode":"100644","path":"backend/release_policy_trust/policy/release-policy.v1.json"}
 {"blob_oid":"62c9778fc9f3926e2e6b423babb7e3fb1dab41f5","class":"protected-control","mode":"100644","path":"backend/release_policy_trust/scripts/candidate_evidence.ts"}
 {"blob_oid":"a75a1bc21d2e561d860f9baf4fbd618fda326989","class":"protected-control","mode":"100644","path":"backend/release_policy_trust/scripts/clean.mjs"}
