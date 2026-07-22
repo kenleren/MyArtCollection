@@ -60,6 +60,18 @@ candidate. A push or manual event whose immutable commit is not a direct
 candidate/evidence pair fails closed; post-merge evidence needs its own reviewed
 contract.
 
+Trust inventory is generated from the exact immutable candidate result tree;
+review evidence is excluded only from the inventory it describes. Reproduction
+materializes the trust package from that named commit twice, under the pinned
+Node/npm/UTC/C environment, rather than copying the checkout. Workers SPDX and
+artifact evidence are intentionally different: an evidence candidate must have
+one parent, and its only source anchor is that parent. The workflow generates
+SPDX twice from that anchor, byte-compares both outputs and the committed bytes,
+then validates the committed artifact against the same parent. The generic
+topology guard permits exactly the five regular evidence files in an
+evidence-only child; merge commits, source changes, renames, and extra paths
+fail before evidence is trusted.
+
 ## Reproducibility and cache boundary
 
 All GitHub Actions are pinned to immutable commits. Checkout 7.0.0, cache

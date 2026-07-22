@@ -401,6 +401,9 @@ jobs:
           set -euo pipefail
           A="${{ steps.immutable-workers-candidate.outputs.artifact_anchor }}"
           npm --prefix backend/release_policy_workers_free run sbom:generate -- --anchor "$A" --output "$RUNNER_TEMP/sbom.spdx.json"
+          npm --prefix backend/release_policy_workers_free run sbom:generate -- --anchor "$A" --output "$RUNNER_TEMP/sbom-second.spdx.json"
+          cmp "$RUNNER_TEMP/sbom.spdx.json" "$RUNNER_TEMP/sbom-second.spdx.json"
+          cmp backend/release_policy_workers_free/evidence/sbom.spdx.json "$RUNNER_TEMP/sbom.spdx.json"
       - name: Verify Workers Free SPDX evidence
         shell: bash
         run: |
@@ -413,6 +416,13 @@ jobs:
           set -euo pipefail
           A="${{ steps.immutable-workers-candidate.outputs.artifact_anchor }}"
           npm --prefix backend/release_policy_workers_free run artifact:verify -- --anchor "$A" --sbom "$RUNNER_TEMP/sbom.spdx.json" --output backend/release_policy_workers_free/evidence/artifact-manifest.v2.json
+      - name: Verify generic evidence-only topology
+        shell: bash
+        run: |
+          set -euo pipefail
+          C="${{ steps.immutable-workers-candidate.outputs.candidate_head }}"
+          A="${{ steps.immutable-workers-candidate.outputs.artifact_anchor }}"
+          npm --prefix backend/release_policy_workers_free run phase:guard -- --phase evidence-only --anchor "$A" --candidate "$C"
       - name: Rehearse Workers Free restore
         shell: bash
         run: |
@@ -529,10 +539,8 @@ jobs:
             exit 1
           fi
           if [[ "$expected_verification_scope" == full ]]; then
-            artifact_anchor="$(git rev-parse --verify "$CANDIDATE_SHA^")"
             npm --prefix backend/release_policy_trust run candidate:generate -- \
-              --candidate-base "$artifact_anchor" \
-              --overlay-manifest backend/release_policy_workers_free/config/phase-b-overlay.v1.json \
+              --candidate "$CANDIDATE_SHA" \
               --output "$RUNNER_TEMP/candidate-tree.v1.jsonl"
             cmp \
               backend/release_policy_trust/evidence/review/candidate-tree.v1.jsonl \
@@ -544,7 +552,7 @@ jobs:
           npm --prefix backend/release_policy_trust run codeowners:verify
           npm --prefix backend/release_policy_trust run external:verify
           npm --prefix backend/release_policy_trust run reproduce -- \
-            --source-commit "$(git rev-parse --verify "$CANDIDATE_SHA^")" \
+            --source-commit "$CANDIDATE_SHA" \
             --output "$RUNNER_TEMP/reproducibility.v1.json"
           cmp \
             backend/release_policy_trust/evidence/review/reproducibility.v1.json \

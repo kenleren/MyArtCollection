@@ -10,7 +10,13 @@ const lockInput = process.argv.includes("--lock") ? anchoredPath(value("lock")) 
 if (!/^[0-9a-f]{40}$/.test(anchor) || !output || output === root || !lockInput) throw new Error("SBOM anchor rejected");
 const git = (...args: string[]) => execFileSync("git", ["-C", root, ...args], { encoding: "utf8" }).trim();
 const epoch = Number(git("show", "-s", "--format=%ct", anchor)); if (!Number.isSafeInteger(epoch)) throw new Error("SBOM epoch rejected");
-const lockBytes = readFileSync(lockInput); const lock = JSON.parse(lockBytes.toString("utf8")) as { name: string; version: string; packages: Record<string, { name?: string; version?: string; integrity?: string }> };
+// The evidence candidate is a child; its immutable source is exactly its sole
+// parent.  Never let an evidence worktree (or its supplied lock path) bind the
+// SPDX document.
+const anchoredLockPath = "backend/release_policy_workers_free/package-lock.json";
+const lockBytes = Buffer.from(execFileSync("git", ["-C", repositoryRoot, "show", `${anchor}:${anchoredLockPath}`]));
+if (process.argv.includes("--lock") && !readFileSync(lockInput).equals(lockBytes)) throw new Error("SBOM lock differs from source anchor");
+const lock = JSON.parse(lockBytes.toString("utf8")) as { name: string; version: string; packages: Record<string, { name?: string; version?: string; integrity?: string }> };
 const hash = (input: Uint8Array | string) => createHash("sha256").update(input).digest("hex");
 const packages = Object.entries(lock.packages).map(([path, row], index) => ({ SPDXID: `SPDXRef-Package-${index}`, name: row.name ?? (path || lock.name), versionInfo: row.version ?? lock.version, downloadLocation: "NOASSERTION", filesAnalyzed: false, licenseConcluded: "NOASSERTION", licenseDeclared: "NOASSERTION", copyrightText: "NOASSERTION", ...(row.integrity ? { checksums: [{ algorithm: "SHA512", checksumValue: Buffer.from(row.integrity.replace(/^sha512-/, ""), "base64").toString("hex") }] } : {}) }));
 const rootPackage = packages[0]; if (!rootPackage) throw new Error("SBOM root package missing");

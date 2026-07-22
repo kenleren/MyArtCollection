@@ -21,6 +21,27 @@ const startBytes = (oid, path) => Buffer.from(git("show", `${oid}:${path}`));
 const hashAt = (oid, path) => hash(startBytes(oid, path));
 const writeCanonical = (path, value) => writeFileSync(path, `${JSON.stringify(value)}\n`, { flag: "wx" });
 const reproductionPath = "backend/release_policy_trust/evidence/review/reproducibility.v1.json";
+// A rebind is deliberately a generic, evidence-only child.  These are the
+// only review artifacts that may differ from its source anchor; no issue- or
+// history-specific overlay is part of this contract.
+export const evidenceOnlyPaths = [
+  "backend/release_policy_trust/evidence/review/candidate-tree.v1.jsonl",
+  reproductionPath,
+  "backend/release_policy_trust/evidence/review/final-candidate.v1.json",
+  "backend/release_policy_workers_free/evidence/sbom.spdx.json",
+  "backend/release_policy_workers_free/evidence/artifact-manifest.v2.json",
+];
+export function assertEvidenceOnlyDelta(delta) {
+  const expected = evidenceOnlyPaths.map((path) => `M\t${path}`);
+  if (JSON.stringify(delta) !== JSON.stringify(expected)) fail("evidence-only path set rejected");
+}
+export function assertEvidenceOnlyTopology(anchor, candidate) {
+  if (!/^[0-9a-f]{40}$/.test(anchor) || !/^[0-9a-f]{40}$/.test(candidate) || /^0+$/.test(anchor) || /^0+$/.test(candidate)) fail("evidence-only oid rejected");
+  const parents = git("rev-list", "--parents", "-n", "1", candidate).trim().split(/\s+/);
+  if (parents.length !== 2 || parents[0] !== candidate || parents[1] !== anchor) fail("evidence-only parent rejected");
+  assertEvidenceOnlyDelta(git("diff", "--name-status", "--no-renames", anchor, candidate).trim().split("\n").filter(Boolean));
+  for (const path of evidenceOnlyPaths) if (treeMode(candidate, path) !== "100644") fail("evidence-only mode rejected");
+}
 export const mandatoryBDelta = [
   "M\tbackend/release_policy_trust/evidence/review/candidate-tree.v1.jsonl",
   "M\tbackend/release_policy_trust/evidence/review/final-candidate.v1.json",
@@ -327,6 +348,13 @@ function assertFinalASeal() {
 }
 
 function main() {
+  if (phase === "evidence-only") {
+    const anchor = required(option("anchor"), "anchor");
+    const candidate = required(option("candidate"), "candidate");
+    requireCleanWorktree();
+    assertEvidenceOnlyTopology(anchor, candidate);
+    return;
+  }
 if (phase === "preserve-sbom") preserve();
 else if (phase === "verify-sbom-preservation") verifyPreservation();
 else if (phase === "final-a") assertFinalASeal();

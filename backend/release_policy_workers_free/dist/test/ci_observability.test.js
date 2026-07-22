@@ -13,12 +13,10 @@ const wranglerPath = resolve(root, "backend/release_policy_workers_free/wrangler
 const phaseGuardUrl = pathToFileURL(resolve(root, "backend/release_policy_workers_free/scripts/phase_guard.mjs")).href;
 function phaseGuardAssertions() {
     const source = [
-        `import { assertBDelta, expectedBDelta, mandatoryBDelta } from ${JSON.stringify(phaseGuardUrl)};`,
-        "const five = expectedBDelta(false); const six = expectedBDelta(true);",
-        "if (five.length !== 5 || six.length !== 6 || six[2] !== 'M\\tbackend/release_policy_trust/evidence/review/reproducibility.v1.json') process.exit(2);",
-        "assertBDelta(five, false); assertBDelta(six, true);",
-        "for (const [delta, differs] of [[five.slice(1), false], [[...five, 'M\\textra'], false], [[...five.slice(0, 2), 'A\\tbackend/release_policy_trust/evidence/review/reproducibility.v1.json', ...five.slice(2)], true], [five, true]]) { let rejected = false; try { assertBDelta(delta, differs); } catch { rejected = true; } if (!rejected) process.exit(3); }",
-        "if (JSON.stringify(mandatoryBDelta) !== JSON.stringify(five)) process.exit(4);",
+        `import { assertEvidenceOnlyDelta, evidenceOnlyPaths } from ${JSON.stringify(phaseGuardUrl)};`,
+        "const five = evidenceOnlyPaths.map((path) => `M\\t${path}`);",
+        "if (five.length !== 5) process.exit(2); assertEvidenceOnlyDelta(five);",
+        "for (const delta of [five.slice(1), [...five, 'M\\textra'], [...five.slice(0, 2), 'A\\tbackend/release_policy_trust/evidence/review/reproducibility.v1.json', ...five.slice(2)]]) { let rejected = false; try { assertEvidenceOnlyDelta(delta); } catch { rejected = true; } if (!rejected) process.exit(3); }",
     ].join("\n");
     execFileSync("node", ["--input-type=module", "--eval", source], { cwd: resolve(root, "backend/release_policy_workers_free"), stdio: "inherit" });
 }
@@ -111,7 +109,7 @@ test("Release Readiness partitions backend commands into strict, ordered observa
     assert.match(backend, /git rev-list --parents -n 1 "\$candidate_head"/);
     assert.match(backend, /candidate_head=%s\\nartifact_anchor=%s\\n/);
     assert.doesNotMatch(backend.slice(backend.indexOf("Generate Workers Free SPDX evidence"), backend.indexOf("Rehearse Workers Free restore")), /git rev-parse HEAD\^|GITHUB_SHA\^/);
-    assert.equal((backend.match(/\$\{\{ steps\.immutable-workers-candidate\.outputs\.artifact_anchor \}\}/g) ?? []).length, 3);
+    assert.equal((backend.match(/\$\{\{ steps\.immutable-workers-candidate\.outputs\.artifact_anchor \}\}/g) ?? []).length, 4);
     assert.doesNotMatch(backend, /Test backend packages|continue-on-error|if:\s*always\(\)|set -x|ACTIONS_STEP_DEBUG|upload-artifact/);
 });
 test("actionlint is pinned to an immutable OCI digest and runs fail-closed", () => {
@@ -143,6 +141,6 @@ test("deployment config uses the reviewed bundle without Wrangler rebundling", (
     assert.match(artifact, /"wrangler\.jsonc"/);
     assert.match(artifact, /"evidence\/bundle\/worker\.mjs"/);
 });
-test("phase guard accepts only the computed five or six evidence deltas", () => {
+test("phase guard accepts only the generic five-path evidence delta", () => {
     phaseGuardAssertions();
 });
