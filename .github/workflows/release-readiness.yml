@@ -39,7 +39,15 @@ jobs:
         run: |
           set -euo pipefail
           archive=actionlint_1.7.12_linux_amd64.tar.gz
-          curl -fsSLO "https://github.com/rhysd/actionlint/releases/download/v1.7.12/${archive}"
+          for attempt in 1 2 3; do
+            if curl -fsSL --output "$archive" "https://github.com/rhysd/actionlint/releases/download/v1.7.12/${archive}"; then
+              break
+            fi
+            if [[ "$attempt" == 3 ]]; then
+              exit 1
+            fi
+            sleep "$((attempt * 2))"
+          done
           printf '%s  %s\n' \
             '8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8' \
             "$archive" | sha256sum -c -

@@ -107,6 +107,18 @@ test("Release Readiness partitions backend commands into strict, ordered observa
   assert.doesNotMatch(backend, /Test backend packages|continue-on-error|if:\s*always\(\)|set -x|ACTIONS_STEP_DEBUG|upload-artifact/);
 });
 
+test("actionlint download retries are bounded and retain the checksum pin", () => {
+  const workflow = readFileSync(workflowPath, "utf8");
+  const lint = workflow.slice(workflow.indexOf("      - name: Install checksum-verified actionlint"), workflow.indexOf("  flutter-quality:"));
+  assert.match(lint, /archive=actionlint_1\.7\.12_linux_amd64\.tar\.gz/);
+  assert.match(lint, /for attempt in 1 2 3; do/);
+  assert.match(lint, /curl -fsSL --output "\$archive" "https:\/\/github\.com\/rhysd\/actionlint\/releases\/download\/v1\.7\.12\/\$\{archive\}"/);
+  assert.match(lint, /if \[\[ "\$attempt" == 3 \]\]; then\s+exit 1/);
+  assert.match(lint, /sleep "\$\(\(attempt \* 2\)\)"/);
+  assert.match(lint, /8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8/);
+  assert.match(lint, /sha256sum -c -/);
+});
+
 test("phase guard accepts only the computed five or six evidence deltas", () => {
   phaseGuardAssertions();
 });
