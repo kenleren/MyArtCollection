@@ -486,7 +486,7 @@
 {"blob_oid":"246de55a92032bb455358aed8d6de01d83a4ee67","class":"protected-control","mode":"100644","path":"backend/release_policy_trust/scripts/external_verify.ts"}
 {"blob_oid":"2ba4b671144c1894d9a0a48853655ee535245d32","class":"protected-control","mode":"100644","path":"backend/release_policy_trust/scripts/final_candidate_generate.ts"}
 {"blob_oid":"152746f7398c691ae1cff54adc182138804fa41c","class":"protected-control","mode":"100644","path":"backend/release_policy_trust/scripts/git_anchors.ts"}
-{"blob_oid":"d27078efb0e0ebf6f0d5469b556d3b6a1872b85c","class":"protected-control","mode":"100644","path":"backend/release_policy_trust/scripts/policy_verify.ts"}
+{"blob_oid":"b1f8d26df355bfd54d7c1ba650b1f9040c997822","class":"protected-control","mode":"100644","path":"backend/release_policy_trust/scripts/policy_verify.ts"}
 {"blob_oid":"374b9b7b682e41ebed8b36e3cff2b73f0c96e4e9","class":"protected-control","mode":"100644","path":"backend/release_policy_trust/scripts/reproduce.ts"}
 {"blob_oid":"8fc070101a2787524cf57f9ad250adbbaebfe433","class":"protected-control","mode":"100644","path":"backend/release_policy_trust/scripts/shared.ts"}
 {"blob_oid":"f8e29ab72367062e8b015510b8b1fded35c7c99d","class":"protected-control","mode":"100644","path":"backend/release_policy_trust/scripts/trust_source_scope.ts"}
@@ -547,14 +547,14 @@
 {"blob_oid":"5ae0fa57bc944595d6c75d3a0f0be7b74dd69905","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/dist/test/ci_observability.test.js"}
 {"blob_oid":"298ccd3e2e0ec4b0120282570e9202f8ff0ac1c2","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/dist/test/dispatcher.test.js"}
 {"blob_oid":"1075f1100a04b9b2bf8f2421b9299d4c53a29ccc","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/dist/test/github_pagination.test.js"}
-{"blob_oid":"c450d891d1cd6f75e194e3331f5084979e7caffe","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/evidence/artifact-manifest.v2.json"}
+{"blob_oid":"edd9b0c7b9f9ef1e0a37a4d24f79826ea6d83b81","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/evidence/artifact-manifest.v2.json"}
 {"blob_oid":"28758f90ef72032930eee64b16ae9008c567d291","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/evidence/bundle/bundle-evidence.v1.json"}
 {"blob_oid":"20bb3a5b626961eba1edfb44d15005ff5b11fccd","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/evidence/bundle/import-manifest.v1.json"}
 {"blob_oid":"de101324ede369e00545e2d53d8debaa338b2350","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/evidence/bundle/metafile.json"}
 {"blob_oid":"6f963a79735ba8cb22001ac1a9d95568d5822282","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/evidence/bundle/worker.mjs"}
 {"blob_oid":"95e9420696fa1dbd472d709e9290419a2b72593f","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/evidence/restore-fixture.v1.json"}
 {"blob_oid":"332114915f2c50ee935c4228b0d1d912a2537630","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/evidence/restore-rehearsal.v1.json"}
-{"blob_oid":"f6e822362a023b38ab3bafb3c6f1f13c3f026417","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/evidence/sbom.spdx.json"}
+{"blob_oid":"d35d20f0d1fc19949f8b0f2a66f1a070cb40a8b4","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/evidence/sbom.spdx.json"}
 {"blob_oid":"2e64ec1ee64ed5d9fec8262649425ada23df53fe","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/evidence/sqlite-conformance.v1.json"}
 {"blob_oid":"a9ca2a5245cdf0a1d5aa7c5cad9840afe20035b6","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/evidence/wrangler-preflight.v1.json"}
 {"blob_oid":"81cdfebf4bf74502121fadb78f56d9e35b552c13","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/package-lock.json"}
