@@ -28,11 +28,11 @@ const imports = [...bytes.toString("utf8").matchAll(/(?:from\s+|import\s*)["']([
 if (manifest.output !== "worker.mjs" || JSON.stringify(manifest.imports) !== JSON.stringify(imports) || imports.length !== 2 || imports.some((item) => item !== "node:crypto")) throw new Error("import manifest drift");
 const ignore = readFileSync(resolve(repositoryRoot, ".gitignore"), "utf8");
 if (ignore.split("\n").filter((line) => line === "/.work/release-policy-workers-free/").length !== 1) throw new Error("root generated-output ignore drift");
-const flags = ["nodejs_compat", "nodejs_compat_v2", "nodejs_compat_do_not_populate_process_env", "disallow_importable_env"];
+const flags = ["nodejs_compat_v2", "nodejs_compat_do_not_populate_process_env", "disallow_importable_env"];
 function assertCompatibility(candidate) {
   if (JSON.stringify(candidate) !== JSON.stringify(flags)) throw new Error(candidate.includes("nodejs_compat_v2") ? "compatibility-inventory-drift" : "explicit-v2-required");
   const state = getNodeCompat("2026-07-21", candidate);
-  if (state.mode !== "v2" || !state.hasNodejsCompatFlag || !state.hasNodejsCompatV2Flag) throw new Error("node-compat-v2-required");
+  if (state.mode !== "v2" || !state.hasNodejsCompatV2Flag) throw new Error("node-compat-v2-required");
   return state;
 }
 const nodeCompat = assertCompatibility(flags);
@@ -59,7 +59,7 @@ try {
   const rejected = await runtime.dispatchFetch("http://runtime.invalid/webhook", { method: "POST", headers: { ...headers, "x-hub-signature-256": `sha256=${"0".repeat(64)}` }, body: raw });
   if (rejected.status !== 401) throw new Error("invalid HMAC was not rejected before DO");
 } finally { await runtime.dispose(); }
-for (const negative of [flags.filter((flag) => flag !== "nodejs_compat" && flag !== "nodejs_compat_v2"), flags.filter((flag) => flag !== "nodejs_compat_v2"), [...flags, "forbidden_flag"]]) {
+for (const negative of [flags.filter((flag) => flag !== "nodejs_compat_v2"), [...flags, "nodejs_compat"], [...flags, "forbidden_flag"]]) {
   let rejected = false;
   try { assertCompatibility(negative); } catch { rejected = true; }
   if (!rejected) throw new Error("compatibility negative accepted");

@@ -1,1 +1,1 @@
-{"sha256":"1a8739102e9fe9bccd1ceab72053600d2d9b63fe4a8e6825749a810220799ecd","bytes":151330,"esbuild":"0.25.9","miniflare":"4.20260721.0","compatibility_flags":["nodejs_compat","nodejs_compat_v2","nodejs_compat_do_not_populate_process_env","disallow_importable_env"]}
+{"sha256":"1a8739102e9fe9bccd1ceab72053600d2d9b63fe4a8e6825749a810220799ecd","bytes":151330,"esbuild":"0.25.9","miniflare":"4.20260721.0","compatibility_flags":["nodejs_compat_v2","nodejs_compat_do_not_populate_process_env","disallow_importable_env"]}

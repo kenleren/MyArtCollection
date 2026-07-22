@@ -22,7 +22,7 @@ const CASE_IDS = [
   "protected.delete", "protected.copy", "protected.rename", "protected.case_fold",
 ];
 const CASE_SET = new Set([...CASE_IDS, "restore.rehearsal"]);
-const FLAGS = ["nodejs_compat", "nodejs_compat_v2", "nodejs_compat_do_not_populate_process_env", "disallow_importable_env"];
+const FLAGS = ["nodejs_compat_v2", "nodejs_compat_do_not_populate_process_env", "disallow_importable_env"];
 const FIXED_SCHEDULED_TIME_MS = 1784603820000;
 const FIXED_CRON = "17 3 * * *";
 const REPOSITORY_ID = 1288597824;

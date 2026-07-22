@@ -6,7 +6,7 @@
   "find_additional_modules": false,
   "send_metrics": false,
   "compatibility_date": "2026-07-21",
-  "compatibility_flags": ["nodejs_compat", "nodejs_compat_v2", "nodejs_compat_do_not_populate_process_env", "disallow_importable_env"],
+  "compatibility_flags": ["nodejs_compat_v2", "nodejs_compat_do_not_populate_process_env", "disallow_importable_env"],
   "durable_objects": { "bindings": [{ "name": "REPOSITORY", "class_name": "RepositoryDurableObject" }] },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["RepositoryDurableObject"] }]
 }
