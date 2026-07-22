@@ -232,6 +232,7 @@ jobs:
       EVENT_NAME: ${{ github.event_name }}
       EVENT_SHA: ${{ github.sha }}
       PULL_REQUEST_HEAD_SHA: ${{ github.event.pull_request.head.sha || '' }}
+      PULL_REQUEST_BASE_SHA: ${{ github.event.pull_request.base.sha || '' }}
     steps:
       - name: Check out repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
@@ -276,7 +277,12 @@ jobs:
             echo "Immutable artifact anchor is missing or invalid" >&2
             exit 1
           fi
-          printf 'candidate_head=%s\nartifact_anchor=%s\n' "$candidate_head" "$artifact_anchor" >> "$GITHUB_OUTPUT"
+          pr_base="$PULL_REQUEST_BASE_SHA"
+          if [[ "$EVENT_NAME" == pull_request ]]; then
+            if [[ ! "$pr_base" =~ ^[0-9a-f]{40}$ ]] || [[ "$(git rev-parse --verify "${pr_base}^{commit}")" != "$pr_base" ]]; then echo "Immutable PR base is missing or invalid" >&2; exit 1; fi
+            git merge-base --is-ancestor "$pr_base" "$candidate_head"
+          fi
+          printf 'candidate_head=%s\nartifact_anchor=%s\npr_base=%s\n' "$candidate_head" "$artifact_anchor" "$pr_base" >> "$GITHUB_OUTPUT"
       - name: Set up Node
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
         with:

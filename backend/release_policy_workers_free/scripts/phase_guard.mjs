@@ -36,15 +36,29 @@ const byteOrder = (left, right) => left < right ? -1 : left > right ? 1 : 0;
 // Compare the same semantic delta under this explicit bytewise path ordering.
 const normalizeEvidenceDelta = (delta) => [...delta].sort(byteOrder);
 export function assertEvidenceOnlyDelta(delta) {
-  const expected = normalizeEvidenceDelta(evidenceOnlyPaths.map((path) => `M\t${path}`));
-  if (!Array.isArray(delta) || JSON.stringify(normalizeEvidenceDelta(delta)) !== JSON.stringify(expected)) fail("evidence-only path set rejected");
+  const mandatory = evidenceOnlyPaths.filter((path) => path !== reproductionPath).map((path) => `M\t${path}`);
+  const actual = normalizeEvidenceDelta(delta);
+  if (!Array.isArray(delta) || ![mandatory, [...mandatory, `M\t${reproductionPath}`]].map(normalizeEvidenceDelta).some((expected) => JSON.stringify(actual) === JSON.stringify(expected))) fail("evidence-only path set rejected");
 }
 export function assertEvidenceOnlyTopology(anchor, candidate, runGit = git) {
   if (!/^[0-9a-f]{40}$/.test(anchor) || !/^[0-9a-f]{40}$/.test(candidate) || /^0+$/.test(anchor) || /^0+$/.test(candidate)) fail("evidence-only oid rejected");
   const parents = runGit("rev-list", "--parents", "-n", "1", candidate).trim().split(/\s+/);
   if (parents.length !== 2 || parents[0] !== candidate || parents[1] !== anchor) fail("evidence-only parent rejected");
   assertEvidenceOnlyDelta(runGit("diff", "--name-status", "--no-renames", anchor, candidate).trim().split("\n").filter(Boolean));
+  const changed = !Buffer.from(runGit("show", `${anchor}:${reproductionPath}`)).equals(Buffer.from(runGit("show", `${candidate}:${reproductionPath}`)));
+  const hasDelta = runGit("diff", "--name-only", anchor, candidate, "--", reproductionPath).trim() === reproductionPath;
+  if (changed !== hasDelta) fail("evidence-only reproduction predicate rejected");
   for (const path of evidenceOnlyPaths) if (treeMode(candidate, path, runGit) !== "100644") fail("evidence-only mode rejected");
+}
+export function assertEventTopology({ event, candidate, anchor, base, before, manualBase }, runGit = git) {
+  const valid = (value) => typeof value === "string" && /^[0-9a-f]{40}$/.test(value) && !/^0+$/.test(value);
+  if (!valid(candidate) || !valid(anchor)) fail("event identity rejected");
+  const parents = runGit("rev-list", "--parents", "-n", "1", candidate).trim().split(/\s+/);
+  if (parents.length !== 2 || parents[1] !== anchor) fail("event parent rejected");
+  if (event === "pull_request") { if (!valid(base) || runGit("merge-base", base, anchor).trim() !== base || runGit("merge-base", base, candidate).trim() !== base) fail("event PR base rejected"); return; }
+  if (event === "push") { if (!valid(before) || before !== anchor || runGit("merge-base", before, candidate).trim() !== before) fail("event push before rejected"); return; }
+  if (event === "workflow_dispatch") { if (!valid(manualBase) || manualBase !== anchor) fail("event manual base rejected"); return; }
+  fail("event kind rejected");
 }
 export const mandatoryBDelta = [
   "M\tbackend/release_policy_trust/evidence/review/candidate-tree.v1.jsonl",
