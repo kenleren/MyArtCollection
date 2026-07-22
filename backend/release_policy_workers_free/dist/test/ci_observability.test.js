@@ -7,6 +7,8 @@ import { pathToFileURL } from "node:url";
 import test from "node:test";
 const root = resolve(process.cwd(), "../..");
 const workflowPath = resolve(root, ".github/workflows/release-readiness.yml");
+const sqliteConformancePath = resolve(root, "backend/release_policy_workers_free/scripts/sqlite_conformance.mjs");
+const artifactScriptPath = resolve(root, "backend/release_policy_workers_free/scripts/artifact.ts");
 const phaseGuardUrl = pathToFileURL(resolve(root, "backend/release_policy_workers_free/scripts/phase_guard.mjs")).href;
 function phaseGuardAssertions() {
     const source = [
@@ -118,6 +120,16 @@ test("actionlint is pinned to an immutable OCI digest and runs fail-closed", () 
     assert.match(lint, /-v "\$GITHUB_WORKSPACE:\/repo:ro" -w \/repo/);
     assert.match(lint, /PATH=\/usr\/bin:\/bin \/usr\/local\/bin\/actionlint -color/);
     assert.doesNotMatch(lint, /releases\/download\/v1\.7\.12|curl |sha256sum -c -/);
+});
+test("SQLite evidence derives the preflight-validated Miniflare version and artifacts bind its generator", () => {
+    const harness = readFileSync(sqliteConformancePath, "utf8");
+    const artifact = readFileSync(artifactScriptPath, "utf8");
+    assert.match(harness, /const miniflareVersion = installed\.version/);
+    assert.match(harness, /return miniflareVersion/);
+    assert.match(harness, /boundedEvidence\(results, miniflareVersion\)/);
+    assert.match(harness, /miniflare: miniflareVersion/);
+    assert.doesNotMatch(harness, /miniflare:\s*"4\.20260714\.0"/);
+    assert.match(artifact, /"scripts\/sqlite_conformance\.mjs"/);
 });
 test("phase guard accepts only the computed five or six evidence deltas", () => {
     phaseGuardAssertions();

@@ -79,6 +79,7 @@ function preflight() {
   const installed = JSON.parse(readFileSync(resolve(packageRoot, "node_modules/miniflare/package.json"), "utf8"));
   const lock = JSON.parse(readFileSync(resolve(packageRoot, "package-lock.json"), "utf8"));
   ensure(installed.version === "4.20260721.0" && lock.packages?.["node_modules/miniflare"]?.version === "4.20260721.0", "harness", "miniflare_version");
+  const miniflareVersion = installed.version;
   const bundle = readFileSync(bundlePath); bundleHash = sha256(bundle);
   const bundleEvidence = JSON.parse(readFileSync(resolve(bundleRoot, "bundle-evidence.v1.json"), "utf8"));
   ensure(bundleEvidence.sha256 === bundleHash && bundleEvidence.bytes === bundle.byteLength && bundleEvidence.miniflare === installed.version, "harness", "bundle_evidence");
@@ -104,6 +105,7 @@ function preflight() {
   ensure(!harnessSource.includes(`.${removedScheduled}(`), "harness", "removed_scheduled_api");
   ensure((harnessSource.match(/async function runScheduledStep\(/g) ?? []).length === 1, "harness", "scheduled_helper_count");
   ensure((harnessSource.match(/\.scheduled\(\{/g) ?? []).length === 1, "harness", "scheduled_proxy_count");
+  return miniflareVersion;
 }
 function walk(root) {
   const results = [];
@@ -395,19 +397,19 @@ async function runLane(caseId, kind, creds) {
   } catch (error) { await lane.cleanup(); throw error; }
 }
 
-function boundedEvidence(results) {
+function boundedEvidence(results, miniflareVersion) {
   const bucketFields = ["do_headroom_bucket", "duplicate_binding_bucket", "duplicate_check_bucket", "exceeded_resource_bucket", "forbidden_egress_bucket", "oldest_work_bucket", "pending_bucket", "provider_error_bucket", "request_headroom_bucket", "row_headroom_bucket", "status_egress_bucket", "storage_headroom_bucket", "worker_error_bucket"];
-  return { schema_version: 1, node: process.version, miniflare: "4.20260714.0", bundle_sha256: bundleHash, import_manifest_sha256: importManifestHash, paired_black_box: true, paired_persistent_sqlite: true, unsafe_live_inspection: false, scheduled_proxy: true, removed_miniflare_dispatch_absent: true, scheduled_http_trigger_count: 0, case_count: results.length, cases: results.map((result) => { const finalWatchdog = result.inspections.at(-1)?.watchdog ?? {}; return { case_id: result.caseId, external_equivalence: true, route_count: result.external.totals.all, create_count: result.external.totals.create, update_count: result.external.totals.update, forbidden_egress_count: result.external.forbidden_egress, telemetry_buckets: Object.fromEntries(bucketFields.map((field) => [field, finalWatchdog[field] ?? 2])), row_count_within_bound: result.inspections.every((row) => row.rows <= 100), database_bytes_within_bound: result.inspections.every((row) => row.database_bytes <= 1_048_576), alarm_count_within_bound: result.inspections.every((row) => row.alarm_count <= 8), redaction_scan: result.inspections.every((row) => row.redaction_scan) }; }), temp_cleanup: true, production_config_leakage: false, deployed_cpu_quota_proof: false };
+  return { schema_version: 1, node: process.version, miniflare: miniflareVersion, bundle_sha256: bundleHash, import_manifest_sha256: importManifestHash, paired_black_box: true, paired_persistent_sqlite: true, unsafe_live_inspection: false, scheduled_proxy: true, removed_miniflare_dispatch_absent: true, scheduled_http_trigger_count: 0, case_count: results.length, cases: results.map((result) => { const finalWatchdog = result.inspections.at(-1)?.watchdog ?? {}; return { case_id: result.caseId, external_equivalence: true, route_count: result.external.totals.all, create_count: result.external.totals.create, update_count: result.external.totals.update, forbidden_egress_count: result.external.forbidden_egress, telemetry_buckets: Object.fromEntries(bucketFields.map((field) => [field, finalWatchdog[field] ?? 2])), row_count_within_bound: result.inspections.every((row) => row.rows <= 100), database_bytes_within_bound: result.inspections.every((row) => row.database_bytes <= 1_048_576), alarm_count_within_bound: result.inspections.every((row) => row.alarm_count <= 8), redaction_scan: result.inspections.every((row) => row.redaction_scan) }; }), temp_cleanup: true, production_config_leakage: false, deployed_cpu_quota_proof: false };
 }
 
 async function main() {
-  preflight(); const results = [];
+  const miniflareVersion = preflight(); const results = [];
   for (const caseId of CASE_IDS) {
     const creds = credentials(); const black = await runLane(caseId, "black_box", creds); const persistent = await runLane(caseId, "persistent_sqlite", creds);
     try { assert.deepEqual(persistent.external, black.external); } catch { throw new HarnessFailure(caseId, "external_equivalence"); }
     results.push({ caseId, external: black.external, inspections: persistent.inspections, markers: creds.markers });
   }
-  const evidence = boundedEvidence(results); const encoded = JSON.stringify(evidence) + "\n";
+  const evidence = boundedEvidence(results, miniflareVersion); const encoded = JSON.stringify(evidence) + "\n";
   for (const result of results) for (const marker of result.markers) ensure(!encoded.includes(marker), result.caseId, "evidence_redaction");
   writeFileSync(evidencePath, encoded); process.stdout.write(`sqlite conformance passed (${CASE_IDS.length} cases, ${CASE_IDS.length * 2} uninstrumented lanes)\n`);
 }
