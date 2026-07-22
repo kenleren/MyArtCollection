@@ -110,16 +110,14 @@ test("Release Readiness partitions backend commands into strict, ordered observa
     assert.equal((backend.match(/\$\{\{ steps\.immutable-workers-candidate\.outputs\.artifact_anchor \}\}/g) ?? []).length, 3);
     assert.doesNotMatch(backend, /Test backend packages|continue-on-error|if:\s*always\(\)|set -x|ACTIONS_STEP_DEBUG|upload-artifact/);
 });
-test("actionlint download retries are bounded and retain the checksum pin", () => {
+test("actionlint is pinned to an immutable OCI digest and runs fail-closed", () => {
     const workflow = readFileSync(workflowPath, "utf8");
-    const lint = workflow.slice(workflow.indexOf("      - name: Install checksum-verified actionlint"), workflow.indexOf("  flutter-quality:"));
-    assert.match(lint, /archive=actionlint_1\.7\.12_linux_amd64\.tar\.gz/);
-    assert.match(lint, /for attempt in 1 2 3; do/);
-    assert.match(lint, /curl -fsSL --output "\$archive" "https:\/\/github\.com\/rhysd\/actionlint\/releases\/download\/v1\.7\.12\/\$\{archive\}"/);
-    assert.match(lint, /if \[\[ "\$attempt" == 3 \]\]; then\s+exit 1/);
-    assert.match(lint, /sleep "\$\(\(attempt \* 2\)\)"/);
-    assert.match(lint, /8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8/);
-    assert.match(lint, /sha256sum -c -/);
+    const lint = workflow.slice(workflow.indexOf("      - name: Run digest-pinned actionlint"), workflow.indexOf("  flutter-quality:"));
+    assert.match(lint, /rhysd\/actionlint@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667/);
+    assert.match(lint, /docker run --rm --read-only --cap-drop=ALL --network none/);
+    assert.match(lint, /-v "\$GITHUB_WORKSPACE:\/repo:ro" -w \/repo/);
+    assert.match(lint, /PATH=\/usr\/bin:\/bin \/usr\/local\/bin\/actionlint -color/);
+    assert.doesNotMatch(lint, /releases\/download\/v1\.7\.12|curl |sha256sum -c -/);
 });
 test("phase guard accepts only the computed five or six evidence deltas", () => {
     phaseGuardAssertions();
