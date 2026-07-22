@@ -19,6 +19,8 @@ import 'package:my_art_collection/app/storage/local_attachment_store.dart';
 import 'package:path/path.dart' as p;
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
+import 'visual_evidence_output.dart';
+
 void main() {
   setUpAll(() async {
     sqfliteFfiInit();
@@ -877,7 +879,7 @@ Future<void> _capture(
     image.dispose();
     return data!.buffer.asUint8List();
   });
-  final output = Directory(p.join('artifacts', 'visual'));
+  final output = visualEvidenceOutputDirectory();
   output.createSync(recursive: true);
   File(p.join(output.path, fileName)).writeAsBytesSync(bytes!);
 }
