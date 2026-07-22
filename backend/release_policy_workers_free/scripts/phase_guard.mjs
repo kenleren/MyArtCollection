@@ -39,12 +39,12 @@ export function assertEvidenceOnlyDelta(delta) {
   const expected = normalizeEvidenceDelta(evidenceOnlyPaths.map((path) => `M\t${path}`));
   if (!Array.isArray(delta) || JSON.stringify(normalizeEvidenceDelta(delta)) !== JSON.stringify(expected)) fail("evidence-only path set rejected");
 }
-export function assertEvidenceOnlyTopology(anchor, candidate) {
+export function assertEvidenceOnlyTopology(anchor, candidate, runGit = git) {
   if (!/^[0-9a-f]{40}$/.test(anchor) || !/^[0-9a-f]{40}$/.test(candidate) || /^0+$/.test(anchor) || /^0+$/.test(candidate)) fail("evidence-only oid rejected");
-  const parents = git("rev-list", "--parents", "-n", "1", candidate).trim().split(/\s+/);
+  const parents = runGit("rev-list", "--parents", "-n", "1", candidate).trim().split(/\s+/);
   if (parents.length !== 2 || parents[0] !== candidate || parents[1] !== anchor) fail("evidence-only parent rejected");
-  assertEvidenceOnlyDelta(git("diff", "--name-status", "--no-renames", anchor, candidate).trim().split("\n").filter(Boolean));
-  for (const path of evidenceOnlyPaths) if (treeMode(candidate, path) !== "100644") fail("evidence-only mode rejected");
+  assertEvidenceOnlyDelta(runGit("diff", "--name-status", "--no-renames", anchor, candidate).trim().split("\n").filter(Boolean));
+  for (const path of evidenceOnlyPaths) if (treeMode(candidate, path, runGit) !== "100644") fail("evidence-only mode rejected");
 }
 export const mandatoryBDelta = [
   "M\tbackend/release_policy_trust/evidence/review/candidate-tree.v1.jsonl",
@@ -221,7 +221,7 @@ function regenerateOverlayEvidence(anchor, expectedCandidate, expectedSummary) {
 const finalAPaths = [overlayPaths[1], overlayPaths[2], "backend/release_policy_workers_free/scripts/phase_guard.mjs"];
 const finalAV1Sha256 = "53055b0aceb861392fbf97daa35819c1a30a5916e9fb5ee1680a8c8aad608fe8";
 function nameStatus(from, to) { return git("diff", "--name-status", from, to).trim().split("\n").filter(Boolean); }
-function treeMode(oid, path) { const row = git("ls-tree", oid, "--", path).trim(); return row ? row.split(/\s+/)[0] : ""; }
+function treeMode(oid, path, runGit = git) { const row = runGit("ls-tree", oid, "--", path).trim(); return row ? row.split(/\s+/)[0] : ""; }
 function requireCleanWorktree() { if (git("status", "--porcelain=v1", "--untracked-files=all").trim()) fail("worktree must be completely clean"); }
 function assertAllowedACommit(parent, commit) {
   const delta = nameStatus(parent, commit);

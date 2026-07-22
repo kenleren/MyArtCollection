@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -19,6 +19,37 @@ function phaseGuardAssertions() {
         "for (const delta of [five.slice(1), [...five, 'M\\textra'], [...five.slice(0, 2), 'A\\tbackend/release_policy_trust/evidence/review/reproducibility.v1.json', ...five.slice(2)]]) { let rejected = false; try { assertEvidenceOnlyDelta(delta); } catch { rejected = true; } if (!rejected) process.exit(3); }",
     ].join("\n");
     execFileSync("node", ["--input-type=module", "--eval", source], { cwd: resolve(root, "backend/release_policy_workers_free"), stdio: "inherit" });
+}
+function topologyAssertions() {
+    const fixture = mkdtempSync(join(tmpdir(), "workers-evidence-topology-"));
+    try {
+        git(fixture, ["init", "--initial-branch=main"]);
+        git(fixture, ["config", "user.name", "Fixture"]);
+        git(fixture, ["config", "user.email", "fixture@example.invalid"]);
+        for (const path of ["backend/release_policy_trust/evidence/review/candidate-tree.v1.jsonl", "backend/release_policy_trust/evidence/review/reproducibility.v1.json", "backend/release_policy_trust/evidence/review/final-candidate.v1.json", "backend/release_policy_workers_free/evidence/sbom.spdx.json", "backend/release_policy_workers_free/evidence/artifact-manifest.v2.json"]) {
+            mkdirSync(join(fixture, path, ".."), { recursive: true });
+            writeFileSync(join(fixture, path), "base\n");
+        }
+        git(fixture, ["add", "."]);
+        git(fixture, ["commit", "-m", "base"]);
+        const base = git(fixture, ["rev-parse", "HEAD"]);
+        writeFileSync(join(fixture, "source.txt"), "sealed source\n");
+        git(fixture, ["add", "source.txt"]);
+        git(fixture, ["commit", "-m", "source"]);
+        const source = git(fixture, ["rev-parse", "HEAD"]);
+        for (const path of ["backend/release_policy_trust/evidence/review/candidate-tree.v1.jsonl", "backend/release_policy_trust/evidence/review/reproducibility.v1.json", "backend/release_policy_trust/evidence/review/final-candidate.v1.json", "backend/release_policy_workers_free/evidence/sbom.spdx.json", "backend/release_policy_workers_free/evidence/artifact-manifest.v2.json"])
+            writeFileSync(join(fixture, path), "evidence\n");
+        git(fixture, ["commit", "-am", "evidence"]);
+        const evidence = git(fixture, ["rev-parse", "HEAD"]);
+        const sourceCode = `import { assertEvidenceOnlyTopology } from ${JSON.stringify(phaseGuardUrl)}; import { execFileSync } from 'node:child_process'; const r=(...a)=>execFileSync('git',['-C',${JSON.stringify(fixture)},...a],{encoding:'utf8'}); assertEvidenceOnlyTopology(${JSON.stringify(source)},${JSON.stringify(evidence)},r);`;
+        execFileSync("node", ["--input-type=module", "--eval", sourceCode]);
+        const squash = git(fixture, ["commit-tree", git(fixture, ["rev-parse", `${evidence}^{tree}`]), "-p", base, "-m", "squash"]);
+        const rejected = `import { assertEvidenceOnlyTopology } from ${JSON.stringify(phaseGuardUrl)}; import { execFileSync } from 'node:child_process'; const r=(...a)=>execFileSync('git',['-C',${JSON.stringify(fixture)},...a],{encoding:'utf8'}); let ok=false; try { assertEvidenceOnlyTopology(${JSON.stringify(base)},${JSON.stringify(squash)},r); } catch { ok=true; } if (!ok) process.exit(1);`;
+        execFileSync("node", ["--input-type=module", "--eval", rejected]);
+    }
+    finally {
+        rmSync(fixture, { recursive: true, force: true });
+    }
 }
 function git(cwd, args) {
     return execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
@@ -144,3 +175,4 @@ test("deployment config uses the reviewed bundle without Wrangler rebundling", (
 test("phase guard accepts only the generic five-path evidence delta", () => {
     phaseGuardAssertions();
 });
+test("actual evidence topology guard accepts evidence and rejects squash-shaped rebind", () => { topologyAssertions(); });
