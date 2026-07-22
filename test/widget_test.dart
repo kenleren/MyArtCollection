@@ -34,6 +34,8 @@ import 'package:my_art_collection/app/storage/local_attachment_store.dart';
 import 'package:path/path.dart' as p;
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
+import 'visual_evidence_output.dart';
+
 enum _Issue211CollectionVisualState {
   populated,
   composed,
@@ -6145,7 +6147,7 @@ Future<void> _captureIssue211CollectionVisualEvidence(
       image.dispose();
       return byteData!.buffer.asUint8List();
     });
-    final outputDirectory = Directory(p.join('artifacts', 'visual'));
+    final outputDirectory = visualEvidenceOutputDirectory();
     outputDirectory.createSync(recursive: true);
     File(p.join(outputDirectory.path, fileName)).writeAsBytesSync(bytes!);
   } finally {
@@ -6660,7 +6662,7 @@ Future<void> captureRenderedBoundaryToArtifacts(
     return byteData!.buffer.asUint8List();
   });
 
-  final outputDirectory = Directory(p.join('artifacts', 'visual'));
+  final outputDirectory = visualEvidenceOutputDirectory();
   outputDirectory.createSync(recursive: true);
   final screenshotFile = File(p.join(outputDirectory.path, fileName));
   screenshotFile.parent.createSync(recursive: true);
