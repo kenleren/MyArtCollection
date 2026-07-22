@@ -158,7 +158,7 @@ export class GitHubAppPort {
     async getPullRequest(repositoryId, number) { return this.json("pullRequest", [repositoryId, number]).then(({ value }) => this.pr(value)); }
     async getMainRef(repositoryId) { const { value } = await this.json("mainRef", [repositoryId]); const v = value; return { repositoryId, ref: "refs/heads/main", sha: this.string(v.object && v.object.sha) }; }
     async listPullRequestFiles(repositoryId, number, page, perPage) { const { value, nextPage } = await this.json("pullFiles", [repositoryId, number], `page=${page}&per_page=${perPage}`, undefined, page); return { items: this.array(value).map((x) => ({ path: this.string(x.filename), status: this.string(x.status), ...(typeof x.previous_filename === "string" ? { previousPath: x.previous_filename } : {}) })), nextPage }; }
-    async listOpenMainPullRequests(repositoryId, page, perPage) { const { value, nextPage } = await this.json("openMainPulls", [repositoryId], `state=open&base=main&page=${page}&per_page=${perPage}`, undefined, page); return { items: this.array(value).map((x) => ({ ...this.pr(x), createdAt: this.string(x.created_at) })), nextPage }; }
+    async listOpenMainPullRequests(repositoryId, page, perPage) { const { value, nextPage } = await this.json("openMainPulls", [repositoryId], `state=open&base=main&sort=created&direction=asc&page=${page}&per_page=${perPage}`, undefined, page); return { items: this.array(value).map((x) => ({ ...this.pr(x), createdAt: this.string(x.created_at) })), nextPage }; }
     async listAppChecks(repositoryId, headSha, page, perPage) { const { value, nextPage } = await this.json("appChecks", [repositoryId, headSha], `page=${page}&per_page=${perPage}`, undefined, page); const v = value; const items = this.array(v.check_runs).map((x) => this.check(repositoryId, x)); const seen = new Set(); let duplicates = 0; for (const item of items) {
         const key = `${item.appId}:${item.checkId}:${item.externalId}`;
         if (seen.has(key))
@@ -225,17 +225,17 @@ export function githubInstallationAuthorization(input) {
         if (response.redirected || response.status !== 201 || !/^application\/json(?:;|$)/i.test(response.headers.get("content-type") ?? ""))
             throw new Error("github installation token rejected");
         const body = await boundedJson(response, MAX_RESPONSE_BYTES.installationToken);
-        const wantedKeys = ["expires_at", "permissions", "repositories", "repository_selection", "token"];
-        if (JSON.stringify(Object.keys(body).sort()) !== JSON.stringify(wantedKeys) || typeof body.token !== "string" || body.token.length < 1 || body.token.length > 512 || !/^[\x21-\x7e]+$/.test(body.token) || body.repository_selection !== "selected")
+        if (typeof body.token !== "string" || body.token.length < 1 || body.token.length > 512 || !/^[\x21-\x7e]+$/.test(body.token) || body.repository_selection !== "selected")
             throw new Error("github installation token malformed");
         const permissions = body.permissions;
-        if (!permissions || typeof permissions !== "object" || Array.isArray(permissions) || JSON.stringify(permissions) !== JSON.stringify({ checks: "write", contents: "read", metadata: "read", pull_requests: "read" }))
+        const requiredPermissions = { checks: "write", contents: "read", metadata: "read", pull_requests: "read" };
+        if (!permissions || typeof permissions !== "object" || Array.isArray(permissions) || JSON.stringify(Object.entries(permissions).sort(([a], [b]) => a.localeCompare(b))) !== JSON.stringify(Object.entries(requiredPermissions).sort(([a], [b]) => a.localeCompare(b))))
             throw new Error("github installation scope rejected");
         const repositories = body.repositories;
         if (!Array.isArray(repositories) || repositories.length !== 1 || !repositories[0] || typeof repositories[0] !== "object")
             throw new Error("github installation scope rejected");
         const repository = repositories[0];
-        if (JSON.stringify(Object.keys(repository).sort()) !== JSON.stringify(["full_name", "id", "name"]) || repository.id !== input.repositoryId || repository.name !== "MyArtCollection" || repository.full_name !== "kenleren/MyArtCollection")
+        if (repository.id !== input.repositoryId || repository.name !== "MyArtCollection" || repository.full_name !== "kenleren/MyArtCollection")
             throw new Error("github installation scope rejected");
         if (typeof body.expires_at !== "string" || !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/.test(body.expires_at))
             throw new Error("github installation expiry rejected");

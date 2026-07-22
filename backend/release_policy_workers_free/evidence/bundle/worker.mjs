@@ -2122,7 +2122,7 @@ function isExactGithubRequest(identity, request) {
   const prefix = `/repositories/${identity.repositoryId}`;
   const patterns = [["POST", new RegExp(`^/app/installations/${identity.installationId}/access_tokens$`)], ["GET", new RegExp(`^${prefix}/pulls/[1-9][0-9]*$`)], ["GET", new RegExp(`^${prefix}/git/ref/heads/main$`)], ["GET", new RegExp(`^${prefix}/pulls/[1-9][0-9]*/files$`)], ["GET", new RegExp(`^${prefix}/pulls$`)], ["GET", new RegExp(`^${prefix}/commits/[0-9a-f]{40}/check-runs$`)], ["POST", new RegExp(`^${prefix}/check-runs$`)], ["PATCH", new RegExp(`^${prefix}/check-runs/[1-9][0-9]*$`)]];
   if (!patterns.some(([method, path]) => request.method === method && path.test(url.pathname))) return false;
-  if (url.search && !/^\?(?:page=[1-9][0-9]*&per_page=100|state=open&base=main&page=[1-9][0-9]*&per_page=100)$/.test(url.search)) return false;
+  if (url.search && !/^\?(?:page=[1-9][0-9]*&per_page=100|state=open&base=main&sort=created&direction=asc&page=[1-9][0-9]*&per_page=100)$/.test(url.search)) return false;
   return true;
 }
 
@@ -2269,7 +2269,7 @@ var GitHubAppPort = class {
     return { items: this.array(value).map((x) => ({ path: this.string(x.filename), status: this.string(x.status), ...typeof x.previous_filename === "string" ? { previousPath: x.previous_filename } : {} })), nextPage };
   }
   async listOpenMainPullRequests(repositoryId, page, perPage) {
-    const { value, nextPage } = await this.json("openMainPulls", [repositoryId], `state=open&base=main&page=${page}&per_page=${perPage}`, void 0, page);
+    const { value, nextPage } = await this.json("openMainPulls", [repositoryId], `state=open&base=main&sort=created&direction=asc&page=${page}&per_page=${perPage}`, void 0, page);
     return { items: this.array(value).map((x) => ({ ...this.pr(x), createdAt: this.string(x.created_at) })), nextPage };
   }
   async listAppChecks(repositoryId, headSha, page, perPage) {
@@ -2353,14 +2353,14 @@ function githubInstallationAuthorization(input) {
     const response = await callFetch(input.fetcher, outbound);
     if (response.redirected || response.status !== 201 || !/^application\/json(?:;|$)/i.test(response.headers.get("content-type") ?? "")) throw new Error("github installation token rejected");
     const body = await boundedJson(response, MAX_RESPONSE_BYTES.installationToken);
-    const wantedKeys = ["expires_at", "permissions", "repositories", "repository_selection", "token"];
-    if (JSON.stringify(Object.keys(body).sort()) !== JSON.stringify(wantedKeys) || typeof body.token !== "string" || body.token.length < 1 || body.token.length > 512 || !/^[\x21-\x7e]+$/.test(body.token) || body.repository_selection !== "selected") throw new Error("github installation token malformed");
+    if (typeof body.token !== "string" || body.token.length < 1 || body.token.length > 512 || !/^[\x21-\x7e]+$/.test(body.token) || body.repository_selection !== "selected") throw new Error("github installation token malformed");
     const permissions = body.permissions;
-    if (!permissions || typeof permissions !== "object" || Array.isArray(permissions) || JSON.stringify(permissions) !== JSON.stringify({ checks: "write", contents: "read", metadata: "read", pull_requests: "read" })) throw new Error("github installation scope rejected");
+    const requiredPermissions = { checks: "write", contents: "read", metadata: "read", pull_requests: "read" };
+    if (!permissions || typeof permissions !== "object" || Array.isArray(permissions) || JSON.stringify(Object.entries(permissions).sort(([a], [b]) => a.localeCompare(b))) !== JSON.stringify(Object.entries(requiredPermissions).sort(([a], [b]) => a.localeCompare(b)))) throw new Error("github installation scope rejected");
     const repositories = body.repositories;
     if (!Array.isArray(repositories) || repositories.length !== 1 || !repositories[0] || typeof repositories[0] !== "object") throw new Error("github installation scope rejected");
     const repository = repositories[0];
-    if (JSON.stringify(Object.keys(repository).sort()) !== JSON.stringify(["full_name", "id", "name"]) || repository.id !== input.repositoryId || repository.name !== "MyArtCollection" || repository.full_name !== "kenleren/MyArtCollection") throw new Error("github installation scope rejected");
+    if (repository.id !== input.repositoryId || repository.name !== "MyArtCollection" || repository.full_name !== "kenleren/MyArtCollection") throw new Error("github installation scope rejected");
     if (typeof body.expires_at !== "string" || !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/.test(body.expires_at)) throw new Error("github installation expiry rejected");
     const expiry = Date.parse(body.expires_at);
     const nowMs = input.now?.() ?? Date.now();

@@ -366,7 +366,7 @@
       "format": "esm"
     },
     "src/github_routes.ts": {
-      "bytes": 3736,
+      "bytes": 3763,
       "imports": [
         {
           "path": "src/config.ts",
@@ -377,7 +377,7 @@
       "format": "esm"
     },
     "src/github_app_port.ts": {
-      "bytes": 19041,
+      "bytes": 18978,
       "imports": [
         {
           "path": "node_modules/@archivale/release-policy-trust/dist/src/index.js",
@@ -542,13 +542,13 @@
           "bytesInOutput": 2811
         },
         "src/github_app_port.ts": {
-          "bytesInOutput": 16342
+          "bytesInOutput": 16256
         },
         "src/github_routes.ts": {
-          "bytesInOutput": 3075
+          "bytesInOutput": 3102
         }
       },
-      "bytes": 151389
+      "bytes": 151330
     }
   }
 }

@@ -37,7 +37,7 @@ test("one alarm memoizes one token and rejects subrequest 51 before send", async
             assert.equal(request.headers.get("content-type"), "application/json");
             assert.equal(await request.text(), '{"repository_ids":[1288597824],"permissions":{"checks":"write","contents":"read","metadata":"read","pull_requests":"read"}}');
             const expiry = new Date((Math.floor(Date.now() / 1000) + 120) * 1000).toISOString().replace(".000", "");
-            return new Response(JSON.stringify({ token: "synthetic", expires_at: expiry, permissions: { checks: "write", contents: "read", metadata: "read", pull_requests: "read" }, repository_selection: "selected", repositories: [{ id: 1288597824, name: "MyArtCollection", full_name: "kenleren/MyArtCollection" }] }), { status: 201, headers: { "content-type": "application/json" } });
+            return new Response(JSON.stringify({ token: "synthetic", expires_at: expiry, permissions: { pull_requests: "read", metadata: "read", checks: "write", contents: "read" }, repository_selection: "selected", repositories: [{ id: 1288597824, node_id: "R_test", name: "MyArtCollection", full_name: "kenleren/MyArtCollection", private: true, owner: { login: "kenleren" } }], expires_at_extra: "documented fields permitted" }), { status: 201, headers: { "content-type": "application/json" } });
         }
         assert.equal(request.url, "https://api.github.com/repositories/1288597824/git/ref/heads/main");
         assert.equal(request.headers.get("authorization"), "Bearer synthetic");

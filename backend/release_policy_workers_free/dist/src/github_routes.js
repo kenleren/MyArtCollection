@@ -31,7 +31,7 @@ export function isExactGithubRequest(identity, request) {
     const patterns = [["POST", new RegExp(`^/app/installations/${identity.installationId}/access_tokens$`)], ["GET", new RegExp(`^${prefix}/pulls/[1-9][0-9]*$`)], ["GET", new RegExp(`^${prefix}/git/ref/heads/main$`)], ["GET", new RegExp(`^${prefix}/pulls/[1-9][0-9]*/files$`)], ["GET", new RegExp(`^${prefix}/pulls$`)], ["GET", new RegExp(`^${prefix}/commits/[0-9a-f]{40}/check-runs$`)], ["POST", new RegExp(`^${prefix}/check-runs$`)], ["PATCH", new RegExp(`^${prefix}/check-runs/[1-9][0-9]*$`)]];
     if (!patterns.some(([method, path]) => request.method === method && path.test(url.pathname)))
         return false;
-    if (url.search && !/^\?(?:page=[1-9][0-9]*&per_page=100|state=open&base=main&page=[1-9][0-9]*&per_page=100)$/.test(url.search))
+    if (url.search && !/^\?(?:page=[1-9][0-9]*&per_page=100|state=open&base=main&sort=created&direction=asc&page=[1-9][0-9]*&per_page=100)$/.test(url.search))
         return false;
     return true;
 }

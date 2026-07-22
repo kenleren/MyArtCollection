@@ -9,6 +9,7 @@ const root = resolve(process.cwd(), "../..");
 const workflowPath = resolve(root, ".github/workflows/release-readiness.yml");
 const sqliteConformancePath = resolve(root, "backend/release_policy_workers_free/scripts/sqlite_conformance.mjs");
 const artifactScriptPath = resolve(root, "backend/release_policy_workers_free/scripts/artifact.ts");
+const wranglerPath = resolve(root, "backend/release_policy_workers_free/wrangler.jsonc");
 const phaseGuardUrl = pathToFileURL(resolve(root, "backend/release_policy_workers_free/scripts/phase_guard.mjs")).href;
 function phaseGuardAssertions() {
     const source = [
@@ -130,6 +131,14 @@ test("SQLite evidence derives the preflight-validated Miniflare version and arti
     assert.match(harness, /miniflare: miniflareVersion/);
     assert.doesNotMatch(harness, /miniflare:\s*"4\.20260714\.0"/);
     assert.match(artifact, /"scripts\/sqlite_conformance\.mjs"/);
+});
+test("deployment config uses the reviewed bundle without Wrangler rebundling", () => {
+    const wrangler = JSON.parse(readFileSync(wranglerPath, "utf8"));
+    const artifact = readFileSync(artifactScriptPath, "utf8");
+    assert.equal(wrangler.main, "evidence/bundle/worker.mjs");
+    assert.equal(wrangler.no_bundle, true);
+    assert.match(artifact, /"wrangler\.jsonc"/);
+    assert.match(artifact, /"evidence\/bundle\/worker\.mjs"/);
 });
 test("phase guard accepts only the computed five or six evidence deltas", () => {
     phaseGuardAssertions();

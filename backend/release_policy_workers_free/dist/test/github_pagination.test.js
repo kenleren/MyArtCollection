@@ -4,6 +4,7 @@ import { GitHubAppPort } from "../src/github_app_port.js";
 const repositoryId = 1288597824;
 const identity = { appId: 1, baseRef: "main", installationId: 2, repositoryId, repositoryName: "kenleren/MyArtCollection" };
 const pullPath = `/repositories/${repositoryId}/pulls/1/files`;
+const openMainPath = `/repositories/${repositoryId}/pulls`;
 const files = Array.from({ length: 100 }, (_, index) => ({ filename: `file-${index}.md`, status: "modified" }));
 const pageUrl = (page) => `https://api.github.com${pullPath}?per_page=100&page=${page}`;
 const portFor = (response) => new GitHubAppPort(async () => response, async () => "synthetic", identity);
@@ -26,6 +27,13 @@ test("official open-main response shape parses without fictional top-level ident
     assert.equal(page.items[0]?.createdAt, "2026-07-21T00:00:00Z");
     assert.equal(page.items[0]?.appId, identity.appId);
     assert.equal(page.items[0]?.repositoryId, repositoryId);
+});
+test("open-main fanout freezes documented ascending creation order", async () => {
+    const requests = [];
+    const port = new GitHubAppPort(async (request) => { requests.push(new Request(request).url); return new Response(JSON.stringify([pull({ number: 1, created_at: "2026-07-21T00:00:00Z" }), pull({ number: 2, created_at: "2026-07-22T00:00:00Z" })]), { headers: { "content-type": "application/json" } }); }, async () => "synthetic", identity);
+    const page = await port.listOpenMainPullRequests(repositoryId, 1, 100);
+    assert.deepEqual(page.items.map((item) => item.createdAt), ["2026-07-21T00:00:00Z", "2026-07-22T00:00:00Z"]);
+    assert.equal(requests[0], `https://api.github.com${openMainPath}?state=open&base=main&sort=created&direction=asc&page=1&per_page=100`);
 });
 test("pull-request response fails closed without the official nested base repository identity", async () => {
     const fictional = { ...pull(), app: { id: 1 }, installation: { id: 2 }, base_repo: { id: repositoryId, full_name: identity.repositoryName }, base: { ref: "main", sha: "a".repeat(40) } };
@@ -106,7 +114,7 @@ test("every malformed or contradictory Link rejects before body consumption", as
     }
 });
 test("open-main and app-check pagination use their exact fixed routes", async () => {
-    const openLink = `<https://api.github.com/repositories/${repositoryId}/pulls?per_page=100&page=2&base=main&state=open>; rel="next"`;
+    const openLink = `<https://api.github.com/repositories/${repositoryId}/pulls?per_page=100&page=2&direction=asc&base=main&sort=created&state=open>; rel="next"`;
     const open = await portFor(new Response("[]", { headers: { "content-type": "application/json", link: openLink } })).listOpenMainPullRequests(repositoryId, 1, 100);
     assert.equal(open.nextPage, 2);
     const checksLink = `<https://api.github.com/repositories/${repositoryId}/commits/${"b".repeat(40)}/check-runs?per_page=100&page=2>; rel="next"`;
