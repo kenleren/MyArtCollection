@@ -390,6 +390,11 @@ jobs:
         run: |
           set -euo pipefail
           npm --prefix backend/release_policy_workers_free run test:sqlite-conformance
+      - name: Verify Workers Free Wrangler dry-run contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm --prefix backend/release_policy_workers_free run test:wrangler-contract
       - name: Generate Workers Free SPDX evidence
         shell: bash
         run: |

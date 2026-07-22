@@ -79,6 +79,7 @@ test("Release Readiness partitions backend commands into strict, ordered observa
     ["Test Workers Free package", "npm --prefix backend/release_policy_workers_free test"],
     ["Test Workers Free runtime contract", "npm --prefix backend/release_policy_workers_free run test:runtime-contract"],
     ["Test Workers Free SQLite conformance", "npm --prefix backend/release_policy_workers_free run test:sqlite-conformance"],
+    ["Verify Workers Free Wrangler dry-run contract", "npm --prefix backend/release_policy_workers_free run test:wrangler-contract"],
     ["Generate Workers Free SPDX evidence", "npm --prefix backend/release_policy_workers_free run sbom:generate -- --anchor \"$A\" --output \"$RUNNER_TEMP/sbom.spdx.json\""],
     ["Verify Workers Free SPDX evidence", "npm --prefix backend/release_policy_workers_free run sbom:verify -- --anchor \"$A\" --input \"$RUNNER_TEMP/sbom.spdx.json\""],
     ["Verify Workers Free artifact manifest", "npm --prefix backend/release_policy_workers_free run artifact:verify -- --anchor \"$A\" --sbom \"$RUNNER_TEMP/sbom.spdx.json\" --output backend/release_policy_workers_free/evidence/artifact-manifest.v2.json"],
@@ -129,6 +130,8 @@ test("SQLite evidence derives the preflight-validated Miniflare version and arti
   assert.match(harness, /miniflare: miniflareVersion/);
   assert.doesNotMatch(harness, /miniflare:\s*"4\.20260714\.0"/);
   assert.match(artifact, /"scripts\/sqlite_conformance\.mjs"/);
+  assert.match(artifact, /"scripts\/wrangler_contract\.mjs"/);
+  assert.match(artifact, /"evidence\/wrangler-preflight\.v1\.json"/);
 });
 
 test("deployment config uses the reviewed bundle without Wrangler rebundling", () => {

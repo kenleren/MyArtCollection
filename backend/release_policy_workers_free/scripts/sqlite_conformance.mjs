@@ -31,7 +31,7 @@ const INSTALLATION_ID = 1;
 const BASE_SHA = "a".repeat(40);
 const HEAD_SHA = "b".repeat(40);
 const CHECK_ID = 7001;
-const CONFIG = JSON.stringify({ contract_version: 1, repository_id: REPOSITORY_ID, repository_name: "kenleren/MyArtCollection", app_id: APP_ID, installation_id: INSTALLATION_ID, github_api_origin: "https://api.github.com", github_api_version: "2022-11-28", policy_sha256: "a443af2eb86fa310ea8705826e70d1b178a4d8d231060440ed522d3069b9a80d", egress_manifest_sha256: "4076541b10ad17bd6e300d838032c49538cb4aa9a172685fe9f0cef02fd4c368", permissions: { checks: "write", contents: "read", metadata: "read", pull_requests: "read" }, quota: { window_seconds: 86400, warning_units: 1000, hard_units: 10000 } });
+const CONFIG = JSON.stringify({ contract_version: 1, repository_id: REPOSITORY_ID, repository_name: "kenleren/MyArtCollection", app_id: APP_ID, installation_id: INSTALLATION_ID, github_api_origin: "https://api.github.com", github_api_version: "2022-11-28", policy_sha256: "a443af2eb86fa310ea8705826e70d1b178a4d8d231060440ed522d3069b9a80d", egress_manifest_sha256: "0e1666e746a12f05885ddc7c13919fd8b03e6fed6af873b47c78050e358148f3", permissions: { checks: "write", contents: "read", metadata: "read", pull_requests: "read" }, quota: { window_seconds: 86400, warning_units: 1000, hard_units: 10000 } });
 const sleep = (ms) => new Promise((resolveSleep) => setTimeout(resolveSleep, ms));
 const sha256 = (value) => createHash("sha256").update(value).digest("hex");
 
