@@ -1,9 +1,9 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { cpSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { closeSync, mkdirSync, openSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
-import { argument, git, hashBytes, hashFile, packageRoot, repoRoot, validateOid } from "./shared.js";
+import { argument, git, hashBytes, hashFile, repoRoot, validateOid } from "./shared.js";
 
 function files(root: string): string[] {
   const output: string[] = [];
@@ -37,20 +37,33 @@ function run(root: string): { build: string; pack: string; sbom: string } {
   return { build: directoryDigest(join(root, "dist/src")), pack: hashFile(join(packDir, filename)), sbom: hashBytes(sbomBytes) };
 }
 
-const candidateArgument = process.argv.includes("--source-commit") ? argument("--source-commit") : argument("--candidate");
-const candidate = candidateArgument === "INDEX" ? candidateArgument : validateOid(candidateArgument);
+const candidate = validateOid(process.argv.includes("--source-commit") ? argument("--source-commit") : argument("--candidate"));
 const output = resolve(repoRoot, argument("--output"));
-if (candidate !== "INDEX" && !process.argv.includes("--source-commit")) {
-  git(["cat-file", "-e", `${candidate}^{commit}`]);
-  if ((git(["diff", "--name-only", candidate, "--", "backend/release_policy_trust", ".github/CODEOWNERS", ".github/workflows/release-readiness.yml", "docs/RELEASE_READINESS_CI.md", "docs/RELEASE_POLICY_TRUST.md"], { encoding: "utf8" }) as string).trim() !== "") throw new Error("workspace differs from candidate");
-}
+git(["cat-file", "-e", `${candidate}^{commit}`]);
 const root = join(tmpdir(), `release-policy-reproduce-${process.pid}`); rmSync(root, { recursive: true, force: true });
 try {
   const firstRoot = join(root, "first"); const secondRoot = join(root, "second");
-  cpSync(packageRoot, firstRoot, { recursive: true, filter: (source) => !/(?:^|\/)(?:node_modules|dist|review)(?:\/|$)/.test(source) });
-  cpSync(packageRoot, secondRoot, { recursive: true, filter: (source) => !/(?:^|\/)(?:node_modules|dist|review)(?:\/|$)/.test(source) });
-  const first = run(firstRoot); const second = run(secondRoot);
+  // Materialize exact named-tree bytes twice. The ambient checkout is never an input.
+  for (const destination of [firstRoot, secondRoot]) {
+    mkdirSync(destination, { recursive: true });
+    // Do not buffer the archive in memory: a valid exact source tree may be
+    // larger than Node's default execFile buffer. The temporary root is private
+    // and removed in finally, while tar still receives only named-tree bytes.
+    const archivePath = join(destination, "source.tar");
+    const archiveFd = openSync(archivePath, "wx", 0o600);
+    try {
+      const archived = spawnSync("git", ["archive", "--format=tar", candidate, "backend/release_policy_trust"], { cwd: repoRoot, stdio: ["ignore", archiveFd, "pipe"] });
+      if (archived.status !== 0 || archived.error) throw new Error("candidate archive materialization failed");
+    } finally { closeSync(archiveFd); }
+    execFileSync("tar", ["-x", "-f", archivePath, "-C", destination]);
+    const materialized = join(destination, "backend/release_policy_trust");
+    for (const name of ["node_modules", "dist", "review"]) rmSync(join(materialized, name), { recursive: true, force: true });
+    if (!statSync(join(materialized, "package-lock.json")).isFile()) throw new Error("candidate trust package is incomplete");
+  }
+  const firstPackageRoot = join(firstRoot, "backend/release_policy_trust");
+  const secondPackageRoot = join(secondRoot, "backend/release_policy_trust");
+  const first = run(firstPackageRoot); const second = run(secondPackageRoot);
   if (JSON.stringify(first) !== JSON.stringify(second)) throw new Error("build, pack, or SBOM is not byte reproducible");
   mkdirSync(resolve(output, ".."), { recursive: true });
-  writeFileSync(output, `${JSON.stringify({ base_commit: "f42582c8eb0d1405cd5e214f6b9c80980225b5f1", build_sha256: first.build, package_lock_sha256: hashFile(join(packageRoot, "package-lock.json")), package_source_sha256: directoryDigest(packageRoot), pack_sha256: first.pack, sbom_sha256: first.sbom, schema_version: 1 }, null, 2)}\n`);
+  writeFileSync(output, `${JSON.stringify({ base_commit: "f42582c8eb0d1405cd5e214f6b9c80980225b5f1", build_sha256: first.build, package_lock_sha256: hashFile(join(firstPackageRoot, "package-lock.json")), package_source_sha256: directoryDigest(firstPackageRoot), pack_sha256: first.pack, sbom_sha256: first.sbom, schema_version: 1 }, null, 2)}\n`);
 } finally { rmSync(root, { recursive: true, force: true }); }

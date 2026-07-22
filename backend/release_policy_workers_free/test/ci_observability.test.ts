@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -15,14 +15,30 @@ const phaseGuardUrl = pathToFileURL(resolve(root, "backend/release_policy_worker
 
 function phaseGuardAssertions(): void {
   const source = [
-    `import { assertBDelta, expectedBDelta, mandatoryBDelta } from ${JSON.stringify(phaseGuardUrl)};`,
-    "const five = expectedBDelta(false); const six = expectedBDelta(true);",
-    "if (five.length !== 5 || six.length !== 6 || six[2] !== 'M\\tbackend/release_policy_trust/evidence/review/reproducibility.v1.json') process.exit(2);",
-    "assertBDelta(five, false); assertBDelta(six, true);",
-    "for (const [delta, differs] of [[five.slice(1), false], [[...five, 'M\\textra'], false], [[...five.slice(0, 2), 'A\\tbackend/release_policy_trust/evidence/review/reproducibility.v1.json', ...five.slice(2)], true], [five, true]]) { let rejected = false; try { assertBDelta(delta, differs); } catch { rejected = true; } if (!rejected) process.exit(3); }",
-    "if (JSON.stringify(mandatoryBDelta) !== JSON.stringify(five)) process.exit(4);",
+    `import { assertEvidenceOnlyDelta, assertEventTopology, evidenceOnlyPaths } from ${JSON.stringify(phaseGuardUrl)};`,
+    "const five = evidenceOnlyPaths.map((path) => `M\\t${path}`);",
+    "if (five.length !== 5) process.exit(2); assertEvidenceOnlyDelta(five); assertEvidenceOnlyDelta([...five].reverse()); assertEvidenceOnlyDelta(five.filter((row) => !row.includes('reproducibility')));",
+    "for (const delta of [five.slice(1), [...five, 'M\\textra'], [...five.slice(0, 2), 'A\\tbackend/release_policy_trust/evidence/review/reproducibility.v1.json', ...five.slice(2)]]) { let rejected = false; try { assertEvidenceOnlyDelta(delta); } catch { rejected = true; } if (!rejected) process.exit(3); }",
+    "const a='a'.repeat(40), b='b'.repeat(40), c='c'.repeat(40), d='d'.repeat(40), g=(...x)=>x[0]==='rev-list'?`${c} ${a}`:(x[1]===a?a:b); assertEventTopology({event:'pull_request',candidate:c,anchor:a,base:b},g); assertEventTopology({event:'push',candidate:c,anchor:a,before:a},g); assertEventTopology({event:'workflow_dispatch',candidate:c,anchor:a,manualBase:a},g); for(const x of [{event:'pull_request',candidate:c,anchor:a,base:d},{event:'push',candidate:c,anchor:a,before:b},{event:'workflow_dispatch',candidate:c,anchor:a,manualBase:b},{event:'bad',candidate:c,anchor:a}]) {let r=false;try{assertEventTopology(x,g)}catch{r=true}if(!r)process.exit(4)}",
   ].join("\n");
   execFileSync("node", ["--input-type=module", "--eval", source], { cwd: resolve(root, "backend/release_policy_workers_free"), stdio: "inherit" });
+}
+
+function topologyAssertions(): void {
+  const fixture = mkdtempSync(join(tmpdir(), "workers-evidence-topology-"));
+  try {
+    git(fixture, ["init", "--initial-branch=main"]); git(fixture, ["config", "user.name", "Fixture"]); git(fixture, ["config", "user.email", "fixture@example.invalid"]);
+    for (const path of ["backend/release_policy_trust/evidence/review/candidate-tree.v1.jsonl", "backend/release_policy_trust/evidence/review/reproducibility.v1.json", "backend/release_policy_trust/evidence/review/final-candidate.v1.json", "backend/release_policy_workers_free/evidence/sbom.spdx.json", "backend/release_policy_workers_free/evidence/artifact-manifest.v2.json"]) { mkdirSync(join(fixture, path, ".."), { recursive: true }); writeFileSync(join(fixture, path), "base\n"); }
+    git(fixture, ["add", "."]); git(fixture, ["commit", "-m", "base"]); const base = git(fixture, ["rev-parse", "HEAD"]);
+    writeFileSync(join(fixture, "source.txt"), "sealed source\n"); git(fixture, ["add", "source.txt"]); git(fixture, ["commit", "-m", "source"]); const source = git(fixture, ["rev-parse", "HEAD"]);
+    for (const path of ["backend/release_policy_trust/evidence/review/candidate-tree.v1.jsonl", "backend/release_policy_trust/evidence/review/reproducibility.v1.json", "backend/release_policy_trust/evidence/review/final-candidate.v1.json", "backend/release_policy_workers_free/evidence/sbom.spdx.json", "backend/release_policy_workers_free/evidence/artifact-manifest.v2.json"]) writeFileSync(join(fixture, path), "evidence\n");
+    git(fixture, ["commit", "-am", "evidence"]); const evidence = git(fixture, ["rev-parse", "HEAD"]);
+    const sourceCode = `import { assertEvidenceOnlyTopology } from ${JSON.stringify(phaseGuardUrl)}; import { execFileSync } from 'node:child_process'; const r=(...a)=>execFileSync('git',['-C',${JSON.stringify(fixture)},...a],{encoding:'utf8'}); assertEvidenceOnlyTopology(${JSON.stringify(source)},${JSON.stringify(evidence)},r);`;
+    execFileSync("node", ["--input-type=module", "--eval", sourceCode]);
+    const squash = git(fixture, ["commit-tree", git(fixture, ["rev-parse", `${evidence}^{tree}`]), "-p", base, "-m", "squash"]);
+    const rejected = `import { assertEvidenceOnlyTopology } from ${JSON.stringify(phaseGuardUrl)}; import { execFileSync } from 'node:child_process'; const r=(...a)=>execFileSync('git',['-C',${JSON.stringify(fixture)},...a],{encoding:'utf8'}); let ok=false; try { assertEvidenceOnlyTopology(${JSON.stringify(base)},${JSON.stringify(squash)},r); } catch { ok=true; } if (!ok) process.exit(1);`;
+    execFileSync("node", ["--input-type=module", "--eval", rejected]);
+  } finally { rmSync(fixture, { recursive: true, force: true }); }
 }
 
 function git(cwd: string, args: string[]): string {
@@ -107,7 +123,12 @@ test("Release Readiness partitions backend commands into strict, ordered observa
   assert.match(backend, /git rev-list --parents -n 1 "\$candidate_head"/);
   assert.match(backend, /candidate_head=%s\\nartifact_anchor=%s\\n/);
   assert.doesNotMatch(backend.slice(backend.indexOf("Generate Workers Free SPDX evidence"), backend.indexOf("Rehearse Workers Free restore")), /git rev-parse HEAD\^|GITHUB_SHA\^/);
-  assert.equal((backend.match(/\$\{\{ steps\.immutable-workers-candidate\.outputs\.artifact_anchor \}\}/g) ?? []).length, 3);
+  assert.equal((backend.match(/\$\{\{ steps\.immutable-workers-candidate\.outputs\.artifact_anchor \}\}/g) ?? []).length, 4);
+  assert.match(backend, /PULL_REQUEST_BASE_SHA: \$\{\{ github\.event\.pull_request\.base\.sha \|\| '' \}\}/);
+  assert.match(backend, /PUSH_BEFORE_SHA: \$\{\{ github\.event\.before \|\| '' \}\}/);
+  assert.match(backend, /--event "\$EVENT_NAME" --pr-base "\$B" --push-before "\$PUSH_BEFORE_SHA" --manual-base "\$A"/);
+  const guard = readFileSync(resolve(root, "backend/release_policy_workers_free/scripts/phase_guard.mjs"), "utf8");
+  assert.match(guard, /assertEventTopology\(\{ event: required\(option\("event"\), "event"\), candidate, anchor, base: option\("pr-base"\), before: option\("push-before"\), manualBase: option\("manual-base"\) \}\)/);
   assert.doesNotMatch(backend, /Test backend packages|continue-on-error|if:\s*always\(\)|set -x|ACTIONS_STEP_DEBUG|upload-artifact/);
 });
 
@@ -143,6 +164,8 @@ test("deployment config uses the reviewed bundle without Wrangler rebundling", (
   assert.match(artifact, /"evidence\/bundle\/worker\.mjs"/);
 });
 
-test("phase guard accepts only the computed five or six evidence deltas", () => {
+test("phase guard accepts only the generic five-path evidence delta", () => {
   phaseGuardAssertions();
 });
+
+test("actual evidence topology guard accepts evidence and rejects squash-shaped rebind", () => { topologyAssertions(); });

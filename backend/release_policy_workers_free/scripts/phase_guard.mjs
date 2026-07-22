@@ -21,6 +21,45 @@ const startBytes = (oid, path) => Buffer.from(git("show", `${oid}:${path}`));
 const hashAt = (oid, path) => hash(startBytes(oid, path));
 const writeCanonical = (path, value) => writeFileSync(path, `${JSON.stringify(value)}\n`, { flag: "wx" });
 const reproductionPath = "backend/release_policy_trust/evidence/review/reproducibility.v1.json";
+// A rebind is deliberately a generic, evidence-only child.  These are the
+// only review artifacts that may differ from its source anchor; no issue- or
+// history-specific overlay is part of this contract.
+export const evidenceOnlyPaths = [
+  "backend/release_policy_trust/evidence/review/candidate-tree.v1.jsonl",
+  reproductionPath,
+  "backend/release_policy_trust/evidence/review/final-candidate.v1.json",
+  "backend/release_policy_workers_free/evidence/sbom.spdx.json",
+  "backend/release_policy_workers_free/evidence/artifact-manifest.v2.json",
+];
+const byteOrder = (left, right) => left < right ? -1 : left > right ? 1 : 0;
+// Git name-status is path-ordered, whereas generators run in dependency order.
+// Compare the same semantic delta under this explicit bytewise path ordering.
+const normalizeEvidenceDelta = (delta) => [...delta].sort(byteOrder);
+export function assertEvidenceOnlyDelta(delta) {
+  const mandatory = evidenceOnlyPaths.filter((path) => path !== reproductionPath).map((path) => `M\t${path}`);
+  const actual = normalizeEvidenceDelta(delta);
+  if (!Array.isArray(delta) || ![mandatory, [...mandatory, `M\t${reproductionPath}`]].map(normalizeEvidenceDelta).some((expected) => JSON.stringify(actual) === JSON.stringify(expected))) fail("evidence-only path set rejected");
+}
+export function assertEvidenceOnlyTopology(anchor, candidate, runGit = git) {
+  if (!/^[0-9a-f]{40}$/.test(anchor) || !/^[0-9a-f]{40}$/.test(candidate) || /^0+$/.test(anchor) || /^0+$/.test(candidate)) fail("evidence-only oid rejected");
+  const parents = runGit("rev-list", "--parents", "-n", "1", candidate).trim().split(/\s+/);
+  if (parents.length !== 2 || parents[0] !== candidate || parents[1] !== anchor) fail("evidence-only parent rejected");
+  const delta = runGit("diff", "--name-status", "--no-renames", anchor, candidate).trim().split("\n").filter(Boolean);
+  assertEvidenceOnlyDelta(delta);
+  const changed = !Buffer.from(runGit("show", `${anchor}:${reproductionPath}`)).equals(Buffer.from(runGit("show", `${candidate}:${reproductionPath}`)));
+  if (changed !== delta.includes(`M\t${reproductionPath}`)) fail("evidence-only reproduction predicate rejected");
+  for (const path of evidenceOnlyPaths) if (treeMode(candidate, path, runGit) !== "100644") fail("evidence-only mode rejected");
+}
+export function assertEventTopology({ event, candidate, anchor, base, before, manualBase }, runGit = git) {
+  const valid = (value) => typeof value === "string" && /^[0-9a-f]{40}$/.test(value) && !/^0+$/.test(value);
+  if (!valid(candidate) || !valid(anchor)) fail("event identity rejected");
+  const parents = runGit("rev-list", "--parents", "-n", "1", candidate).trim().split(/\s+/);
+  if (parents.length !== 2 || parents[1] !== anchor) fail("event parent rejected");
+  if (event === "pull_request") { if (!valid(base) || runGit("merge-base", base, anchor).trim() !== base || runGit("merge-base", base, candidate).trim() !== base) fail("event PR base rejected"); return; }
+  if (event === "push") { if (!valid(before) || before !== anchor || runGit("merge-base", before, candidate).trim() !== before) fail("event push before rejected"); return; }
+  if (event === "workflow_dispatch") { if (!valid(manualBase) || manualBase !== anchor) fail("event manual base rejected"); return; }
+  fail("event kind rejected");
+}
 export const mandatoryBDelta = [
   "M\tbackend/release_policy_trust/evidence/review/candidate-tree.v1.jsonl",
   "M\tbackend/release_policy_trust/evidence/review/final-candidate.v1.json",
@@ -196,7 +235,7 @@ function regenerateOverlayEvidence(anchor, expectedCandidate, expectedSummary) {
 const finalAPaths = [overlayPaths[1], overlayPaths[2], "backend/release_policy_workers_free/scripts/phase_guard.mjs"];
 const finalAV1Sha256 = "53055b0aceb861392fbf97daa35819c1a30a5916e9fb5ee1680a8c8aad608fe8";
 function nameStatus(from, to) { return git("diff", "--name-status", from, to).trim().split("\n").filter(Boolean); }
-function treeMode(oid, path) { const row = git("ls-tree", oid, "--", path).trim(); return row ? row.split(/\s+/)[0] : ""; }
+function treeMode(oid, path, runGit = git) { const row = runGit("ls-tree", oid, "--", path).trim(); return row ? row.split(/\s+/)[0] : ""; }
 function requireCleanWorktree() { if (git("status", "--porcelain=v1", "--untracked-files=all").trim()) fail("worktree must be completely clean"); }
 function assertAllowedACommit(parent, commit) {
   const delta = nameStatus(parent, commit);
@@ -327,6 +366,14 @@ function assertFinalASeal() {
 }
 
 function main() {
+  if (phase === "evidence-only") {
+    const anchor = required(option("anchor"), "anchor");
+    const candidate = required(option("candidate"), "candidate");
+    assertEventTopology({ event: required(option("event"), "event"), candidate, anchor, base: option("pr-base"), before: option("push-before"), manualBase: option("manual-base") });
+    requireCleanWorktree();
+    assertEvidenceOnlyTopology(anchor, candidate);
+    return;
+  }
 if (phase === "preserve-sbom") preserve();
 else if (phase === "verify-sbom-preservation") verifyPreservation();
 else if (phase === "final-a") assertFinalASeal();

@@ -52,7 +52,10 @@ const summaryPath = resolve(packageRoot, "evidence/review/final-candidate.v1.jso
 const summary = JSON.parse(readFileSync(summaryPath, "utf8")) as Record<string, unknown>;
 const summaryKeys = ["base_commit", "candidate_inventory_sha256", "claim_matrix_sha256", "external_manifest_sha256", "package_file_count", "package_lock_sha256", "policy_sha256", "protected_file_count", "reproducibility_sha256", "schema_version", "test_case_count"];
 if (Object.keys(summary).sort().join("\0") !== summaryKeys.sort().join("\0")) throw new Error("final candidate summary keys mismatch");
-const inventoryBytes = Buffer.from(`${candidateRows.sort((a, b) => a.path.localeCompare(b.path)).map(({ row }) => row).join("\n")}\n`);
+// Inventory generation uses byte/code-point order, not host-locale collation.
+// Verification must reconstruct exactly the same canonical bytes.
+const byteOrder = (left: string, right: string): number => left < right ? -1 : left > right ? 1 : 0;
+const inventoryBytes = Buffer.from(`${candidateRows.sort((a, b) => byteOrder(a.path, b.path)).map(({ row }) => row).join("\n")}\n`);
 const committedInventory = readFileSync(resolve(repoRoot, "backend/release_policy_trust/evidence/review/candidate-tree.v1.jsonl"));
 if (Buffer.compare(inventoryBytes, committedInventory) !== 0) throw new Error("candidate JSONL diverges from exact candidate");
 let testCaseCount = 0;
