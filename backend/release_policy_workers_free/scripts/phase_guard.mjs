@@ -31,9 +31,13 @@ export const evidenceOnlyPaths = [
   "backend/release_policy_workers_free/evidence/sbom.spdx.json",
   "backend/release_policy_workers_free/evidence/artifact-manifest.v2.json",
 ];
+const byteOrder = (left, right) => left < right ? -1 : left > right ? 1 : 0;
+// Git name-status is path-ordered, whereas generators run in dependency order.
+// Compare the same semantic delta under this explicit bytewise path ordering.
+const normalizeEvidenceDelta = (delta) => [...delta].sort(byteOrder);
 export function assertEvidenceOnlyDelta(delta) {
-  const expected = evidenceOnlyPaths.map((path) => `M\t${path}`);
-  if (JSON.stringify(delta) !== JSON.stringify(expected)) fail("evidence-only path set rejected");
+  const expected = normalizeEvidenceDelta(evidenceOnlyPaths.map((path) => `M\t${path}`));
+  if (!Array.isArray(delta) || JSON.stringify(normalizeEvidenceDelta(delta)) !== JSON.stringify(expected)) fail("evidence-only path set rejected");
 }
 export function assertEvidenceOnlyTopology(anchor, candidate) {
   if (!/^[0-9a-f]{40}$/.test(anchor) || !/^[0-9a-f]{40}$/.test(candidate) || /^0+$/.test(anchor) || /^0+$/.test(candidate)) fail("evidence-only oid rejected");
