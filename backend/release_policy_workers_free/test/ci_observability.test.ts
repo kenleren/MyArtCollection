@@ -15,10 +15,11 @@ const phaseGuardUrl = pathToFileURL(resolve(root, "backend/release_policy_worker
 
 function phaseGuardAssertions(): void {
   const source = [
-    `import { assertEvidenceOnlyDelta, evidenceOnlyPaths } from ${JSON.stringify(phaseGuardUrl)};`,
+    `import { assertEvidenceOnlyDelta, assertEventTopology, evidenceOnlyPaths } from ${JSON.stringify(phaseGuardUrl)};`,
     "const five = evidenceOnlyPaths.map((path) => `M\\t${path}`);",
-    "if (five.length !== 5) process.exit(2); assertEvidenceOnlyDelta(five); assertEvidenceOnlyDelta([...five].reverse());",
+    "if (five.length !== 5) process.exit(2); assertEvidenceOnlyDelta(five); assertEvidenceOnlyDelta([...five].reverse()); assertEvidenceOnlyDelta(five.filter((row) => !row.includes('reproducibility')));",
     "for (const delta of [five.slice(1), [...five, 'M\\textra'], [...five.slice(0, 2), 'A\\tbackend/release_policy_trust/evidence/review/reproducibility.v1.json', ...five.slice(2)]]) { let rejected = false; try { assertEvidenceOnlyDelta(delta); } catch { rejected = true; } if (!rejected) process.exit(3); }",
+    "const a='a'.repeat(40), b='b'.repeat(40), c='c'.repeat(40), d='d'.repeat(40), g=(...x)=>x[0]==='rev-list'?`${c} ${a}`:(x[1]===a?a:b); assertEventTopology({event:'pull_request',candidate:c,anchor:a,base:b},g); assertEventTopology({event:'push',candidate:c,anchor:a,before:a},g); assertEventTopology({event:'workflow_dispatch',candidate:c,anchor:a,manualBase:a},g); for(const x of [{event:'pull_request',candidate:c,anchor:a,base:d},{event:'push',candidate:c,anchor:a,before:b},{event:'workflow_dispatch',candidate:c,anchor:a,manualBase:b},{event:'bad',candidate:c,anchor:a}]) {let r=false;try{assertEventTopology(x,g)}catch{r=true}if(!r)process.exit(4)}",
   ].join("\n");
   execFileSync("node", ["--input-type=module", "--eval", source], { cwd: resolve(root, "backend/release_policy_workers_free"), stdio: "inherit" });
 }
@@ -123,6 +124,11 @@ test("Release Readiness partitions backend commands into strict, ordered observa
   assert.match(backend, /candidate_head=%s\\nartifact_anchor=%s\\n/);
   assert.doesNotMatch(backend.slice(backend.indexOf("Generate Workers Free SPDX evidence"), backend.indexOf("Rehearse Workers Free restore")), /git rev-parse HEAD\^|GITHUB_SHA\^/);
   assert.equal((backend.match(/\$\{\{ steps\.immutable-workers-candidate\.outputs\.artifact_anchor \}\}/g) ?? []).length, 4);
+  assert.match(backend, /PULL_REQUEST_BASE_SHA: \$\{\{ github\.event\.pull_request\.base\.sha \|\| '' \}\}/);
+  assert.match(backend, /PUSH_BEFORE_SHA: \$\{\{ github\.event\.before \|\| '' \}\}/);
+  assert.match(backend, /--event "\$EVENT_NAME" --pr-base "\$B" --push-before "\$PUSH_BEFORE_SHA" --manual-base "\$A"/);
+  const guard = readFileSync(resolve(root, "backend/release_policy_workers_free/scripts/phase_guard.mjs"), "utf8");
+  assert.match(guard, /assertEventTopology\(\{ event: required\(option\("event"\), "event"\), candidate, anchor, base: option\("pr-base"\), before: option\("push-before"\), manualBase: option\("manual-base"\) \}\)/);
   assert.doesNotMatch(backend, /Test backend packages|continue-on-error|if:\s*always\(\)|set -x|ACTIONS_STEP_DEBUG|upload-artifact/);
 });
 
