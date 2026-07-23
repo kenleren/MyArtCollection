@@ -178,7 +178,7 @@ test("deployment config uses the reviewed bundle without Wrangler rebundling", (
     assert.match(artifact, /"wrangler\.jsonc"/);
     assert.match(artifact, /"evidence\/bundle\/worker\.mjs"/);
 });
-test("phase guard accepts only the generic five-path evidence delta", () => {
+test("phase guard accepts the conditional four-or-five evidence delta", () => {
     phaseGuardAssertions();
 });
 test("actual evidence topology guard accepts evidence and rejects squash-shaped rebind", () => { topologyAssertions(); });
