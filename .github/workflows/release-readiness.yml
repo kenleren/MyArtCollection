@@ -164,13 +164,25 @@ jobs:
           bash test/gradle_wrapper_validation_test.sh
       - name: Validate native attachment viewer policy
         run: bash test/attachment_native_viewer_policy_test.sh
-      - name: Test native attachment custody crash and race contracts
+      - name: Test native attachment custody instrumentation contract
         run: |
           bash test/attachment_custody_instrumentation_contract_test.sh
-          bash test/attachment_custody_native_test.sh
-          ATTACHMENT_CUSTODY_SANITIZERS=address,undefined bash test/attachment_custody_native_test.sh
-          ATTACHMENT_CUSTODY_SANITIZERS=thread bash test/attachment_custody_native_test.sh
-          bash test/attachment_custody_release_symbol_test.sh
+      - name: Require pinned native attachment custody compiler
+        run: command -v g++-13
+      - name: Test native attachment custody contract (host)
+        run: CXX=g++-13 ATTACHMENT_CUSTODY_SUITE=contract ATTACHMENT_CUSTODY_SANITIZERS=none bash test/attachment_custody_native_test.sh
+      - name: Test native attachment custody race (host)
+        run: CXX=g++-13 ATTACHMENT_CUSTODY_SUITE=race ATTACHMENT_CUSTODY_SANITIZERS=none bash test/attachment_custody_native_test.sh
+      - name: Test native attachment custody contract (ASan+UBSan)
+        run: CXX=g++-13 ATTACHMENT_CUSTODY_SUITE=contract ATTACHMENT_CUSTODY_SANITIZERS=address,undefined bash test/attachment_custody_native_test.sh
+      - name: Test native attachment custody race (ASan+UBSan)
+        run: CXX=g++-13 ATTACHMENT_CUSTODY_SUITE=race ATTACHMENT_CUSTODY_SANITIZERS=address,undefined bash test/attachment_custody_native_test.sh
+      - name: Test native attachment custody contract (TSan)
+        run: CXX=g++-13 ATTACHMENT_CUSTODY_SUITE=contract ATTACHMENT_CUSTODY_SANITIZERS=thread bash test/attachment_custody_native_test.sh
+      - name: Test native attachment custody race (TSan)
+        run: CXX=g++-13 ATTACHMENT_CUSTODY_SUITE=race ATTACHMENT_CUSTODY_SANITIZERS=thread bash test/attachment_custody_native_test.sh
+      - name: Test native attachment custody release symbols
+        run: bash test/attachment_custody_release_symbol_test.sh
       - name: Set up Temurin Java
         uses: actions/setup-java@0f481fcb613427c0f801b606911222b5b6f3083a
         with:
