@@ -87,6 +87,8 @@ validate_flutter_job() {
     '      - name: Analyze Flutter project' \
     '      - name: Run serialized Flutter tests'; do grep -Fqx "$line" "$job" >/dev/null || return 1; done
   grep -Fq 'actions/checkout@' "$job" && grep -Fq 'actions/cache@' "$job" && grep -Fq 'Install checksum-verified Flutter' "$job" && grep -Fq 'Install PDF text extraction for report assertions' "$job" && grep -Fq 'Map checksum-verified Flutter test fonts' "$job" || return 1
+  [[ "$(grep -Fxc '        run: dart format --output=none --set-exit-if-changed lib test' "$job")" = 1 ]] || return 1
+  [[ "$(grep -Fxc '        run: flutter analyze' "$job")" = 1 ]] || return 1
   [[ "$(grep -Fxc '        run: flutter test --concurrency=1' "$job")" = 1 ]] || return 1
   ! grep -Eq '^[[:space:]]+(if:|continue-on-error:|strategy:|matrix:)|retry|rerun|flutter (test|drive).*--(name|tags|exclude-tags|concurrency=[^1])' "$job"
 }
@@ -111,6 +113,53 @@ for mutation in \
   ! cmp -s "$flutter_job" "$candidate"
   ! validate_flutter_job "$candidate"
 done
+
+literal_replace_line() {
+  local input=$1 output=$2 target=$3 replacement=$4 line found=0
+  : > "$output"
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if [[ "$line" == "$target" ]]; then
+      printf '%s\n' "$replacement" >> "$output"
+      found=$((found + 1))
+    else
+      printf '%s\n' "$line" >> "$output"
+    fi
+  done < "$input"
+  [[ "$found" = 1 ]]
+}
+generated=0 applied=0 validator_reached=0 rejected=0
+while IFS='|' read -r name target replacement; do
+  [[ -n "$name" && -n "$target" && -n "$replacement" ]]
+  candidate="$fixture_dir/$name.yml"; reverse="$fixture_dir/$name.reverse.yml"
+  [[ -s "$flutter_job" && "$(grep -Fxc "$target" "$flutter_job")" = 1 ]]
+  literal_replace_line "$flutter_job" "$candidate" "$target" "$replacement"
+  generated=$((generated + 1))
+  [[ -s "$candidate" && ! "$(cmp -s "$flutter_job" "$candidate"; printf %s "$?")" = 0 ]]
+  [[ "$(grep -Fxc "$target" "$candidate")" = 0 && "$(grep -Fxc "$replacement" "$candidate")" = 1 ]]
+  literal_replace_line "$candidate" "$reverse" "$replacement" "$target"
+  cmp -s "$flutter_job" "$reverse"
+  applied=$((applied + 1)); validator_reached=$((validator_reached + 1))
+  if validate_flutter_job "$candidate"; then exit 1; fi
+  rejected=$((rejected + 1))
+done <<'MUTATIONS'
+checkout_pin|      uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0|      uses: actions/checkout@broken
+credential|        persist-credentials: false|        persist-credentials: true
+cache_pin|      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9|      uses: actions/cache@broken
+cache_path|          path: ~/.pub-cache|          path: ~/.bad-cache
+fetch|        run: flutter pub get --enforce-lockfile|        run: flutter pub get
+runner|    runs-on: ubuntu-24.04|    runs-on: ubuntu-22.04
+flutter_name|      - name: Install checksum-verified Flutter|      - name: Install Flutter
+pdf_name|      - name: Install PDF text extraction for report assertions|      - name: Install PDF tools
+font_name|      - name: Map checksum-verified Flutter test fonts|      - name: Map fonts
+format_name|      - name: Check Flutter formatting|      - name: Check formatting
+analyze_name|      - name: Analyze Flutter project|      - name: Analyze project
+test_name|      - name: Run serialized Flutter tests|      - name: Run tests
+test_command|        run: flutter test --concurrency=1|        run: flutter test --concurrency=2
+format_command|        run: dart format --output=none --set-exit-if-changed lib test|        run: dart format lib test
+analysis_command|        run: flutter analyze|        run: flutter analyze --no-fatal-infos
+analysis_exact|        run: flutter analyze|        run: flutter analyze --fatal-infos
+MUTATIONS
+[[ "$generated" = 16 && "$generated" = "$applied" && "$generated" = "$validator_reached" && "$generated" = "$rejected" ]]
 
 native="$repo_root/test/attachment_custody_native_test.sh"
 for invalid in '' 'contract,contract' 'contract contract'; do
