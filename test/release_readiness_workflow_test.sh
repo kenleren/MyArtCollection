@@ -48,6 +48,14 @@ for command in \
   'CXX=g++-13 ATTACHMENT_CUSTODY_SUITE=race ATTACHMENT_CUSTODY_SANITIZERS=thread bash test/attachment_custody_native_test.sh'; do [[ "$(grep -Fxc "        run: $command" "$workflow")" = 1 ]]; done
 if grep -F 'continue-on-error:' "$workflow"; then exit 1; fi
 
+for step in 'Check Flutter formatting' 'Analyze Flutter project' 'Run serialized Flutter tests'; do
+  [[ "$(grep -Fxc "      - name: $step" "$workflow")" = 1 ]]
+done
+for command in 'dart format --output=none --set-exit-if-changed lib test' 'flutter analyze' 'flutter test --concurrency=1'; do
+  [[ "$(grep -Fxc "        run: $command" "$workflow")" = 1 ]]
+done
+if grep -F 'Check formatting, analysis, and tests' "$workflow"; then exit 1; fi
+
 native="$repo_root/test/attachment_custody_native_test.sh"
 for invalid in '' 'contract,contract' 'contract contract'; do
   result="$(ATTACHMENT_CUSTODY_SUITE="$invalid" CXX=clang++ bash "$native" 2>&1 || true)"

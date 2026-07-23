@@ -136,11 +136,12 @@ jobs:
           sudo ln -s "$roboto" /System/Library/Fonts/SFNS.ttf
       - name: Fetch locked Flutter dependencies
         run: flutter pub get --enforce-lockfile
-      - name: Check formatting, analysis, and tests
-        run: |
-          dart format --set-exit-if-changed lib test
-          flutter analyze
-          flutter test --concurrency=1
+      - name: Check Flutter formatting
+        run: dart format --output=none --set-exit-if-changed lib test
+      - name: Analyze Flutter project
+        run: flutter analyze
+      - name: Run serialized Flutter tests
+        run: flutter test --concurrency=1
 
   android-debug-package:
     name: Android debug package
