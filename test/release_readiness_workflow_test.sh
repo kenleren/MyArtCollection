@@ -45,7 +45,7 @@ for command in \
   'CXX=g++-13 ATTACHMENT_CUSTODY_SUITE=contract ATTACHMENT_CUSTODY_SANITIZERS=address,undefined bash test/attachment_custody_native_test.sh' \
   'CXX=g++-13 ATTACHMENT_CUSTODY_SUITE=race ATTACHMENT_CUSTODY_SANITIZERS=address,undefined bash test/attachment_custody_native_test.sh' \
   'CXX=g++-13 ATTACHMENT_CUSTODY_SUITE=contract ATTACHMENT_CUSTODY_SANITIZERS=thread bash test/attachment_custody_native_test.sh' \
-  'CXX=g++-13 ATTACHMENT_CUSTODY_SUITE=race ATTACHMENT_CUSTODY_SANITIZERS=thread bash test/attachment_custody_native_test.sh'; do [[ "$(grep -Fxc "          $command" "$workflow")" = 1 ]]; done
+  'CXX=g++-13 ATTACHMENT_CUSTODY_SUITE=race ATTACHMENT_CUSTODY_SANITIZERS=thread bash test/attachment_custody_native_test.sh'; do [[ "$(grep -Fxc "        run: $command" "$workflow")" = 1 ]]; done
 if grep -F 'continue-on-error:' "$workflow"; then exit 1; fi
 
 native="$repo_root/test/attachment_custody_native_test.sh"
@@ -56,4 +56,9 @@ done
 for compiler in '/tmp/compiler' 'clang++ bad' $'clang++\nBAD' 'clang++=bad' 'clang++,bad' 'status=pass'; do
   result="$(ATTACHMENT_CUSTODY_SUITE=contract CXX="$compiler" bash "$native" 2>&1 || true)"
   [[ "$result" = CUSTODY_NATIVE_REJECTED ]]
+done
+
+for mode in none address,undefined thread; do
+  result="$(CXX=clang++ ATTACHMENT_CUSTODY_SUITE=contract ATTACHMENT_CUSTODY_SANITIZERS="$mode" /bin/bash "$native" 2>&1)"
+  [[ "$(printf '%s\n' "$result" | grep -Ec '^CUSTODY_NATIVE_RESULT suite=contract sanitizer=(none|address,undefined|thread) compiler=clangxx status=pass$')" = 1 ]]
 done
