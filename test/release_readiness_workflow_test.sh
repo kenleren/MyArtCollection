@@ -56,6 +56,26 @@ for command in 'dart format --output=none --set-exit-if-changed lib test' 'flutt
 done
 if grep -F 'Check formatting, analysis, and tests' "$workflow"; then exit 1; fi
 
+flutter_job="$(mktemp "${TMPDIR:-/tmp}/release-readiness-flutter-job.XXXXXX")"
+trap 'rm -f "$flutter_job"' EXIT
+[[ "$(grep -Fxc '  flutter-quality:' "$workflow")" = 1 ]]
+awk 'BEGIN { in_job=0 } /^  flutter-quality:$/ { if (in_job) exit 1; in_job=1 } in_job && /^  [A-Za-z0-9_-]+:$/ && $0 != "  flutter-quality:" { exit } in_job { print } END { if (!in_job) exit 1 }' "$workflow" > "$flutter_job"
+[[ -s "$flutter_job" ]]
+for line in \
+  '      - name: Fetch locked Flutter dependencies' \
+  '        run: flutter pub get --enforce-lockfile' \
+  '      - name: Check Flutter formatting' \
+  '        run: dart format --output=none --set-exit-if-changed lib test' \
+  '      - name: Analyze Flutter project' \
+  '        run: flutter analyze' \
+  '      - name: Run serialized Flutter tests' \
+  '        run: flutter test --concurrency=1'; do [[ "$(grep -Fxc "$line" "$flutter_job")" = 1 ]]; done
+[[ "$(grep -nF '      - name: Fetch locked Flutter dependencies' "$flutter_job" | cut -d: -f1)" -lt "$(grep -nF '      - name: Check Flutter formatting' "$flutter_job" | cut -d: -f1)" ]]
+[[ "$(grep -nF '      - name: Check Flutter formatting' "$flutter_job" | cut -d: -f1)" -lt "$(grep -nF '      - name: Analyze Flutter project' "$flutter_job" | cut -d: -f1)" ]]
+[[ "$(grep -nF '      - name: Analyze Flutter project' "$flutter_job" | cut -d: -f1)" -lt "$(grep -nF '      - name: Run serialized Flutter tests' "$flutter_job" | cut -d: -f1)" ]]
+[[ "$(grep -Fxc '        run: flutter test --concurrency=1' "$flutter_job")" = 1 ]]
+if grep -Eq '^[[:space:]]+(if:|continue-on-error:|strategy:|matrix:)|flutter (test|drive).*--(name|tags|exclude-tags|concurrency=[^1])|retry|rerun|for .* in' "$flutter_job"; then exit 1; fi
+
 native="$repo_root/test/attachment_custody_native_test.sh"
 for invalid in '' 'contract,contract' 'contract contract'; do
   result="$(ATTACHMENT_CUSTODY_SUITE="$invalid" CXX=clang++ bash "$native" 2>&1 || true)"
