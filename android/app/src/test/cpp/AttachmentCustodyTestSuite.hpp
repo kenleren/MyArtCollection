@@ -959,7 +959,9 @@ inline std::string export_pair_confinement_tests() {
   return {};
 }
 
-inline std::string race_tests(int repetitions = 40) {
+inline constexpr int kRaceRepetitions = 40;
+
+inline std::string race_tests(int repetitions = kRaceRepetitions) {
   const fs::path sentinel = unique_path("archivale-custody-sentinel-");
   const std::string sentinel_bytes = "outside-root-sentinel-with-stable-identity";
   write_file(sentinel, sentinel_bytes);

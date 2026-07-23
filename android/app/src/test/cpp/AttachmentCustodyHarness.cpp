@@ -4,15 +4,14 @@
 
 #include <iostream>
 
-int main() {
-  const std::string contract_failure = custody_test::run_contract_suite();
-  if (!contract_failure.empty()) {
-    std::cerr << contract_failure << '\n';
-    return 1;
-  }
-  const std::string race_failure = custody_test::race_tests();
-  if (!race_failure.empty()) {
-    std::cerr << race_failure << '\n';
+int main(int argc, char** argv) {
+  if (argc != 3 || std::string(argv[1]) != "--suite") return 1;
+  const std::string suite = argv[2];
+  const std::string failure = suite == "contract" ? custody_test::run_contract_suite()
+                              : suite == "race" ? custody_test::race_tests()
+                                                : "invalid suite";
+  if (!failure.empty()) {
+    std::cerr << failure << '\n';
     return 1;
   }
   return 0;
