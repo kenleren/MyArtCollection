@@ -60,5 +60,5 @@ done
 
 for mode in none address,undefined thread; do
   result="$(CXX=clang++ ATTACHMENT_CUSTODY_SUITE=contract ATTACHMENT_CUSTODY_SANITIZERS="$mode" /bin/bash "$native" 2>&1)"
-  [[ "$(printf '%s\n' "$result" | grep -Ec '^CUSTODY_NATIVE_RESULT suite=contract sanitizer=(none|address,undefined|thread) compiler=clangxx status=pass$')" = 1 ]]
+  [[ "$(printf '%s\n' "$result" | grep -Ec '^CUSTODY_NATIVE_RESULT suite=contract sanitizer=(none|address,undefined|thread) compiler=clangxx phase=cleanup class=cleanup exit=0 status=pass$')" = 1 ]]
 done

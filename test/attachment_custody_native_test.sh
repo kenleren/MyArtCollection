@@ -20,25 +20,13 @@ fi
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 binary="$(mktemp "${TMPDIR:-/tmp}/attachment-custody-harness.XXXXXX")"
 output="$(mktemp "${TMPDIR:-/tmp}/attachment-custody-output.XXXXXX")"
-status=fail
-cleanup_and_report() {
-  saved_status=$?
-  trap - EXIT
-  cleanup_status=0
-  rm -f "$binary" "$output" || cleanup_status=$?
-  if [[ "$saved_status" -ne 0 ]]; then
-    status=fail
-    printf 'CUSTODY_NATIVE_RESULT suite=%s sanitizer=%s compiler=%s status=%s\n' "$suite" "$sanitizer" "$compiler_token" "$status"
-    exit "$saved_status"
-  fi
-  if [[ "$cleanup_status" -ne 0 ]]; then
-    status=fail
-    printf 'CUSTODY_NATIVE_RESULT suite=%s sanitizer=%s compiler=%s status=%s\n' "$suite" "$sanitizer" "$compiler_token" "$status"
-    exit "$cleanup_status"
-  fi
-  printf 'CUSTODY_NATIVE_RESULT suite=%s sanitizer=%s compiler=%s status=%s\n' "$suite" "$sanitizer" "$compiler_token" "$status"
+result() { printf 'CUSTODY_NATIVE_RESULT suite=%s sanitizer=%s compiler=%s phase=%s class=%s exit=%s status=%s\n' "$suite" "$sanitizer" "$compiler_token" "$1" "$2" "$3" "$4"; }
+finish_failure() {
+  phase=$1 class=$2 code=$3
+  rm -f "$binary" "$output" || :
+  result "$phase" "$class" "$code" fail
+  exit "$code"
 }
-trap cleanup_and_report EXIT
 
 compiler_args=(-std=c++20 -Wall -Wextra -Werror -pthread)
 if [[ "$sanitizer" == "address,undefined" ]]; then
@@ -47,9 +35,14 @@ elif [[ "$sanitizer" == "thread" ]]; then
   compiler_args+=(-fsanitize=thread -fno-omit-frame-pointer)
 fi
 
-"$compiler_path" \
+if "$compiler_path" \
   "${compiler_args[@]}" \
   "$repo_root/android/app/src/test/cpp/AttachmentCustodyHarness.cpp" \
-  -o "$binary" >"$output" 2>&1
-"$binary" --suite "$suite" >>"$output" 2>&1
-status=pass
+  -o "$binary" >"$output" 2>&1; then :; else finish_failure compile runtime "$?"; fi
+if "$binary" --suite "$suite" >>"$output" 2>&1; then :; else
+  code=$?
+  if [[ "$code" = 64 ]]; then finish_failure execute invalid "$code"; fi
+  if [[ "$code" = 65 ]]; then finish_failure execute assertion "$code"; fi
+  finish_failure execute runtime "$code"
+fi
+if rm -f "$binary" "$output"; then result cleanup cleanup 0 pass; else code=$?; result cleanup cleanup "$code" fail; exit "$code"; fi
