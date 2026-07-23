@@ -48,73 +48,116 @@ for command in \
   'CXX=g++-13 ATTACHMENT_CUSTODY_SUITE=race ATTACHMENT_CUSTODY_SANITIZERS=thread bash test/attachment_custody_native_test.sh'; do [[ "$(grep -Fxc "        run: $command" "$workflow")" = 1 ]]; done
 if grep -F 'continue-on-error:' "$workflow"; then exit 1; fi
 
-for step in 'Check Flutter formatting' 'Analyze Flutter project' 'Run serialized Flutter tests'; do
-  [[ "$(grep -Fxc "      - name: $step" "$workflow")" = 1 ]]
-done
-for command in 'dart format --output=none --set-exit-if-changed lib test' 'flutter analyze' 'flutter test --concurrency=1'; do
-  [[ "$(grep -Fxc "        run: $command" "$workflow")" = 1 ]]
-done
-if grep -F 'Check formatting, analysis, and tests' "$workflow"; then exit 1; fi
-
 flutter_job="$(mktemp "${TMPDIR:-/tmp}/release-readiness-flutter-job.XXXXXX")"
-trap 'rm -f "$flutter_job"' EXIT
+canonical_flutter_job="$(mktemp "${TMPDIR:-/tmp}/release-readiness-canonical-flutter-job.XXXXXX")"
+fixture_dir="$(mktemp -d "${TMPDIR:-/tmp}/release-readiness-flutter-fixture.XXXXXX")"
+trap 'rm -f "$flutter_job" "$canonical_flutter_job"; rm -rf "$fixture_dir"' EXIT
 [[ "$(grep -Fxc '  flutter-quality:' "$workflow")" = 1 ]]
 awk 'BEGIN { in_job=0 } /^  flutter-quality:$/ { if (in_job) exit 1; in_job=1 } in_job && /^  [A-Za-z0-9_-]+:$/ && $0 != "  flutter-quality:" { exit } in_job { print } END { if (!in_job) exit 1 }' "$workflow" > "$flutter_job"
 [[ -s "$flutter_job" ]]
-for line in \
-  '      - name: Fetch locked Flutter dependencies' \
-  '        run: flutter pub get --enforce-lockfile' \
-  '      - name: Check Flutter formatting' \
-  '        run: dart format --output=none --set-exit-if-changed lib test' \
-  '      - name: Analyze Flutter project' \
-  '        run: flutter analyze' \
-  '      - name: Run serialized Flutter tests' \
-  '        run: flutter test --concurrency=1'; do [[ "$(grep -Fxc "$line" "$flutter_job")" = 1 ]]; done
-[[ "$(grep -nF '      - name: Fetch locked Flutter dependencies' "$flutter_job" | cut -d: -f1)" -lt "$(grep -nF '      - name: Check Flutter formatting' "$flutter_job" | cut -d: -f1)" ]]
-[[ "$(grep -nF '      - name: Check Flutter formatting' "$flutter_job" | cut -d: -f1)" -lt "$(grep -nF '      - name: Analyze Flutter project' "$flutter_job" | cut -d: -f1)" ]]
-[[ "$(grep -nF '      - name: Analyze Flutter project' "$flutter_job" | cut -d: -f1)" -lt "$(grep -nF '      - name: Run serialized Flutter tests' "$flutter_job" | cut -d: -f1)" ]]
-[[ "$(grep -Fxc '        run: flutter test --concurrency=1' "$flutter_job")" = 1 ]]
-if grep -Eq '^[[:space:]]+(if:|continue-on-error:|strategy:|matrix:)|flutter (test|drive).*--(name|tags|exclude-tags|concurrency=[^1])|retry|rerun|for .* in' "$flutter_job"; then exit 1; fi
+cat > "$canonical_flutter_job" <<'EOF'
+  flutter-quality:
+    name: Flutter quality
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          persist-credentials: false
+      - name: Restore Dart dependency cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: ~/.pub-cache
+          key: pub-${{ runner.os }}-${{ hashFiles('pubspec.lock') }}
+          restore-keys: pub-${{ runner.os }}-
+      - name: Install checksum-verified Flutter
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="flutter_linux_${FLUTTER_VERSION}-stable.tar.xz"
+          curl -fsSLO "https://storage.googleapis.com/flutter_infra_release/releases/stable/linux/${archive}"
+          printf '%s  %s\n' "$FLUTTER_LINUX_X64_SHA256" "$archive" | sha256sum -c -
+          tar -xJf "$archive" -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/flutter/bin" >> "$GITHUB_PATH"
+      - name: Install PDF text extraction for report assertions
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence="$RUNNER_TEMP/poppler-apt-evidence"
+          archives="$evidence/archives"
+          mkdir -p "$archives/partial"
+          sudo apt-get update
+          apt-get --simulate install --no-install-recommends poppler-utils \
+            > "$evidence/simulation.txt"
+          awk '
+            /^Inst / {
+              package_name=$2
+              version=""
+              architecture=$NF
+              gsub(/[\[\])]/, "", architecture)
+              for (i=3; i<=NF; i++) {
+                if ($i ~ /^\(/) {
+                  version=$i
+                  gsub(/^\(/, "", version)
+                  break
+                }
+              }
+              if (version == "" || architecture == "") exit 1
+              print package_name "\t" version "\t" architecture
+            }
+          ' "$evidence/simulation.txt" | LC_ALL=C sort -u > "$evidence/expected.tsv"
+          sudo apt-get -o "Dir::Cache::archives=$archives" install \
+            --yes --download-only --no-install-recommends poppler-utils
+          : > "$evidence/actual.tsv"
+          while IFS= read -r -d '' archive; do
+            package_name="$(dpkg-deb -f "$archive" Package)"
+            version="$(dpkg-deb -f "$archive" Version)"
+            architecture="$(dpkg-deb -f "$archive" Architecture)"
+            digest="$(sha256sum "$archive" | cut -d ' ' -f 1)"
+            printf '%s\t%s\t%s\t%s\n' \
+              "$package_name" "$version" "$architecture" "$digest" \
+              >> "$evidence/actual.tsv"
+          done < <(find "$archives" -maxdepth 1 -type f -name '*.deb' -print0)
+          cut -f 1-3 "$evidence/actual.tsv" | LC_ALL=C sort -u \
+            > "$evidence/actual-coordinates.tsv"
+          diff -u "$evidence/expected.tsv" "$evidence/actual-coordinates.tsv"
+          awk -F '\t' 'NF != 4 || $4 !~ /^[0-9a-f]{64}$/ { exit 1 }' \
+            "$evidence/actual.tsv"
+          sha256sum \
+            "$evidence/simulation.txt" \
+            "$evidence/expected.tsv" \
+            "$evidence/actual.tsv" \
+            "$evidence/actual-coordinates.tsv" \
+            > "$evidence/runtime-evidence.sha256"
+          test "$(wc -l < "$evidence/runtime-evidence.sha256")" -eq 4
+          sudo apt-get -o "Dir::Cache::archives=$archives" install \
+            --yes --no-download --no-install-recommends poppler-utils
+          pdftotext -v
+      - name: Map checksum-verified Flutter test fonts
+        shell: bash
+        run: |
+          set -euo pipefail
+          roboto="$RUNNER_TEMP/flutter/bin/cache/artifacts/material_fonts/Roboto-Regular.ttf"
+          test -f "$roboto"
+          sudo install -d /opt/homebrew/share /System/Library/Fonts
+          sudo ln -s "$RUNNER_TEMP/flutter" /opt/homebrew/share/flutter
+          sudo ln -s "$roboto" /System/Library/Fonts/SFNS.ttf
+      - name: Fetch locked Flutter dependencies
+        run: flutter pub get --enforce-lockfile
+      - name: Check Flutter formatting
+        run: dart format --output=none --set-exit-if-changed lib test
+      - name: Analyze Flutter project
+        run: flutter analyze
+      - name: Run serialized Flutter tests
+        run: flutter test --concurrency=1
+EOF
 
 validate_flutter_job() {
-  local job=$1
-  for line in \
-    '    runs-on: ubuntu-24.04' \
-    '        persist-credentials: false' \
-    '          path: ~/.pub-cache' \
-    '        run: flutter pub get --enforce-lockfile' \
-    '      - name: Check Flutter formatting' \
-    '      - name: Analyze Flutter project' \
-    '      - name: Run serialized Flutter tests'; do grep -Fqx "$line" "$job" >/dev/null || return 1; done
-  grep -Fq 'actions/checkout@' "$job" && grep -Fq 'actions/cache@' "$job" && grep -Fq 'Install checksum-verified Flutter' "$job" && grep -Fq 'Install PDF text extraction for report assertions' "$job" && grep -Fq 'Map checksum-verified Flutter test fonts' "$job" || return 1
-  [[ "$(grep -Fxc '        run: dart format --output=none --set-exit-if-changed lib test' "$job")" = 1 ]] || return 1
-  [[ "$(grep -Fxc '        run: flutter analyze' "$job")" = 1 ]] || return 1
-  [[ "$(grep -Fxc '        run: flutter test --concurrency=1' "$job")" = 1 ]] || return 1
-  ! grep -Eq '^[[:space:]]+(if:|continue-on-error:|strategy:|matrix:)|retry|rerun|flutter (test|drive).*--(name|tags|exclude-tags|concurrency=[^1])' "$job"
+  cmp -s "$canonical_flutter_job" "$1"
 }
 validate_flutter_job "$flutter_job"
-fixture_dir="$(mktemp -d "${TMPDIR:-/tmp}/release-readiness-flutter-fixture.XXXXXX")"
-trap 'rm -f "$flutter_job"; rm -rf "$fixture_dir"' EXIT
-for mutation in \
-  'persist-credentials: false|persist-credentials: true' \
-  'actions/checkout@|actions/checkout@broken' \
-  'actions/cache@|actions/cache@broken' \
-  '~/.pub-cache|~/.other-cache' \
-  'flutter pub get --enforce-lockfile|flutter pub get' \
-  'Install checksum-verified Flutter|Install Flutter' \
-  'Install PDF text extraction for report assertions|Install PDF tools' \
-  'Map checksum-verified Flutter test fonts|Map fonts' \
-  'Check Flutter formatting|Check formatting' \
-  'Analyze Flutter project|Analyze project' \
-  'Run serialized Flutter tests|Run tests' \
-  'flutter test --concurrency=1|flutter test --concurrency=2'; do
-  before=${mutation%%|*}; after=${mutation#*|}; candidate="$fixture_dir/${#before}.yml"
-  sed "0,/$before/s//$after/" "$flutter_job" > "$candidate"
-  ! cmp -s "$flutter_job" "$candidate"
-  ! validate_flutter_job "$candidate"
-done
 
-literal_replace_line() {
+literal_replace_once() {
   local input=$1 output=$2 target=$3 replacement=$4 line found=0
   : > "$output"
   while IFS= read -r line || [[ -n "$line" ]]; do
@@ -128,38 +171,52 @@ literal_replace_line() {
   [[ "$found" = 1 ]]
 }
 generated=0 applied=0 validator_reached=0 rejected=0
-while IFS='|' read -r name target replacement; do
+mutations=(
+  runner '    runs-on: ubuntu-24.04' '    runs-on: ubuntu-22.04'
+  checkout_pin '        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0' '        uses: actions/checkout@broken'
+  credential '          persist-credentials: false' '          persist-credentials: true'
+  cache_pin '        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9' '        uses: actions/cache@broken'
+  cache_path '          path: ~/.pub-cache' '          path: ~/.bad-cache'
+  cache_key "          key: pub-\${{ runner.os }}-\${{ hashFiles('pubspec.lock') }}" '          key: pub-altered'
+  cache_restore_key "          restore-keys: pub-\${{ runner.os }}-" '          restore-keys: pub-altered'
+  flutter_name '      - name: Install checksum-verified Flutter' '      - name: Install Flutter'
+  flutter_url "          curl -fsSLO \"https://storage.googleapis.com/flutter_infra_release/releases/stable/linux/\${archive}\"" "          curl -fsSLO \"https://example.invalid/flutter/\${archive}\""
+  flutter_checksum "          printf '%s  %s\\n' \"\$FLUTTER_LINUX_X64_SHA256\" \"\$archive\" | sha256sum -c -" "          printf '%s  %s\\n' \"\$FLUTTER_LINUX_X64_SHA256\" \"\$archive\""
+  pdf_name '      - name: Install PDF text extraction for report assertions' '      - name: Install PDF tools'
+  pdf_command '          pdftotext -v' '          pdftotext --version'
+  font_name '      - name: Map checksum-verified Flutter test fonts' '      - name: Map fonts'
+  font_target "          sudo ln -s \"\$roboto\" /System/Library/Fonts/SFNS.ttf" "          sudo ln -s \"\$roboto\" /System/Library/Fonts/Roboto-Regular.ttf"
+  fetch '        run: flutter pub get --enforce-lockfile' '        run: flutter pub get'
+  format '        run: dart format --output=none --set-exit-if-changed lib test' '        run: dart format lib test'
+  analysis '        run: flutter analyze' '        run: flutter analyze --no-fatal-infos'
+  test_concurrency '        run: flutter test --concurrency=1' '        run: flutter test --concurrency=2'
+)
+[[ "${#mutations[@]}" = 54 ]]
+for ((index=0; index < ${#mutations[@]}; index += 3)); do
+  name=${mutations[index]}
+  target=${mutations[index + 1]}
+  replacement=${mutations[index + 2]}
   [[ -n "$name" && -n "$target" && -n "$replacement" ]]
-  candidate="$fixture_dir/$name.yml"; reverse="$fixture_dir/$name.reverse.yml"
+  for ((prior=0; prior < index; prior += 3)); do
+    [[ "$name" != "${mutations[prior]}" ]]
+    [[ "$target" != "${mutations[prior + 1]}" ]]
+  done
+  candidate="$fixture_dir/$name.yml"
+  reverse="$fixture_dir/$name.reverse.yml"
   [[ -s "$flutter_job" && "$(grep -Fxc "$target" "$flutter_job")" = 1 ]]
-  literal_replace_line "$flutter_job" "$candidate" "$target" "$replacement"
+  literal_replace_once "$flutter_job" "$candidate" "$target" "$replacement"
+  [[ -f "$candidate" && -s "$candidate" ]]
+  ! cmp -s "$flutter_job" "$candidate"
   generated=$((generated + 1))
-  [[ -s "$candidate" && ! "$(cmp -s "$flutter_job" "$candidate"; printf %s "$?")" = 0 ]]
   [[ "$(grep -Fxc "$target" "$candidate")" = 0 && "$(grep -Fxc "$replacement" "$candidate")" = 1 ]]
-  literal_replace_line "$candidate" "$reverse" "$replacement" "$target"
+  applied=$((applied + 1))
+  literal_replace_once "$candidate" "$reverse" "$replacement" "$target"
   cmp -s "$flutter_job" "$reverse"
-  applied=$((applied + 1)); validator_reached=$((validator_reached + 1))
+  validator_reached=$((validator_reached + 1))
   if validate_flutter_job "$candidate"; then exit 1; fi
   rejected=$((rejected + 1))
-done <<'MUTATIONS'
-checkout_pin|      uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0|      uses: actions/checkout@broken
-credential|        persist-credentials: false|        persist-credentials: true
-cache_pin|      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9|      uses: actions/cache@broken
-cache_path|          path: ~/.pub-cache|          path: ~/.bad-cache
-fetch|        run: flutter pub get --enforce-lockfile|        run: flutter pub get
-runner|    runs-on: ubuntu-24.04|    runs-on: ubuntu-22.04
-flutter_name|      - name: Install checksum-verified Flutter|      - name: Install Flutter
-pdf_name|      - name: Install PDF text extraction for report assertions|      - name: Install PDF tools
-font_name|      - name: Map checksum-verified Flutter test fonts|      - name: Map fonts
-format_name|      - name: Check Flutter formatting|      - name: Check formatting
-analyze_name|      - name: Analyze Flutter project|      - name: Analyze project
-test_name|      - name: Run serialized Flutter tests|      - name: Run tests
-test_command|        run: flutter test --concurrency=1|        run: flutter test --concurrency=2
-format_command|        run: dart format --output=none --set-exit-if-changed lib test|        run: dart format lib test
-analysis_command|        run: flutter analyze|        run: flutter analyze --no-fatal-infos
-analysis_exact|        run: flutter analyze|        run: flutter analyze --fatal-infos
-MUTATIONS
-[[ "$generated" = 16 && "$generated" = "$applied" && "$generated" = "$validator_reached" && "$generated" = "$rejected" ]]
+done
+[[ "$generated" = 18 && "$generated" = "$applied" && "$generated" = "$validator_reached" && "$generated" = "$rejected" ]]
 
 native="$repo_root/test/attachment_custody_native_test.sh"
 for invalid in '' 'contract,contract' 'contract contract'; do
