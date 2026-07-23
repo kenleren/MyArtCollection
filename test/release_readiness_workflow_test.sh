@@ -76,6 +76,42 @@ for line in \
 [[ "$(grep -Fxc '        run: flutter test --concurrency=1' "$flutter_job")" = 1 ]]
 if grep -Eq '^[[:space:]]+(if:|continue-on-error:|strategy:|matrix:)|flutter (test|drive).*--(name|tags|exclude-tags|concurrency=[^1])|retry|rerun|for .* in' "$flutter_job"; then exit 1; fi
 
+validate_flutter_job() {
+  local job=$1
+  for line in \
+    '    runs-on: ubuntu-24.04' \
+    '        persist-credentials: false' \
+    '          path: ~/.pub-cache' \
+    '        run: flutter pub get --enforce-lockfile' \
+    '      - name: Check Flutter formatting' \
+    '      - name: Analyze Flutter project' \
+    '      - name: Run serialized Flutter tests'; do grep -Fqx "$line" "$job" >/dev/null || return 1; done
+  grep -Fq 'actions/checkout@' "$job" && grep -Fq 'actions/cache@' "$job" && grep -Fq 'Install checksum-verified Flutter' "$job" && grep -Fq 'Install PDF text extraction for report assertions' "$job" && grep -Fq 'Map checksum-verified Flutter test fonts' "$job" || return 1
+  [[ "$(grep -Fxc '        run: flutter test --concurrency=1' "$job")" = 1 ]] || return 1
+  ! grep -Eq '^[[:space:]]+(if:|continue-on-error:|strategy:|matrix:)|retry|rerun|flutter (test|drive).*--(name|tags|exclude-tags|concurrency=[^1])' "$job"
+}
+validate_flutter_job "$flutter_job"
+fixture_dir="$(mktemp -d "${TMPDIR:-/tmp}/release-readiness-flutter-fixture.XXXXXX")"
+trap 'rm -f "$flutter_job"; rm -rf "$fixture_dir"' EXIT
+for mutation in \
+  'persist-credentials: false|persist-credentials: true' \
+  'actions/checkout@|actions/checkout@broken' \
+  'actions/cache@|actions/cache@broken' \
+  '~/.pub-cache|~/.other-cache' \
+  'flutter pub get --enforce-lockfile|flutter pub get' \
+  'Install checksum-verified Flutter|Install Flutter' \
+  'Install PDF text extraction for report assertions|Install PDF tools' \
+  'Map checksum-verified Flutter test fonts|Map fonts' \
+  'Check Flutter formatting|Check formatting' \
+  'Analyze Flutter project|Analyze project' \
+  'Run serialized Flutter tests|Run tests' \
+  'flutter test --concurrency=1|flutter test --concurrency=2'; do
+  before=${mutation%%|*}; after=${mutation#*|}; candidate="$fixture_dir/${#before}.yml"
+  sed "0,/$before/s//$after/" "$flutter_job" > "$candidate"
+  ! cmp -s "$flutter_job" "$candidate"
+  ! validate_flutter_job "$candidate"
+done
+
 native="$repo_root/test/attachment_custody_native_test.sh"
 for invalid in '' 'contract,contract' 'contract contract'; do
   result="$(ATTACHMENT_CUSTODY_SUITE="$invalid" CXX=clang++ bash "$native" 2>&1 || true)"
