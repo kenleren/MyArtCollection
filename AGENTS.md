@@ -80,14 +80,13 @@ exception.
 
 ## Documentation Sources
 
-When changing behavior, check the relevant local docs first:
+Read the reference for the surface being changed:
 
-- `docs/NORTH_STAR.md`
-- `docs/ARCHITECTURE.md`
-- `docs/SECRET_HYGIENE.md`
-- `docs/COPY_TRUST_SPEC.md`
-- `docs/AI_BROKER_AUTH_AND_QUOTA_SPEC.md`
-- `docs/AI_BROKER_PAYLOAD_AND_TELEMETRY_SPEC.md`
-- `docs/COSTED_AI_BACKEND_GATE_SPEC.md`
-- `docs/AI_PROVIDER_DATA_AND_SOURCE_RIGHTS_SPEC.md`
-- `docs/FIREBASE_TELEMETRY_POLICY.md`
+- Product scope or architecture: `docs/NORTH_STAR.md`, `docs/ARCHITECTURE.md`.
+- Secret handling: `docs/SECRET_HYGIENE.md`; the credential restrictions above remain binding.
+- AI, privacy, document, export or valuation wording: `docs/COPY_TRUST_SPEC.md`.
+- Broker identity, quotas or credits: `docs/AI_BROKER_AUTH_AND_QUOTA_SPEC.md`, `docs/COSTED_AI_BACKEND_GATE_SPEC.md`.
+- Broker payloads or telemetry: `docs/AI_BROKER_PAYLOAD_AND_TELEMETRY_SPEC.md`, `docs/FIREBASE_TELEMETRY_POLICY.md`.
+- Provider data use or source rights: `docs/AI_PROVIDER_DATA_AND_SOURCE_RIGHTS_SPEC.md`.
+
+Do not load unrelated references for every behavior change. Preserve the independent-review and provider-release requirements above.
