@@ -188,3 +188,26 @@ green check named `Release readiness`, repository controls must block merge
 until the trusted workflow or required CODEOWNERS/latest-push review approves
 the change. Ruleset, branch-protection, merge, and administrator changes remain
 human-owned and are outside this implementation task.
+
+## Native race failure diagnostics
+
+A native test failure remains fatal. The host harness reports only its fixed
+exit code through `CUSTODY_NATIVE_RESULT`; raw compiler/harness output is
+removed. Exit 64 means invalid invocation and 65 means an otherwise unclassified
+assertion. ThreadSanitizer's exit 66 remains a runtime/sanitizer failure. Race
+assertions have stable identifiers:
+
+| Exit | Assertion |
+| --- | --- |
+| 80 | Leaf-race publication setup failed |
+| 81 / 82 | Leaf race changed the outside sentinel during attempts / after join |
+| 83 | Intermediate-race publication setup failed |
+| 84 / 85 | Intermediate race changed the outside sentinel during attempts / after join |
+| 86 | Export leaf race opened an outside payload |
+| 87 / 88 | Export leaf race changed the outside sentinel during attempts / after join |
+| 89 | Export intermediate race opened an outside payload |
+| 90 / 91 | Export intermediate race changed the outside sentinel during attempts / after join |
+
+These identifiers do not change the assertions, sanitizer settings or 40
+repetitions per scenario. An intermittent assertion must be diagnosed; a later
+passing run does not resolve an earlier failure.
