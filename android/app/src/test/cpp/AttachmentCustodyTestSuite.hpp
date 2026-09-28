@@ -909,6 +909,12 @@ inline std::string fail_closed_capability_test() {
   return require(scan.outcome == "scanComplete", "failed capability probe left unsafe nodes");
 }
 
+inline std::string export_digest(const std::string& bytes) {
+  custody::Sha256 hash;
+  hash.update(reinterpret_cast<const unsigned char*>(bytes.data()), bytes.size());
+  return hash.finish();
+}
+
 inline std::string export_pair_confinement_tests() {
   const fs::path root = unique_path("archivale-export-pair-");
   const fs::path reports = root / "generated_exports/reports";
@@ -916,16 +922,17 @@ inline std::string export_pair_confinement_tests() {
   const std::string name = "report-safe.pdf";
   const std::string expected_payload = "%PDF-1.4\ncommitted\n%%EOF\n";
   const std::string expected_metadata = "{\"state\":\"complete\"}";
+  const std::string expected_digest = export_digest(expected_payload);
   write_file(reports / name, expected_payload);
   write_file(reports / (name + ".json"), expected_metadata);
 
-  auto pair = custody::open_export_pair(root.string(), (reports / name).string());
+  auto pair = custody::open_export_pair(root.string(), (reports / name).string(), expected_payload.size(), expected_digest);
   if (!pair.valid() || read_descriptor(pair.payload.get()) != expected_payload ||
       read_descriptor(pair.metadata.get()) != expected_metadata) {
     return "descriptor-relative export pair did not open exact committed files";
   }
-  if (custody::open_export_pair(root.string(), (root / "private.pdf").string()).valid() ||
-      custody::open_export_pair(root.string(), (reports / "../private.pdf").string()).valid()) {
+  if (custody::open_export_pair(root.string(), (root / "private.pdf").string(), expected_payload.size(), expected_digest).valid() ||
+      custody::open_export_pair(root.string(), (reports / "../private.pdf").string(), expected_payload.size(), expected_digest).valid()) {
     return "export pair accepted non-exact lexical geometry";
   }
 
@@ -937,7 +944,7 @@ inline std::string export_pair_confinement_tests() {
   const Fingerprint sentinel_before = fingerprint(sentinel);
   fs::remove_all(reports);
   fs::create_directory_symlink(outside, reports);
-  if (custody::open_export_pair(root.string(), (reports / name).string()).valid()) {
+  if (custody::open_export_pair(root.string(), (reports / name).string(), expected_payload.size(), expected_digest).valid()) {
     return "intermediate export-directory symlink was accepted";
   }
   if (!same_fingerprint(sentinel_before, fingerprint(sentinel))) {
@@ -948,7 +955,7 @@ inline std::string export_pair_confinement_tests() {
   fs::create_directories(reports);
   fs::create_hard_link(sentinel, reports / name);
   write_file(reports / (name + ".json"), expected_metadata);
-  if (custody::open_export_pair(root.string(), (reports / name).string()).valid()) {
+  if (custody::open_export_pair(root.string(), (reports / name).string(), expected_payload.size(), expected_digest).valid()) {
     return "multiply-linked export payload was accepted";
   }
   if (!same_fingerprint(sentinel_before, fingerprint(sentinel))) {
@@ -956,6 +963,62 @@ inline std::string export_pair_confinement_tests() {
   }
   fs::remove_all(root);
   fs::remove_all(outside);
+  return {};
+}
+
+inline std::string export_publication_authority_tests() {
+  const fs::path root = unique_path("archivale-export-authority-");
+  const fs::path reports = root / "generated_exports/reports";
+  const fs::path outside = unique_path("archivale-export-authority-outside-");
+  fs::create_directories(reports);
+  const fs::path payload = reports / "report-authority.pdf";
+  const fs::path metadata = reports / "report-authority.pdf.json";
+  const std::string committed = "%PDF-1.4\ncommitted payload\n%%EOF\n";
+  const std::string substitute(committed.size(), 'x');
+  const std::string expected_digest = export_digest(committed);
+  write_file(outside, substitute);
+  const Fingerprint outside_before = fingerprint(outside);
+  const auto metadata_for = [&](const std::string& bytes) {
+    return "{\"state\":\"complete\",\"byte_size\":" + std::to_string(bytes.size()) +
+           ",\"checksum_sha256\":\"" + export_digest(bytes) + "\"}";
+  };
+  for (const bool replace_metadata : {false, true}) {
+    write_file(payload, committed);
+    write_file(metadata, metadata_for(committed));
+    custody::test_at_boundary([&](const char* point) {
+      if (std::string(point) != "export.afterKindOpen") return;
+      fs::rename(payload, reports / "held");
+      fs::copy_file(outside, payload);
+      if (replace_metadata) write_file(metadata, metadata_for(substitute));
+    });
+    auto pair = custody::open_export_pair(root.string(), payload.string(),
+                                          committed.size(), expected_digest);
+    custody::test_reset_hooks();
+    if (pair.valid()) return "export substituted bytes acquired publication authority";
+    if (!same_fingerprint(outside_before, fingerprint(outside))) {
+      return "export authority regression changed outside sentinel";
+    }
+  }
+  write_file(payload, committed);
+  write_file(metadata, metadata_for(committed));
+  if (custody::open_export_pair(root.string(), payload.string(), 0, expected_digest).valid() ||
+      custody::open_export_pair(root.string(), payload.string(), committed.size(), "").valid() ||
+      custody::open_export_pair(root.string(), payload.string(), committed.size(), std::string(64, 'g')).valid() ||
+      custody::open_export_pair(root.string(), payload.string(), committed.size() + 1, expected_digest).valid()) {
+    return "export accepted missing or invalid publication expectation";
+  }
+  auto pair = custody::open_export_pair(root.string(), payload.string(), committed.size(), expected_digest);
+  if (!pair.valid() || lseek(pair.payload.get(), 0, SEEK_CUR) != 0 ||
+      read_descriptor(pair.payload.get()) != committed) {
+    return "verified export descriptor was not rewound to committed bytes";
+  }
+  // A sparse hostile replacement is rejected by size without reading gigabytes.
+  if (truncate(payload.c_str(), static_cast<off_t>(8ULL * 1024 * 1024 * 1024)) != 0 ||
+      custody::open_export_pair(root.string(), payload.string(), committed.size(), expected_digest).valid()) {
+    return "oversized export substitution did not fail closed";
+  }
+  fs::remove_all(root);
+  fs::remove(outside);
   return {};
 }
 
@@ -1047,6 +1110,7 @@ inline std::string race_tests(int repetitions = kRaceRepetitions) {
     const fs::path outside = unique_path("archivale-export-leaf-outside-");
     const std::string name = "report-leaf-race.pdf";
     const std::string committed = "%PDF-1.4\ncommitted-leaf-race\n%%EOF\n";
+    const std::string committed_digest = export_digest(committed);
     fs::create_directories(reports);
     fs::create_directories(outside);
     const fs::path payload = reports / name;
@@ -1068,7 +1132,7 @@ inline std::string race_tests(int repetitions = kRaceRepetitions) {
       }
     });
     for (int attempt = 0; attempt < 40; ++attempt) {
-      auto pair = custody::open_export_pair(root.string(), payload.string());
+      auto pair = custody::open_export_pair(root.string(), payload.string(), committed.size(), committed_digest);
       if (pair.valid() && read_descriptor(pair.payload.get()) != committed) {
         stop.store(true);
         attacker.join();
@@ -1097,6 +1161,7 @@ inline std::string race_tests(int repetitions = kRaceRepetitions) {
     const fs::path outside = unique_path("archivale-export-race-outside-");
     const std::string name = "report-race.pdf";
     const std::string committed = "%PDF-1.4\ncommitted-race\n%%EOF\n";
+    const std::string committed_digest = export_digest(committed);
     fs::create_directories(reports);
     fs::create_directories(outside);
     write_file(reports / name, committed);
@@ -1114,7 +1179,7 @@ inline std::string race_tests(int repetitions = kRaceRepetitions) {
       }
     });
     for (int attempt = 0; attempt < 40; ++attempt) {
-      auto pair = custody::open_export_pair(root.string(), (reports / name).string());
+      auto pair = custody::open_export_pair(root.string(), (reports / name).string(), committed.size(), committed_digest);
       if (pair.valid() && read_descriptor(pair.payload.get()) != committed) {
         stop.store(true);
         attacker.join();
@@ -1146,7 +1211,7 @@ inline std::string run_contract_suite() {
                            exclusive_durability_retry_tests,
                            publication_scan_negative_tests, erasure_control_tests,
                            erasure_race_and_exclusivity_tests, fail_closed_capability_test,
-                           export_pair_confinement_tests}) {
+                           export_pair_confinement_tests, export_publication_authority_tests}) {
     const std::string failure = test();
     if (!failure.empty()) return failure;
   }

@@ -38,6 +38,8 @@ internal object ExportSaveCopyPolicy {
         mimeType: String,
         payload: FileInputStream,
         metadataPayload: InputStream,
+        expectedByteSize: Long,
+        expectedSha256: String,
     ): ValidatedExportSource? {
         return try {
             val exportRoot = File(applicationDocumentsDirectory.absoluteFile, "generated_exports")
@@ -46,7 +48,9 @@ internal object ExportSaveCopyPolicy {
             if (Files.isSymbolicLink(sourceFile.toPath()) || !canonicalSource.isFile) {
                 return null
             }
+            if (expectedByteSize <= 0 || !sha256.matches(expectedSha256)) return null
             val metadata = parseMetadata(metadataPayload) ?: return null
+            if (metadata.byteSize != expectedByteSize || metadata.checksum != expectedSha256) return null
             val extension = if (metadata.kind == "report") "pdf" else "zip"
             val directory = if (metadata.kind == "report") "reports" else "archives"
             val expected = File(exportRoot, "$directory/${metadata.artifactId}.$extension")

@@ -31,6 +31,8 @@ const INSTALLATION_ID = 1;
 const BASE_SHA = "a".repeat(40);
 const HEAD_SHA = "b".repeat(40);
 const CHECK_ID = 7001;
+const RACE_DELIVERIES = ["race-shared", ...Array.from({ length: 16 }, (_, index) => `race-${index}`)];
+const RACE_WITNESS = "race-completion-witness";
 const CONFIG = JSON.stringify({ contract_version: 1, repository_id: REPOSITORY_ID, repository_name: "kenleren/MyArtCollection", app_id: APP_ID, installation_id: INSTALLATION_ID, github_api_origin: "https://api.github.com", github_api_version: "2022-11-28", policy_sha256: "a443af2eb86fa310ea8705826e70d1b178a4d8d231060440ed522d3069b9a80d", egress_manifest_sha256: "0e1666e746a12f05885ddc7c13919fd8b03e6fed6af873b47c78050e358148f3", permissions: { checks: "write", contents: "read", metadata: "read", pull_requests: "read" }, quota: { window_seconds: 86400, warning_units: 1000, hard_units: 10000 } });
 const sleep = (ms) => new Promise((resolveSleep) => setTimeout(resolveSleep, ms));
 const sha256 = (value) => createHash("sha256").update(value).digest("hex");
@@ -148,8 +150,11 @@ class SyntheticEgress {
     this.gateTriggered = false;
     this.gateReached = new Promise((resolveGate) => { this.resolveGate = resolveGate; });
     this.gateRelease = new Promise((resolveRelease) => { this.resolveRelease = resolveRelease; });
+    this.witnessTriggered = false;
+    this.witnessRelease = new Promise((resolveRelease) => { this.resolveWitness = resolveRelease; });
   }
   releaseGate() { this.resolveRelease(); }
+  releaseWitness() { this.resolveWitness(); }
   count(routeId) { return this.routes.filter((row) => row.route_id === routeId).length; }
   total() { return this.routes.length; }
   response(value, options = {}) {
@@ -170,9 +175,15 @@ class SyntheticEgress {
     if (method === "GET" && path === `/repositories/${REPOSITORY_ID}/pulls/1` && !url.search) {
       this.record("pullRequest");
       if (this.fixture.gate && this.count("pullRequest") === 1) { this.gateTriggered = true; this.resolveGate(); await this.gateRelease; }
+      if (this.fixture.raceWitness && this.count("pullRequest") === 6) { this.witnessTriggered = true; await this.witnessRelease; }
       return this.response({ base: { ref: "main", sha: BASE_SHA, repo: { id: REPOSITORY_ID, full_name: "kenleren/MyArtCollection" } }, head: { sha: HEAD_SHA, repo: { id: REPOSITORY_ID, full_name: "kenleren/MyArtCollection" } }, changed_files: this.fixture.declaredCount ?? this.fixture.files.length, number: 1, state: "open" });
     }
-    if (method === "GET" && path === `/repositories/${REPOSITORY_ID}/git/ref/heads/main` && !url.search) { this.record("mainRef"); return this.response({ object: { sha: BASE_SHA } }); }
+    if (method === "GET" && path === `/repositories/${REPOSITORY_ID}/git/ref/heads/main` && !url.search) {
+      this.record("mainRef");
+      // Regression injection: arrival of the last readback is not completion.
+      if (this.fixture.raceWitness && this.count("mainRef") === 5) await sleep(350);
+      return this.response({ object: { sha: BASE_SHA } });
+    }
     if (method === "GET" && path === `/repositories/${REPOSITORY_ID}/pulls/1/files`) return this.pullFiles(url);
     if (method === "POST" && path === `/repositories/${REPOSITORY_ID}/check-runs` && !url.search) {
       this.createAttempts += 1; const body = await request.json();
@@ -228,6 +239,7 @@ function makeOptions(creds, egress, persist) {
 function fixtureFor(caseId) {
   const fixture = { files: defaultFiles(1) };
   if (["race.duplicate_same_generation", "alarm.sole_drainer", "telemetry.watchdog"].includes(caseId)) fixture.gate = true;
+  if (caseId === "race.duplicate_same_generation") fixture.raceWitness = true;
   if (caseId === "recovery.ambiguous_create") fixture.ambiguousCreate = true;
   if (caseId === "recovery.definite_presend") fixture.definiteTokenFailure = true;
   if (caseId === "pagination.101") { fixture.files = defaultFiles(101); fixture.finalRelations = true; }
@@ -287,6 +299,13 @@ function stoppedInspection(caseId, persistRoot, objectId, creds) {
     for (const row of parsed) { const prefix = String(row.key).split("/")[0]; prefixCounts[prefix] = (prefixCounts[prefix] ?? 0) + 1; const state = row.value?.state; if (typeof state === "string") states[state] = (states[state] ?? 0) + 1; staleLeases += countStaleLeases(row.value); }
     const watchdog = metaParsed.find((row) => row.key === "watchdog/v1")?.value; const watchdogFields = watchdog && typeof watchdog === "object" ? Object.keys(watchdog).sort() : [];
     const alarmCount = metaParsed.find((row) => row.key === "alarm_count/v1")?.value ?? 0;
+    if (caseId === "race.duplicate_same_generation") {
+      const receipts = parsed.filter((row) => row.key.startsWith("receipt/"));
+      ensure(receipts.length === RACE_DELIVERIES.length + 1 && RACE_DELIVERIES.every((delivery) =>
+        receipts.find((row) => row.key === `receipt/${INSTALLATION_ID}/${delivery}`)?.value?.state === "terminal_success") &&
+        receipts.find((row) => row.key === `receipt/${INSTALLATION_ID}/${RACE_WITNESS}`)?.value?.state === "snapshotting",
+      caseId, "race_cohort_terminal");
+    }
     const retries = metaParsed.filter((row) => row.key.startsWith("retry/")); const retryClasses = retries.map((row) => row.value?.error_class).filter((value) => typeof value === "string").sort(); const retryAttempts = Math.max(0, ...retries.map((row) => Number(row.value?.attempts) || 0));
     const restoreRows = captureRestoreFixture ? {
       kv: kv.map((row) => ({ durable_row: row.key, version: Number(row.version), value_json: String(row.value_json) })),
@@ -324,7 +343,7 @@ class Lane {
     }
     if (this.persistRoot) { const root = this.persistRoot; rmSync(root, { recursive: true, force: true }); ensure(!existsSync(root), this.caseId, "temp_cleanup"); this.persistRoot = null; }
   }
-  async cleanup() { if (this.mf) { try { await this.mf.dispose(); } catch {} this.mf = null; } if (this.persistRoot) { rmSync(this.persistRoot, { recursive: true, force: true }); this.persistRoot = null; } }
+  async cleanup() { if (this.mf) { try { await this.mf.dispose(); } catch {} this.mf = null; } for (const phase of this.phases) phase.releaseWitness(); if (this.persistRoot) { rmSync(this.persistRoot, { recursive: true, force: true }); this.persistRoot = null; } }
 }
 
 async function standardLifecycle(lane, options = {}) {
@@ -344,9 +363,21 @@ async function runLane(caseId, kind, creds) {
       await lane.start(); const body = makeBody();
       await dispatchWebhook(lane.mf, lane.creds, "race-shared", body, lane.record); await waitFor(caseId, () => lane.egress.gateTriggered, "gate_timeout");
       const requests = [...Array.from({ length: 31 }, () => dispatchWebhook(lane.mf, lane.creds, "race-shared", body, lane.record)), ...Array.from({ length: 16 }, (_, index) => dispatchWebhook(lane.mf, lane.creds, `race-${index}`, body, lane.record))];
-      await Promise.all(requests); const scheduled = runScheduledStep(lane.mf, lane.record, "during"); lane.egress.releaseGate(); await scheduled; await waitFor(caseId, () => aggregateEgress(lane.phases).update === 1); await runScheduledStep(lane.mf, lane.record, "quiescence-1"); await runScheduledStep(lane.mf, lane.record, "quiescence-2"); lane.record.post_terminal = true;
-      const aggregate = aggregateEgress(lane.phases); ensure(lane.record.http.length === 48 && lane.record.http.every((status) => status === 202) && aggregate.create === 1 && aggregate.update === 1, caseId, "race_outcome");
-      await lane.finish((inspection) => { ensure(inspection.prefix_counts.receipt === 17 && inspection.prefix_counts.generation === 1 && inspection.prefix_counts.current === 1 && inspection.prefix_counts.binding === 1 && inspection.stale_leases === 0, caseId, "race_sqlite"); });
+      await Promise.all(requests); const scheduled = runScheduledStep(lane.mf, lane.record, "during"); lane.egress.releaseGate(); await scheduled;
+      await waitFor(caseId, () => aggregateEgress(lane.phases).update === 1);
+      // The second alarm has captured its receipt list by this readback.
+      // Admit a distinct witness afterward, then wait for its next-alarm
+      // snapshot. Automatic alarms are serial, so this proves the original
+      // cohort finished even while the last response above is deliberately
+      // delayed. Hold the witness through disposal and stopped inspection.
+      await waitFor(caseId, () => lane.egress.count("pullFiles") === 2 &&
+        lane.egress.count("pullRequest") === 5 && lane.egress.count("mainRef") === 5,
+      "duplicate_batch_incomplete");
+      await dispatchWebhook(lane.mf, lane.creds, RACE_WITNESS, body, lane.record);
+      await waitFor(caseId, () => lane.egress.witnessTriggered, "race_witness_timeout");
+      await runScheduledStep(lane.mf, lane.record, "cohort-terminal-1"); await runScheduledStep(lane.mf, lane.record, "cohort-terminal-2"); lane.record.post_terminal = true;
+      const aggregate = aggregateEgress(lane.phases); ensure(lane.record.http.length === 49 && lane.record.http.every((status) => status === 202) && aggregate.create === 1 && aggregate.update === 1, caseId, "race_outcome");
+      await lane.finish((inspection) => { ensure(inspection.prefix_counts.receipt === 18 && inspection.prefix_counts.generation === 1 && inspection.prefix_counts.current === 1 && inspection.prefix_counts.binding === 1 && inspection.stale_leases === 0 && inspection.states.terminal_success === 18 && inspection.states.snapshotting === 1 && !inspection.states.received && !inspection.states.enqueued, caseId, "race_sqlite"); });
     } else if (caseId === "race.delivery_conflict") {
       await lane.start(); const first = dispatchWebhook(lane.mf, lane.creds, "conflict-delivery", makeBody("opened"), lane.record); const second = dispatchWebhook(lane.mf, lane.creds, "conflict-delivery", makeBody("reopened"), lane.record);
       await Promise.all([first, second]); await runScheduledStep(lane.mf, lane.record, "drive"); await runScheduledStep(lane.mf, lane.record, "quiescence-1");
