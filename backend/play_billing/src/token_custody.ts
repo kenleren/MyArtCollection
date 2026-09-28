@@ -1,9 +1,10 @@
+import { validLifecycleFields, type LifecycleFields } from './lifecycle.js';
 import { BILLING_DATABASE_ID, PACKAGE_NAME } from './constants.js';
 import type { BillingDeadline } from './deadline.js';
 
-export const CUSTODY_VERSION = 'play-token-custody-v1';
+export const CUSTODY_VERSION = 'play-token-custody-v2';
 export const MAX_TOKEN_BYTES = 4096;
-export interface TokenContext { accountSubject: string; tokenFingerprint: string }
+export interface TokenContext extends LifecycleFields { accountSubject: string; tokenFingerprint: string }
 export interface TokenEnvelope {
   version: typeof CUSTODY_VERSION;
   keyVersion: string;
@@ -39,13 +40,13 @@ export function validBase64(value: string, maximum: number): boolean {
     Buffer.from(value, 'base64').toString('base64') === value;
 }
 export function custodyAad(context: TokenContext, keyVersion: string): Buffer {
-  if (!/^[a-f0-9]{64}$/.test(context.accountSubject) ||
+  if (!validLifecycleFields(context) || !/^[a-f0-9]{64}$/.test(context.accountSubject) ||
       !/^[a-f0-9]{64}$/.test(context.tokenFingerprint) || !validKeyVersion(keyVersion)) {
     throw custodyUnavailable();
   }
   return Buffer.from(JSON.stringify([
     CUSTODY_VERSION, PACKAGE_NAME, BILLING_DATABASE_ID,
-    context.accountSubject, context.tokenFingerprint, keyVersion,
+    context.accountSubject, context.lifecycleEpoch, String(context.lifecycleGeneration), context.tokenFingerprint, keyVersion,
   ]), 'utf8');
 }
 /** CRC32C is KMS transport integrity, not encryption or authentication. */

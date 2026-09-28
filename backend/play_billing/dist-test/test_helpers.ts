@@ -3,6 +3,7 @@ import { testCustody } from './fake_custody.js';
 import { randomBytes, randomUUID } from 'node:crypto';
 
 import {
+  COLLECTIONS,
   DISCLOSURE_PURPOSE,
   DISCLOSURE_VERSION,
   PRODUCT_ALLOWLIST,
@@ -60,9 +61,9 @@ export interface Harness {
 export function createHarness(hooks?: VerificationHooks): Harness {
   const clock = new FakeClock();
   const database = new InMemoryBillingDatabase();
-  const repository = new BillingRepository(database, new DeterministicNonceSource());
   const play = new FakePlaySubscriptionsAdapter();
   const identifiers = createBillingIdentifiers(randomBytes(32));
+  const repository = new BillingRepository(database, new DeterministicNonceSource(), identifiers);
   const custody = testCustody();
   const identity = { uid: randomBytes(24).toString('base64url') };
   return {
@@ -88,7 +89,7 @@ export function verifyRequest(
 ): VerifyRequest {
   return {
     requestId,
-    version: 'play-billing-v2',
+    version: 'play-billing-v3',
     billingDisclosureVersion: DISCLOSURE_VERSION,
     productId,
     purchaseToken: token,
@@ -105,6 +106,8 @@ export async function acceptDisclosure(harness: Harness): Promise<void> {
   if (!('status' in response) || response.status !== 'accepted') {
     throw new Error('test disclosure setup failed');
   }
+  const prepared = await harness.repository.preparePurchase(harness.identifiers.accountSubject(harness.identity.uid), harness.clock.now());
+  if (prepared.kind !== 'ready') throw new Error('test routing setup failed');
 }
 
 export interface PurchaseOptions {
@@ -131,9 +134,7 @@ export function eligiblePurchase(
       options.acknowledgementState ?? 'ACKNOWLEDGEMENT_STATE_ACKNOWLEDGED',
     linkedPurchaseToken: options.linkedPurchaseToken,
     externalAccountIdentifiers: {
-      obfuscatedExternalAccountId: harness.identifiers.obfuscatedAccountId(
-        (options.accountIdentity ?? harness.identity).uid,
-      ),
+      obfuscatedExternalAccountId: (harness.database.snapshotForTest().get(`${COLLECTIONS.lifecycles}/${harness.identifiers.accountSubject((options.accountIdentity ?? harness.identity).uid)}`) as { obfuscatedAccountId: string } | undefined)?.obfuscatedAccountId ?? 'synthetic-unregistered-account' ,
     },
     lineItems: [
       {

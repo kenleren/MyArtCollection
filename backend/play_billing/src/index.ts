@@ -14,6 +14,7 @@ export type {
   DisclosureResponse,
   FreeResponse,
   PaidResponse,
+  PrepareResponse,
   PlaySubscriptionPurchase,
   VerifyRequest,
   VerifyResponse,
@@ -47,6 +48,7 @@ export {
   type StringParameter,
 } from './runtime_config.js';
 export {
+  preparePlayPurchase,
   acceptPlayBillingDisclosure,
   revokePlayBillingDisclosure,
   verifyPlaySubscription,

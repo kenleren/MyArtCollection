@@ -60,10 +60,11 @@ describe('billing isolation and redaction', () => {
     const stored = [...harness.database.snapshotForTest().values()];
     assert.equal(containsValue(stored, token), false);
     assert.equal(containsValue(stored, harness.identity.uid), false);
-    assert.equal(
-      containsValue(stored, harness.identifiers.obfuscatedAccountId(harness.identity.uid)),
-      false,
-    );
+    const root = recordsInCollection(harness.database, COLLECTIONS.lifecycles)[0] as Record<string, unknown>;
+    assert.equal(typeof root.obfuscatedAccountId, 'string');
+    for (const [path, record] of harness.database.snapshotForTest()) {
+      if (!path.startsWith(`${COLLECTIONS.lifecycles}/`)) assert.equal(containsValue(record, root.obfuscatedAccountId as string), false);
+    }
   });
 
   test('opaque attempt fields exist only in the three server-only collections', async () => {
@@ -102,6 +103,7 @@ describe('billing isolation and redaction', () => {
       'src/constants.ts',
       'src/contracts.ts',
       'src/crypto.ts',
+      'src/lifecycle.ts',
       'src/deadline.ts',
       'src/token_custody.ts',
       'src/kms_token_custody.ts',

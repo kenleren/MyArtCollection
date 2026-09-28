@@ -279,13 +279,15 @@ describe('PlayBillingService verification contract', () => {
       accepted: true,
     });
     assert.equal('status' in disclosure && disclosure.status, 'accepted');
+    await harness.repository.preparePurchase(harness.identifiers.accountSubject(otherIdentity.uid), harness.clock.now());
     harness.play.setPurchase(
       token,
       eligiblePurchase(harness, { accountIdentity: otherIdentity }),
     );
     const second = await harness.service.verifySubscription(otherIdentity, verifyRequest(token));
     assert.equal(second.state, 'free');
-    assert.equal('reason' in second && second.reason, 'not_verified');
+    assert.equal('reason' in second && second.reason, 'unsafe_record');
+    assert.equal(harness.play.getCalls.length, 1);
     assert.equal(recordsInCollection(harness.database, COLLECTIONS.bindings).length, 1);
   });
 
@@ -565,7 +567,7 @@ function bytesDiffer(left: Uint8Array, right: Uint8Array): boolean {
 }
 
 
-test('legacy disclosure never authorizes Play but can be affirmatively replaced by v2', async () => {
+test('legacy disclosure never authorizes Play but can be affirmatively replaced by v3', async () => {
   const harness = createHarness();
   await acceptDisclosure(harness);
   const subject = harness.identifiers.accountSubject(harness.identity.uid);

@@ -36,6 +36,10 @@ function createTransactionAdapter(
       const result = await transaction.get(firestore.collection('playBillingPurchaseBindings').where('accountSubject', '==', subject).limit(1));
       return result.empty ? undefined : normalizeFirestoreValue(result.docs[0]!.data());
     },
+    findSubjectRoute: async (subject) => {
+      const result = await transaction.get(firestore.collection('playBillingAccountRoutes').where('accountSubject', '==', subject).limit(1));
+      return result.empty ? undefined : normalizeFirestoreValue(result.docs[0]!.data());
+    },
     set: <Value>(collection: BillingCollection, id: string, value: Value) => {
       transaction.set(
         firestore.collection(collection).doc(id),

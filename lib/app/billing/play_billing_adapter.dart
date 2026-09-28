@@ -11,8 +11,8 @@ import '../research/firebase_research_runtime.dart';
 import '../account/firebase_account_service.dart';
 import 'entitlement_plan.dart';
 
-const _contractVersion = 'play-billing-v2';
-const _disclosureVersion = 'billing-verification-disclosure-v3';
+const _contractVersion = 'play-billing-v3';
+const _disclosureVersion = 'billing-verification-disclosure-v4';
 const _disclosurePurpose = 'play_subscription_verification';
 const _maxLease = Duration(minutes: 15);
 // A device can start with a stale wall clock. The lease never uses wall time,
@@ -75,7 +75,9 @@ abstract interface class PlayBillingStore {
   Stream<PlayPurchase> get purchaseStream;
   Future<bool> buySubscription(PlayProduct product, String obfuscatedAccountId);
   Future<void> restorePurchases();
-  Future<PlayOwnedPurchases> queryOwnedPurchases(String accountId);
+
+  /// Queries the current Play account, without asserting Archivale ownership.
+  Future<PlayOwnedPurchases> queryOwnedPurchases();
 }
 
 /// The narrow UI-facing command surface. It intentionally exposes no payment
@@ -153,14 +155,14 @@ class InAppPurchasePlayBillingStore implements PlayBillingStore {
   Future<void> restorePurchases() => _inAppPurchase.restorePurchases();
 
   @override
-  Future<PlayOwnedPurchases> queryOwnedPurchases(String accountId) async {
+  Future<PlayOwnedPurchases> queryOwnedPurchases() async {
     try {
       if (!await _inAppPurchase.isAvailable()) {
         return const PlayOwnedPurchases(unavailable: true);
       }
       final result = await _inAppPurchase
           .getPlatformAddition<InAppPurchaseAndroidPlatformAddition>()
-          .queryPastPurchases(applicationUserName: accountId);
+          .queryPastPurchases();
       if (result.error != null) {
         return const PlayOwnedPurchases(unavailable: true);
       }
@@ -252,11 +254,38 @@ class PlayBillingVerification {
   bool get isPaid => plan != null && leaseDuration != null;
 }
 
+/// A durable account route permits purchase dispatch, never paid access.
+class PlayBillingPreparation {
+  const PlayBillingPreparation.ready({
+    required this.requestId,
+    required this.obfuscatedAccountId,
+    required this.lifecycleEpoch,
+  }) : presentation = EntitlementPresentation.idle;
+
+  const PlayBillingPreparation.unavailable(
+    this.requestId, {
+    this.presentation = EntitlementPresentation.unavailable,
+  }) : obfuscatedAccountId = null,
+       lifecycleEpoch = null;
+
+  final String requestId;
+  final String? obfuscatedAccountId;
+  final String? lifecycleEpoch;
+  final EntitlementPresentation presentation;
+
+  bool get isReady =>
+      _isRequestId(requestId) &&
+      _isCanonicalAccountRoute(obfuscatedAccountId) &&
+      lifecycleEpoch != null &&
+      RegExp(r'^[0-9a-f]{32}$').hasMatch(lifecycleEpoch!);
+}
+
 abstract interface class PlayBillingVerifier {
   /// Called only after the billing disclosure has been accepted in the UI.
   Future<String?> ensureBillingIdentity({bool useExistingAccount = false});
   String? currentBillingUserId();
   Future<bool> acceptDisclosure(String requestId);
+  Future<PlayBillingPreparation> preparePurchase(String requestId);
   Future<PlayBillingVerification> restoreAccount(String requestId);
   Future<PlayBillingVerification> verify({
     required String requestId,
@@ -475,6 +504,23 @@ class FirebasePlayBillingVerifier
     }
   }
 
+  @override
+  Future<PlayBillingPreparation> preparePurchase(String requestId) async {
+    if (!_identityInitialized) {
+      return PlayBillingPreparation.unavailable(requestId);
+    }
+    try {
+      final result = await _callable('preparePlayPurchase').call({
+        'version': _contractVersion,
+        'requestId': requestId,
+        'billingDisclosureVersion': _disclosureVersion,
+      });
+      return _parsePreparation(result, requestId);
+    } catch (_) {
+      return PlayBillingPreparation.unavailable(requestId);
+    }
+  }
+
   PlayBillingCallable _callable(String name) => _callableFactory.create(
     name,
     options: const PlayBillingCallableOptions(
@@ -483,6 +529,51 @@ class FirebasePlayBillingVerifier
       limitedUseAppCheckToken: true,
     ),
   );
+}
+
+PlayBillingPreparation _parsePreparation(Object? raw, String requestId) {
+  if (raw is! Map ||
+      raw['version'] != _contractVersion ||
+      raw['requestId'] != requestId ||
+      !_isRequestId(requestId)) {
+    return PlayBillingPreparation.unavailable(requestId);
+  }
+  if (raw['status'] == 'ready' &&
+      _hasKeys(raw, const {
+        'version',
+        'requestId',
+        'status',
+        'obfuscatedAccountId',
+        'lifecycleEpoch',
+      }) &&
+      raw['obfuscatedAccountId'] is String &&
+      raw['lifecycleEpoch'] is String) {
+    final preparation = PlayBillingPreparation.ready(
+      requestId: requestId,
+      obfuscatedAccountId: raw['obfuscatedAccountId'] as String,
+      lifecycleEpoch: raw['lifecycleEpoch'] as String,
+    );
+    if (preparation.isReady) return preparation;
+  }
+  if (raw['state'] == 'free' &&
+      _hasKeys(raw, const {
+        'version',
+        'requestId',
+        'state',
+        'status',
+        'reason',
+      }) &&
+      _preparationReasonsByStatus[raw['status']]?.contains(raw['reason']) ==
+          true) {
+    final presentation = _presentationForFreeReason(raw['reason']);
+    return PlayBillingPreparation.unavailable(
+      requestId,
+      presentation: presentation == EntitlementPresentation.idle
+          ? EntitlementPresentation.unavailable
+          : presentation,
+    );
+  }
+  return PlayBillingPreparation.unavailable(requestId);
 }
 
 PlayBillingVerification _parseVerification(
@@ -761,12 +852,30 @@ class PlayBillingEntitlementService implements BillingManagementService {
       _failPreflight(entryFence);
       return false;
     }
+    // Keep routing separate from both account recovery and receipt verification.
+    // No route is cached across account changes, retries or foreground resumes.
+    final preparationRequestId = _newRequestId();
+    PlayBillingPreparation preparation;
+    try {
+      preparation = await _verifier.preparePurchase(preparationRequestId);
+    } catch (_) {
+      preparation = PlayBillingPreparation.unavailable(preparationRequestId);
+    }
+    if (!_isFenceCurrent(entryFence, requireIdentity: true)) return false;
+    if (preparation.requestId != preparationRequestId || !preparation.isReady) {
+      _transitionFree(
+        presentation: preparation.presentation == EntitlementPresentation.idle
+            ? EntitlementPresentation.unavailable
+            : preparation.presentation,
+      );
+      return false;
+    }
     final purchaseFence = _beginOperation(uid);
     bool started;
     try {
       started = await _store.buySubscription(
         product,
-        _obfuscatedAccountId(uid),
+        preparation.obfuscatedAccountId!,
       );
     } catch (_) {
       if (_isFenceCurrent(purchaseFence, requireIdentity: true)) {
@@ -881,9 +990,7 @@ class PlayBillingEntitlementService implements BillingManagementService {
     }
     PlayOwnedPurchases owned;
     try {
-      owned = await _store.queryOwnedPurchases(
-        _obfuscatedAccountId(fence.uid!),
-      );
+      owned = await _store.queryOwnedPurchases();
     } catch (_) {
       owned = const PlayOwnedPurchases(unavailable: true);
     }
@@ -1436,11 +1543,33 @@ const _freeReasonsByStatus = <Object?, Set<String>>{
 bool _hasKeys(Map raw, Set<String> expected) =>
     raw.length == expected.length && raw.keys.every(expected.contains);
 
-String _obfuscatedAccountId(String uid) => base64Url
-    .encode(
-      sha256.convert(utf8.encode('archivale-play-account-v1\n$uid')).bytes,
-    )
-    .replaceAll('=', '');
+const _preparationReasonsByStatus = <Object?, Set<String>>{
+  'rejected': {
+    'invalid_request',
+    'identity_rejected',
+    'disclosure_required',
+    'recovery_required',
+    'unsafe_record',
+  },
+  'unavailable': {'temporarily_unavailable', 'rate_limited'},
+};
+
+bool _isRequestId(String value) => RegExp(
+  r'^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$',
+).hasMatch(value);
+
+bool _isCanonicalAccountRoute(String? value) {
+  if (value == null || !RegExp(r'^[A-Za-z0-9_-]{43}$').hasMatch(value)) {
+    return false;
+  }
+  try {
+    final decoded = base64Url.decode('$value=');
+    return decoded.length == 32 &&
+        base64Url.encode(decoded).replaceAll('=', '') == value;
+  } on FormatException {
+    return false;
+  }
+}
 
 String _newRequestId() {
   final random = Random.secure();

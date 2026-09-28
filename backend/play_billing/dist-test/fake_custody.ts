@@ -33,4 +33,4 @@ export function testCustody(transport = new FakeKmsTransport()): GoogleKmsTokenC
   return new GoogleKmsTokenCustody(TEST_KEY, [TEST_KEY], transport);
 }
 
-export const syntheticEnvelopeForRepositoryTests = { version: 'play-token-custody-v1' as const, keyVersion: TEST_KEY, ciphertext: Buffer.alloc(48, 7).toString('base64') };
+export const syntheticEnvelopeForRepositoryTests = { version: 'play-token-custody-v2' as const, keyVersion: TEST_KEY, ciphertext: Buffer.alloc(48, 7).toString('base64') };

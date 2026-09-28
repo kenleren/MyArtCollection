@@ -1,4 +1,4 @@
-import { createHash, createHmac, randomBytes } from 'node:crypto';
+import { createHmac, randomBytes } from 'node:crypto';
 
 import { ACTIVE_KEY_VERSION } from './constants.js';
 import type { NonceSource } from './contracts.js';
@@ -8,7 +8,7 @@ export interface BillingIdentifiers {
   accountSubject(uid: string): string;
   requestFingerprint(uid: string, requestId: string): string;
   tokenFingerprint(purchaseToken: string): string;
-  obfuscatedAccountId(uid: string): string;
+  routeFingerprint(obfuscatedAccountId: string): string;
 }
 
 export function createBillingIdentifiers(key: Uint8Array): BillingIdentifiers {
@@ -23,10 +23,7 @@ export function createBillingIdentifiers(key: Uint8Array): BillingIdentifiers {
     requestFingerprint: (uid, requestId) =>
       hmac('archivale-play-request-v1', `${uid}\n${requestId}`),
     tokenFingerprint: (token) => hmac('archivale-play-token-v1', token),
-    obfuscatedAccountId: (uid) =>
-      createHash('sha256')
-        .update(`archivale-play-account-v1\n${uid}`, 'utf8')
-        .digest('base64url'),
+    routeFingerprint: (route) => hmac('archivale-play-route-v1', route),
   };
 }
 

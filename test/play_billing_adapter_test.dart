@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:my_art_collection/app/account/firebase_account_service.dart';
 import 'support/fake_paid_account_gateway.dart';
 
@@ -37,6 +38,7 @@ void main() {
       await service.restore();
       expect((await service.currentState()).plan, EntitlementPlans.collector);
       expect(store.restoreCalls, 0);
+      expect(verifier.prepareRequests, isEmpty);
       expect(verifier.requests, isEmpty);
       expect(verifier.restoreRequests, hasLength(1));
       expect(await service.purchase(EntitlementPlans.starter), isFalse);
@@ -71,7 +73,7 @@ void main() {
     () async {
       await preparePurchase();
       final receipt = purchase(EntitlementPlans.starter);
-      store.ownedNext = (_) async => PlayOwnedPurchases(purchases: [receipt]);
+      store.ownedNext = () async => PlayOwnedPurchases(purchases: [receipt]);
       final verified = Completer<PlayBillingVerification>();
       verifier.next = (_) => verified.future;
       var completed = false;
@@ -184,7 +186,7 @@ void main() {
     'ambiguous device receipts fail visibly without guessing the plan',
     () async {
       await preparePurchase();
-      store.ownedNext = (_) async => PlayOwnedPurchases(
+      store.ownedNext = () async => PlayOwnedPurchases(
         purchases: [
           purchase(EntitlementPlans.starter, token: 'one'),
           purchase(EntitlementPlans.collector, token: 'two'),
@@ -211,7 +213,7 @@ void main() {
       store.emit(receipt);
       await tick();
       final oldId = verifier.requests.single;
-      store.ownedNext = (_) async => PlayOwnedPurchases(purchases: [receipt]);
+      store.ownedNext = () async => PlayOwnedPurchases(purchases: [receipt]);
       verifier.next = (request) =>
           verifier.paidFor(EntitlementPlans.starter, request);
       await service.restore();
@@ -227,7 +229,7 @@ void main() {
     'a pending receipt without a token never becomes an empty purchase list',
     () async {
       await preparePurchase();
-      store.ownedNext = (_) async => PlayOwnedPurchases(
+      store.ownedNext = () async => PlayOwnedPurchases(
         purchases: [
           purchase(
             EntitlementPlans.starter,
@@ -257,7 +259,7 @@ void main() {
         reason: 'verification_pending',
         presentation: EntitlementPresentation.verificationPending,
       );
-      store.ownedNext = (_) async =>
+      store.ownedNext = () async =>
           PlayOwnedPurchases(purchases: [purchase(EntitlementPlans.starter)]);
       store.emit(
         purchase(EntitlementPlans.starter, state: PlayPurchaseState.pending),
@@ -362,7 +364,7 @@ void main() {
       gateway.change((uid: 'uid-a', anonymous: false, google: false));
       await tick();
       response.complete({
-        'version': 'play-billing-v2',
+        'version': 'play-billing-v3',
         'requestId': 'ignored',
         'status': 'accepted',
       });
@@ -394,14 +396,145 @@ void main() {
   );
 
   test(
-    'purchase uses an obfuscated account ID only after billing identity bootstrap',
+    'purchase uses the prepared server route after account and receipt recovery',
     () async {
+      final order = <String>[];
       store.products = <PlayProduct>[product(EntitlementPlans.starter)];
+      verifier.restoreAccountNext = (request) {
+        order.add('account');
+        return PlayBillingVerification.free(
+          request,
+          outcome: 'none',
+          reason: 'no_known_purchase',
+        );
+      };
+      store.ownedNext = () {
+        order.add('receipts');
+        return const PlayOwnedPurchases();
+      };
+      verifier.prepareNext = (request) {
+        order.add('prepare');
+        return verifier.readyFor(request);
+      };
+      store.buyNext = (_, _) {
+        order.add('buy');
+        return true;
+      };
       expect(await service.acceptBillingDisclosure(), isTrue);
       expect(await service.purchase(EntitlementPlans.starter), isTrue);
-      expect(store.buyAccountId, hasLength(43));
-      expect(store.buyAccountId, isNot('uid-a'));
+      expect(order, ['account', 'receipts', 'prepare', 'buy']);
+      expect(store.buyAccountId, verifier.accountRoute);
       expect(verifier.accepts, hasLength(1));
+      expect((await service.currentState()).plan, EntitlementPlans.free);
+      store.emit(purchase(EntitlementPlans.starter));
+      await tick();
+      expect({
+        verifier.restoreRequests.single,
+        verifier.prepareRequests.single,
+        verifier.requests.single,
+      }, hasLength(3));
+    },
+  );
+
+  for (final state in ['paid', 'pending', 'unavailable', 'legacy']) {
+    test('account $state preflight never prepares another purchase', () async {
+      await preparePurchase();
+      verifier.restoreAccountNext = (request) => state == 'paid'
+          ? verifier.paidFor(EntitlementPlans.collector, request)
+          : PlayBillingVerification.free(
+              request,
+              outcome: state == 'legacy' ? 'rejected' : state,
+              reason: switch (state) {
+                'pending' => 'verification_pending',
+                'legacy' => 'recovery_required',
+                _ => 'temporarily_unavailable',
+              },
+            );
+      expect(await service.purchase(EntitlementPlans.starter), isFalse);
+      expect(verifier.prepareRequests, isEmpty);
+      expect(store.buyAccountId, isNull);
+    });
+  }
+
+  test(
+    'a discovered foreign receipt is verified without preparing a route',
+    () async {
+      await preparePurchase();
+      store.ownedNext = () => PlayOwnedPurchases(
+        purchases: [purchase(EntitlementPlans.starter, token: 'other-account')],
+      );
+      verifier.next = (request) => PlayBillingVerification.free(
+        request,
+        reason: 'account_conflict',
+        presentation: EntitlementPresentation.recoveryExhausted,
+      );
+      expect(await service.purchase(EntitlementPlans.starter), isFalse);
+      expect(verifier.requests, hasLength(1));
+      expect(verifier.prepareRequests, isEmpty);
+      expect(store.buyAccountId, isNull);
+    },
+  );
+
+  for (final change in ['account', 'provider', 'foreground']) {
+    test('$change change fences a delayed preparation before buying', () async {
+      await preparePurchase();
+      final ready = Completer<PlayBillingPreparation>();
+      verifier.prepareNext = (_) => ready.future;
+      final buying = service.purchase(EntitlementPlans.starter);
+      await tick();
+      final request = verifier.prepareRequests.single;
+      // A second tap cannot dispatch a second preparation while one is pending.
+      expect(await service.purchase(EntitlementPlans.starter), isFalse);
+      if (change == 'foreground') {
+        await service.refreshForForeground();
+      } else {
+        verifier.notifyIdentityChange(change == 'account' ? 'uid-b' : 'uid-a');
+        await tick();
+      }
+      ready.complete(verifier.readyFor(request));
+      expect(await buying, isFalse);
+      expect(store.buyAccountId, isNull);
+      expect((await service.currentState()).plan, EntitlementPlans.free);
+      expect(verifier.prepareRequests, hasLength(1));
+    });
+  }
+
+  test(
+    'prepare failure never buys and an explicit retry uses a new request',
+    () async {
+      await preparePurchase();
+      verifier.prepareNext = (_) => throw StateError('synthetic unavailable');
+      expect(await service.purchase(EntitlementPlans.starter), isFalse);
+      expect(store.buyAccountId, isNull);
+      expect(
+        (await service.currentState()).presentation,
+        EntitlementPresentation.unavailable,
+      );
+      verifier.prepareNext = null;
+      expect(await service.purchase(EntitlementPlans.starter), isTrue);
+      expect(verifier.prepareRequests.toSet(), hasLength(2));
+      expect(store.buyAccountId, verifier.accountRoute);
+    },
+  );
+
+  test(
+    'purchase routes are obtained afresh for each signed-in account',
+    () async {
+      final routes = <String>[];
+      for (final uid in ['uid-a', 'uid-b', 'uid-a']) {
+        verifier.notifyIdentityChange(uid);
+        await tick();
+        await preparePurchase();
+        expect(await service.purchase(EntitlementPlans.starter), isTrue);
+        routes.add(store.buyAccountId!);
+        store.emit(
+          purchase(EntitlementPlans.starter, state: PlayPurchaseState.canceled),
+        );
+        await tick();
+      }
+      expect(routes[0], isNot(routes[1]));
+      expect(routes[2], routes[0]);
+      expect(verifier.prepareRequests, hasLength(3));
     },
   );
 
@@ -412,6 +545,7 @@ void main() {
       expect(await service.purchase(EntitlementPlans.starter), isFalse);
       await service.restore();
       expect(store.restoreCalls, 0);
+      expect(verifier.prepareRequests, isEmpty);
     },
   );
 
@@ -1003,12 +1137,12 @@ void main() {
       final callables = FakeCallableFactory(
         onCall: (name, data) => switch (name) {
           'acceptPlayBillingDisclosure' => <String, Object>{
-            'version': 'play-billing-v2',
+            'version': 'play-billing-v3',
             'requestId': data['requestId']!,
             'status': 'accepted',
           },
           'verifyPlaySubscription' => <String, Object>{
-            'version': 'play-billing-v2',
+            'version': 'play-billing-v3',
             'requestId': data['requestId']!,
             'state': 'active',
             'status': 'paid',
@@ -1059,11 +1193,118 @@ void main() {
   );
 
   test(
-    'account restore uses the bounded v2 callable and rejects mixed or expanded responses',
+    'preparation uses a strict lazy callable and canonical account route',
+    () async {
+      const requestId = '11111111-1111-4111-8111-111111111111';
+      final route = base64Url
+          .encode(List<int>.filled(32, 7))
+          .replaceAll('=', '');
+      Map<String, Object> ready(Map<String, Object> data) => {
+        'version': 'play-billing-v3',
+        'requestId': data['requestId']!,
+        'status': 'ready',
+        'obfuscatedAccountId': route,
+        'lifecycleEpoch': 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      };
+      Object? Function(Map<String, Object>) response = ready;
+      final callables = FakeCallableFactory(
+        onCall: (_, data) => response(data),
+      );
+      final verifier = FirebasePlayBillingVerifier(
+        FakeFirebaseRuntime(),
+        accountService: FirebaseAccountService(FakePaidAccountGateway()),
+        callableFactory: callables,
+      );
+      expect((await verifier.preparePurchase(requestId)).isReady, isFalse);
+      expect(callables.invocations, isEmpty);
+      await verifier.ensureBillingIdentity();
+      final prepared = await verifier.preparePurchase(requestId);
+      expect(prepared.isReady, isTrue);
+      expect(prepared.obfuscatedAccountId, route);
+      final invocation = callables.invocations.single;
+      expect(invocation.name, 'preparePlayPurchase');
+      expect(invocation.data, {
+        'version': 'play-billing-v3',
+        'requestId': requestId,
+        'billingDisclosureVersion': 'billing-verification-disclosure-v4',
+      });
+      expect(invocation.options.region, 'us-central1');
+      expect(invocation.options.timeout, const Duration(seconds: 60));
+      expect(invocation.options.limitedUseAppCheckToken, isTrue);
+
+      for (final changes in <Map<String, Object?>>[
+        {'version': 'play-billing-v2'},
+        {'requestId': '22222222-2222-4222-8222-222222222222'},
+        {'status': 'paid'},
+        {'purchaseToken': 'unexpected-field'},
+        {'lifecycleEpoch': null},
+        {'lifecycleEpoch': 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'},
+        {'lifecycleEpoch': 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'},
+        {'obfuscatedAccountId': 'uid-a'},
+        {'obfuscatedAccountId': '$route='},
+        {'obfuscatedAccountId': '${List.filled(42, 'A').join()}B'},
+        {'obfuscatedAccountId': 43},
+      ]) {
+        response = (data) => {...ready(data), ...changes};
+        expect(
+          (await verifier.preparePurchase(requestId)).isReady,
+          isFalse,
+          reason: changes.keys.join(','),
+        );
+      }
+      response = (data) => ready(data)..remove('lifecycleEpoch');
+      expect((await verifier.preparePurchase(requestId)).isReady, isFalse);
+      response = ready;
+      expect(
+        (await verifier.preparePurchase('noncanonical-request')).isReady,
+        isFalse,
+      );
+      response = (_) => throw StateError('synthetic network failure');
+      expect((await verifier.preparePurchase(requestId)).isReady, isFalse);
+    },
+  );
+
+  test('preparation allows only its fixed non-paid failure pairs', () async {
+    const requestId = '11111111-1111-4111-8111-111111111111';
+    for (final entry in <(String, String, EntitlementPresentation)>[
+      (
+        'rejected',
+        'recovery_required',
+        EntitlementPresentation.recoveryExhausted,
+      ),
+      ('rejected', 'unsafe_record', EntitlementPresentation.recoveryExhausted),
+      ('unavailable', 'rate_limited', EntitlementPresentation.unavailable),
+      ('none', 'recovery_required', EntitlementPresentation.unavailable),
+      ('pending', 'unsafe_record', EntitlementPresentation.unavailable),
+      ('rejected', 'account_conflict', EntitlementPresentation.unavailable),
+    ]) {
+      final verifier = FirebasePlayBillingVerifier(
+        FakeFirebaseRuntime(),
+        accountService: FirebaseAccountService(FakePaidAccountGateway()),
+        callableFactory: FakeCallableFactory(
+          onCall: (_, data) => {
+            'version': 'play-billing-v3',
+            'requestId': data['requestId']!,
+            'state': 'free',
+            'status': entry.$1,
+            'reason': entry.$2,
+          },
+        ),
+      );
+      await verifier.ensureBillingIdentity();
+      final result = await verifier.preparePurchase(requestId);
+      expect(result.isReady, isFalse);
+      expect(result.obfuscatedAccountId, isNull);
+      expect(result.presentation, entry.$3);
+    }
+  });
+
+  test(
+    'account restore uses the bounded v3 callable and rejects mixed or expanded responses',
     () async {
       Object? Function(Map<String, Object>) response = (data) =>
           <String, Object>{
-            'version': 'play-billing-v2',
+            'version': 'play-billing-v3',
             'requestId': data['requestId']!,
             'state': 'free',
             'status': 'none',
@@ -1082,19 +1323,20 @@ void main() {
       expect(result.permitsPurchaseCheck, isTrue);
       expect(callables.invocations.single.name, 'restorePlayEntitlement');
       expect(callables.invocations.single.data, {
-        'version': 'play-billing-v2',
+        'version': 'play-billing-v3',
         'requestId': 'restore-request',
-        'billingDisclosureVersion': 'billing-verification-disclosure-v3',
+        'billingDisclosureVersion': 'billing-verification-disclosure-v4',
       });
       for (final changes in <Map<String, Object>>[
         {'version': 'play-billing-v1'},
+        {'version': 'play-billing-v2'},
         {'status': 'unknown'},
         {'status': 'pending'},
         {'purchaseToken': 'synthetic-sensitive-field'},
         {'requestId': 'stale-request'},
       ]) {
         response = (data) => <String, Object>{
-          'version': 'play-billing-v2',
+          'version': 'play-billing-v3',
           'requestId': data['requestId']!,
           'state': 'free',
           'status': 'none',
@@ -1141,7 +1383,7 @@ void main() {
         accountService: FirebaseAccountService(FakePaidAccountGateway()),
         callableFactory: FakeCallableFactory(
           onCall: (_, data) => <String, Object>{
-            'version': 'play-billing-v2',
+            'version': 'play-billing-v3',
             'requestId': data['requestId']!,
             'state': 'free',
             'status': entry.$1,
@@ -1170,7 +1412,7 @@ void main() {
       final now = DateTime.utc(2026, 7, 11, 12);
       final runtime = FakeFirebaseRuntime();
       Object? response = <String, Object>{
-        'version': 'play-billing-v2',
+        'version': 'play-billing-v3',
         'requestId': 'verify-1',
         'state': 'active',
         'status': 'paid',
@@ -1224,7 +1466,7 @@ void main() {
         accountService: FirebaseAccountService(FakePaidAccountGateway()),
         callableFactory: FakeCallableFactory(
           onCall: (_, data) => <String, Object>{
-            'version': 'play-billing-v2',
+            'version': 'play-billing-v3',
             'requestId': data['requestId']!,
             'state': 'active',
             'status': 'paid',
@@ -1284,7 +1526,7 @@ class FakeStore implements PlayBillingStore {
   FutureOr<bool> Function(PlayProduct product, String accountId)? buyNext;
   FutureOr<PlayProductQuery> Function(Set<String> productIds)? queryNext;
   FutureOr<void> Function()? restoreNext;
-  FutureOr<PlayOwnedPurchases> Function(String accountId)? ownedNext;
+  FutureOr<PlayOwnedPurchases> Function()? ownedNext;
 
   @override
   Future<bool> isAvailable() async =>
@@ -1314,8 +1556,8 @@ class FakeStore implements PlayBillingStore {
   }
 
   @override
-  Future<PlayOwnedPurchases> queryOwnedPurchases(String accountId) async {
-    if (ownedNext != null) return await ownedNext!(accountId);
+  Future<PlayOwnedPurchases> queryOwnedPurchases() async {
+    if (ownedNext != null) return await ownedNext!();
     if (!await isAvailable()) {
       return const PlayOwnedPurchases(unavailable: true);
     }
@@ -1331,6 +1573,8 @@ class FakeVerifier implements PlayBillingVerifier, PlayBillingIdentityObserver {
   final List<String> accepts = <String>[];
   final List<String> requests = <String>[];
   final List<String> restoreRequests = <String>[];
+  final List<String> prepareRequests = <String>[];
+  FutureOr<PlayBillingPreparation> Function(String request)? prepareNext;
   FutureOr<String?> Function()? identityNext;
   FutureOr<PlayBillingVerification> Function(String request)?
   restoreAccountNext;
@@ -1356,6 +1600,23 @@ class FakeVerifier implements PlayBillingVerifier, PlayBillingIdentityObserver {
           reason: 'no_known_purchase',
         ));
   }
+
+  String get accountRoute => base64Url
+      .encode(List<int>.filled(32, uid == 'uid-a' ? 1 : 2))
+      .replaceAll('=', '');
+
+  @override
+  Future<PlayBillingPreparation> preparePurchase(String requestId) async {
+    prepareRequests.add(requestId);
+    return await (prepareNext?.call(requestId) ?? readyFor(requestId));
+  }
+
+  PlayBillingPreparation readyFor(String requestId) =>
+      PlayBillingPreparation.ready(
+        requestId: requestId,
+        obfuscatedAccountId: accountRoute,
+        lifecycleEpoch: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      );
 
   @override
   Future<bool> acceptDisclosure(String requestId) async {
@@ -1504,7 +1765,7 @@ class _DeferredCallable implements PlayBillingCallable {
   Future<Object?> call(Map<String, Object> data) async {
     await response.future;
     return {
-      'version': 'play-billing-v2',
+      'version': 'play-billing-v3',
       'requestId': data['requestId'],
       'status': 'accepted',
     };

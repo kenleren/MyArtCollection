@@ -1,6 +1,8 @@
 # Paid Android account recovery, disabled source slice (#194)
 
-Status: implementation candidate for independent task/payment/privacy review.
+Status: accepted historical v2 recovery foundation. Current disabled v3 routing
+contract: [PLAY_BILLING_ROUTING_V3_SPEC.md](PLAY_BILLING_ROUTING_V3_SPEC.md).
+The v2 shapes below are retained for explicit compatibility/rejection evidence.
 No provider configuration, purchase, deployment or store release is authorized.
 The [internal-v1 gate](PLAY_BILLING_GATE_SPEC.md) is historical; this is a
 coordinated v2 wire/storage transition, not a mixed-writer upgrade.

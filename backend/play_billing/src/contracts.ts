@@ -23,7 +23,7 @@ export type FreeReason =
 export type NormalizedPaidState = 'active' | 'grace' | 'canceled';
 
 export interface VerifyRequest {
-  version: 'play-billing-v2';
+  version: 'play-billing-v3';
   requestId: string;
   billingDisclosureVersion: string;
   productId: string;
@@ -32,7 +32,7 @@ export interface VerifyRequest {
 
 export interface PaidResponse {
   status: 'paid';
-  version: 'play-billing-v2';
+  version: 'play-billing-v3';
   requestId: string;
   planId: PlanId;
   productId: ProductId;
@@ -44,7 +44,7 @@ export interface PaidResponse {
 
 export interface FreeResponse {
   status: 'none' | 'pending' | 'unavailable' | 'rejected';
-  version: 'play-billing-v2';
+  version: 'play-billing-v3';
   requestId?: string;
   state: 'free';
   reason: FreeReason;
@@ -64,7 +64,7 @@ export interface DisclosureRequest {
 }
 
 export interface DisclosureResponse {
-  version: 'play-billing-v2';
+  version: 'play-billing-v3';
   requestId: string;
   status: 'accepted' | 'revoked';
 }
@@ -134,4 +134,12 @@ export interface Clock {
 
 export interface NonceSource {
   nextNonce(): Uint8Array;
+}
+
+export interface PrepareResponse {
+  version: 'play-billing-v3';
+  requestId: string;
+  status: 'ready';
+  obfuscatedAccountId: string;
+  lifecycleEpoch: string;
 }

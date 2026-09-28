@@ -1,5 +1,5 @@
-export const CONTRACT_VERSION = 'play-billing-v2';
-export const DISCLOSURE_VERSION = 'billing-verification-disclosure-v3';
+export const CONTRACT_VERSION = 'play-billing-v3';
+export const DISCLOSURE_VERSION = 'billing-verification-disclosure-v4';
 export const DISCLOSURE_ASSERTION_VERSION = 'billing-disclosure-assertion-v1';
 export const DISCLOSURE_PURPOSE = 'play_subscription_verification';
 export const PACKAGE_NAME = 'app.archivale';
@@ -21,6 +21,8 @@ export const REVOKED_RETENTION_MS = 30 * 24 * 60 * 60_000;
 export const BINDING_RETENTION_MS = 30 * 24 * 60 * 60_000;
 
 export const COLLECTIONS = {
+  lifecycles: 'playBillingLifecycles',
+  routes: 'playBillingAccountRoutes',
   accounts: 'playBillingAccountSubscriptions',
   disclosures: 'playBillingDisclosureAssertions',
   bindings: 'playBillingPurchaseBindings',

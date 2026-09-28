@@ -133,7 +133,9 @@ class _BillingPlanScreenState extends State<BillingPlanScreen> {
             scrollable: true,
             title: const Text('Confirm subscription verification'),
             content: const Text(
-              'Sign in with Google to purchase or restore a subscription. Use the same Archivale Google account when you return or reinstall. Your Play purchasing account may be different. Archivale stores your purchase confirmation encrypted on its verification service to restore your subscription after reinstalling or changing devices; collection records, artwork images and documents are not sent. Sign-in does not enable backup or AI research. Your local archive remains available without an account.',
+              'Sign in with Google to purchase or restore a subscription. Use the same account on every device; your Play purchasing account may differ.\n\n'
+              'Archivale stores an account reference and sends it to Google Play to link your purchases. It stores your purchase confirmation encrypted on its servers for restore on another device or installation. Your collection records, artwork images and documents are not sent.\n\n'
+              'Sign-in does not enable backup or AI research. Your local archive remains available without an account.',
             ),
             actions: [
               TextButton(

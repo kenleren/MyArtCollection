@@ -35,6 +35,11 @@
       "collectionGroup": "playBillingPurchaseBindings",
       "fieldPath": "tokenEnvelope",
       "indexes": []
+    },
+    {
+      "collectionGroup": "playBillingLifecycles",
+      "fieldPath": "obfuscatedAccountId",
+      "indexes": []
     }
   ]
 }

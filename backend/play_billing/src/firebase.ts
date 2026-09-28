@@ -39,7 +39,19 @@ const callableOptions = {
   secrets: [fingerprintKey],
 };
 
+export const preparePlayPurchase = onCall(callableOptions, async (request) => {
+  const deadline = new BillingDeadline();
+  if (process.env.PLAY_BILLING_ROUTING_ENABLED !== 'enabled' || process.env.PLAY_BILLING_RECOVERY_ENABLED !== 'enabled') return temporarilyUnavailable(request.data);
+  const app = getOrInitializeApp();
+  const identity = await deadline.run(() => verifyCallableIdentity(request, getAuth(app))).catch(() => undefined);
+  if (!identity) return identityRejected(request.data);
+  const service = createService(app);
+  return service === undefined ? temporarilyUnavailable(request.data)
+    : await deadline.run(() => service.preparePurchase(identity, request.data, deadline), 55_000).catch(() => temporarilyUnavailable(request.data));
+});
+
 export const acceptPlayBillingDisclosure = onCall(callableOptions, async (request) => {
+  if (process.env.PLAY_BILLING_ROUTING_ENABLED !== 'enabled') return temporarilyUnavailable(request.data);
   const deadline = new BillingDeadline();
   const app = getOrInitializeApp();
   const identity = await deadline.run(() => verifyCallableIdentity(request, getAuth(app))).catch(() => undefined);
@@ -53,6 +65,7 @@ export const acceptPlayBillingDisclosure = onCall(callableOptions, async (reques
 });
 
 export const revokePlayBillingDisclosure = onCall(callableOptions, async (request) => {
+  if (process.env.PLAY_BILLING_ROUTING_ENABLED !== 'enabled') return temporarilyUnavailable(request.data);
   const deadline = new BillingDeadline();
   const app = getOrInitializeApp();
   const identity = await deadline.run(() => verifyCallableIdentity(request, getAuth(app))).catch(() => undefined);
@@ -66,6 +79,7 @@ export const revokePlayBillingDisclosure = onCall(callableOptions, async (reques
 });
 
 export const verifyPlaySubscription = onCall(callableOptions, async (request) => {
+  if (process.env.PLAY_BILLING_ROUTING_ENABLED !== 'enabled') return temporarilyUnavailable(request.data);
   if (process.env.PLAY_BILLING_RECOVERY_ENABLED !== 'enabled') return temporarilyUnavailable(request.data);
   const deadline = new BillingDeadline();
   const app = getOrInitializeApp();
@@ -80,6 +94,7 @@ export const verifyPlaySubscription = onCall(callableOptions, async (request) =>
 });
 
 export const restorePlayEntitlement = onCall(callableOptions, async (request) => {
+  if (process.env.PLAY_BILLING_ROUTING_ENABLED !== 'enabled') return temporarilyUnavailable(request.data);
   const deadline = new BillingDeadline();
   if (process.env.PLAY_BILLING_RECOVERY_ENABLED !== 'enabled') return temporarilyUnavailable(request.data);
   const app = getOrInitializeApp();
@@ -96,7 +111,7 @@ function createService(app: App): PlayBillingService | undefined {
     const identifiers = createBillingIdentifiers(decodeFingerprintKey(fingerprintKey.value()));
     const database = new FirestoreBillingDatabase(getFirestore(app, BILLING_DATABASE_ID));
     return new PlayBillingService({
-      repository: new BillingRepository(database, new CryptoNonceSource()),
+      repository: new BillingRepository(database, new CryptoNonceSource(), identifiers),
       identifiers,
       play: createConfiguredPlaySubscriptionsAdapter({
         enabled: process.env.PLAY_BILLING_ANDROID_PUBLISHER_ENABLED === 'enabled',
@@ -163,7 +178,7 @@ function identityRejected(data: unknown): Record<string, unknown> {
       ? data.requestId
       : undefined;
   return {
-    version: 'play-billing-v2',
+    version: 'play-billing-v3',
     ...(requestId === undefined ? {} : { requestId }),
     state: 'free',
     status: 'rejected',

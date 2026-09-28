@@ -10,7 +10,7 @@ import { ATTEMPT_LEASE_MS, BILLING_DATABASE_ID, COLLECTIONS } from '../src/const
 import { FirestoreBillingDatabase } from '../src/firestore_store.js';
 import { BillingRepository, type AttemptHandle } from '../src/store.js';
 import { PlayBillingService } from '../src/verifier.js';
-import { CryptoNonceSource } from '../src/crypto.js';
+import { CryptoNonceSource, createBillingIdentifiers, type BillingIdentifiers } from '../src/crypto.js';
 import { CONTRACT_VERSION, DISCLOSURE_VERSION } from '../src/constants.js';
 import { createHarness, eligiblePurchase, purchaseToken, verifyRequest, DeterministicNonceSource, FakeClock } from '../dist-test/test_helpers.js';
 
@@ -26,20 +26,25 @@ after(async () => {
 
 describe('named billing database persistence', () => {
   test('encrypted account restore survives a repository/service restart on named Firestore', async () => {
-    const persisted = createFirestoreHarness();
     const h = createHarness();
+    const persisted = createFirestoreHarness(h.identifiers);
     const subject = h.identifiers.accountSubject(h.identity.uid);
     await persisted.repository.acceptDisclosure(subject, h.clock.now());
+    const prepared = await persisted.repository.preparePurchase(subject, h.clock.now());
+    assert.equal(prepared.kind, 'ready');
+    if (prepared.kind !== 'ready') throw new Error('routing setup failed');
     const service = new PlayBillingService({ ...h, repository: persisted.repository });
-    const token = purchaseToken(); h.play.setPurchase(token, eligiblePurchase(h));
+    const token = purchaseToken(); h.play.setPurchase(token, { ...eligiblePurchase(h), externalAccountIdentifiers: { obfuscatedExternalAccountId: prepared.obfuscatedAccountId } });
     assert.equal((await service.verifySubscription(h.identity, verifyRequest(token))).status, 'paid');
     const stored = await readRecord(persisted.firestore, COLLECTIONS.bindings, h.identifiers.tokenFingerprint(token));
     assert.equal(JSON.stringify(stored).includes(token), false);
     assert.equal(stored.retentionExpiresAt, undefined);
     h.clock.advance(20_000);
     const restarted = new PlayBillingService({ ...h,
-      repository: new BillingRepository(new FirestoreBillingDatabase(persisted.firestore), new CryptoNonceSource()),
+      repository: new BillingRepository(new FirestoreBillingDatabase(persisted.firestore), new CryptoNonceSource(), h.identifiers),
     });
+    await restarted.acceptDisclosure(h.identity, { requestId: randomUUID(), disclosureVersion: DISCLOSURE_VERSION,
+      purpose: 'play_subscription_verification', accepted: true });
     const restored = await restarted.restoreEntitlement(h.identity, {
       version: CONTRACT_VERSION, requestId: randomUUID(), billingDisclosureVersion: DISCLOSURE_VERSION,
     });
@@ -47,6 +52,57 @@ describe('named billing database persistence', () => {
     assert.equal(h.play.getCalls.length, 2);
     const index = await readRecord(persisted.firestore, COLLECTIONS.accounts, subject);
     assert.equal(index.current === h.identifiers.tokenFingerprint(token), true);
+  });
+
+  test('concurrent first registration and lost response preserve one reciprocal Firestore route', async () => {
+    const h = createFirestoreHarness(); const subject = opaque(`route-account-${randomUUID()}`);
+    await h.repository.acceptDisclosure(subject, h.clock.now());
+    const prepared = await Promise.all([1,2,3].map(() => h.repository.preparePurchase(subject, h.clock.now())));
+    assert.equal(prepared.every((value) => value.kind === 'ready'), true);
+    assert.deepEqual(prepared[0], prepared[1]); assert.deepEqual(prepared[1], prepared[2]);
+    const root = await readRecord(h.firestore, COLLECTIONS.lifecycles, subject);
+    const route = await readRecord(h.firestore, COLLECTIONS.routes, root.routeFingerprint as string);
+    assert.equal(route.lifecycleEpoch, root.lifecycleEpoch); assert.equal(route.assertionId, root.assertionId);
+    const routes = await h.firestore.collection(COLLECTIONS.routes).where('accountSubject', '==', subject).get();
+    assert.equal(routes.size, 1);
+    // A failed response after the transaction is durable cannot rotate identity.
+    const original = h.repository.preparePurchase.bind(h.repository);
+    h.repository.preparePurchase = async (...args) => { await original(...args); throw new Error('synthetic lost response'); };
+    await assert.rejects(h.repository.preparePurchase(subject, h.clock.now()));
+    assert.deepEqual(await original(subject, h.clock.now()), prepared[0]);
+  });
+
+  test('Firestore disclosure synchronization and retirement remain atomic across restart', async () => {
+    const h = createFirestoreHarness(); const subject = opaque(`retire-account-${randomUUID()}`);
+    await h.repository.acceptDisclosure(subject, h.clock.now());
+    await h.repository.preparePurchase(subject, h.clock.now());
+    const first = await readRecord(h.firestore, COLLECTIONS.lifecycles, subject);
+    await h.repository.revokeDisclosure(subject, h.clock.now());
+    const paused = await readRecord(h.firestore, COLLECTIONS.lifecycles, subject);
+    assert.equal(paused.status, 'consent_paused'); assert.notEqual(paused.assertionId, first.assertionId);
+    await h.firestore.collection(COLLECTIONS.disclosures).doc(subject).delete();
+    await h.repository.acceptDisclosure(subject, h.clock.now());
+    const resumed = await readRecord(h.firestore, COLLECTIONS.lifecycles, subject);
+    assert.equal(resumed.lifecycleEpoch, first.lifecycleEpoch); assert.equal(resumed.obfuscatedAccountId, first.obfuscatedAccountId);
+    assert.equal((await readRecord(h.firestore, COLLECTIONS.routes, resumed.routeFingerprint as string)).assertionId, resumed.assertionId);
+    assert.equal(await h.repository.retireLifecycle(subject, { lifecycleEpoch: resumed.lifecycleEpoch as string,
+      lifecycleGeneration: resumed.lifecycleGeneration as number }, h.clock.now()), true);
+    await h.repository.acceptDisclosure(subject, h.clock.now());
+    assert.equal((await h.repository.preparePurchase(subject, h.clock.now())).kind, 'recovery_required');
+    const retired = await readRecord(h.firestore, COLLECTIONS.lifecycles, subject);
+    assert.equal(retired.status, 'retired'); assert.equal(retired.lifecycleGeneration, 2);
+  });
+
+  test('Firestore direct prepare refuses legacy and orphan route records without creating root', async () => {
+    for (const collection of [COLLECTIONS.bindings, COLLECTIONS.accounts, COLLECTIONS.routes]) {
+      const h = createFirestoreHarness(); const subject = opaque(`orphan-account-${randomUUID()}`);
+      await h.repository.acceptDisclosure(subject, h.clock.now());
+      await h.firestore.collection(collection).doc(collection === COLLECTIONS.accounts ? subject : randomUUID())
+        .set({ contractVersion: 'play-billing-v2', accountSubject: subject });
+      if (collection === COLLECTIONS.routes) await assert.rejects(h.repository.preparePurchase(subject, h.clock.now()));
+      else assert.equal((await h.repository.preparePurchase(subject, h.clock.now())).kind, 'recovery_required');
+      assert.equal((await h.firestore.collection(COLLECTIONS.lifecycles).doc(subject).get()).exists, false);
+    }
   });
 
   test('persists opaque owner fields in only the three approved records', async () => {
@@ -168,7 +224,7 @@ describe('named billing database persistence', () => {
   });
 });
 
-function createFirestoreHarness(): {
+function createFirestoreHarness(identifiers: BillingIdentifiers = createBillingIdentifiers(Buffer.alloc(32, 7))): {
   clock: FakeClock;
   firestore: Firestore;
   repository: BillingRepository;
@@ -182,7 +238,8 @@ function createFirestoreHarness(): {
     firestore,
     repository: new BillingRepository(
       new FirestoreBillingDatabase(firestore),
-      new DeterministicNonceSource(),
+      new CryptoNonceSource(),
+      identifiers,
     ),
   };
 }
@@ -223,6 +280,7 @@ async function acquire(
   tokenFingerprint: string,
 ): Promise<AttemptHandle> {
   if (!await harness.repository.hasCurrentDisclosure(accountSubject, harness.clock.now())) await harness.repository.acceptDisclosure(accountSubject, harness.clock.now());
+  await harness.repository.preparePurchase(accountSubject, harness.clock.now());
   const result = await harness.repository.acquireAttempt(
     accountSubject,
     requestFingerprint,

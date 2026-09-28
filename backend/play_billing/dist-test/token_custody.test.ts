@@ -5,7 +5,7 @@ import { GoogleKmsTokenCustody, GoogleKmsTransport, createConfiguredTokenCustody
 import { crc32c } from '../src/token_custody.js';
 import { FakeKmsTransport, TEST_KEY } from './fake_custody.js';
 import { deferred } from './test_helpers.js';
-const context = { accountSubject: 'a'.repeat(64), tokenFingerprint: 'b'.repeat(64) };
+const context = { lifecycleEpoch: '1'.repeat(32), lifecycleGeneration: 1, accountSubject: 'a'.repeat(64), tokenFingerprint: 'b'.repeat(64) };
 
 test('custody round trip binds account, token and exact same-parent key version', async () => {
   const transport = new FakeKmsTransport();
@@ -16,7 +16,10 @@ test('custody round trip binds account, token and exact same-parent key version'
   await assert.rejects(custody.decrypt({ ...envelope, keyVersion: nextVersion }, context, new BillingDeadline()));
   await assert.rejects(custody.decrypt(envelope, { ...context, accountSubject: 'c'.repeat(64) }, new BillingDeadline()));
   await assert.rejects(custody.decrypt(envelope, { ...context, tokenFingerprint: 'c'.repeat(64) }, new BillingDeadline()));
+  await assert.rejects(custody.decrypt(envelope, { ...context, lifecycleEpoch: '2'.repeat(32) }, new BillingDeadline()));
+  await assert.rejects(custody.decrypt(envelope, { ...context, lifecycleGeneration: 2 }, new BillingDeadline()));
   const before = transport.calls.length;
+  await assert.rejects(custody.decrypt({ ...envelope, version: 'play-token-custody-v1' } as unknown as typeof envelope, context, new BillingDeadline()));
   await assert.rejects(custody.decrypt({ ...envelope, keyVersion: TEST_KEY.slice(0, -1) + '3' }, context, new BillingDeadline()));
   assert.equal(transport.calls.length, before);
 });

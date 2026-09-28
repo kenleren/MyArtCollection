@@ -23,8 +23,9 @@ test('late database callback after timeout cannot acquire authority or call Play
       return operation(tx);
     }),
   };
-  const repository = new BillingRepository(database, new DeterministicNonceSource());
+  const repository = new BillingRepository(database, new DeterministicNonceSource(), h.identifiers);
   await repository.acceptDisclosure(h.identifiers.accountSubject(h.identity.uid), h.clock.now());
+  await repository.preparePurchase(h.identifiers.accountSubject(h.identity.uid), h.clock.now());
   const token = purchaseToken(); h.play.setPurchase(token, eligiblePurchase(h));
   const service = new PlayBillingService({ ...h, repository });
   const deadline = new BillingDeadline(); delay = true;
@@ -36,6 +37,7 @@ test('late database callback after timeout cannot acquire authority or call Play
 
 test('canceled invocation dispatches no Play lookup after a late committed acquire result', async () => {
   const h = createHarness(); await h.repository.acceptDisclosure(h.identifiers.accountSubject(h.identity.uid), h.clock.now());
+  await h.repository.preparePurchase(h.identifiers.accountSubject(h.identity.uid), h.clock.now());
   const token = purchaseToken(); h.play.setPurchase(token, eligiblePurchase(h));
   const entered = deferred(); const release = deferred();
   const acquire = h.repository.acquireAttempt.bind(h.repository);
@@ -49,6 +51,7 @@ test('canceled invocation dispatches no Play lookup after a late committed acqui
 
 test('canceled invocation dispatches no acknowledgement after a late committed acknowledgement start', async () => {
   const h = createHarness(); await h.repository.acceptDisclosure(h.identifiers.accountSubject(h.identity.uid), h.clock.now());
+  await h.repository.preparePurchase(h.identifiers.accountSubject(h.identity.uid), h.clock.now());
   const token = purchaseToken(); h.play.setPurchase(token, eligiblePurchase(h, { acknowledgementState: 'ACKNOWLEDGEMENT_STATE_PENDING' }));
   const entered = deferred(); const release = deferred();
   const begin = h.repository.beginAcknowledgement.bind(h.repository);

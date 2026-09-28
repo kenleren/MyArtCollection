@@ -189,7 +189,22 @@ void main() {
       find.textContaining('Sign in with Google to purchase or restore'),
       findsOneWidget,
     );
-    await _capture(tester, fixture, 'google-disclosure-360.png');
+    expect(
+      find.textContaining(
+        'stores an account reference and sends it to Google Play',
+      ),
+      findsOneWidget,
+    );
+    await _capture(tester, fixture, 'google-routing-disclosure-360.png');
+    await tester.drag(
+      find.descendant(
+        of: find.byType(AlertDialog),
+        matching: find.byType(SingleChildScrollView),
+      ),
+      const Offset(0, -420),
+    );
+    await tester.pumpAndSettle();
+    await _capture(tester, fixture, 'google-routing-disclosure-bottom-360.png');
     await tester.tap(find.widgetWithText(FilledButton, 'Continue'));
     await tester.pumpAndSettle();
     expect(fixture.service.restoreCalls, 0);
@@ -200,7 +215,7 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(find.text('Sign-in canceled'), findsOneWidget);
-    await _capture(tester, fixture, 'google-canceled-360.png');
+    await _capture(tester, fixture, 'google-routing-canceled-360.png');
     expect(tester.takeException(), isNull);
   });
 

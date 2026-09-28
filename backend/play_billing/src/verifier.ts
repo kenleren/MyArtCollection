@@ -18,6 +18,7 @@ import type {
   FreeResponse,
   NormalizedPaidState,
   PaidResponse,
+  PrepareResponse,
   PlayLineItem,
   PlaySubscriptionPurchase,
   PlaySubscriptionsAdapter,
@@ -64,6 +65,24 @@ interface EligiblePurchase {
 export class PlayBillingService {
   constructor(private readonly dependencies: PlayBillingDependencies) {}
 
+  async preparePurchase(identity: BillingIdentity, input: unknown, deadline = new BillingDeadline()): Promise<PrepareResponse | FreeResponse> {
+    if (!isPlainObject(input) || serializedSize(input) > 1024 ||
+        !hasExactKeys(input, ['version','requestId','billingDisclosureVersion']) ||
+        input.version !== CONTRACT_VERSION || !isCanonicalUuid(input.requestId) ||
+        input.billingDisclosureVersion !== DISCLOSURE_VERSION) return free(validRequestIdFrom(input), 'invalid_request');
+    try {
+      const result = await this.dependencies.repository.preparePurchase(this.dependencies.identifiers.accountSubject(identity.uid),
+        this.dependencies.clock.now(), deadline);
+      deadline.check();
+      return result.kind === 'ready'
+        ? { version: CONTRACT_VERSION, requestId: input.requestId, status: 'ready',
+          obfuscatedAccountId: result.obfuscatedAccountId, lifecycleEpoch: result.lifecycleEpoch }
+        : free(input.requestId, result.kind);
+    } catch (error) {
+      return free(input.requestId, error instanceof UnsafeBillingRecordError ? 'unsafe_record' : 'temporarily_unavailable');
+    }
+  }
+
   async acceptDisclosure(
     identity: BillingIdentity,
     input: unknown,
@@ -78,8 +97,8 @@ export class PlayBillingService {
       const subject = this.dependencies.identifiers.accountSubject(identity.uid);
       await this.dependencies.repository.acceptDisclosure(subject, this.dependencies.clock.now(), deadline);
       return { version: CONTRACT_VERSION, requestId: request.requestId, status: 'accepted' };
-    } catch {
-      return free(request.requestId, 'temporarily_unavailable');
+    } catch (error) {
+      return free(request.requestId, error instanceof UnsafeBillingRecordError ? 'unsafe_record' : 'temporarily_unavailable');
     }
   }
 
@@ -97,8 +116,8 @@ export class PlayBillingService {
       const subject = this.dependencies.identifiers.accountSubject(identity.uid);
       await this.dependencies.repository.revokeDisclosure(subject, this.dependencies.clock.now(), deadline);
       return { version: CONTRACT_VERSION, requestId: request.requestId, status: 'revoked' };
-    } catch {
-      return free(request.requestId, 'temporarily_unavailable');
+    } catch (error) {
+      return free(request.requestId, error instanceof UnsafeBillingRecordError ? 'unsafe_record' : 'temporarily_unavailable');
     }
   }
 
@@ -115,8 +134,8 @@ export class PlayBillingService {
       if (!(await repository.hasCurrentDisclosure(accountSubject, this.dependencies.clock.now()))) {
         return free(request.requestId, 'disclosure_required');
       }
-    } catch {
-      return free(request.requestId, 'temporarily_unavailable');
+    } catch (error) {
+      return free(request.requestId, error instanceof UnsafeBillingRecordError ? 'unsafe_record' : 'temporarily_unavailable');
     }
 
     const tokenFingerprint = identifiers.tokenFingerprint(request.purchaseToken);
@@ -130,8 +149,8 @@ export class PlayBillingService {
         this.dependencies.clock.now(),
         deadline,
       );
-    } catch {
-      return free(request.requestId, 'temporarily_unavailable');
+    } catch (error) {
+      return free(request.requestId, error instanceof UnsafeBillingRecordError ? 'unsafe_record' : 'temporarily_unavailable');
     }
     if (acquisition.kind !== 'acquired') {
       return free(request.requestId, acquisition.kind);
@@ -141,6 +160,7 @@ export class PlayBillingService {
     const playDeadline = Math.min(deadline.expiresAt, Date.now() + PLAY_PORTION_DEADLINE_MS);
     let purchase: PlaySubscriptionPurchase;
     try {
+      if (!await repository.isCurrentAttempt(attempt, this.dependencies.clock.now())) return free(request.requestId, 'not_verified');
       purchase = await this.getSubscription(request.purchaseToken, playDeadline, deadline);
     } catch {
       await this.closeWithoutThrow(attempt);
@@ -164,7 +184,6 @@ export class PlayBillingService {
       );
     }
     return this.finishOrdinaryVerification(
-      identity,
       request.requestId,
       request.purchaseToken,
       purchase,
@@ -189,6 +208,7 @@ export class PlayBillingService {
       if (acquired.kind !== 'acquired') return free(requestId, acquired.kind);
       attempt = acquired.attempt;
       if (!attempt.envelope) return free(requestId, 'unsafe_record');
+      if (!await repository.isCurrentAttempt(attempt, clock.now())) return free(requestId, 'not_verified');
       const token = await (this.dependencies.custody ?? new DisabledTokenCustody()).decrypt(attempt.envelope, attempt, deadline);
       if (!validToken(token) || identifiers.tokenFingerprint(token) !== attempt.tokenFingerprint) return free(requestId, 'unsafe_record');
       deadline.check();
@@ -202,10 +222,10 @@ export class PlayBillingService {
           billingDisclosureVersion: DISCLOSURE_VERSION,
         }, purchase, attempt, attempt.accountSubject, identifiers.requestFingerprint(identity.uid, requestId), deadline.expiresAt);
       }
-      return await this.finishOrdinaryVerification(identity, requestId, token, purchase, attempt, undefined, deadline.expiresAt);
-    } catch {
+      return await this.finishOrdinaryVerification(requestId, token, purchase, attempt, undefined, deadline.expiresAt);
+    } catch (error) {
       if (attempt) await this.closeWithoutThrow(attempt);
-      return free(requestId, 'temporarily_unavailable');
+      return free(requestId, error instanceof UnsafeBillingRecordError ? 'unsafe_record' : 'temporarily_unavailable');
     }
   }
 
@@ -239,8 +259,8 @@ export class PlayBillingService {
         this.dependencies.clock.now(),
         successorAttempt.fence!.deadline,
       );
-    } catch {
-      return free(request.requestId, 'temporarily_unavailable');
+    } catch (error) {
+      return free(request.requestId, error instanceof UnsafeBillingRecordError ? 'unsafe_record' : 'temporarily_unavailable');
     }
     if (acquisition.kind !== 'acquired') {
       return free(request.requestId, acquisition.kind);
@@ -248,13 +268,13 @@ export class PlayBillingService {
 
     let predecessor: PlaySubscriptionPurchase;
     try {
+      if (!await this.dependencies.repository.isCurrentAttempt(acquisition.attempt, this.dependencies.clock.now())) return free(request.requestId, 'not_verified');
       predecessor = await this.getSubscription(linkedToken, playDeadline, successorAttempt.fence!.deadline);
     } catch {
       await this.closeWithoutThrow(acquisition.attempt);
       return free(request.requestId, 'temporarily_unavailable');
     }
     return this.finishOrdinaryVerification(
-      identity,
       request.requestId,
       linkedToken,
       predecessor,
@@ -265,7 +285,6 @@ export class PlayBillingService {
   }
 
   private async finishOrdinaryVerification(
-    identity: BillingIdentity,
     requestId: string,
     rawToken: string,
     purchase: PlaySubscriptionPurchase,
@@ -276,12 +295,12 @@ export class PlayBillingService {
     const eligible = validateEligiblePurchase(
       purchase,
       requestedProduct,
-      this.dependencies.identifiers.obfuscatedAccountId(identity.uid),
+      attempt.expectedPlayAccountId,
       this.dependencies.clock.now(),
     );
     if (eligible === undefined) {
       const inactive = validatedInactive(purchase, requestedProduct,
-        this.dependencies.identifiers.obfuscatedAccountId(identity.uid), this.dependencies.clock.now());
+        attempt.expectedPlayAccountId, this.dependencies.clock.now());
       if (inactive !== undefined && attempt.envelope !== undefined) {
         try {
           if (!await this.dependencies.repository.recordInactive(attempt, inactive, this.dependencies.clock.now()) ||
@@ -315,6 +334,7 @@ export class PlayBillingService {
         await this.closeWithoutThrow(attempt);
         return free(requestId, 'not_verified');
       }
+      if (!await this.dependencies.repository.isCurrentAttempt(attempt, this.dependencies.clock.now(), 'verified_owner')) return free(requestId, 'not_verified');
       const tokenEnvelope = attempt.envelope ?? await (this.dependencies.custody ?? new DisabledTokenCustody()).encrypt(
         rawToken, attempt, attempt.fence!.deadline);
       attempt.fence!.deadline.check();
@@ -348,6 +368,7 @@ export class PlayBillingService {
         }
         await this.dependencies.hooks?.afterAcknowledgementStarted?.();
         try {
+          if (!await this.dependencies.repository.isCurrentAttempt(attempt, this.dependencies.clock.now(), 'ack_in_progress')) return free(requestId, 'not_verified');
           await withAbsoluteDeadline(
             () => this.dependencies.play.acknowledgeSubscription({
               packageName: PACKAGE_NAME,

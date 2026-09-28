@@ -1,3 +1,5 @@
+import { LIFECYCLE_VERSION, validLifecycleFields, sameLifecycle, validLifecycleRoot, validReciprocalRoute, routeFor, type LifecycleFields, type LifecycleRoot, type LifecycleRoute } from './lifecycle.js';
+import type { BillingIdentifiers } from './crypto.js';
 import {
   ACK_COOLDOWN_MS,
   ACTIVE_KEY_VERSION,
@@ -27,6 +29,7 @@ export type BillingCollection = (typeof COLLECTIONS)[keyof typeof COLLECTIONS];
 export interface BillingTransaction {
   get<T>(collection: BillingCollection, id: string): Promise<T | undefined>;
   findSubjectBinding(accountSubject: string): Promise<unknown | undefined>;
+  findSubjectRoute(accountSubject: string): Promise<unknown | undefined>;
   set<T>(collection: BillingCollection, id: string, value: T): void;
 }
 
@@ -41,7 +44,8 @@ export interface AttemptOwner {
   attemptNonce: Uint8Array;
 }
 
-export interface AttemptHandle {
+export interface AttemptHandle extends LifecycleFields {
+  expectedPlayAccountId: string;
   tokenFingerprint: string;
   accountSubject: string;
   owner: AttemptOwner;
@@ -49,7 +53,7 @@ export interface AttemptHandle {
   fence?: { assertionId: string; indexRevision: number; deadline: BillingDeadline; kind: 'verify' | 'restore' };
   envelope?: TokenEnvelope;
 }
-interface AccountIndex {
+interface AccountIndex extends LifecycleFields {
   contractVersion: typeof CONTRACT_VERSION;
   keyVersion: typeof ACTIVE_KEY_VERSION;
   accountSubject: string;
@@ -90,7 +94,7 @@ interface DisclosureRecord extends BaseRecord {
   statusChangedAt: Date;
 }
 
-interface RequestReplayRecord extends BaseRecord, AttemptOwner {
+interface RequestReplayRecord extends BaseRecord, AttemptOwner, LifecycleFields {
   operationKind: 'verify' | 'restore';
   tokenFingerprint: string;
   phase: OperationPhase;
@@ -99,7 +103,7 @@ interface RequestReplayRecord extends BaseRecord, AttemptOwner {
   cooldownUntil?: Date;
 }
 
-interface TokenOperationRecord extends BaseRecord, AttemptOwner {
+interface TokenOperationRecord extends BaseRecord, AttemptOwner, LifecycleFields {
   tokenFingerprint: string;
   accountSubject?: string;
   phase: OperationPhase;
@@ -110,7 +114,7 @@ interface TokenOperationRecord extends BaseRecord, AttemptOwner {
   acknowledgementStartedAt: Date[];
 }
 
-interface PurchaseBindingRecord extends Omit<BaseRecord, 'retentionExpiresAt'> {
+interface PurchaseBindingRecord extends Omit<BaseRecord, 'retentionExpiresAt'>, LifecycleFields {
   retentionExpiresAt?: Date;
   tokenEnvelope: TokenEnvelope;
   tokenFingerprint: string;
@@ -189,57 +193,114 @@ export class BillingRepository {
   constructor(
     private readonly database: BillingDatabase,
     private readonly nonces: NonceSource,
+    private readonly identifiers: Pick<BillingIdentifiers, 'routeFingerprint'>,
   ) {}
 
   get databaseId(): string {
     return this.database.databaseId;
   }
 
-  async acceptDisclosure(accountSubject: string, now: Date, deadline = new BillingDeadline()): Promise<void> {
-    await this.database.runTransaction(async (tx) => {
+  private async readLifecycle(tx: BillingTransaction, subject: string): Promise<LifecycleRoot | undefined> {
+    const root = await tx.get<LifecycleRoot>(COLLECTIONS.lifecycles, subject);
+    if (root === undefined) {
+      if (await tx.findSubjectRoute(subject) !== undefined) throw new UnsafeBillingRecordError();
+      return undefined;
+    }
+    if (!validLifecycleRoot(root, subject) || this.identifiers.routeFingerprint(root.obfuscatedAccountId) !== root.routeFingerprint) {
+      throw new UnsafeBillingRecordError();
+    }
+    const route = await tx.get<LifecycleRoute>(COLLECTIONS.routes, root.routeFingerprint);
+    if (!route || !validReciprocalRoute(route, root)) throw new UnsafeBillingRecordError();
+    return root;
+  }
+
+  private nonce(): Uint8Array {
+    const nonce = this.nonces.nextNonce();
+    if (!(nonce instanceof Uint8Array) || nonce.byteLength !== 16) throw new UnsafeBillingRecordError();
+    return nonce;
+  }
+
+  async preparePurchase(subject: string, now: Date, deadline = new BillingDeadline()): Promise<
+    { kind: 'ready'; obfuscatedAccountId: string; lifecycleEpoch: string } |
+    { kind: 'disclosure_required' | 'recovery_required' | 'unsafe_record' }
+  > {
+    return this.database.runTransaction(async (tx) => {
       deadline.check();
-      const existing = await tx.get<DisclosureRecord>(COLLECTIONS.disclosures, accountSubject);
-      if (existing !== undefined && !validDisclosure(existing, accountSubject, true)) {
-        throw new UnsafeBillingRecordError();
+      const disclosure = await tx.get<DisclosureRecord>(COLLECTIONS.disclosures, subject);
+      if (!disclosure || !validDisclosure(disclosure, subject) || disclosure.status !== 'accepted' || disclosure.retentionExpiresAt <= now) {
+        return { kind: 'disclosure_required' };
       }
+      const root = await this.readLifecycle(tx, subject);
+      if (root !== undefined) {
+        if (root.status === 'retired') return { kind: 'recovery_required' };
+        if (root.status !== 'active' || root.assertionId !== disclosure.assertionId) return { kind: 'unsafe_record' };
+        deadline.check();
+        return { kind: 'ready', obfuscatedAccountId: root.obfuscatedAccountId, lifecycleEpoch: root.lifecycleEpoch };
+      }
+      // First registration cannot create authority beside old or orphan state,
+      // even when a direct caller bypasses the mobile recovery preflight.
+      const index = await tx.get<AccountIndex>(COLLECTIONS.accounts, subject);
+      const orphan = await tx.findSubjectBinding(subject);
+      if (index !== undefined || orphan !== undefined) {
+        return { kind: isLegacy(index) || isLegacy(orphan) ? 'recovery_required' : 'unsafe_record' };
+      }
+      const obfuscatedAccountId = Buffer.concat([this.nonce(), this.nonce()]).toString('base64url');
+      const routeFingerprint = this.identifiers.routeFingerprint(obfuscatedAccountId);
+      if (await tx.get(COLLECTIONS.routes, routeFingerprint) !== undefined) return { kind: 'unsafe_record' };
+      const created: LifecycleRoot = {
+        version: LIFECYCLE_VERSION, accountSubject: subject, lifecycleEpoch: Buffer.from(this.nonce()).toString('hex'),
+        lifecycleGeneration: 1, status: 'active', routeFingerprint, obfuscatedAccountId,
+        assertionId: disclosure.assertionId, createdAt: now, updatedAt: now,
+      };
       deadline.check();
-      tx.set<DisclosureRecord>(COLLECTIONS.disclosures, accountSubject, {
-        contractVersion: CONTRACT_VERSION,
-        keyVersion: ACTIVE_KEY_VERSION,
-        assertionId: Buffer.from(this.nonces.nextNonce()).toString('hex'),
-        assertionVersion: DISCLOSURE_ASSERTION_VERSION,
-        accountSubject,
-        disclosureVersion: DISCLOSURE_VERSION,
-        purpose: DISCLOSURE_PURPOSE,
-        acceptedAt: now,
-        status: 'accepted',
-        statusChangedAt: now,
-        createdAt: existing?.createdAt ?? now,
-        updatedAt: now,
-        retentionExpiresAt: addMs(now, DISCLOSURE_RETENTION_MS),
-      });
+      tx.set(COLLECTIONS.lifecycles, subject, created);
+      tx.set(COLLECTIONS.routes, routeFingerprint, routeFor(created));
+      return { kind: 'ready', obfuscatedAccountId, lifecycleEpoch: created.lifecycleEpoch };
     });
   }
 
+  async acceptDisclosure(accountSubject: string, now: Date, deadline = new BillingDeadline()): Promise<void> {
+    return this.updateDisclosure(accountSubject, now, 'accepted', deadline);
+  }
   async revokeDisclosure(accountSubject: string, now: Date, deadline = new BillingDeadline()): Promise<void> {
+    return this.updateDisclosure(accountSubject, now, 'revoked', deadline);
+  }
+  private async updateDisclosure(accountSubject: string, now: Date, status: 'accepted' | 'revoked', deadline: BillingDeadline): Promise<void> {
     await this.database.runTransaction(async (tx) => {
       deadline.check();
       const existing = await tx.get<DisclosureRecord>(COLLECTIONS.disclosures, accountSubject);
-      if (existing === undefined) {
-        return;
-      }
-      if (!validDisclosure(existing, accountSubject, true)) {
-        throw new UnsafeBillingRecordError();
-      }
+      if (existing !== undefined && !validDisclosure(existing, accountSubject, true)) throw new UnsafeBillingRecordError();
+      const root = await this.readLifecycle(tx, accountSubject);
+      if (status === 'revoked' && existing === undefined && root === undefined) return;
+      const assertionId = Buffer.from(this.nonce()).toString('hex');
       deadline.check();
       tx.set<DisclosureRecord>(COLLECTIONS.disclosures, accountSubject, {
-        ...existing,
-        assertionId: Buffer.from(this.nonces.nextNonce()).toString('hex'),
-        status: 'revoked',
-        statusChangedAt: now,
-        updatedAt: now,
-        retentionExpiresAt: addMs(now, REVOKED_RETENTION_MS),
+        contractVersion: CONTRACT_VERSION, keyVersion: ACTIVE_KEY_VERSION, assertionId,
+        assertionVersion: DISCLOSURE_ASSERTION_VERSION, accountSubject, disclosureVersion: DISCLOSURE_VERSION,
+        purpose: DISCLOSURE_PURPOSE, acceptedAt: status === 'accepted' ? now : existing?.acceptedAt ?? now,
+        status, statusChangedAt: now, createdAt: existing?.createdAt ?? now, updatedAt: now,
+        retentionExpiresAt: addMs(now, status === 'accepted' ? DISCLOSURE_RETENTION_MS : REVOKED_RETENTION_MS),
       });
+      if (root !== undefined) {
+        const updated: LifecycleRoot = { ...root, assertionId,
+          status: root.status === 'retired' ? 'retired' : status === 'accepted' ? 'active' : 'consent_paused', updatedAt: now };
+        tx.set(COLLECTIONS.lifecycles, accountSubject, updated);
+        tx.set(COLLECTIONS.routes, root.routeFingerprint, routeFor(updated));
+      }
+    });
+  }
+
+  /** Authority fence only: no public endpoint, identity deletion or retention cleanup. */
+  async retireLifecycle(subject: string, expected: LifecycleFields, now: Date, deadline = new BillingDeadline()): Promise<boolean> {
+    return this.database.runTransaction(async (tx) => {
+      deadline.check();
+      const root = await this.readLifecycle(tx, subject);
+      if (!root || !sameLifecycle(root, expected) || root.status === 'retired' || root.lifecycleGeneration >= Number.MAX_SAFE_INTEGER) return false;
+      const retired: LifecycleRoot = { ...root, status: 'retired', lifecycleGeneration: root.lifecycleGeneration + 1, updatedAt: now };
+      deadline.check();
+      tx.set(COLLECTIONS.lifecycles, subject, retired);
+      tx.set(COLLECTIONS.routes, root.routeFingerprint, routeFor(retired));
+      return true;
     });
   }
 
@@ -293,8 +354,17 @@ export class BillingRepository {
       deadline.check();
       const disclosure = await tx.get<DisclosureRecord>(COLLECTIONS.disclosures, accountSubject);
       if (!disclosure || !validDisclosure(disclosure, accountSubject) || disclosure.status !== 'accepted' || disclosure.retentionExpiresAt <= now) return { kind: 'disclosure_required' };
+      const root = await this.readLifecycle(tx, accountSubject);
       const index = await tx.get<AccountIndex>(COLLECTIONS.accounts, accountSubject);
-      if (index !== undefined && !validIndex(index, accountSubject)) return { kind: 'unsafe_record' };
+      if (index !== undefined && isLegacy(index)) return { kind: 'recovery_required' };
+      if (root === undefined) {
+        const orphan = await tx.findSubjectBinding(accountSubject);
+        if (index !== undefined || orphan !== undefined) return { kind: isLegacy(orphan) ? 'recovery_required' : 'unsafe_record' };
+        return { kind: kind === 'restore' ? 'no_known_purchase' : 'recovery_required' };
+      }
+      if (root.status === 'retired') return { kind: 'recovery_required' };
+      if (root.status !== 'active' || root.assertionId !== disclosure.assertionId) return { kind: 'disclosure_required' };
+      if (index !== undefined && (!validIndex(index, accountSubject) || !sameLifecycle(index, root))) return { kind: 'unsafe_record' };
       if (index === undefined) {
         const orphan = await tx.findSubjectBinding(accountSubject);
         if (orphan !== undefined) return { kind: isLegacy(orphan) ? 'recovery_required' : 'unsafe_record' };
@@ -306,7 +376,7 @@ export class BillingRepository {
         if (pointer === undefined) continue;
         const referenced = await tx.get<PurchaseBindingRecord>(COLLECTIONS.bindings, pointer);
         if (referenced === undefined || !validBinding(referenced, pointer) ||
-            referenced.accountSubject !== accountSubject) return { kind: 'unsafe_record' };
+            referenced.accountSubject !== accountSubject || !sameLifecycle(referenced, root)) return { kind: 'unsafe_record' };
         indexedBindings.set(pointer, referenced);
       }
       if (!validIndexedChain(index, indexedBindings)) return { kind: 'unsafe_record' };
@@ -323,9 +393,9 @@ export class BillingRepository {
       if (kind === 'restore' && (binding === undefined || binding.accountSubject !== accountSubject || !validEnvelope(binding.tokenEnvelope))) return { kind: 'unsafe_record' };
       if (replay !== undefined && replay.operationKind !== kind) return { kind: 'replay_conflict' };
       if (
-        (replay !== undefined && !validReplay(replay, requestFingerprint)) ||
-        (operation !== undefined && !validOperation(operation, tokenFingerprint)) ||
-        (binding !== undefined && !validBinding(binding, tokenFingerprint))
+        (replay !== undefined && (!validReplay(replay, requestFingerprint) || !sameLifecycle(replay, root))) ||
+        (operation !== undefined && (!validOperation(operation, tokenFingerprint) || !sameLifecycle(operation, root))) ||
+        (binding !== undefined && (!validBinding(binding, tokenFingerprint) || !sameLifecycle(binding, root)))
       ) {
         return { kind: 'unsafe_record' };
       }
@@ -387,6 +457,7 @@ export class BillingRepository {
           contractVersion: CONTRACT_VERSION,
           keyVersion: ACTIVE_KEY_VERSION,
           ...owner,
+          lifecycleEpoch: root.lifecycleEpoch, lifecycleGeneration: root.lifecycleGeneration,
           operationKind: kind,
           tokenFingerprint,
           phase: 'lookup_in_flight',
@@ -401,6 +472,7 @@ export class BillingRepository {
         contractVersion: CONTRACT_VERSION,
         keyVersion: ACTIVE_KEY_VERSION,
         ...owner,
+        lifecycleEpoch: root.lifecycleEpoch, lifecycleGeneration: root.lifecycleGeneration,
         tokenFingerprint,
         phase: 'lookup_in_flight',
         outcomeCode: 'in_flight',
@@ -423,6 +495,8 @@ export class BillingRepository {
       return {
         kind: 'acquired',
         attempt: { tokenFingerprint, accountSubject, owner, usesReplay, envelope: binding?.tokenEnvelope,
+          lifecycleEpoch: root.lifecycleEpoch, lifecycleGeneration: root.lifecycleGeneration,
+          expectedPlayAccountId: root.obfuscatedAccountId,
           fence: { assertionId: disclosure.assertionId, indexRevision: index?.revision ?? 0, deadline, kind } },
       };
     });
@@ -537,7 +611,7 @@ export class BillingRepository {
         if (
           predecessor !== undefined &&
           (!validBinding(predecessor, input.predecessorFingerprint) ||
-            predecessor.accountSubject !== attempt.accountSubject ||
+            predecessor.accountSubject !== attempt.accountSubject || !sameLifecycle(predecessor, attempt) ||
             (predecessor.successorFingerprint !== undefined &&
               predecessor.successorFingerprint !== attempt.tokenFingerprint))
         ) {
@@ -563,6 +637,7 @@ export class BillingRepository {
         current = undefined;
       }
       const binding: PurchaseBindingRecord = {
+        lifecycleEpoch: attempt.lifecycleEpoch, lifecycleGeneration: attempt.lifecycleGeneration,
         contractVersion: CONTRACT_VERSION,
         keyVersion: ACTIVE_KEY_VERSION,
         tokenEnvelope: input.tokenEnvelope,
@@ -601,6 +676,7 @@ export class BillingRepository {
 
       };
       tx.set<AccountIndex>(COLLECTIONS.accounts, attempt.accountSubject, {
+        lifecycleEpoch: attempt.lifecycleEpoch, lifecycleGeneration: attempt.lifecycleGeneration,
         contractVersion: CONTRACT_VERSION, keyVersion: ACTIVE_KEY_VERSION, accountSubject: attempt.accountSubject,
         revision: (index?.revision ?? 0) + 1, current,
         candidate: attempt.tokenFingerprint, updatedAt: input.verifiedAt,
@@ -714,7 +790,7 @@ export class BillingRepository {
         if (
           predecessor !== undefined &&
           (!validBinding(predecessor, binding.stagedPredecessorFingerprint) ||
-            predecessor.accountSubject !== attempt.accountSubject ||
+            predecessor.accountSubject !== attempt.accountSubject || !sameLifecycle(predecessor, attempt) ||
             (predecessor.successorFingerprint !== undefined &&
               predecessor.successorFingerprint !== attempt.tokenFingerprint))
         ) {
@@ -829,10 +905,10 @@ export class BillingRepository {
       return true;
     }, false, now);
   }
-  async isCurrentAttempt(attempt: AttemptHandle, now: Date): Promise<boolean> {
+  async isCurrentAttempt(attempt: AttemptHandle, now: Date, phase: 'lookup_in_flight' | 'verified_owner' | 'ack_in_progress' = 'lookup_in_flight'): Promise<boolean> {
     return this.guarded(attempt, async (tx) => {
       const operation = await tx.get<TokenOperationRecord>(COLLECTIONS.operations, attempt.tokenFingerprint);
-      return ownedOperation(operation, attempt, 'lookup_in_flight') && operation.leaseExpiresAt !== undefined && operation.leaseExpiresAt > now;
+      return ownedOperation(operation, attempt, phase) && operation.leaseExpiresAt !== undefined && operation.leaseExpiresAt > now;
     }, false, now);
   }
 
@@ -855,7 +931,11 @@ export class BillingRepository {
       if (!fence) return fallback;
       fence.deadline.check();
       const disclosure = await tx.get<DisclosureRecord>(COLLECTIONS.disclosures, attempt.accountSubject);
+      const root = await this.readLifecycle(tx, attempt.accountSubject);
       const index = await tx.get<AccountIndex>(COLLECTIONS.accounts, attempt.accountSubject);
+      if (!root || root.status !== 'active' || !sameLifecycle(root, attempt) ||
+          root.obfuscatedAccountId !== attempt.expectedPlayAccountId || root.assertionId !== fence.assertionId ||
+          (index !== undefined && !sameLifecycle(index, attempt))) return fallback;
       if (!disclosure || !validDisclosure(disclosure, attempt.accountSubject) || disclosure.status !== 'accepted' || disclosure.retentionExpiresAt <= now ||
           disclosure.assertionId !== fence.assertionId || (index !== undefined && !validIndex(index, attempt.accountSubject)) ||
           (index?.revision ?? 0) !== fence.indexRevision) return fallback;
@@ -929,12 +1009,12 @@ function validDisclosure(record: DisclosureRecord, accountSubject: string, allow
       'updatedAt',
       'retentionExpiresAt',
     ]) &&
-    (validBase(record) || (allowPrevious && record.contractVersion as string === 'play-billing-v1' && record.keyVersion === ACTIVE_KEY_VERSION && record.createdAt instanceof Date && record.updatedAt instanceof Date && record.retentionExpiresAt instanceof Date)) &&
+    (validBase(record) || (allowPrevious && ['play-billing-v1','play-billing-v2'].includes(record.contractVersion as string) && record.keyVersion === ACTIVE_KEY_VERSION && record.createdAt instanceof Date && record.updatedAt instanceof Date && record.retentionExpiresAt instanceof Date)) &&
     ((allowPrevious && record.contractVersion as string === 'play-billing-v1') || /^[a-f0-9]{32}$/.test(record.assertionId)) &&
     record.assertionVersion === DISCLOSURE_ASSERTION_VERSION &&
     record.accountSubject === accountSubject &&
     (record.disclosureVersion === DISCLOSURE_VERSION ||
-      (allowPrevious && ['billing-verification-disclosure-v1', 'billing-verification-disclosure-v2'].includes(record.disclosureVersion))) &&
+      (allowPrevious && ['billing-verification-disclosure-v1', 'billing-verification-disclosure-v2', 'billing-verification-disclosure-v3'].includes(record.disclosureVersion))) &&
     record.purpose === DISCLOSURE_PURPOSE &&
     record.acceptedAt instanceof Date &&
     record.statusChangedAt instanceof Date &&
@@ -945,6 +1025,8 @@ function validDisclosure(record: DisclosureRecord, accountSubject: string, allow
 function validReplay(record: RequestReplayRecord, requestFingerprint: string): boolean {
   return (
     hasOnlyKeys(record, [
+      'lifecycleEpoch',
+      'lifecycleGeneration',
       'contractVersion',
       'keyVersion',
       'requestFingerprint',
@@ -962,6 +1044,7 @@ function validReplay(record: RequestReplayRecord, requestFingerprint: string): b
     ]) &&
     (record.operationKind === 'verify' || record.operationKind === 'restore') &&
     validBase(record) &&
+    validLifecycleFields(record) &&
     validOwner(record) &&
     record.requestFingerprint === requestFingerprint &&
     isFingerprint(record.tokenFingerprint) &&
@@ -974,6 +1057,8 @@ function validReplay(record: RequestReplayRecord, requestFingerprint: string): b
 function validOperation(record: TokenOperationRecord, tokenFingerprint: string): boolean {
   return (
     hasOnlyKeys(record, [
+      'lifecycleEpoch',
+      'lifecycleGeneration',
       'contractVersion',
       'keyVersion',
       'requestFingerprint',
@@ -992,6 +1077,7 @@ function validOperation(record: TokenOperationRecord, tokenFingerprint: string):
       'retentionExpiresAt',
     ]) &&
     validBase(record) &&
+    validLifecycleFields(record) &&
     validOwner(record) &&
     record.tokenFingerprint === tokenFingerprint &&
     isFingerprint(record.tokenFingerprint) &&
@@ -1007,6 +1093,8 @@ function validOperation(record: TokenOperationRecord, tokenFingerprint: string):
 function validBinding(record: PurchaseBindingRecord, tokenFingerprint: string): boolean {
   return (
     hasOnlyKeys(record, [
+      'lifecycleEpoch',
+      'lifecycleGeneration',
       'contractVersion',
       'keyVersion',
       'tokenEnvelope',
@@ -1036,7 +1124,7 @@ function validBinding(record: PurchaseBindingRecord, tokenFingerprint: string): 
       'updatedAt',
       'retentionExpiresAt',
     ]) &&
-    validBase(record, true) && validEnvelope(record.tokenEnvelope) &&
+    validLifecycleFields(record) && validBase(record, true) && validEnvelope(record.tokenEnvelope) &&
     record.tokenFingerprint === tokenFingerprint &&
     isFingerprint(record.tokenFingerprint) &&
     isFingerprint(record.accountSubject) &&
@@ -1124,7 +1212,7 @@ function cooldownBeforeBoundary(
   );
 }
 
-function sameOwner(record: AttemptOwner, attempt: AttemptHandle): boolean {
+function sameOwner(record: AttemptOwner, attempt: Pick<AttemptHandle, 'owner'>): boolean {
   return (
     record.requestFingerprint === attempt.owner.requestFingerprint &&
     record.attemptGeneration === attempt.owner.attemptGeneration &&
@@ -1140,7 +1228,7 @@ function ownedOperation(
   return (
     record !== undefined &&
     validOperation(record, attempt.tokenFingerprint) &&
-    sameOwner(record, attempt) &&
+    sameLifecycle(record, attempt) && sameOwner(record, attempt) &&
     record.phase === phase
   );
 }
@@ -1153,7 +1241,7 @@ function ownedOperationAny(
   return (
     record !== undefined &&
     validOperation(record, attempt.tokenFingerprint) &&
-    sameOwner(record, attempt) &&
+    sameLifecycle(record, attempt) && sameOwner(record, attempt) &&
     phases.includes(record.phase)
   );
 }
@@ -1166,7 +1254,7 @@ function ownedReplayAny(
   return (
     record !== undefined &&
     validReplay(record, attempt.owner.requestFingerprint) &&
-    sameOwner(record, attempt) &&
+    sameLifecycle(record, attempt) && sameOwner(record, attempt) &&
     phases.includes(record.phase)
   );
 }
@@ -1179,7 +1267,7 @@ function ownedBinding(
   return (
     record !== undefined &&
     validBinding(record, attempt.tokenFingerprint) &&
-    record.attemptRequestFingerprint === attempt.owner.requestFingerprint &&
+    sameLifecycle(record, attempt) && record.attemptRequestFingerprint === attempt.owner.requestFingerprint &&
     record.attemptGeneration === attempt.owner.attemptGeneration &&
     bytesEqual(record.attemptNonce, attempt.owner.attemptNonce) &&
     record.attemptPhase === phase
@@ -1204,12 +1292,7 @@ function consistentReplayOperation(
 ): boolean {
   if (
     replay.tokenFingerprint !== operation.tokenFingerprint ||
-    !sameOwner(replay, {
-      tokenFingerprint: operation.tokenFingerprint,
-      accountSubject: operation.accountSubject ?? '',
-      owner: operation,
-      usesReplay: true,
-    })
+    !sameLifecycle(replay, operation) || !sameOwner(replay, { owner: operation })
   ) {
     return false;
   }
@@ -1286,11 +1369,11 @@ function validLeaseAndCooldown(
 }
 
 function isLegacy(value: unknown): boolean {
-  return value !== null && typeof value === 'object' && 'contractVersion' in value && value.contractVersion === 'play-billing-v1';
+  return value !== null && typeof value === 'object' && 'contractVersion' in value && ['play-billing-v1','play-billing-v2'].includes(value.contractVersion as string);
 }
 function validIndex(record: AccountIndex, subject: string): boolean {
-  return hasOnlyKeys(record, ['contractVersion','keyVersion','accountSubject','revision','current','candidate','inactive','updatedAt']) &&
-    record.contractVersion === CONTRACT_VERSION && record.keyVersion === ACTIVE_KEY_VERSION && record.accountSubject === subject &&
+  return hasOnlyKeys(record, ['lifecycleEpoch','lifecycleGeneration','contractVersion','keyVersion','accountSubject','revision','current','candidate','inactive','updatedAt']) &&
+    validLifecycleFields(record) && record.contractVersion === CONTRACT_VERSION && record.keyVersion === ACTIVE_KEY_VERSION && record.accountSubject === subject &&
     Number.isSafeInteger(record.revision) && record.revision > 0 && record.updatedAt instanceof Date &&
     (record.current !== undefined || record.candidate !== undefined) &&
     (record.current === undefined || isFingerprint(record.current)) &&
