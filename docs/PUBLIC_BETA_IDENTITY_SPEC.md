@@ -11,8 +11,12 @@ activation, complete restore claim or public release approval.
 - AI credits use UTC calendar months with no rollover. Upgrades raise that
   month's allowance without resetting usage. This rule is accepted but its
   billing-to-broker allowance implementation belongs to a later slice.
-- The offline signed creation lease duration (24 hours or seven days) is
-  awaiting an owner decision and is not implemented here. Existing anonymous paid customers remain unknown.
+- Verified subscribers may create artworks offline for up to seven days,
+  capped at subscription expiry. AI requires an online server check and
+  existing records remain accessible. Signed offline leases are not
+  implemented in this slice.
+- On 2026-09-28, the owner confirmed there have been no real customer
+  subscription payments. This is an owner attestation, not a live account audit.
 
 ## Implemented identity contract
 
@@ -57,9 +61,9 @@ owner-controlled coordinated rollout. Firebase and Android Publisher defaults
 remain disabled; no provider/Play/Firebase configuration was changed.
 
 Lost anonymous sessions cannot recover the original binding from a purchase
-token alone. Before release, the owner must establish whether such purchases
-exist and approve a verified recovery/refund route. Do not transfer tokens
-across UIDs automatically.
+token alone. The owner confirmed there are no real paying customers to
+migrate. Existing test purchases still need explicit recovery/reset handling
+during release validation. Do not transfer tokens across UIDs automatically.
 
 ## Remaining public-beta work
 
