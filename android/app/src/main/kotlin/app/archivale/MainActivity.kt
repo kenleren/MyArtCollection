@@ -139,10 +139,20 @@ class MainActivity : FlutterActivity() {
                 return@setMethodCallHandler
             }
             val sourcePath = call.argument<String>("sourcePath")
+            val expectedByteSize = (call.argument<Any>("expectedByteSize") as? Number)?.let {
+                when (it) {
+                    is Int -> it.toLong()
+                    is Long -> it
+                    else -> null
+                }
+            }
+            val expectedSha256 = call.argument<String>("expectedSha256")
             val suggestedName = call.argument<String>("suggestedName")
             val mimeType = call.argument<String>("mimeType")
             if (
                 sourcePath == null ||
+                expectedByteSize == null || expectedByteSize <= 0 ||
+                expectedSha256 == null || !Regex("^[a-f0-9]{64}$").matches(expectedSha256) ||
                 suggestedName == null ||
                 mimeType == null ||
                 !ExportSaveCopyPolicy.isSafeSuggestedName(suggestedName)
@@ -161,6 +171,8 @@ class MainActivity : FlutterActivity() {
                 applicationDocumentsDirectory = applicationDocumentsDirectory,
                 suggestedName = suggestedName,
                 mimeType = mimeType,
+                expectedByteSize = expectedByteSize,
+                expectedSha256 = expectedSha256,
             )
             if (source == null) {
                 result.success("unavailable")
@@ -300,6 +312,8 @@ class MainActivity : FlutterActivity() {
         applicationDocumentsDirectory: File,
         suggestedName: String,
         mimeType: String,
+        expectedByteSize: Long,
+        expectedSha256: String,
     ): ExportSaveCopyPolicy.ValidatedExportSource? {
         var payload: ParcelFileDescriptor.AutoCloseInputStream? = null
         var metadata: ParcelFileDescriptor.AutoCloseInputStream? = null
@@ -307,6 +321,8 @@ class MainActivity : FlutterActivity() {
             val descriptors = AttachmentCustodyNative.openExportPair(
                 applicationDocumentsDirectory.absolutePath,
                 sourceFile.absolutePath,
+                expectedByteSize,
+                expectedSha256,
             )
             if (descriptors.size != 2) return null
             payload = ParcelFileDescriptor.AutoCloseInputStream(
@@ -323,6 +339,8 @@ class MainActivity : FlutterActivity() {
                     mimeType = mimeType,
                     payload = requireNotNull(payload),
                     metadataPayload = metadataPayload,
+                    expectedByteSize = expectedByteSize,
+                    expectedSha256 = expectedSha256,
                 )
             }.also { validated ->
                 if (validated == null) payload.close()

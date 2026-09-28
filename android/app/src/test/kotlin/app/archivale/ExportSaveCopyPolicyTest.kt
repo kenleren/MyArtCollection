@@ -20,6 +20,8 @@ class ExportSaveCopyPolicyTest {
     private lateinit var privateDataDirectory: File
     private lateinit var applicationDocumentsDirectory: File
     private lateinit var exportRoot: File
+    private var publicationByteSize = 0L
+    private var publicationSha256 = ""
 
     @Before
     fun setUp() {
@@ -155,6 +157,27 @@ class ExportSaveCopyPolicyTest {
     }
 
     @Test
+    fun mutuallyConsistentReplacementCannotReplacePublicationExpectation() {
+        val report = committedReport(byteArrayOf(1, 2, 3))
+        val metadata = File("${report.path}.json")
+        val replacement = byteArrayOf(4, 5, 6)
+        report.writeBytes(replacement)
+        metadata.writeText(JSONObject(metadata.readText())
+            .put("checksum_sha256", replacement.sha256()).toString())
+        assertNull(validate(report))
+    }
+
+    @Test
+    fun invalidPublicationExpectationFailsClosed() {
+        val report = committedReport()
+        publicationByteSize = 0
+        assertNull(validate(report))
+        publicationByteSize = 3
+        publicationSha256 = ""
+        assertNull(validate(report))
+    }
+
+    @Test
     fun allowsOnlySafeSuggestedNames() {
         assertTrue(ExportSaveCopyPolicy.isSafeSuggestedName("report-1.pdf"))
         assertFalse(ExportSaveCopyPolicy.isSafeSuggestedName("../private.pdf"))
@@ -166,6 +189,8 @@ class ExportSaveCopyPolicyTest {
         val id = "report-${subjectId.sha256().take(24)}-1"
         val report = File(exportRoot, "reports/$id.pdf")
         assertTrue(requireNotNull(report.parentFile).mkdirs())
+        publicationByteSize = bytes.size.toLong()
+        publicationSha256 = bytes.sha256()
         report.writeBytes(bytes)
         val metadata = JSONObject()
             .put("metadata_version", 1)
@@ -207,6 +232,8 @@ class ExportSaveCopyPolicyTest {
                 mimeType = mimeType,
                 payload = payload,
                 metadataPayload = it,
+                expectedByteSize = publicationByteSize,
+                expectedSha256 = publicationSha256,
             )
         }
         if (validated == null) payload.close()

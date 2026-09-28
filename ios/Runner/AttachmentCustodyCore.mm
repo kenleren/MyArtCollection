@@ -23,12 +23,16 @@ extern "C" const char* AttachmentCustodyExecute(
 extern "C" int AttachmentCustodyOpenExportPair(
     const char* flutter_root,
     const char* source_path,
+    int64_t expected_size,
+    const char* expected_sha256,
     int* payload_descriptor,
     int* metadata_descriptor) {
   if (payload_descriptor == nullptr || metadata_descriptor == nullptr) return 0;
   auto pair = custody::open_export_pair(
       flutter_root == nullptr ? "" : flutter_root,
-      source_path == nullptr ? "" : source_path);
+      source_path == nullptr ? "" : source_path,
+      expected_size > 0 ? static_cast<uint64_t>(expected_size) : 0,
+      expected_sha256 == nullptr ? "" : expected_sha256);
   if (!pair.valid()) return 0;
   *payload_descriptor = pair.payload.release();
   *metadata_descriptor = pair.metadata.release();

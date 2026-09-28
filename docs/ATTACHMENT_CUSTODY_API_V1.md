@@ -137,3 +137,33 @@ are wire identifiers. Additive response fields are permitted. Renaming or
 weakening them requires a new versioned channel. Issue #221 must preserve
 `missing`, `publicationAbsent`, and `erasureAbsent` as idempotent absence and
 must never describe them as proof that deletion occurred.
+
+## Generated-export descriptor authority
+
+The separate native export-pair entrypoint requires the expected payload byte
+length and SHA-256 from the export store's in-memory publication capability.
+Android's JNI and Apple's C bridge enforce the same contract before releasing
+payload or metadata descriptors. Missing, malformed or mismatched expectations
+fail closed; there is no path-only fallback. The payload read is bounded to the
+expected length plus one overflow byte, and a successful descriptor is rewound.
+Existing directory, inode, link-count and sidecar validation remains in place.
+
+A link-count snapshot cannot prove publication ownership: a name can be
+replaced between filesystem observations. Adjacent metadata cannot supply the
+missing authority because it is mutable too. The export store therefore keeps
+only capabilities issued by successful publication in that store instance;
+revalidation and `latest()` preserve the original expected length/hash. The
+normal app startup shares one store across report and archive services. Opening
+a new store, including after app restart, does not reconstruct authority from
+files or sidecars. The export panel asks the collector to generate a fresh
+file; already saved external copies are unchanged. Persisted publication
+authority would require a separately reviewed trusted ledger.
+
+Tests replace a committed payload with different same-length bytes at the
+native directory-open boundary, including a mutually consistent forged
+sidecar. Expectations come from the fixture before substitution. Both cases
+must be rejected, and the original hard-link race assertions remain enabled.
+This binds the authorized content; it does not claim permanent immutability of
+an open inode. Destination copy validation remains required. The attachment
+custody method-channel V1 publication, removal and erasure operations are
+unchanged by this separate export API requirement.

@@ -42,12 +42,15 @@ class ExportArtifact {
 }
 
 class ExportArtifactStore {
-  const ExportArtifactStore._(this.root);
+  ExportArtifactStore._(this.root);
 
   static const metadataVersion = 1;
   static const metadataStateComplete = 'complete';
 
   final Directory root;
+  // Publication authority is intentionally process-local. Adjacent sidecars
+  // are integrity checks, not a trusted ledger from which to recover authority.
+  final Map<String, ExportArtifact> _published = {};
 
   static Future<ExportArtifactStore> open() async {
     final documents = await getApplicationDocumentsDirectory();
@@ -162,6 +165,7 @@ class ExportArtifactStore {
           'The completed export artifact failed final validation.',
         );
       }
+      _published[destination.path] = validated;
       return validated;
     } on Object {
       await _deleteIfOwned(metadataStaging);
@@ -189,29 +193,17 @@ class ExportArtifactStore {
     String? subjectId,
   }) async {
     _validateSubject(kind, subjectId);
-    final directory = Directory(p.join(root.path, '${kind.name}s'));
-    if (!await directory.exists()) return null;
-    final extension = '.${extensionFor(kind)}';
-    final files = await directory
-        .list(followLinks: false)
-        .where(
-          (entry) =>
-              entry is File &&
-              p.extension(entry.path) == extension &&
-              !p.basename(entry.path).endsWith('.partial'),
-        )
-        .cast<File>()
-        .toList();
-    files.sort((left, right) => right.path.compareTo(left.path));
-    for (final file in files) {
-      final id = p.basenameWithoutExtension(file.path);
+    final candidates =
+        _published.values
+            .where(
+              (artifact) =>
+                  artifact.kind == kind && artifact.subjectId == subjectId,
+            )
+            .toList()
+          ..sort((left, right) => right.file.path.compareTo(left.file.path));
+    for (final candidate in candidates) {
       try {
-        _validateIdentity(kind: kind, id: id, subjectId: subjectId);
-        final artifact = await _validateNamedArtifact(
-          kind: kind,
-          id: id,
-          subjectId: subjectId,
-        );
+        final artifact = await validate(candidate);
         if (artifact != null) return artifact;
       } on Object {
         // Corrupt, legacy, or incomplete entries are never surfaced.
@@ -224,7 +216,7 @@ class ExportArtifactStore {
     required ExportArtifactKind kind,
     required String id,
     required String? subjectId,
-    ExportArtifact? expectedCapability,
+    required ExportArtifact expectedCapability,
   }) async {
     _validateIdentity(kind: kind, id: id, subjectId: subjectId);
     final extension = extensionFor(kind);
@@ -279,13 +271,12 @@ class ExportArtifactStore {
     if (digest.byteSize != byteSize || digest.checksumSha256 != checksum) {
       return null;
     }
-    if (expectedCapability != null &&
-        (expectedCapability.file.absolute.path != file.absolute.path ||
-            expectedCapability.byteSize != byteSize ||
-            expectedCapability.checksumSha256 != checksum ||
-            expectedCapability.createdAt.toUtc() != createdAt ||
-            expectedCapability.displayName != decoded['file_name'] ||
-            expectedCapability.mimeType != decoded['mime_type'])) {
+    if (expectedCapability.file.absolute.path != file.absolute.path ||
+        expectedCapability.byteSize != byteSize ||
+        expectedCapability.checksumSha256 != checksum ||
+        expectedCapability.createdAt.toUtc() != createdAt ||
+        expectedCapability.displayName != decoded['file_name'] ||
+        expectedCapability.mimeType != decoded['mime_type']) {
       return null;
     }
     return ExportArtifact._(

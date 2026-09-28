@@ -3481,7 +3481,7 @@ class _ExportWorkflowPanelState extends State<ExportWorkflowPanel> {
           Text(
             _isReport
                 ? 'Generated from user-confirmed fields and verified local supporting files.'
-                : 'Generated locally in app-private storage. This unencrypted ZIP contains the entire collection and available original supporting files.',
+                : 'Generated locally in app-private storage. This unencrypted ZIP includes artwork records and available original supporting files. Some saved details and AI history are excluded.',
           ),
           if (_isBusy && progress != null) ...[
             const SizedBox(height: 12),
@@ -3489,6 +3489,12 @@ class _ExportWorkflowPanelState extends State<ExportWorkflowPanel> {
             const SizedBox(height: 6),
             Text(
               'Preparing ${progress.completedItems} of ${progress.totalItems} items…',
+            ),
+          ],
+          if (artifact == null && !_isBusy) ...[
+            const SizedBox(height: 10),
+            const Text(
+              'Generate a fresh file to open, save, or share. After reopening Archivale, generate it again; copies you already saved are unchanged.',
             ),
           ],
           if (_message != null) ...[
