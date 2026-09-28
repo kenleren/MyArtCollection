@@ -17,6 +17,24 @@
           "order": "ASCENDING"
         }
       ]
+    },
+    {
+      "collectionGroup": "playBillingReconcileWork",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "state",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "dueAt",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "__name__",
+          "order": "ASCENDING"
+        }
+      ]
     }
   ],
   "fieldOverrides": [
@@ -128,6 +146,41 @@
     {
       "collectionGroup": "playBillingPurchaseBindings",
       "fieldPath": "ownershipProof",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "playBillingReconcileWork",
+      "fieldPath": "currentDemand",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "playBillingReconcileWork",
+      "fieldPath": "candidateDemand",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "playBillingReconcileWork",
+      "fieldPath": "selectedDemand",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "playBillingReconcileWork",
+      "fieldPath": "nonce",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "playBillingReconcileWork",
+      "fieldPath": "attemptStarts",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "playBillingReconcileWork",
+      "fieldPath": "dispatchTotals",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "playBillingReconcileWork",
+      "fieldPath": "completedObservation",
       "indexes": []
     }
   ]

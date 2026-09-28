@@ -30,7 +30,7 @@ function context(h: Harness) {
     envelope:{version:'play-event-token-custody-v1',keyVersion:'projects/synthetic-billing/locations/us-central1/keyRings/testing/cryptoKeys/tokens/cryptoKeyVersions/1',ciphertext:'AAAA'},
     resolved:{accountSubject:subject(h),lifecycleEpoch:root?.lifecycleEpoch??'a'.repeat(32),lifecycleGeneration:root?.lifecycleGeneration??1},
   });
-  return { accountSubject: subject(h), eventWork,
+  return { accountSubject: subject(h), work:{kind:'event' as const,fence:eventWork},
     requestFingerprint:createHash('sha256').update(`synthetic-background:${randomUUID()}`).digest('hex'),source:'background' as const };
 }
 async function backgroundRestore(h: Harness) {

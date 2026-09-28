@@ -10,6 +10,7 @@ export interface BillingIdentifiers {
   tokenFingerprint(purchaseToken: string): string;
   routeFingerprint(obfuscatedAccountId: string): string;
   eventFingerprint(topic: string, messageId: string): string;
+  reconciliationFingerprint(subject: string, epoch: string, owner: number, nonce: Uint8Array, selection: string): string;
   eventOperationFingerprint(eventFingerprint: string, generation: number): string;
 }
 
@@ -27,6 +28,7 @@ export function createBillingIdentifiers(key: Uint8Array): BillingIdentifiers {
     tokenFingerprint: (token) => hmac('archivale-play-token-v1', token),
     routeFingerprint: (route) => hmac('archivale-play-route-v1', route),
     eventFingerprint: (topic, id) => hmac('archivale-play-event-v1', `${topic}\n${id}`),
+    reconciliationFingerprint: (subject, epoch, owner, nonce, selection) => hmac('archivale-play-reconciliation-v1', `${subject}\n${epoch}\n${owner}\n${Buffer.from(nonce).toString('hex')}\n${selection}`),
     eventOperationFingerprint: (event, generation) => hmac('archivale-play-event-operation-v1', `${event}\n${generation}`),
   };
 }

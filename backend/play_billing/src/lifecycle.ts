@@ -12,6 +12,9 @@ export interface LifecycleRoot extends LifecycleFields {
   assertionId: string;
   createdAt: Date;
   updatedAt: Date;
+  reconcileVersion?: 'play-billing-reconcile-v1';
+  reconcileScheduleRevision?: number;
+  reconcileOwnerGeneration?: number;
   authorityVersion?: 'play-billing-authority-v1';
   authorityPublicationRevision?: number;
 }
@@ -35,9 +38,12 @@ export function validOpaqueRoute(value: unknown): value is string {
 export function validLifecycleRoot(value: LifecycleRoot, subject: string): boolean {
   return exact(value, ['version','accountSubject','status','routeFingerprint','obfuscatedAccountId','assertionId',
     'lifecycleEpoch','lifecycleGeneration','createdAt','updatedAt',
+    ...(value.reconcileVersion === undefined && value.reconcileScheduleRevision === undefined && value.reconcileOwnerGeneration === undefined ? [] : ['reconcileVersion','reconcileScheduleRevision','reconcileOwnerGeneration']),
     ...(value.authorityVersion === undefined && value.authorityPublicationRevision === undefined ? [] : ['authorityVersion','authorityPublicationRevision'])]) &&
     ((value.authorityVersion === undefined && value.authorityPublicationRevision === undefined) || (value.authorityVersion === 'play-billing-authority-v1' &&
       Number.isSafeInteger(value.authorityPublicationRevision) && value.authorityPublicationRevision! >= 0)) &&
+    ((value.reconcileVersion === undefined && value.reconcileScheduleRevision === undefined && value.reconcileOwnerGeneration === undefined) ||
+      (value.reconcileVersion === 'play-billing-reconcile-v1' && Number.isSafeInteger(value.reconcileScheduleRevision) && value.reconcileScheduleRevision! >= 0 && Number.isSafeInteger(value.reconcileOwnerGeneration) && value.reconcileOwnerGeneration! >= 0)) &&
     value.version === LIFECYCLE_VERSION && value.accountSubject === subject && fingerprint(subject) &&
     validLifecycleFields(value) && status(value.status) && fingerprint(value.routeFingerprint) &&
     validOpaqueRoute(value.obfuscatedAccountId) && assertion(value.assertionId) &&

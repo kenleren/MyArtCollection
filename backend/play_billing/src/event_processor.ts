@@ -104,7 +104,7 @@ export class EventProcessor {
       const service=new PlayBillingService({repository:this.d.repository,identifiers:this.d.identifiers,clock:this.d.clock,play,custody});
       const input={version:CONTRACT_VERSION,requestId:randomUUID(),billingDisclosureVersion:DISCLOSURE_VERSION};
       const result=await deadline.run(()=>service.processAccountObservation({accountSubject:account.accountSubject,source:'background',
-        requestFingerprint:this.d.identifiers.eventOperationFingerprint(work.eventFingerprint,work.generation),eventWork:work},
+        requestFingerprint:this.d.identifiers.eventOperationFingerprint(work.eventFingerprint,work.generation),work:{kind:'event',fence:work}},
         superseded?{kind:'restore',input}:{kind:'verify',input:{...input,purchaseToken:token,productId:productId??discovery?.lineItems?.[0]?.productId}},deadline),50_000);
       if(result.status==='paid' || ('reason'in result && ['expired','on_hold','paused','play_pending'].includes(result.reason))) { outcome='completed'; reason='none'; }
       else if('reason'in result && ['unsafe_record','disclosure_required','recovery_required','account_conflict','invalid_request'].includes(result.reason)) {

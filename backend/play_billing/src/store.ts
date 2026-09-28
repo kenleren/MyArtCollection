@@ -1,4 +1,5 @@
-import { ownsEvent, validEventWork, type EventWorkFence, type EventWorkRecord, type ResolvedEventAccount } from './event_records.js';
+import { type InternalWork, type ReconcileFence, type ReconcileWork, type ReconcilePolicy, type CompletedObservation, type MigrationException, validMigrationException, validPolicy, validWork, ownsWork, marked, initialWork, reschedule, fenceFor, selection, increment, selectedEqual } from './reconciliation_work.js';
+import { ownsEvent, type EventWorkFence, type EventWorkRecord, type ResolvedEventAccount } from './event_records.js';
 import { OWNERSHIP_PROOF_VERSION, validOwnershipProof, type OwnershipProof } from './ownership_proof.js';
 import { AUTHORITY_VERSION, SNAPSHOT_VERSION, initialAuthority, validAuthority, outboxFor, fingerprint, type AccountAuthority, type AuthorityOutbox, type AuthoritySnapshot, type ObservationSource, type InactiveReason } from './account_authority.js';
 import { LIFECYCLE_VERSION, validLifecycleFields, sameLifecycle, validLifecycleRoot, validReciprocalRoute, validOpaqueRoute, routeFor, type LifecycleFields, type LifecycleRoot, type LifecycleRoute } from './lifecycle.js';
@@ -40,6 +41,7 @@ export interface BillingTransaction {
 export interface BillingDatabase {
   readonly databaseId: string;
   dueEventWork(now: Date, limit: number): Promise<string[]>;
+  dueReconciliationWork?(now: Date, limit: number): Promise<string[]>;
   runTransaction<T>(operation: (transaction: BillingTransaction) => Promise<T>): Promise<T>;
 }
 
@@ -56,7 +58,8 @@ export interface AttemptHandle extends LifecycleFields {
   owner: AttemptOwner;
   usesReplay: boolean;
   fence?: { assertionId: string; indexRevision: number; deadline: BillingDeadline; kind: 'verify' | 'restore';
-    observationGeneration: number; observationNonce: Uint8Array; source: ObservationSource; publicationRevision: number; eventWork?: EventWorkFence };
+    observationGeneration: number; observationNonce: Uint8Array; source: ObservationSource; publicationRevision: number; work?: InternalWork };
+  completedObservation?: CompletedObservation;
   envelope?: TokenEnvelope;
   ownershipProof?: OwnershipProof;
 }
@@ -204,25 +207,37 @@ export class BillingRepository {
     private readonly database: BillingDatabase,
     private readonly nonces: NonceSource,
     private readonly identifiers: Pick<BillingIdentifiers, 'routeFingerprint'>,
-  ) {}
+    private readonly reconciliationPolicy?: ReconcilePolicy,
+  ) { if (reconciliationPolicy && !validPolicy(reconciliationPolicy)) throw new Error('billing reconciliation policy unavailable'); }
 
   get databaseId(): string {
     return this.database.databaseId;
   }
 
-  private async readLifecycle(tx: BillingTransaction, subject: string): Promise<LifecycleRoot | undefined> {
+  private async readLifecycle(tx: BillingTransaction, subject: string, allowUnmarked = false): Promise<LifecycleRoot | undefined> {
     const root = await tx.get<LifecycleRoot>(COLLECTIONS.lifecycles, subject);
+    const work = await tx.get<ReconcileWork>(COLLECTIONS.reconcileWork, subject);
+    const exception = await tx.get<MigrationException>(COLLECTIONS.reconcileExceptions, subject);
     if (root === undefined) {
-      if (await tx.findSubjectRoute(subject) !== undefined || await tx.get(COLLECTIONS.authorities, subject) !== undefined ||
+      if (exception !== undefined || work !== undefined || await tx.findSubjectRoute(subject) !== undefined || await tx.get(COLLECTIONS.authorities, subject) !== undefined ||
           await tx.get(COLLECTIONS.authorityOutbox, subject) !== undefined) throw new UnsafeBillingRecordError();
       return undefined;
     }
     if (!validLifecycleRoot(root, subject) || this.identifiers.routeFingerprint(root.obfuscatedAccountId) !== root.routeFingerprint) {
       throw new UnsafeBillingRecordError();
     }
+    if(exception !== undefined && !validMigrationException(exception,root))throw new UnsafeBillingRecordError();
     const route = await tx.get<LifecycleRoute>(COLLECTIONS.routes, root.routeFingerprint);
     if (!route || !validReciprocalRoute(route, root)) throw new UnsafeBillingRecordError();
     await this.readAuthority(tx, root);
+    if (root.reconcileVersion === undefined && work === undefined) {
+      if(root.status!=='retired'){
+        const index=await tx.get<AccountIndex>(COLLECTIONS.accounts,subject);
+        if(isLegacy(index))throw new MigrationRequiredError();
+        await this.validatePointers(tx,root,index);
+      }
+      if (!allowUnmarked) throw new MigrationRequiredError();
+    } else if (!work || !validWork(work, root)) throw new UnsafeBillingRecordError();
     return root;
   }
 
@@ -302,6 +317,169 @@ export class BillingRepository {
       work.resolved.accountSubject === account.accountSubject && sameLifecycle(work.resolved, account);
   }
 
+  private async readWork(tx: BillingTransaction, root: LifecycleRoot): Promise<ReconcileWork> {
+    const w = await tx.get<ReconcileWork>(COLLECTIONS.reconcileWork, root.accountSubject);
+    if (!w || !validWork(w, root)) throw new UnsafeBillingRecordError();
+    return w;
+  }
+  private async validInternalWork(tx: BillingTransaction, work: InternalWork, root: LifecycleRoot, now: Date): Promise<boolean> {
+    if (!work || Object.keys(work).length !== 2 || !Object.hasOwn(work,'kind') || !Object.hasOwn(work,'fence')) return false;
+    if (work.kind === 'event') return this.validWorkFence(tx, work.fence, root, now);
+    if (work.kind !== 'reconciliation') return false;
+    return ownsWork(await this.readWork(tx, root), work.fence, now);
+  }
+  private async validatePointers(tx: BillingTransaction, root: LifecycleRoot, index: AccountIndex | undefined): Promise<void> {
+    if (index && (!validIndex(index, root.accountSubject) || !sameLifecycle(index, root))) throw new UnsafeBillingRecordError();
+    if (!index && await tx.findSubjectBinding(root.accountSubject) !== undefined) throw new UnsafeBillingRecordError();
+    const bindings = new Map<string, PurchaseBindingRecord>();
+    for (const id of new Set([index?.current,index?.candidate])) {
+      if (!id) continue;
+      const binding = await tx.get<PurchaseBindingRecord>(COLLECTIONS.bindings,id);
+      if (!binding || !validBinding(binding,id) || binding.accountSubject !== root.accountSubject || !sameLifecycle(binding,root)) throw new UnsafeBillingRecordError();
+      bindings.set(id,binding);
+    }
+    if (!validIndexedChain(index,bindings)) throw new UnsafeBillingRecordError();
+  }
+  private scheduleConsent(tx: BillingTransaction, root: LifecycleRoot, old: ReconcileWork | undefined,
+    index: AccountIndex | undefined, now: Date, publicationRevision: number): void {
+    if (!old) {
+      tx.set(COLLECTIONS.reconcileExceptions,root.accountSubject,{version:'play-billing-reconcile-exception-v1',accountSubject:root.accountSubject,
+        lifecycleEpoch:root.lifecycleEpoch,lifecycleGeneration:root.lifecycleGeneration,reason:root.status==='retired'?'unmarked_retired':'unmarked_revoked',recordedAt:now});
+      return;
+    }
+    const w = reschedule(old,root,index,now,this.reconciliationPolicy,{publicationRevision});
+    Object.assign(root,marked(root,w));
+    tx.set(COLLECTIONS.reconcileWork,root.accountSubject,w);
+  }
+
+  /** Claims only retained, validated custody; no event, UID or requested token. */
+  async claimReconciliation(subject:string,now:Date,deadline:BillingDeadline):Promise<ReconcileFence|undefined> {
+    if(!this.reconciliationPolicy)return undefined;
+    return this.database.runTransaction(async tx=>{
+      deadline.check();
+      const root=await this.readLifecycle(tx,subject);
+      if(!root||root.status!=='active')return undefined;
+      const w=await this.readWork(tx,root);
+      if(!['ready','retry','working'].includes(w.state)||w.dueAt>now)return undefined;
+      const defer = (state:'retry'|'blocked',dueAt:Date,reason:'consent'|'budget'|'retry'):undefined => {
+        const next:ReconcileWork={...w,state,dueAt,reason,scheduleRevision:increment(w.scheduleRevision),ownerGeneration:increment(w.ownerGeneration),
+          nonce:undefined,selectedDemand:undefined,leaseExpiresAt:undefined,completedObservation:undefined};
+        deadline.check();tx.set(COLLECTIONS.reconcileWork,subject,next);tx.set(COLLECTIONS.lifecycles,subject,marked(root,next));return undefined;
+      };
+      const disclosure=await tx.get<DisclosureRecord>(COLLECTIONS.disclosures,subject);
+      if(disclosure && !validDisclosure(disclosure,subject))throw new UnsafeBillingRecordError();
+      if(!disclosure||disclosure.status!=='accepted'||disclosure.assertionId!==root.assertionId||disclosure.retentionExpiresAt<=now)
+        return defer('blocked',now,'consent');
+      const index=await tx.get<AccountIndex>(COLLECTIONS.accounts,subject);
+      await this.validatePointers(tx,root,index);
+      const authority=await this.readAuthority(tx,root);
+      if(!index||!authority)throw new UnsafeBillingRecordError();
+      if(authority.owner?.leaseExpiresAt!==undefined&&authority.owner.leaseExpiresAt>now)return defer('retry',authority.owner.leaseExpiresAt,'retry');
+      const chosen=selection(w,index,authority.acknowledgementRecoveryToken,now);
+      if(!chosen){
+        const ack=authority.acknowledgementRecoveryToken;
+        const dates=[w.currentDemand,w.candidateDemand].filter(d=>d!==undefined&&(!ack||d.tokenFingerprint===ack)).map(d=>d!.dueAt).filter(d=>d>now);
+        if(!dates.length)throw new UnsafeBillingRecordError();
+        return defer('retry',new Date(Math.min(...dates.map(Number))),'retry');
+      }
+      const starts=w.attemptStarts.filter(d=>+d>+now-86_400_000);
+      if(starts.some(d=>d>now)||starts.length>=12)return defer('retry',new Date(Math.min(...starts.map(Number))+86_400_000+1),'budget');
+      const operation=await tx.get<TokenOperationRecord>(COLLECTIONS.operations,chosen.tokenFingerprint);
+      if(operation&&(!validOperation(operation,chosen.tokenFingerprint)||!sameLifecycle(operation,root)))throw new UnsafeBillingRecordError();
+      if(operation&&(protectedBeforeBoundary(operation,now)||cooldownBeforeBoundary(operation,now)||+now<+operation.lastGetStartedAt+TOKEN_GET_COOLDOWN_MS)){
+        const until=Math.max(+(operation.leaseExpiresAt??now),+(operation.cooldownUntil??now),+operation.lastGetStartedAt+TOKEN_GET_COOLDOWN_MS);
+        return defer('retry',new Date(until),'retry');
+      }
+      const claimed:ReconcileWork={...w,state:'working',scheduleRevision:increment(w.scheduleRevision),ownerGeneration:increment(w.ownerGeneration),
+        nonce:this.nonce(),selectedDemand:chosen,leaseExpiresAt:addMs(now,ATTEMPT_LEASE_MS),dueAt:addMs(now,ATTEMPT_LEASE_MS),
+        attemptStarts:[...starts,now],completedObservation:undefined,reason:undefined};
+      deadline.check();tx.set(COLLECTIONS.reconcileWork,subject,claimed);tx.set(COLLECTIONS.lifecycles,subject,marked(root,claimed));
+      return fenceFor(claimed);
+    });
+  }
+
+  async reserveReconciliation(fence:ReconcileFence,kind:'get'|'ack'|'kms',now:Date,deadline:BillingDeadline,requestFingerprint:string):Promise<void> {
+    await this.database.runTransaction(async tx=>{
+      deadline.check();const root=await this.readLifecycle(tx,fence.accountSubject);
+      if(!root||root.status!=='active')throw new UnsafeBillingRecordError();
+      const w=await this.readWork(tx,root);
+      const disclosure=await tx.get<DisclosureRecord>(COLLECTIONS.disclosures,root.accountSubject);
+      const authority=await this.readAuthority(tx,root);
+      const index=await tx.get<AccountIndex>(COLLECTIONS.accounts,root.accountSubject);
+      if(!ownsWork(w,fence,now)||!disclosure||!validDisclosure(disclosure,root.accountSubject)||disclosure.status!=='accepted'||disclosure.retentionExpiresAt<=now||
+        disclosure.assertionId!==fence.assertionId||!index||index.revision!==fence.selectedDemand.indexRevision||!authority||
+        authority.owner?.source!=='background'||authority.owner.requestFingerprint!==requestFingerprint||authority.owner.tokenFingerprint!==fence.selectedDemand.tokenFingerprint||authority.owner.phase==='complete'||
+        !authority.owner.leaseExpiresAt||authority.owner.leaseExpiresAt<=now)throw new UnsafeBillingRecordError();
+      if(!['get','ack','kms'].includes(kind))throw new UnsafeBillingRecordError();
+      deadline.check();tx.set(COLLECTIONS.reconcileWork,root.accountSubject,{...w,dispatchTotals:{...w.dispatchTotals,[kind]:increment(w.dispatchTotals[kind])}});
+    });
+  }
+
+  async retryReconciliation(fence:ReconcileFence,now:Date,deadline:BillingDeadline):Promise<boolean> {
+    return this.database.runTransaction(async tx=>{
+      deadline.check();const root=await this.readLifecycle(tx,fence.accountSubject);
+      if(!root||root.status!=='active')return false;
+      const w=await this.readWork(tx,root);if(!ownsWork(w,fence,now))return false;
+      const delay=Math.min(this.reconciliationPolicy?.maxRetryMs??900_000,(this.reconciliationPolicy?.retryMs??30_000)*2**Math.min(w.attemptStarts.length-1,5));
+      const dueAt=addMs(now,delay);
+      const next:ReconcileWork={...w,state:'retry',scheduleRevision:increment(w.scheduleRevision),ownerGeneration:increment(w.ownerGeneration),dueAt,
+        nonce:undefined,leaseExpiresAt:undefined,selectedDemand:undefined,completedObservation:undefined,reason:'retry'};
+      // Preserve age of an overdue other demand. Overall retry limits invocation cadence.
+      const key=w.candidateDemand?.tokenFingerprint===fence.selectedDemand.tokenFingerprint?'candidateDemand':'currentDemand';
+      if(next[key])next[key]={...next[key]!,dueAt};
+      deadline.check();tx.set(COLLECTIONS.reconcileWork,root.accountSubject,next);tx.set(COLLECTIONS.lifecycles,root.accountSubject,marked(root,next));return true;
+    });
+  }
+
+  private async validateCompleted(attempt:AttemptHandle,now:Date,outcome:'paid'|'inactive'):Promise<boolean> {
+    return this.database.runTransaction(async tx=>{
+      const receipt=attempt.completedObservation;const f=attempt.fence;
+      if(!receipt||!f||receipt.outcome!==outcome)return false;
+      f.deadline.check();const root=await this.readLifecycle(tx,attempt.accountSubject);
+      if(!root||root.status!=='active'||!sameLifecycle(root,attempt)||root.assertionId!==f.assertionId||root.obfuscatedAccountId!==attempt.expectedPlayAccountId)return false;
+      const w=await this.readWork(tx,root);const r=w.completedObservation;
+      if(!r||r.scheduleRevision!==receipt.scheduleRevision||r.ownerGeneration!==receipt.ownerGeneration||!bytesEqual(r.nonce,receipt.nonce)||
+        !selectedEqual(r.selectedDemand,receipt.selectedDemand)||r.requestFingerprint!==attempt.owner.requestFingerprint||r.observationGeneration!==f.observationGeneration||
+        !bytesEqual(r.observationNonce,f.observationNonce)||r.publicationRevision!==f.publicationRevision||r.indexRevision!==f.indexRevision||r.outcome!==outcome||r.reason!==receipt.reason)return false;
+      const disclosure=await tx.get<DisclosureRecord>(COLLECTIONS.disclosures,root.accountSubject);
+      const index=await tx.get<AccountIndex>(COLLECTIONS.accounts,root.accountSubject);
+      await this.validatePointers(tx,root,index);
+      const authority=await this.readAuthority(tx,root);
+      const operation=await tx.get<TokenOperationRecord>(COLLECTIONS.operations,attempt.tokenFingerprint);
+      const replay=attempt.usesReplay?await tx.get<RequestReplayRecord>(COLLECTIONS.replays,attempt.owner.requestFingerprint):undefined;
+      const binding=await tx.get<PurchaseBindingRecord>(COLLECTIONS.bindings,attempt.tokenFingerprint);
+      if(!disclosure||!validDisclosure(disclosure,root.accountSubject)||disclosure.status!=='accepted'||disclosure.retentionExpiresAt<=now||disclosure.assertionId!==root.assertionId||
+        !index||!validIndex(index,root.accountSubject)||!sameLifecycle(index,root)||index.revision!==r.indexRevision||!this.currentObservation(authority,attempt)||authority!.owner!.phase!=='complete'||authority!.publicationRevision!==r.publicationRevision||
+        !ownedOperation(operation,attempt,outcome==='paid'?'paid':'free')||(attempt.usesReplay&&!ownedReplayAny(replay,attempt,[outcome==='paid'?'paid':'free'])))return false;
+      f.deadline.check();
+      if(outcome==='inactive')return index.inactive?.tokenFingerprint===attempt.tokenFingerprint&&index.inactive.reason===r.reason;
+      return authority!.snapshot.state!=='none'&&authority!.snapshot.observationGeneration===f.observationGeneration&&index.current===attempt.tokenFingerprint&&index.inactive?.tokenFingerprint!==attempt.tokenFingerprint&&
+        ownedBinding(binding,attempt,'paid')&&binding.ackState==='acknowledged'&&binding.bindingState==='acknowledged_delivery'&&binding.playExpiresAt>now;
+    });
+  }
+
+  /** Refresh an acknowledged current without restaging or erasing a pending candidate. */
+  async finalizeReconciliationCurrent(attempt:AttemptHandle,input:PaidCommit,playAcknowledged:boolean,now:Date):Promise<PaidCommit|undefined> {
+    if(attempt.fence?.work?.kind!=='reconciliation'||attempt.fence.work.fence.selectedDemand.kind!=='current'||!playAcknowledged)return undefined;
+    const result=await this.guarded(attempt,async(tx,index,authority,root)=>{
+      const binding=await tx.get<PurchaseBindingRecord>(COLLECTIONS.bindings,attempt.tokenFingerprint);
+      const operation=await tx.get<TokenOperationRecord>(COLLECTIONS.operations,attempt.tokenFingerprint);
+      const replay=attempt.usesReplay?await tx.get<RequestReplayRecord>(COLLECTIONS.replays,attempt.owner.requestFingerprint):undefined;
+      if(index?.current!==attempt.tokenFingerprint||!binding||!validBinding(binding,attempt.tokenFingerprint)||binding.ackState!=='acknowledged'||binding.bindingState!=='acknowledged_delivery'||
+        !ownedOperation(operation,attempt,'verified_owner')||(attempt.usesReplay&&!ownedReplayAny(replay,attempt,['lookup_in_flight']))||binding.productId!==input.productId||input.playExpiresAt<=now||authority.acknowledgementRecoveryToken!==undefined)return undefined;
+      tx.set(COLLECTIONS.bindings,attempt.tokenFingerprint,{...binding,planId:input.planId,productId:input.productId,normalizedState:input.normalizedState,playExpiresAt:input.playExpiresAt,lastVerifiedAt:input.verifiedAt,
+        attemptGeneration:attempt.owner.attemptGeneration,attemptNonce:attempt.owner.attemptNonce,attemptRequestFingerprint:attempt.owner.requestFingerprint,
+        attemptPhase:'paid',updatedAt:now});
+      tx.set(COLLECTIONS.accounts,attempt.accountSubject,{...index,revision:index.revision+1,inactive:undefined,updatedAt:now});
+      tx.set(COLLECTIONS.operations,attempt.tokenFingerprint,{...operation,phase:'paid',outcomeCode:'paid',leaseExpiresAt:undefined,updatedAt:now});
+      if(replay)tx.set(COLLECTIONS.replays,attempt.owner.requestFingerprint,{...replay,phase:'paid',outcomeCode:'paid',leaseExpiresAt:undefined,updatedAt:now});
+      this.publishAuthority(tx,root,{...authority,owner:{...authority.owner!,phase:'complete',leaseExpiresAt:undefined}},
+        {state:input.normalizedState,planId:input.planId,productId:input.productId,tokenFingerprint:attempt.tokenFingerprint,verifiedAt:input.verifiedAt,playExpiresAt:input.playExpiresAt},true);
+      return input;
+    },undefined,now,'paid');
+    if(result){attempt.fence!.indexRevision++;attempt.fence!.publicationRevision++;}return result;
+  }
+
   private nonce(): Uint8Array {
     const nonce = this.nonces.nextNonce();
     if (!(nonce instanceof Uint8Array) || nonce.byteLength !== 16) throw new UnsafeBillingRecordError();
@@ -320,6 +498,9 @@ export class BillingRepository {
       }
       const root = await this.readLifecycle(tx, subject);
       if (root !== undefined) {
+        const existingIndex=await tx.get<AccountIndex>(COLLECTIONS.accounts,subject);
+        if(isLegacy(existingIndex))return {kind:'recovery_required'};
+        if(root.status!=='retired')await this.validatePointers(tx,root,existingIndex);
         if (root.status === 'retired') return { kind: 'recovery_required' };
         if (root.status !== 'active' || root.assertionId !== disclosure.assertionId) return { kind: 'unsafe_record' };
         deadline.check();
@@ -341,7 +522,9 @@ export class BillingRepository {
         assertionId: disclosure.assertionId, createdAt: now, updatedAt: now,
       };
       deadline.check();
-      tx.set(COLLECTIONS.lifecycles, subject, created);
+      const work = initialWork(created, now);
+      tx.set(COLLECTIONS.reconcileWork, subject, work);
+      tx.set(COLLECTIONS.lifecycles, subject, marked(created, work));
       tx.set(COLLECTIONS.routes, routeFingerprint, routeFor(created));
       return { kind: 'ready', obfuscatedAccountId, lifecycleEpoch: created.lifecycleEpoch };
     });
@@ -358,7 +541,10 @@ export class BillingRepository {
       deadline.check();
       const existing = await tx.get<DisclosureRecord>(COLLECTIONS.disclosures, accountSubject);
       if (existing !== undefined && !validDisclosure(existing, accountSubject, true)) throw new UnsafeBillingRecordError();
-      const root = await this.readLifecycle(tx, accountSubject);
+      const root = await this.readLifecycle(tx, accountSubject, status === 'revoked');
+      const work = root ? await tx.get<ReconcileWork>(COLLECTIONS.reconcileWork, accountSubject) : undefined;
+      const index = root ? await tx.get<AccountIndex>(COLLECTIONS.accounts, accountSubject) : undefined;
+      if (root && root.status!=='retired') await this.validatePointers(tx, root, index);
       if (status === 'revoked' && existing === undefined && root === undefined) return;
       const authority = root === undefined ? undefined : await this.readAuthority(tx, root) ?? await this.firstAuthority(tx, root, now);
       if (authority && authority.observationGeneration >= Number.MAX_SAFE_INTEGER) throw new UnsafeBillingRecordError();
@@ -374,7 +560,7 @@ export class BillingRepository {
       if (root !== undefined) {
         const updated: LifecycleRoot = { ...root, assertionId,
           status: root.status === 'retired' ? 'retired' : status === 'accepted' ? 'active' : 'consent_paused', updatedAt: now };
-        tx.set(COLLECTIONS.lifecycles, accountSubject, updated);
+        this.scheduleConsent(tx, updated, work, index, now, authority!.publicationRevision + 1);
         tx.set(COLLECTIONS.routes, root.routeFingerprint, routeFor(updated));
         this.publishAuthority(tx, updated, { ...authority!, observationGeneration: authority!.observationGeneration + 1, owner: undefined },
           { state: 'none', reason: updated.status === 'retired' ? 'retired' : status === 'revoked' ? 'revoked' : 'requires_verification', verifiedAt: now }, updated.status === 'retired');
@@ -386,13 +572,16 @@ export class BillingRepository {
   async retireLifecycle(subject: string, expected: LifecycleFields, now: Date, deadline = new BillingDeadline()): Promise<boolean> {
     return this.database.runTransaction(async (tx) => {
       deadline.check();
-      const root = await this.readLifecycle(tx, subject);
+      const root = await this.readLifecycle(tx, subject, true);
+      const work = root ? await tx.get<ReconcileWork>(COLLECTIONS.reconcileWork, subject) : undefined;
+      const index = root ? await tx.get<AccountIndex>(COLLECTIONS.accounts, subject) : undefined;
+      if (root && root.status !== 'retired') await this.validatePointers(tx, root, index);
       if (!root || !sameLifecycle(root, expected) || root.status === 'retired' || root.lifecycleGeneration >= Number.MAX_SAFE_INTEGER) return false;
       const authority = await this.readAuthority(tx, root) ?? await this.firstAuthority(tx, root, now);
       if (authority.observationGeneration >= Number.MAX_SAFE_INTEGER) throw new UnsafeBillingRecordError();
       const retired: LifecycleRoot = { ...root, status: 'retired', lifecycleGeneration: root.lifecycleGeneration + 1, updatedAt: now };
       deadline.check();
-      tx.set(COLLECTIONS.lifecycles, subject, retired);
+      this.scheduleConsent(tx, retired, work, index, now, authority.publicationRevision + 1);
       tx.set(COLLECTIONS.routes, root.routeFingerprint, routeFor(retired));
       this.publishAuthority(tx, retired, { ...authority, observationGeneration: authority.observationGeneration + 1, owner: undefined },
         { state: 'none', reason: 'retired', verifiedAt: now }, true);
@@ -420,16 +609,16 @@ export class BillingRepository {
     now: Date,
     deadline = new BillingDeadline(),
     source: ObservationSource = 'foreground',
-    eventWork?: EventWorkFence,
+    work?: InternalWork,
   ): Promise<AcquireResult> {
-    return this.acquire(accountSubject, requestFingerprint, tokenFingerprint, now, true, 'verify', deadline, source, undefined, eventWork);
+    return this.acquire(accountSubject, requestFingerprint, tokenFingerprint, now, true, 'verify', deadline, source, undefined, work);
   }
 
-  acquireAccountAttempt(accountSubject: string, requestFingerprint: string, now: Date, deadline: BillingDeadline, source: ObservationSource = 'foreground', eventWork?: EventWorkFence): Promise<AcquireResult> {
-    return this.acquire(accountSubject, requestFingerprint, undefined, now, true, 'restore', deadline, source, undefined, eventWork);
+  acquireAccountAttempt(accountSubject: string, requestFingerprint: string, now: Date, deadline: BillingDeadline, source: ObservationSource = 'foreground', work?: InternalWork): Promise<AcquireResult> {
+    return this.acquire(accountSubject, requestFingerprint, undefined, now, true, 'restore', deadline, source, undefined, work);
   }
 
-  acquirePredecessorAttempt(
+  async acquirePredecessorAttempt(
     accountSubject: string,
     requestFingerprint: string,
     tokenFingerprint: string,
@@ -437,7 +626,12 @@ export class BillingRepository {
     deadline = new BillingDeadline(),
     previous?: AttemptHandle,
   ): Promise<AcquireResult> {
-    return this.acquire(accountSubject, requestFingerprint, tokenFingerprint, now, false, 'verify', deadline, previous?.fence?.source ?? 'foreground', previous, previous?.fence?.eventWork);
+    const result = await this.acquire(accountSubject, requestFingerprint, tokenFingerprint, now, false, 'verify', deadline, previous?.fence?.source ?? 'foreground', previous, previous?.fence?.work);
+    if (result.kind === 'acquired' && previous?.fence?.work?.kind === 'reconciliation' && result.attempt.fence?.work?.kind === 'reconciliation') {
+      previous.fence.work.fence = result.attempt.fence.work.fence;
+      result.attempt.fence.work = previous.fence.work;
+    }
+    return result;
   }
 
   private async acquire(
@@ -450,7 +644,7 @@ export class BillingRepository {
     deadline: BillingDeadline,
     source: ObservationSource,
     previous?: AttemptHandle,
-    eventWork?: EventWorkFence,
+    work?: InternalWork,
   ): Promise<AcquireResult> {
     return this.database.runTransaction(async (tx) => {
       deadline.check();
@@ -467,8 +661,8 @@ export class BillingRepository {
         return { kind: kind === 'restore' ? 'no_known_purchase' : 'recovery_required' };
       }
       if (root.status === 'retired') return { kind: 'recovery_required' };
-      if (source === 'background' && (!eventWork || !await this.validWorkFence(tx, eventWork, root, now))) return { kind: 'unsafe_record' };
-      if (source === 'foreground' && eventWork !== undefined) return { kind: 'unsafe_record' };
+      if (source === 'background' && (!work || !await this.validInternalWork(tx, work, root, now))) return { kind: 'unsafe_record' };
+      if (source === 'foreground' && work !== undefined) return { kind: 'unsafe_record' };
       if (root.status !== 'active' || root.assertionId !== disclosure.assertionId) return { kind: 'disclosure_required' };
       if (index !== undefined && (!validIndex(index, accountSubject) || !sameLifecycle(index, root))) return { kind: 'unsafe_record' };
       if (index === undefined) {
@@ -486,7 +680,17 @@ export class BillingRepository {
         indexedBindings.set(pointer, referenced);
       }
       if (!validIndexedChain(index, indexedBindings)) return { kind: 'unsafe_record' };
-      const tokenFingerprint = requestedToken ?? index?.candidate ?? index?.current;
+      const reconcile = work?.kind === 'reconciliation' ? work.fence : undefined;
+      if (reconcile && (requestedToken !== undefined && previous === undefined)) return {kind:'unsafe_record'};
+      if (reconcile && previous === undefined) {
+        const w = await this.readWork(tx,root);
+        const selected = w.selectedDemand;
+        const pointer = selected?.kind === 'current' ? index?.current : selected?.kind === 'candidate' ? index?.candidate : selected?.tokenFingerprint;
+        const slot = w.candidateDemand?.tokenFingerprint === selected?.tokenFingerprint ? w.candidateDemand : w.currentDemand;
+        if (!selected || selected.indexRevision !== (index?.revision ?? 0) || pointer !== selected.tokenFingerprint ||
+            slot?.tokenFingerprint !== selected.tokenFingerprint || slot.demandRevision !== selected.demandRevision) return {kind:'unsafe_record'};
+      }
+      const tokenFingerprint = requestedToken ?? reconcile?.selectedDemand.tokenFingerprint ?? index?.candidate ?? index?.current;
       if (tokenFingerprint === undefined) return { kind: 'no_known_purchase' };
       const replay = usesReplay
         ? await tx.get<RequestReplayRecord>(COLLECTIONS.replays, requestFingerprint)
@@ -538,6 +742,21 @@ export class BillingRepository {
         previous.fence?.assertionId === disclosure.assertionId && previous.owner.requestFingerprint === requestFingerprint &&
         authority.owner?.phase === 'complete' && previous.fence.indexRevision === (index?.revision ?? 0);
       if (previous !== undefined && !continuing) return { kind: 'unsafe_record' };
+      let admittedWork = work;
+      if (reconcile && previous) {
+        // The only permitted pointer switch is a freshly canceled staged successor
+        // to its retained, indexed predecessor after the successor is closed.
+        const w = await this.readWork(tx,root);
+        const successor = indexedBindings.get(previous.tokenFingerprint);
+        const d = w.currentDemand;
+        if (index?.candidate !== previous.tokenFingerprint || index.current !== tokenFingerprint ||
+          successor?.stagedPredecessorFingerprint !== tokenFingerprint || !d || d.tokenFingerprint !== tokenFingerprint ||
+          authority.acknowledgementRecoveryToken !== undefined) return {kind:'unsafe_record'};
+        const changed:ReconcileWork={...w,scheduleRevision:increment(w.scheduleRevision),selectedDemand:{kind:'current',tokenFingerprint,demandRevision:d.demandRevision,indexRevision:index.revision}};
+        admittedWork={kind:'reconciliation',fence:fenceFor(changed)};
+        // Defer these writes until every admission read has finished below.
+      }
+      if (reconcile?.selectedDemand.kind === 'ack' && !previous && authority.acknowledgementRecoveryToken !== tokenFingerprint) return {kind:'unsafe_record'};
       if (authority.acknowledgementRecoveryToken !== undefined && authority.acknowledgementRecoveryToken !== tokenFingerprint) return { kind: 'verification_pending' };
       if (authority.owner?.leaseExpiresAt !== undefined && authority.owner.leaseExpiresAt > now) return { kind: 'in_flight' };
       if ((!continuing && authority.observationGeneration >= Number.MAX_SAFE_INTEGER) ||
@@ -573,6 +792,11 @@ export class BillingRepository {
       const observationGeneration = continuing ? authority.observationGeneration : authority.observationGeneration + 1;
       const observationNonce = continuing ? authority.owner!.nonce : this.nonce();
       deadline.check();
+      if (admittedWork?.kind === 'reconciliation' && admittedWork !== work) {
+        const old = await this.readWork(tx,root);
+        const changed:ReconcileWork={...old,scheduleRevision:admittedWork.fence.scheduleRevision,selectedDemand:admittedWork.fence.selectedDemand};
+        Object.assign(root,marked(root,changed));tx.set(COLLECTIONS.reconcileWork,accountSubject,changed);
+      }
       this.writeAuthority(tx, root, { ...authority, observationGeneration, owner: { requestFingerprint, nonce: observationNonce,
         tokenFingerprint, source, phase: 'working', leaseExpiresAt } });
       if (usesReplay) {
@@ -624,7 +848,7 @@ export class BillingRepository {
           lifecycleEpoch: root.lifecycleEpoch, lifecycleGeneration: root.lifecycleGeneration,
           expectedPlayAccountId: root.obfuscatedAccountId,
           fence: { assertionId: disclosure.assertionId, indexRevision: index?.revision ?? 0, deadline, kind,
-            observationGeneration, observationNonce, source, publicationRevision: authority.publicationRevision, eventWork } },
+            observationGeneration, observationNonce, source, publicationRevision: authority.publicationRevision, work: admittedWork } },
       };
     });
   }
@@ -916,7 +1140,7 @@ export class BillingRepository {
         });
       }
       return true;
-    }, false, now);
+    }, false, now, 'delivery');
     if (result) { attempt.fence!.indexRevision++; this.auxiliaryExpiry.delete(attempt); }
     return result;
   }
@@ -967,7 +1191,7 @@ export class BillingRepository {
       this.writeAuthority(tx, root, { ...authority, acknowledgementRecoveryToken: attempt.tokenFingerprint,
         owner: { ...authority.owner!, phase: 'ack_in_progress' } });
       return true;
-    }, false, now);
+    }, false, now, 'ack');
   }
 
   async finalizePaid(
@@ -1077,7 +1301,7 @@ export class BillingRepository {
         playExpiresAt: finalized.playExpiresAt,
         verifiedAt: finalized.lastVerifiedAt,
       };
-    }, undefined, now);
+    }, undefined, now, 'paid');
     if (result) { attempt.fence!.indexRevision++; attempt.fence!.publicationRevision++; }
     return result;
   }
@@ -1131,7 +1355,7 @@ export class BillingRepository {
       this.writeAuthority(tx, root, { ...authority, acknowledgementRecoveryToken: attempt.tokenFingerprint,
         owner: { ...authority.owner!, phase: 'ack_unknown', leaseExpiresAt: undefined } });
       return true;
-    }, false, now);
+    }, false, now, 'ack');
   }
   async isCurrentAttempt(attempt: AttemptHandle, now: Date, phase: 'lookup_in_flight' | 'verified_owner' | 'ack_in_progress' = 'lookup_in_flight'): Promise<boolean> {
     return this.guarded(attempt, async (tx) => {
@@ -1141,6 +1365,7 @@ export class BillingRepository {
   }
 
   async isCurrentGrant(attempt: AttemptHandle, now: Date): Promise<boolean> {
+    if(attempt.completedObservation)return this.validateCompleted(attempt,now,'paid');
     return this.guarded(attempt, async (tx, index, authority) => {
       const binding = await tx.get<PurchaseBindingRecord>(COLLECTIONS.bindings, attempt.tokenFingerprint);
       const operation = await tx.get<TokenOperationRecord>(COLLECTIONS.operations, attempt.tokenFingerprint);
@@ -1156,37 +1381,74 @@ export class BillingRepository {
   }
 
   async isCurrentResponse(attempt: AttemptHandle, now: Date): Promise<boolean> {
+    if(attempt.completedObservation)return this.validateCompleted(attempt,now,'inactive');
     return this.guarded(attempt, async (_tx, _index, authority) =>
       authority.owner?.phase === 'complete' && authority.publicationRevision === attempt.fence!.publicationRevision,
     false, now);
   }
 
-  private guarded<T>(attempt: AttemptHandle, action: (tx: BillingTransaction, index: AccountIndex | undefined, authority: AccountAuthority, root: LifecycleRoot) => Promise<T>, fallback: T, now: Date): Promise<T> {
-    return this.database.runTransaction(async (tx) => {
+  private async guarded<T>(attempt: AttemptHandle, action: (tx: BillingTransaction, index: AccountIndex | undefined, authority: AccountAuthority, root: LifecycleRoot) => Promise<T>, fallback: T, now: Date,
+    transition?: 'delivery'|'ack'|'paid'|'inactive', inactiveReason?: string): Promise<T> {
+    const committed = await this.database.runTransaction(async (tx) => {
+      const rejected = {result:fallback,next:undefined as ReconcileFence|undefined,completed:undefined as CompletedObservation|undefined};
       const fence = attempt.fence;
-      if (!fence) return fallback;
+      if (!fence || attempt.completedObservation) return rejected;
       fence.deadline.check();
       const disclosure = await tx.get<DisclosureRecord>(COLLECTIONS.disclosures, attempt.accountSubject);
       const root = await this.readLifecycle(tx, attempt.accountSubject);
       const index = await tx.get<AccountIndex>(COLLECTIONS.accounts, attempt.accountSubject);
       if (!root || root.status !== 'active' || !sameLifecycle(root, attempt) ||
           root.obfuscatedAccountId !== attempt.expectedPlayAccountId || root.assertionId !== fence.assertionId ||
-          (index !== undefined && !sameLifecycle(index, attempt))) return fallback;
+          (index !== undefined && !sameLifecycle(index, attempt))) return rejected;
       if (!disclosure || !validDisclosure(disclosure, attempt.accountSubject) || disclosure.status !== 'accepted' || disclosure.retentionExpiresAt <= now ||
           disclosure.assertionId !== fence.assertionId || (index !== undefined && !validIndex(index, attempt.accountSubject)) ||
-          (index?.revision ?? 0) !== fence.indexRevision) return fallback;
+          (index?.revision ?? 0) !== fence.indexRevision) return rejected;
       const authority = await this.readAuthority(tx, root);
       if (!this.currentObservation(authority, attempt) ||
-          (authority!.owner!.leaseExpiresAt !== undefined && authority!.owner!.leaseExpiresAt! <= now)) return fallback;
-      if (fence.source === 'background' && (!fence.eventWork || !await this.validWorkFence(tx, fence.eventWork, root, now))) return fallback;
-      const result = await action(tx, index, authority!, root);
+          (authority!.owner!.leaseExpiresAt !== undefined && authority!.owner!.leaseExpiresAt! <= now)) return rejected;
+      if (fence.source === 'background' && (!fence.work || !await this.validInternalWork(tx, fence.work, root, now))) return rejected;
+      const old = await this.readWork(tx,root);
+      if(index && index.revision >= Number.MAX_SAFE_INTEGER)return rejected;
+      // Buffer writes so all semantic preimages are read before any Firestore write.
+      const writes = new Map<string,{collection:BillingCollection;id:string;value:unknown}>();
+      const buffered:BillingTransaction={...tx,set:(collection,id,value)=>{writes.set(collection+'/'+id,{collection,id,value});}};
+      const result = await action(buffered, index, authority!, root);
+      let next: ReconcileFence | undefined; let completed: CompletedObservation | undefined;
+      if (transition && result !== false && result !== undefined) {
+        const finalIndex = (writes.get(COLLECTIONS.accounts+'/'+attempt.accountSubject)?.value as AccountIndex|undefined) ?? index;
+        const finalRoot = (writes.get(COLLECTIONS.lifecycles+'/'+attempt.accountSubject)?.value as LifecycleRoot|undefined) ?? root;
+        const finalAuthority = (writes.get(COLLECTIONS.authorities+'/'+attempt.accountSubject)?.value as AccountAuthority|undefined) ?? authority!;
+        const own = fence.work?.kind==='reconciliation' ? fence.work.fence : undefined;
+        const terminal = own && (transition==='paid'||transition==='inactive');
+        const binding = writes.get(COLLECTIONS.bindings+'/'+attempt.tokenFingerprint)?.value as PurchaseBindingRecord|undefined;
+        const w = reschedule(old,finalRoot,finalIndex,now,this.reconciliationPolicy,{own,
+          terminal:(transition==='paid'||transition==='inactive')?{token:attempt.tokenFingerprint,paid:transition==='paid',expiresAt:binding?.playExpiresAt}:undefined,
+          publicationRevision:finalAuthority.publicationRevision,ack:finalAuthority.acknowledgementRecoveryToken,previousIndex:index});
+        if (terminal) {
+          completed={...own,scheduleRevision:w.scheduleRevision,ownerGeneration:w.ownerGeneration,
+            requestFingerprint:attempt.owner.requestFingerprint,observationGeneration:fence.observationGeneration,observationNonce:fence.observationNonce,
+            publicationRevision:finalAuthority.publicationRevision,indexRevision:finalIndex?.revision??0,outcome:transition==='paid'?'paid':'inactive',
+            ...(transition==='inactive'?{reason:inactiveReason}: {})};
+          w.completedObservation=completed;
+        } else if (own) next=fenceFor(w);
+        const merged=marked(finalRoot,w);
+        if(!validWork(w,merged))throw new UnsafeBillingRecordError();
+        buffered.set(COLLECTIONS.reconcileWork,attempt.accountSubject,w);
+        buffered.set(COLLECTIONS.lifecycles,attempt.accountSubject,merged);
+      }
       fence.deadline.check();
-      return result;
+      for(const write of writes.values())tx.set(write.collection,write.id,write.value);
+      return {result,next,completed};
     });
+    // Firestore may retry the closure. Only its committed result may advance handles.
+    if (committed.next && attempt.fence?.work?.kind==='reconciliation') attempt.fence.work.fence=committed.next;
+    if (committed.completed) attempt.completedObservation=committed.completed;
+    return committed.result;
   }
 
   async recordInactive(attempt: AttemptHandle, reason: Exclude<InactiveReason, 'requires_verification' | 'retired'>, now: Date,
     acknowledgementConfirmed = false): Promise<boolean> {
+    const terminal = attempt.fence?.work?.kind === 'reconciliation';
     const committed = await this.guarded(attempt, async (tx, index, authority, root) => {
       const operation = await tx.get<TokenOperationRecord>(COLLECTIONS.operations, attempt.tokenFingerprint);
       const replay = attempt.usesReplay
@@ -1200,14 +1462,19 @@ export class BillingRepository {
       });
       const publicationChanged = index === undefined || index.current === attempt.tokenFingerprint ||
         (index.current === undefined && index.candidate === attempt.tokenFingerprint);
-      if (publicationChanged) this.publishAuthority(tx, root, authority,
+      const finalAuthority = terminal ? {...authority,owner:{...authority.owner!,phase:'complete' as const,leaseExpiresAt:undefined}} : authority;
+      if (publicationChanged) this.publishAuthority(tx, root, finalAuthority,
         { state: 'none', reason, tokenFingerprint: attempt.tokenFingerprint, verifiedAt: now },
         acknowledgementConfirmed || reason === 'expired' || reason === 'revoked');
       else if (acknowledgementConfirmed || reason === 'expired' || reason === 'revoked') {
-        this.writeAuthority(tx, root, { ...authority, acknowledgementRecoveryToken: undefined });
+        this.writeAuthority(tx, root, { ...finalAuthority, acknowledgementRecoveryToken: undefined });
+      } else if (terminal) this.writeAuthority(tx,root,finalAuthority);
+      if (terminal) {
+        tx.set(COLLECTIONS.operations,attempt.tokenFingerprint,{...operation,phase:'free',outcomeCode:'free',leaseExpiresAt:undefined,updatedAt:now});
+        if(replay) tx.set(COLLECTIONS.replays,attempt.owner.requestFingerprint,{...replay,phase:'free',outcomeCode:'free',leaseExpiresAt:undefined,updatedAt:now});
       }
       return { indexed, publicationChanged };
-    }, false as false | { indexed: boolean; publicationChanged: boolean }, now);
+    }, false as false | { indexed: boolean; publicationChanged: boolean }, now, 'inactive', reason);
     if (committed) {
       if (committed.indexed) attempt.fence!.indexRevision++;
       if (committed.publicationChanged) attempt.fence!.publicationRevision++;
@@ -1217,6 +1484,7 @@ export class BillingRepository {
 
 }
 
+export class MigrationRequiredError extends Error {}
 export class UnsafeBillingRecordError extends Error {}
 export class AccountConflictError extends Error {}
 

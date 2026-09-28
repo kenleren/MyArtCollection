@@ -24,6 +24,14 @@ export class FirestoreBillingDatabase implements BillingDatabase {
     return snapshot.docs.map(doc => doc.id);
   }
 
+  async dueReconciliationWork(now: Date, limit: number): Promise<string[]> {
+    if (!Number.isInteger(limit) || limit < 1 || limit > 10) throw new Error('billing reconciliation unsafe');
+    const snapshot = await this.firestore.collection('playBillingReconcileWork')
+      .where('state', 'in', ['ready','retry','working']).where('dueAt', '<=', now)
+      .orderBy('dueAt').orderBy('__name__').limit(limit).get();
+    return snapshot.docs.map(doc => doc.id);
+  }
+
   runTransaction<T>(operation: (transaction: BillingTransaction) => Promise<T>): Promise<T> {
     return this.firestore.runTransaction(async (firestoreTransaction) =>
       operation(createTransactionAdapter(this.firestore, firestoreTransaction)),

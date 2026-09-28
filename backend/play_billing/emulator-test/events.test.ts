@@ -53,7 +53,7 @@ test('named Firestore two resolved event tokens contend for one account owner an
  const resolved={accountSubject:subject,lifecycleEpoch:root.lifecycleEpoch as string,lifecycleGeneration:root.lifecycleGeneration as number};
  const descriptors=await Promise.all([ready(),ready()]);const claims=await Promise.all(descriptors.map(d=>work.claim(d.eventFingerprint,clock.now,deadline())));
  for(const claim of claims){assert.ok(claim);await work.bind(claim,resolved,clock.now,deadline());}
- const results=await Promise.all(claims.map(claim=>repository.acquireAttempt(subject,hash(),claim!.tokenFingerprint!,clock.now,deadline(),'background',claim!)));
+ const results=await Promise.all(claims.map(claim=>repository.acquireAttempt(subject,hash(),claim!.tokenFingerprint!,clock.now,deadline(),'background',{kind:'event',fence:claim!})));
  assert.equal(results.filter(result=>result.kind==='acquired').length,1);assert.equal(results.filter(result=>result.kind==='in_flight').length,1);
  assert.equal(await repository.retireLifecycle(subject,resolved,clock.now),true);
  for(const claim of claims) await assert.rejects(work.charge(claim!,'verificationGet',clock.now,deadline()),/retired/);

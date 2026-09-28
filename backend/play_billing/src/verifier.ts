@@ -1,4 +1,4 @@
-import type { EventWorkFence } from './event_records.js';
+import type { InternalWork } from './reconciliation_work.js';
 import { fingerprint, type ObservationSource } from './account_authority.js';
 import { BillingDeadline } from './deadline.js';
 import { DisabledTokenCustody, validToken, type TokenCustody } from './token_custody.js';
@@ -31,7 +31,7 @@ import type { BillingIdentifiers } from './crypto.js';
 import {
   BillingRepository,
   AccountConflictError,
-  UnsafeBillingRecordError,
+  UnsafeBillingRecordError, MigrationRequiredError,
   type AttemptHandle,
   type PaidCommit,
 } from './store.js';
@@ -70,7 +70,7 @@ export interface AccountObservationContext {
   accountSubject: string;
   requestFingerprint: string;
   source: ObservationSource;
-  eventWork?: EventWorkFence;
+  work?: InternalWork;
 }
 
 export class PlayBillingService {
@@ -90,7 +90,7 @@ export class PlayBillingService {
           obfuscatedAccountId: result.obfuscatedAccountId, lifecycleEpoch: result.lifecycleEpoch }
         : free(input.requestId, result.kind);
     } catch (error) {
-      return free(input.requestId, error instanceof UnsafeBillingRecordError ? 'unsafe_record' : 'temporarily_unavailable');
+      return free(input.requestId, error instanceof MigrationRequiredError ? 'recovery_required' : error instanceof UnsafeBillingRecordError ? 'unsafe_record' : 'temporarily_unavailable');
     }
   }
 
@@ -109,7 +109,7 @@ export class PlayBillingService {
       await this.dependencies.repository.acceptDisclosure(subject, this.dependencies.clock.now(), deadline);
       return { version: CONTRACT_VERSION, requestId: request.requestId, status: 'accepted' };
     } catch (error) {
-      return free(request.requestId, error instanceof UnsafeBillingRecordError ? 'unsafe_record' : 'temporarily_unavailable');
+      return free(request.requestId, error instanceof MigrationRequiredError ? 'recovery_required' : error instanceof UnsafeBillingRecordError ? 'unsafe_record' : 'temporarily_unavailable');
     }
   }
 
@@ -128,7 +128,7 @@ export class PlayBillingService {
       await this.dependencies.repository.revokeDisclosure(subject, this.dependencies.clock.now(), deadline);
       return { version: CONTRACT_VERSION, requestId: request.requestId, status: 'revoked' };
     } catch (error) {
-      return free(request.requestId, error instanceof UnsafeBillingRecordError ? 'unsafe_record' : 'temporarily_unavailable');
+      return free(request.requestId, error instanceof MigrationRequiredError ? 'recovery_required' : error instanceof UnsafeBillingRecordError ? 'unsafe_record' : 'temporarily_unavailable');
     }
   }
 
@@ -145,7 +145,7 @@ export class PlayBillingService {
     observation: { kind: 'verify' | 'restore'; input: unknown }, deadline = new BillingDeadline()): Promise<VerifyResponse> {
     if (!context || !fingerprint(context.accountSubject) || !fingerprint(context.requestFingerprint) ||
         !['foreground','background'].includes(context.source) ||
-        Object.keys(context).some(key => !['accountSubject','requestFingerprint','source','eventWork'].includes(key))) return free(undefined, 'invalid_request');
+        Object.keys(context).some(key => !['accountSubject','requestFingerprint','source','work'].includes(key))) return free(undefined, 'invalid_request');
     if (observation.kind === 'verify') return this.verifyObservation(context, observation.input, deadline);
     if (observation.kind === 'restore') return this.restoreObservation(context, observation.input, deadline);
     return free(undefined, 'invalid_request');
@@ -165,7 +165,7 @@ export class PlayBillingService {
         return free(request.requestId, 'disclosure_required');
       }
     } catch (error) {
-      return free(request.requestId, error instanceof UnsafeBillingRecordError ? 'unsafe_record' : 'temporarily_unavailable');
+      return free(request.requestId, error instanceof MigrationRequiredError ? 'recovery_required' : error instanceof UnsafeBillingRecordError ? 'unsafe_record' : 'temporarily_unavailable');
     }
 
     const tokenFingerprint = identifiers.tokenFingerprint(request.purchaseToken);
@@ -179,10 +179,10 @@ export class PlayBillingService {
         this.dependencies.clock.now(),
         deadline,
         context.source,
-        context.eventWork,
+        context.work,
       );
     } catch (error) {
-      return free(request.requestId, error instanceof UnsafeBillingRecordError ? 'unsafe_record' : 'temporarily_unavailable');
+      return free(request.requestId, error instanceof MigrationRequiredError ? 'recovery_required' : error instanceof UnsafeBillingRecordError ? 'unsafe_record' : 'temporarily_unavailable');
     }
     if (acquisition.kind !== 'acquired') {
       return free(request.requestId, acquisition.kind);
@@ -243,7 +243,7 @@ export class PlayBillingService {
     try {
       deadline.check();
       const acquired = await repository.acquireAccountAttempt(context.accountSubject,
-        context.requestFingerprint, clock.now(), deadline, context.source, context.eventWork);
+        context.requestFingerprint, clock.now(), deadline, context.source, context.work);
       if (acquired.kind !== 'acquired') return free(requestId, acquired.kind);
       attempt = acquired.attempt;
       if (!attempt.envelope) return free(requestId, 'unsafe_record');
@@ -264,7 +264,7 @@ export class PlayBillingService {
       return await this.finishOrdinaryVerification(requestId, token, purchase, attempt, undefined, deadline.expiresAt);
     } catch (error) {
       if (attempt) await this.closeWithoutThrow(attempt);
-      return free(requestId, error instanceof UnsafeBillingRecordError ? 'unsafe_record' : 'temporarily_unavailable');
+      return free(requestId, error instanceof MigrationRequiredError ? 'recovery_required' : error instanceof UnsafeBillingRecordError ? 'unsafe_record' : 'temporarily_unavailable');
     }
   }
 
@@ -299,7 +299,7 @@ export class PlayBillingService {
         successorAttempt,
       );
     } catch (error) {
-      return free(request.requestId, error instanceof UnsafeBillingRecordError ? 'unsafe_record' : 'temporarily_unavailable');
+      return free(request.requestId, error instanceof MigrationRequiredError ? 'recovery_required' : error instanceof UnsafeBillingRecordError ? 'unsafe_record' : 'temporarily_unavailable');
     }
     if (acquisition.kind !== 'acquired') {
       return free(request.requestId, acquisition.kind);
@@ -360,7 +360,7 @@ export class PlayBillingService {
         try {
           if (!await this.dependencies.repository.recordInactive(attempt, inactive, this.dependencies.clock.now(),
                 purchase.acknowledgementState === 'ACKNOWLEDGEMENT_STATE_ACKNOWLEDGED') ||
-              !await this.dependencies.repository.closeAttempt(attempt, this.dependencies.clock.now()) ||
+              (attempt.fence?.work?.kind !== 'reconciliation' && !await this.dependencies.repository.closeAttempt(attempt, this.dependencies.clock.now())) ||
               !await this.dependencies.repository.isCurrentResponse(attempt, this.dependencies.clock.now())) {
             return free(requestId, 'not_verified');
           }
@@ -395,6 +395,13 @@ export class PlayBillingService {
       );
       if (!ownerAccepted) {
         return free(requestId, 'not_verified');
+      }
+      if (attempt.fence?.work?.kind === 'reconciliation' && attempt.fence.work.fence.selectedDemand.kind === 'current') {
+        const commit = await this.dependencies.repository.finalizeReconciliationCurrent(attempt, {
+          planId:eligible.planId,productId:eligible.productId,normalizedState:eligible.normalizedState,playExpiresAt:eligible.playExpiresAt,verifiedAt,
+        },eligible.playAcknowledged,this.dependencies.clock.now());
+        if (!commit || !await this.dependencies.repository.isCurrentGrant(attempt,this.dependencies.clock.now())) return free(requestId,'not_verified');
+        attempt.fence.deadline.check();return paid(requestId,commit);
       }
       const predecessorFingerprint =
         eligible.linkedPurchaseToken === undefined
