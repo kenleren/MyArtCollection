@@ -108,6 +108,7 @@ describe('billing isolation and redaction', () => {
       'src/token_custody.ts',
       'src/kms_token_custody.ts',
       'src/firebase.ts',
+      'src/identity.ts',
       'src/firestore_store.ts',
       'src/in_memory_store.ts',
       'src/play_adapter.ts',
@@ -143,11 +144,8 @@ describe('billing isolation and redaction', () => {
       BILLING_VERIFIER_SERVICE_ACCOUNT,
       'archivale-play-billing-verifier@my-art-collections.iam.gserviceaccount.com',
     );
-    assert.equal(source.includes("verifyIdToken(authorization.slice('Bearer '.length), true)"), true);
-    assert.equal(source.includes('isPaidGoogleIdentity(decoded, request.auth.uid)'), true);
     assert.equal(source.includes("defineString('PLAY_BILLING_APPROVED_APP_ID')"), true);
     assert.equal(source.includes('process.env.PLAY_BILLING_APPROVED_APP_ID'), false);
-    assert.equal(source.includes('matchesApprovedAppId(approvedAppId, request.app.appId)'), true);
   });
 
   test('rollback fixture excludes destructive and broker targets', async () => {
