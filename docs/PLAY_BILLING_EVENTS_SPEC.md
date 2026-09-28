@@ -16,6 +16,13 @@ the runtime service account, **not** the separate Eventarc trigger principal.
 Private invoker, trigger identity and Scheduler authentication remain mandatory
 human provisioning/readback gates. Nothing here establishes deployed IAM.
 
+The implementation calls only subscription GET and ACK. This is a code restriction,
+not method-only provider IAM. Google requires the Play Console permissions
+“View financial data, orders, and cancellation survey responses” and “Manage
+orders and subscriptions” for Billing API access. Provision the minimum grants
+for this app and explicitly review their broader authority; do not describe them
+as GET/ACK-only permissions. [Google API setup](https://developers.google.com/android-publisher/getting_started).
+
 Disabled ingress rejects with a fixed error so managed delivery may retry;
 disabled pump is a no-op. Invalid configuration fails before Firebase, ADC, KMS or
 Publisher construction. Every budget defaults to zero, and the source-controlled

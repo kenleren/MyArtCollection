@@ -30,7 +30,8 @@
     "topic publisher allowlist and managed retry delivery window",
     "named database only and bounded due-work index",
     "full KMS key version allowlist and purpose-limited KMS authority",
-    "Publisher subscription GET and ACK permissions only",
+    "implemented Publisher calls restricted to subscription GET and ACK",
+    "minimum app-scoped Play Console financial-view and Manage orders and subscriptions grants; broader role authority explicitly reviewed",
     "no runtime Auth-list, topic-publisher, default-database or broker-write authority",
     "owner-approved capacity, alert ownership, retention and privacy policy"
   ],

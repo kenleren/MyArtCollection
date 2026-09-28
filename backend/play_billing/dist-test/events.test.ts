@@ -269,3 +269,52 @@ test('deployment fixture matches exported private-delivery contract and requires
  assert.equal(fixture.triggerIdentityConfiguredBySdk,false);assert.deepEqual(fixture.approvedEventKeyVersions,APPROVED_EVENT_KEY_VERSIONS);
  assert.deepEqual(fixture.defaultLimits,CLOSED_EVENT_LIMITS);assert.equal(fixture.enabled,false);
 });
+
+for (const source of ['foreground', 'background'] as const) {
+ for (const delay of [0, 20_000]) {
+  test(`${source} replacement with indexed expiry ${delay ? 'rejects stale' : 'accepts fresh'} commit-time evidence`, async () => {
+   const h = setup(); await acceptDisclosure(h);
+   const old = purchaseToken(); h.play.setPurchase(old, eligiblePurchase(h));
+   assert.equal((await h.service.verifySubscription(h.identity, verifyRequest(old))).status, 'paid');
+   h.clock.advance(20_000);
+   h.play.setPurchase(old, eligiblePurchase(h, {state:'SUBSCRIPTION_STATE_EXPIRED', expiryOffsetMs:-1}));
+   const expired = await h.service.verifySubscription(h.identity, verifyRequest(old));
+   assert.equal('reason' in expired && expired.reason, 'expired');
+   const subject = h.identifiers.accountSubject(h.identity.uid);
+   const priorIndex = h.database.snapshotForTest().get(`${COLLECTIONS.accounts}/${subject}`) as {current:string;inactive:{verifiedAt:Date}};
+   assert.equal(priorIndex.current, h.identifiers.tokenFingerprint(old));
+   assert.equal(priorIndex.inactive.verifiedAt.getTime(), h.clock.now().getTime());
+
+   const token = purchaseToken();
+   const purchase = eligiblePurchase(h, {acknowledgementState:'ACKNOWLEDGEMENT_STATE_PENDING'});
+   if (source === 'background') {
+    delete purchase.externalAccountIdentifiers;
+    purchase.outOfAppPurchaseContext = {expiredPurchaseToken:old};
+   }
+   h.play.setPurchase(token, purchase);
+   const encrypt = h.custody.encrypt.bind(h.custody);
+   h.custody.encrypt = async (...args) => {
+    const envelope = await encrypt(...args);
+    h.clock.advance(delay);
+    return envelope;
+   };
+   if (source === 'foreground') {
+    const result = await h.service.verifySubscription(h.identity, verifyRequest(token));
+    if (delay) assert.equal('reason' in result && result.reason, 'account_conflict');
+    else assert.equal(result.status, 'paid');
+   } else {
+    await h.processor.ingest(notification(token)); await h.processor.pump();
+    assert.equal(jobs(h)[0].state, delay ? 'blocked' : 'completed');
+    // The new-token GET and the auxiliary current-token GET both occurred.
+    assert.equal(jobs(h)[0].dispatchTotals.verificationGet, 2);
+   }
+   const records = h.database.snapshotForTest();
+   const next = h.identifiers.tokenFingerprint(token);
+   assert.equal(records.has(`${COLLECTIONS.bindings}/${next}`), delay === 0);
+   assert.equal(h.play.acknowledgeCalls.length, delay ? 0 : 1);
+   const index = records.get(`${COLLECTIONS.accounts}/${subject}`) as {current:string;candidate?:string};
+   assert.equal(index.current, delay ? priorIndex.current : next);
+   if (delay) assert.equal(index.candidate, undefined);
+  });
+ }
+}

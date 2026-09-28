@@ -841,7 +841,8 @@ export class BillingRepository {
             proof.generation === attempt.fence!.observationGeneration && Date.now() <= proof.expiresAt && now.getTime() >= proof.verifiedAt.getTime() &&
             now.getTime() - proof.verifiedAt.getTime() <= TOKEN_GET_COOLDOWN_MS) return true;
         const observation = index?.inactive;
-        const age = observation ? input.verifiedAt.getTime() - observation.verifiedAt.getTime() : -1;
+        // Custody may finish after verification; both proof paths expire at commit time.
+        const age = observation ? now.getTime() - observation.verifiedAt.getTime() : -1;
         return observation?.tokenFingerprint === fingerprint && observation.reason === 'expired' &&
           age >= 0 && age <= TOKEN_GET_COOLDOWN_MS;
       };
