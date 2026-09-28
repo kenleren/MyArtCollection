@@ -240,7 +240,6 @@ done
 
 # Runtime coverage belongs to the six pinned-compiler Android custody steps.
 # This gate checks workflow structure and rejection before compiler execution.
-printf '%s\n' 'Release workflow contract passed.'
 
 # Keep assertion identifiers distinct from sanitizer failures, notably TSan's 66.
 cat > "$fixture_dir/clang++" <<'COMPILER'
@@ -271,3 +270,5 @@ for fixture_exit in 65 66 80 86 89 91 92; do
   [[ "$actual_exit" == "$fixture_exit" ]]
   [[ "$actual_result" == "CUSTODY_NATIVE_RESULT suite=race sanitizer=thread compiler=clangxx phase=execute class=$expected_class exit=$fixture_exit status=fail" ]]
 done
+
+printf '%s\n' 'Release workflow contract passed.'

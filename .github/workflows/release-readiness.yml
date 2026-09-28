@@ -180,6 +180,13 @@ jobs:
         run: CXX=g++-13 ATTACHMENT_CUSTODY_SUITE=contract ATTACHMENT_CUSTODY_SANITIZERS=address,undefined bash test/attachment_custody_native_test.sh
       - name: Test native attachment custody race (ASan+UBSan)
         run: CXX=g++-13 ATTACHMENT_CUSTODY_SUITE=race ATTACHMENT_CUSTODY_SANITIZERS=address,undefined bash test/attachment_custody_native_test.sh
+      - name: Stress native attachment custody race (ASan+UBSan)
+        shell: bash
+        run: |
+          set -euo pipefail
+          for ((attempt = 0; attempt < 12; attempt++)); do
+            CXX=g++-13 ATTACHMENT_CUSTODY_SUITE=race ATTACHMENT_CUSTODY_SANITIZERS=address,undefined bash test/attachment_custody_native_test.sh
+          done
       - name: Test native attachment custody contract (TSan)
         run: CXX=g++-13 ATTACHMENT_CUSTODY_SUITE=contract ATTACHMENT_CUSTODY_SANITIZERS=thread bash test/attachment_custody_native_test.sh
       - name: Test native attachment custody race (TSan)
