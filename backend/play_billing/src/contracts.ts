@@ -1,6 +1,14 @@
 import type { PlanId, ProductId } from './constants.js';
 
 export type FreeReason =
+  | 'no_known_purchase'
+  | 'recovery_required'
+  | 'account_conflict'
+  | 'expired'
+  | 'on_hold'
+  | 'paused'
+  | 'revoked'
+  | 'play_pending'
   | 'invalid_request'
   | 'identity_rejected'
   | 'disclosure_required'
@@ -15,6 +23,7 @@ export type FreeReason =
 export type NormalizedPaidState = 'active' | 'grace' | 'canceled';
 
 export interface VerifyRequest {
+  version: 'play-billing-v2';
   requestId: string;
   billingDisclosureVersion: string;
   productId: string;
@@ -22,7 +31,8 @@ export interface VerifyRequest {
 }
 
 export interface PaidResponse {
-  version: 'play-billing-v1';
+  status: 'paid';
+  version: 'play-billing-v2';
   requestId: string;
   planId: PlanId;
   productId: ProductId;
@@ -33,7 +43,8 @@ export interface PaidResponse {
 }
 
 export interface FreeResponse {
-  version: 'play-billing-v1';
+  status: 'none' | 'pending' | 'unavailable' | 'rejected';
+  version: 'play-billing-v2';
   requestId?: string;
   state: 'free';
   reason: FreeReason;
@@ -53,7 +64,7 @@ export interface DisclosureRequest {
 }
 
 export interface DisclosureResponse {
-  version: 'play-billing-v1';
+  version: 'play-billing-v2';
   requestId: string;
   status: 'accepted' | 'revoked';
 }

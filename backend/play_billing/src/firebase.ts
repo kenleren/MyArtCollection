@@ -1,3 +1,5 @@
+import { BillingDeadline } from './deadline.js';
+import { createConfiguredTokenCustody } from './kms_token_custody.js';
 import { getApp, getApps, initializeApp, type App } from 'firebase-admin/app';
 import { getAuth, type Auth } from 'firebase-admin/auth';
 import { getFirestore } from 'firebase-admin/firestore';
@@ -21,6 +23,8 @@ import { BillingRepository } from './store.js';
 import { PlayBillingService } from './verifier.js';
 
 const fingerprintKey = defineSecret('PLAY_BILLING_FINGERPRINT_KEY');
+const tokenKeyVersion = defineString('PLAY_BILLING_TOKEN_KEY_VERSION');
+const retainedTokenKeyVersions = defineString('PLAY_BILLING_TOKEN_RETAINED_VERSIONS');
 const approvedAppIdParameter = defineString('PLAY_BILLING_APPROVED_APP_ID');
 const callableOptions = {
   region: 'us-central1' as const,
@@ -36,39 +40,55 @@ const callableOptions = {
 };
 
 export const acceptPlayBillingDisclosure = onCall(callableOptions, async (request) => {
+  const deadline = new BillingDeadline();
   const app = getOrInitializeApp();
-  const identity = await verifyCallableIdentity(request, getAuth(app));
+  const identity = await deadline.run(() => verifyCallableIdentity(request, getAuth(app))).catch(() => undefined);
   if (identity === undefined) {
     return identityRejected(request.data);
   }
   const service = createService(app);
   return service === undefined
     ? temporarilyUnavailable(request.data)
-    : service.acceptDisclosure(identity, request.data);
+    : await deadline.run(() => service.acceptDisclosure(identity, request.data, deadline), 55_000).catch(() => temporarilyUnavailable(request.data));
 });
 
 export const revokePlayBillingDisclosure = onCall(callableOptions, async (request) => {
+  const deadline = new BillingDeadline();
   const app = getOrInitializeApp();
-  const identity = await verifyCallableIdentity(request, getAuth(app));
+  const identity = await deadline.run(() => verifyCallableIdentity(request, getAuth(app))).catch(() => undefined);
   if (identity === undefined) {
     return identityRejected(request.data);
   }
   const service = createService(app);
   return service === undefined
     ? temporarilyUnavailable(request.data)
-    : service.revokeDisclosure(identity, request.data);
+    : await deadline.run(() => service.revokeDisclosure(identity, request.data, deadline), 55_000).catch(() => temporarilyUnavailable(request.data));
 });
 
 export const verifyPlaySubscription = onCall(callableOptions, async (request) => {
+  if (process.env.PLAY_BILLING_RECOVERY_ENABLED !== 'enabled') return temporarilyUnavailable(request.data);
+  const deadline = new BillingDeadline();
   const app = getOrInitializeApp();
-  const identity = await verifyCallableIdentity(request, getAuth(app));
+  const identity = await deadline.run(() => verifyCallableIdentity(request, getAuth(app))).catch(() => undefined);
   if (identity === undefined) {
     return identityRejected(request.data);
   }
   const service = createService(app);
   return service === undefined
     ? temporarilyUnavailable(request.data)
-    : service.verifySubscription(identity, request.data);
+    : await deadline.run(() => service.verifySubscription(identity, request.data, deadline), 55_000).catch(() => temporarilyUnavailable(request.data));
+});
+
+export const restorePlayEntitlement = onCall(callableOptions, async (request) => {
+  const deadline = new BillingDeadline();
+  if (process.env.PLAY_BILLING_RECOVERY_ENABLED !== 'enabled') return temporarilyUnavailable(request.data);
+  const app = getOrInitializeApp();
+  const identity = await deadline.run(() => verifyCallableIdentity(request, getAuth(app))).catch(() => undefined);
+  if (!identity) return identityRejected(request.data);
+  const service = createService(app);
+  return service === undefined ? temporarilyUnavailable(request.data)
+    : await deadline.run(() => service.restoreEntitlement(identity, request.data, deadline), 55_000)
+      .catch(() => temporarilyUnavailable(request.data));
 });
 
 function createService(app: App): PlayBillingService | undefined {
@@ -82,6 +102,10 @@ function createService(app: App): PlayBillingService | undefined {
         enabled: process.env.PLAY_BILLING_ANDROID_PUBLISHER_ENABLED === 'enabled',
       }),
       clock: { now: () => new Date() },
+      custody: createConfiguredTokenCustody(process.env.PLAY_BILLING_TOKEN_CUSTODY_ENABLED === 'enabled' ? {
+        enabled: true, encryptionVersion: tokenKeyVersion.value(),
+        retainedVersions: retainedTokenKeyVersions.value().split(','),
+      } : {}),
     });
   } catch {
     return undefined;
@@ -139,9 +163,10 @@ function identityRejected(data: unknown): Record<string, unknown> {
       ? data.requestId
       : undefined;
   return {
-    version: 'play-billing-v1',
+    version: 'play-billing-v2',
     ...(requestId === undefined ? {} : { requestId }),
     state: 'free',
+    status: 'rejected',
     reason: 'identity_rejected',
   };
 }
@@ -149,6 +174,7 @@ function identityRejected(data: unknown): Record<string, unknown> {
 function temporarilyUnavailable(data: unknown): Record<string, unknown> {
   return {
     ...identityRejected(data),
+    status: 'unavailable',
     reason: 'temporarily_unavailable',
   };
 }

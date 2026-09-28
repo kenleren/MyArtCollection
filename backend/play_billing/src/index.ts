@@ -50,4 +50,5 @@ export {
   acceptPlayBillingDisclosure,
   revokePlayBillingDisclosure,
   verifyPlaySubscription,
+  restorePlayEntitlement,
 } from './firebase.js';

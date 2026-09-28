@@ -235,7 +235,7 @@ describe('PlayBillingService verification contract', () => {
       harness.identity,
       verifyRequest(purchaseToken()),
     );
-    assert.deepEqual(Object.keys(result).sort(), ['reason', 'requestId', 'state', 'version']);
+    assert.deepEqual(Object.keys(result).sort(), ['reason', 'requestId', 'state', 'status', 'version']);
     assert.equal('reason' in result && result.reason, 'temporarily_unavailable');
     assert.equal(harness.play.acknowledgeCalls.length, 0);
   });

@@ -1,3 +1,4 @@
+import { syntheticEnvelopeForRepositoryTests } from '../dist-test/fake_custody.js';
 import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
 import { after, describe, test } from 'node:test';
@@ -8,7 +9,10 @@ import { getFirestore, type Firestore } from 'firebase-admin/firestore';
 import { ATTEMPT_LEASE_MS, BILLING_DATABASE_ID, COLLECTIONS } from '../src/constants.js';
 import { FirestoreBillingDatabase } from '../src/firestore_store.js';
 import { BillingRepository, type AttemptHandle } from '../src/store.js';
-import { DeterministicNonceSource, FakeClock } from '../dist-test/test_helpers.js';
+import { PlayBillingService } from '../src/verifier.js';
+import { CryptoNonceSource } from '../src/crypto.js';
+import { CONTRACT_VERSION, DISCLOSURE_VERSION } from '../src/constants.js';
+import { createHarness, eligiblePurchase, purchaseToken, verifyRequest, DeterministicNonceSource, FakeClock } from '../dist-test/test_helpers.js';
 
 if (process.env.FIRESTORE_EMULATOR_HOST === undefined) {
   throw new Error('FIRESTORE_EMULATOR_HOST is required');
@@ -21,6 +25,30 @@ after(async () => {
 });
 
 describe('named billing database persistence', () => {
+  test('encrypted account restore survives a repository/service restart on named Firestore', async () => {
+    const persisted = createFirestoreHarness();
+    const h = createHarness();
+    const subject = h.identifiers.accountSubject(h.identity.uid);
+    await persisted.repository.acceptDisclosure(subject, h.clock.now());
+    const service = new PlayBillingService({ ...h, repository: persisted.repository });
+    const token = purchaseToken(); h.play.setPurchase(token, eligiblePurchase(h));
+    assert.equal((await service.verifySubscription(h.identity, verifyRequest(token))).status, 'paid');
+    const stored = await readRecord(persisted.firestore, COLLECTIONS.bindings, h.identifiers.tokenFingerprint(token));
+    assert.equal(JSON.stringify(stored).includes(token), false);
+    assert.equal(stored.retentionExpiresAt, undefined);
+    h.clock.advance(20_000);
+    const restarted = new PlayBillingService({ ...h,
+      repository: new BillingRepository(new FirestoreBillingDatabase(persisted.firestore), new CryptoNonceSource()),
+    });
+    const restored = await restarted.restoreEntitlement(h.identity, {
+      version: CONTRACT_VERSION, requestId: randomUUID(), billingDisclosureVersion: DISCLOSURE_VERSION,
+    });
+    assert.equal(restored.status, 'paid');
+    assert.equal(h.play.getCalls.length, 2);
+    const index = await readRecord(persisted.firestore, COLLECTIONS.accounts, subject);
+    assert.equal(index.current === h.identifiers.tokenFingerprint(token), true);
+  });
+
   test('persists opaque owner fields in only the three approved records', async () => {
     const harness = createFirestoreHarness();
     const rawAccountId = `raw-account-${randomUUID()}`;
@@ -194,6 +222,7 @@ async function acquire(
   requestFingerprint: string,
   tokenFingerprint: string,
 ): Promise<AttemptHandle> {
+  if (!await harness.repository.hasCurrentDisclosure(accountSubject, harness.clock.now())) await harness.repository.acceptDisclosure(accountSubject, harness.clock.now());
   const result = await harness.repository.acquireAttempt(
     accountSubject,
     requestFingerprint,
@@ -213,6 +242,7 @@ function commitDelivery(
 ): Promise<boolean> {
   const now = harness.clock.now();
   return harness.repository.commitDelivery(attempt, {
+    tokenEnvelope: syntheticEnvelopeForRepositoryTests,
     planId: 'starter',
     productId: 'archivale_starter_monthly',
     normalizedState: 'active',

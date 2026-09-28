@@ -2,7 +2,6 @@ import {
   ACK_COOLDOWN_MS,
   ACTIVE_KEY_VERSION,
   ATTEMPT_LEASE_MS,
-  BINDING_RETENTION_MS,
   COLLECTIONS,
   CONTRACT_VERSION,
   DISCLOSURE_ASSERTION_VERSION,
@@ -19,12 +18,15 @@ import {
   type PlanId,
   type ProductId,
 } from './constants.js';
+import { BillingDeadline } from './deadline.js';
+import { validEnvelope, type TokenEnvelope } from './token_custody.js';
 import type { NonceSource, NormalizedPaidState } from './contracts.js';
 
 export type BillingCollection = (typeof COLLECTIONS)[keyof typeof COLLECTIONS];
 
 export interface BillingTransaction {
   get<T>(collection: BillingCollection, id: string): Promise<T | undefined>;
+  findSubjectBinding(accountSubject: string): Promise<unknown | undefined>;
   set<T>(collection: BillingCollection, id: string, value: T): void;
 }
 
@@ -44,7 +46,20 @@ export interface AttemptHandle {
   accountSubject: string;
   owner: AttemptOwner;
   usesReplay: boolean;
+  fence?: { assertionId: string; indexRevision: number; deadline: BillingDeadline; kind: 'verify' | 'restore' };
+  envelope?: TokenEnvelope;
 }
+interface AccountIndex {
+  contractVersion: typeof CONTRACT_VERSION;
+  keyVersion: typeof ACTIVE_KEY_VERSION;
+  accountSubject: string;
+  revision: number;
+  current?: string;
+  candidate?: string;
+  inactive?: { tokenFingerprint: string; verifiedAt: Date; reason: string };
+  updatedAt: Date;
+}
+
 
 type OperationPhase =
   | 'lookup_in_flight'
@@ -65,6 +80,7 @@ interface BaseRecord {
 }
 
 interface DisclosureRecord extends BaseRecord {
+  assertionId: string;
   assertionVersion: typeof DISCLOSURE_ASSERTION_VERSION;
   accountSubject: string;
   disclosureVersion: typeof DISCLOSURE_VERSION;
@@ -75,6 +91,7 @@ interface DisclosureRecord extends BaseRecord {
 }
 
 interface RequestReplayRecord extends BaseRecord, AttemptOwner {
+  operationKind: 'verify' | 'restore';
   tokenFingerprint: string;
   phase: OperationPhase;
   outcomeCode: 'in_flight' | 'ack_unknown' | 'paid' | 'free';
@@ -93,7 +110,9 @@ interface TokenOperationRecord extends BaseRecord, AttemptOwner {
   acknowledgementStartedAt: Date[];
 }
 
-interface PurchaseBindingRecord extends BaseRecord {
+interface PurchaseBindingRecord extends Omit<BaseRecord, 'retentionExpiresAt'> {
+  retentionExpiresAt?: Date;
+  tokenEnvelope: TokenEnvelope;
   tokenFingerprint: string;
   accountSubject: string;
   planId: PlanId;
@@ -134,10 +153,14 @@ export type AcquireResult =
         | 'in_flight'
         | 'verification_pending'
         | 'rate_limited'
-        | 'unsafe_record';
+        | 'unsafe_record'
+        | 'disclosure_required'
+        | 'recovery_required'
+        | 'no_known_purchase';
     };
 
 export interface DeliveryInput {
+  tokenEnvelope: TokenEnvelope;
   planId: PlanId;
   productId: ProductId;
   normalizedState: NormalizedPaidState;
@@ -172,15 +195,18 @@ export class BillingRepository {
     return this.database.databaseId;
   }
 
-  async acceptDisclosure(accountSubject: string, now: Date): Promise<void> {
+  async acceptDisclosure(accountSubject: string, now: Date, deadline = new BillingDeadline()): Promise<void> {
     await this.database.runTransaction(async (tx) => {
+      deadline.check();
       const existing = await tx.get<DisclosureRecord>(COLLECTIONS.disclosures, accountSubject);
       if (existing !== undefined && !validDisclosure(existing, accountSubject, true)) {
         throw new UnsafeBillingRecordError();
       }
+      deadline.check();
       tx.set<DisclosureRecord>(COLLECTIONS.disclosures, accountSubject, {
         contractVersion: CONTRACT_VERSION,
         keyVersion: ACTIVE_KEY_VERSION,
+        assertionId: Buffer.from(this.nonces.nextNonce()).toString('hex'),
         assertionVersion: DISCLOSURE_ASSERTION_VERSION,
         accountSubject,
         disclosureVersion: DISCLOSURE_VERSION,
@@ -195,8 +221,9 @@ export class BillingRepository {
     });
   }
 
-  async revokeDisclosure(accountSubject: string, now: Date): Promise<void> {
+  async revokeDisclosure(accountSubject: string, now: Date, deadline = new BillingDeadline()): Promise<void> {
     await this.database.runTransaction(async (tx) => {
+      deadline.check();
       const existing = await tx.get<DisclosureRecord>(COLLECTIONS.disclosures, accountSubject);
       if (existing === undefined) {
         return;
@@ -204,8 +231,10 @@ export class BillingRepository {
       if (!validDisclosure(existing, accountSubject, true)) {
         throw new UnsafeBillingRecordError();
       }
+      deadline.check();
       tx.set<DisclosureRecord>(COLLECTIONS.disclosures, accountSubject, {
         ...existing,
+        assertionId: Buffer.from(this.nonces.nextNonce()).toString('hex'),
         status: 'revoked',
         statusChangedAt: now,
         updatedAt: now,
@@ -232,8 +261,13 @@ export class BillingRepository {
     requestFingerprint: string,
     tokenFingerprint: string,
     now: Date,
+    deadline = new BillingDeadline(),
   ): Promise<AcquireResult> {
-    return this.acquire(accountSubject, requestFingerprint, tokenFingerprint, now, true);
+    return this.acquire(accountSubject, requestFingerprint, tokenFingerprint, now, true, 'verify', deadline);
+  }
+
+  acquireAccountAttempt(accountSubject: string, requestFingerprint: string, now: Date, deadline: BillingDeadline): Promise<AcquireResult> {
+    return this.acquire(accountSubject, requestFingerprint, undefined, now, true, 'restore', deadline);
   }
 
   acquirePredecessorAttempt(
@@ -241,24 +275,41 @@ export class BillingRepository {
     requestFingerprint: string,
     tokenFingerprint: string,
     now: Date,
+    deadline = new BillingDeadline(),
   ): Promise<AcquireResult> {
-    return this.acquire(accountSubject, requestFingerprint, tokenFingerprint, now, false);
+    return this.acquire(accountSubject, requestFingerprint, tokenFingerprint, now, false, 'verify', deadline);
   }
 
   private async acquire(
     accountSubject: string,
     requestFingerprint: string,
-    tokenFingerprint: string,
+    requestedToken: string | undefined,
     now: Date,
     usesReplay: boolean,
+    kind: 'verify' | 'restore',
+    deadline: BillingDeadline,
   ): Promise<AcquireResult> {
     return this.database.runTransaction(async (tx) => {
+      deadline.check();
+      const disclosure = await tx.get<DisclosureRecord>(COLLECTIONS.disclosures, accountSubject);
+      if (!disclosure || !validDisclosure(disclosure, accountSubject) || disclosure.status !== 'accepted' || disclosure.retentionExpiresAt <= now) return { kind: 'disclosure_required' };
+      const index = await tx.get<AccountIndex>(COLLECTIONS.accounts, accountSubject);
+      if (index !== undefined && !validIndex(index, accountSubject)) return { kind: 'unsafe_record' };
+      if (index === undefined) {
+        const orphan = await tx.findSubjectBinding(accountSubject);
+        if (orphan !== undefined) return { kind: isLegacy(orphan) ? 'recovery_required' : 'unsafe_record' };
+      }
+      const tokenFingerprint = requestedToken ?? index?.candidate ?? index?.current;
+      if (tokenFingerprint === undefined) return { kind: 'no_known_purchase' };
       const replay = usesReplay
         ? await tx.get<RequestReplayRecord>(COLLECTIONS.replays, requestFingerprint)
         : undefined;
       const operation = await tx.get<TokenOperationRecord>(COLLECTIONS.operations, tokenFingerprint);
       const binding = await tx.get<PurchaseBindingRecord>(COLLECTIONS.bindings, tokenFingerprint);
 
+      if (binding !== undefined && isLegacy(binding)) return { kind: 'recovery_required' };
+      if (kind === 'restore' && (binding === undefined || binding.accountSubject !== accountSubject || !validEnvelope(binding.tokenEnvelope))) return { kind: 'unsafe_record' };
+      if (replay !== undefined && replay.operationKind !== kind) return { kind: 'replay_conflict' };
       if (
         (replay !== undefined && !validReplay(replay, requestFingerprint)) ||
         (operation !== undefined && !validOperation(operation, tokenFingerprint)) ||
@@ -318,11 +369,13 @@ export class BillingRepository {
       const retentionExpiresAt = addMs(now, OPERATION_RETENTION_MS);
       const acknowledgementStartedAt = recentStarts(operation?.acknowledgementStartedAt ?? [], now);
 
+      deadline.check();
       if (usesReplay) {
         tx.set<RequestReplayRecord>(COLLECTIONS.replays, requestFingerprint, {
           contractVersion: CONTRACT_VERSION,
           keyVersion: ACTIVE_KEY_VERSION,
           ...owner,
+          operationKind: kind,
           tokenFingerprint,
           phase: 'lookup_in_flight',
           outcomeCode: 'in_flight',
@@ -357,7 +410,8 @@ export class BillingRepository {
       });
       return {
         kind: 'acquired',
-        attempt: { tokenFingerprint, accountSubject, owner, usesReplay },
+        attempt: { tokenFingerprint, accountSubject, owner, usesReplay, envelope: binding?.tokenEnvelope,
+          fence: { assertionId: disclosure.assertionId, indexRevision: index?.revision ?? 0, deadline, kind } },
       };
     });
   }
@@ -367,7 +421,7 @@ export class BillingRepository {
     productId: ProductId,
     now: Date,
   ): Promise<boolean> {
-    return this.database.runTransaction(async (tx) => {
+    return this.guarded(attempt, async (tx, index) => {
       const operation = await tx.get<TokenOperationRecord>(
         COLLECTIONS.operations,
         attempt.tokenFingerprint,
@@ -397,7 +451,7 @@ export class BillingRepository {
         updatedAt: now,
       });
       return true;
-    });
+    }, false, now);
   }
 
   async closeAttempt(
@@ -405,7 +459,7 @@ export class BillingRepository {
     now: Date,
     phase: 'free' | 'canceled_pending_read_only' = 'free',
   ): Promise<boolean> {
-    return this.database.runTransaction(async (tx) => {
+    return this.guarded(attempt, async (tx, index) => {
       const operation = await tx.get<TokenOperationRecord>(
         COLLECTIONS.operations,
         attempt.tokenFingerprint,
@@ -436,11 +490,11 @@ export class BillingRepository {
         });
       }
       return true;
-    });
+    }, false, now);
   }
 
   async commitDelivery(attempt: AttemptHandle, input: DeliveryInput): Promise<boolean> {
-    return this.database.runTransaction(async (tx) => {
+    const result = await this.guarded(attempt, async (tx, index) => {
       const operation = await tx.get<TokenOperationRecord>(
         COLLECTIONS.operations,
         attempt.tokenFingerprint,
@@ -478,9 +532,17 @@ export class BillingRepository {
           return false;
         }
       }
+      if (!validEnvelope(input.tokenEnvelope)) return false;
+      const previous = index?.candidate ?? index?.current;
+      if (previous !== undefined && previous !== attempt.tokenFingerprint && previous !== input.predecessorFingerprint) {
+        // Replacement requires a freshly verified inactive current chain under this index revision.
+        if (index?.inactive?.tokenFingerprint !== previous || index.inactive.reason !== 'expired' ||
+            input.verifiedAt.getTime() - index.inactive.verifiedAt.getTime() > TOKEN_GET_COOLDOWN_MS) throw new AccountConflictError();
+      }
       const binding: PurchaseBindingRecord = {
         contractVersion: CONTRACT_VERSION,
         keyVersion: ACTIVE_KEY_VERSION,
+        tokenEnvelope: input.tokenEnvelope,
         tokenFingerprint: attempt.tokenFingerprint,
         accountSubject: attempt.accountSubject,
         planId: input.planId,
@@ -513,11 +575,13 @@ export class BillingRepository {
         stateChangedAt: input.verifiedAt,
         createdAt: existing?.createdAt ?? input.verifiedAt,
         updatedAt: input.verifiedAt,
-        retentionExpiresAt: addMs(
-          new Date(Math.max(input.playExpiresAt.getTime(), input.verifiedAt.getTime())),
-          BINDING_RETENTION_MS,
-        ),
+
       };
+      tx.set<AccountIndex>(COLLECTIONS.accounts, attempt.accountSubject, {
+        contractVersion: CONTRACT_VERSION, keyVersion: ACTIVE_KEY_VERSION, accountSubject: attempt.accountSubject,
+        revision: (index?.revision ?? 0) + 1, current: index?.current,
+        candidate: attempt.tokenFingerprint, updatedAt: input.verifiedAt,
+      });
       tx.set<PurchaseBindingRecord>(COLLECTIONS.bindings, attempt.tokenFingerprint, binding);
       tx.set<TokenOperationRecord>(COLLECTIONS.operations, attempt.tokenFingerprint, {
         ...operation,
@@ -532,11 +596,13 @@ export class BillingRepository {
         });
       }
       return true;
-    });
+    }, false, input.verifiedAt);
+    if (result) attempt.fence!.indexRevision++;
+    return result;
   }
 
   async beginAcknowledgement(attempt: AttemptHandle, now: Date): Promise<boolean> {
-    return this.database.runTransaction(async (tx) => {
+    return this.guarded(attempt, async (tx, index) => {
       const operation = await tx.get<TokenOperationRecord>(
         COLLECTIONS.operations,
         attempt.tokenFingerprint,
@@ -579,7 +645,7 @@ export class BillingRepository {
         updatedAt: now,
       });
       return true;
-    });
+    }, false, now);
   }
 
   async finalizePaid(
@@ -587,7 +653,7 @@ export class BillingRepository {
     now: Date,
     sourcePhase: 'delivery_committed' | 'ack_in_progress',
   ): Promise<PaidCommit | undefined> {
-    return this.database.runTransaction(async (tx) => {
+    const result = await this.guarded(attempt, async (tx, index) => {
       const operation = await tx.get<TokenOperationRecord>(
         COLLECTIONS.operations,
         attempt.tokenFingerprint,
@@ -632,6 +698,7 @@ export class BillingRepository {
           return undefined;
         }
       }
+      if (index?.candidate !== attempt.tokenFingerprint) return undefined;
       const finalized: PurchaseBindingRecord = {
         ...binding,
         ackState: 'acknowledged',
@@ -644,6 +711,10 @@ export class BillingRepository {
         stateChangedAt: now,
         updatedAt: now,
       };
+      tx.set<AccountIndex>(COLLECTIONS.accounts, attempt.accountSubject, {
+        ...index, current: attempt.tokenFingerprint, candidate: undefined,
+        revision: index.revision + 1, inactive: undefined, updatedAt: now,
+      });
       tx.set<PurchaseBindingRecord>(COLLECTIONS.bindings, attempt.tokenFingerprint, finalized);
       if (predecessor !== undefined) {
         tx.set<PurchaseBindingRecord>(
@@ -681,11 +752,13 @@ export class BillingRepository {
         playExpiresAt: finalized.playExpiresAt,
         verifiedAt: finalized.lastVerifiedAt,
       };
-    });
+    }, undefined, now);
+    if (result) attempt.fence!.indexRevision++;
+    return result;
   }
 
   async markAcknowledgementUnknown(attempt: AttemptHandle, now: Date): Promise<boolean> {
-    return this.database.runTransaction(async (tx) => {
+    return this.guarded(attempt, async (tx, index) => {
       const operation = await tx.get<TokenOperationRecord>(
         COLLECTIONS.operations,
         attempt.tokenFingerprint,
@@ -731,23 +804,66 @@ export class BillingRepository {
         });
       }
       return true;
+    }, false, now);
+  }
+  async isCurrentAttempt(attempt: AttemptHandle, now: Date): Promise<boolean> {
+    return this.guarded(attempt, async (tx) => {
+      const operation = await tx.get<TokenOperationRecord>(COLLECTIONS.operations, attempt.tokenFingerprint);
+      return ownedOperation(operation, attempt, 'lookup_in_flight') && operation.leaseExpiresAt !== undefined && operation.leaseExpiresAt > now;
+    }, false, now);
+  }
+
+  async isCurrentGrant(attempt: AttemptHandle, now: Date): Promise<boolean> {
+    return this.guarded(attempt, async (tx, index) => {
+      const binding = await tx.get<PurchaseBindingRecord>(COLLECTIONS.bindings, attempt.tokenFingerprint);
+      return index?.current === attempt.tokenFingerprint && ownedBinding(binding, attempt, 'paid') &&
+        binding.bindingState === 'acknowledged_delivery' && binding.ackState === 'acknowledged' && binding.playExpiresAt > now;
+    }, false, now);
+  }
+
+  private guarded<T>(attempt: AttemptHandle, action: (tx: BillingTransaction, index: AccountIndex | undefined) => Promise<T>, fallback: T, now: Date): Promise<T> {
+    return this.database.runTransaction(async (tx) => {
+      const fence = attempt.fence;
+      if (!fence) return fallback;
+      fence.deadline.check();
+      const disclosure = await tx.get<DisclosureRecord>(COLLECTIONS.disclosures, attempt.accountSubject);
+      const index = await tx.get<AccountIndex>(COLLECTIONS.accounts, attempt.accountSubject);
+      if (!disclosure || !validDisclosure(disclosure, attempt.accountSubject) || disclosure.status !== 'accepted' || disclosure.retentionExpiresAt <= now ||
+          disclosure.assertionId !== fence.assertionId || (index !== undefined && !validIndex(index, attempt.accountSubject)) ||
+          (index?.revision ?? 0) !== fence.indexRevision) return fallback;
+      const result = await action(tx, index);
+      fence.deadline.check();
+      return result;
     });
   }
+
+  async recordInactive(attempt: AttemptHandle, reason: string, now: Date): Promise<void> {
+    await this.guarded(attempt, async (tx, index) => {
+      const operation = await tx.get<TokenOperationRecord>(COLLECTIONS.operations, attempt.tokenFingerprint);
+      if (!ownedOperation(operation, attempt, 'lookup_in_flight') || !index ||
+          (index.current !== attempt.tokenFingerprint && index.candidate !== attempt.tokenFingerprint)) throw new UnsafeBillingRecordError();
+      tx.set<AccountIndex>(COLLECTIONS.accounts, attempt.accountSubject, {
+        ...index, inactive: { tokenFingerprint: attempt.tokenFingerprint, reason, verifiedAt: now }, updatedAt: now,
+      });
+    }, undefined, now);
+  }
+
 }
 
 export class UnsafeBillingRecordError extends Error {}
+export class AccountConflictError extends Error {}
 
 function addMs(date: Date, milliseconds: number): Date {
   return new Date(date.getTime() + milliseconds);
 }
 
-function validBase(record: Partial<BaseRecord>): boolean {
+function validBase(record: Partial<BaseRecord>, withoutTtl = false): boolean {
   return (
     record.contractVersion === CONTRACT_VERSION &&
     record.keyVersion === ACTIVE_KEY_VERSION &&
     record.createdAt instanceof Date &&
     record.updatedAt instanceof Date &&
-    record.retentionExpiresAt instanceof Date
+    (withoutTtl ? record.retentionExpiresAt === undefined : record.retentionExpiresAt instanceof Date)
   );
 }
 
@@ -766,6 +882,7 @@ function validDisclosure(record: DisclosureRecord, accountSubject: string, allow
     hasOnlyKeys(record, [
       'contractVersion',
       'keyVersion',
+      'assertionId',
       'assertionVersion',
       'accountSubject',
       'disclosureVersion',
@@ -777,11 +894,12 @@ function validDisclosure(record: DisclosureRecord, accountSubject: string, allow
       'updatedAt',
       'retentionExpiresAt',
     ]) &&
-    validBase(record) &&
+    (validBase(record) || (allowPrevious && record.contractVersion as string === 'play-billing-v1' && record.keyVersion === ACTIVE_KEY_VERSION && record.createdAt instanceof Date && record.updatedAt instanceof Date && record.retentionExpiresAt instanceof Date)) &&
+    ((allowPrevious && record.contractVersion as string === 'play-billing-v1') || /^[a-f0-9]{32}$/.test(record.assertionId)) &&
     record.assertionVersion === DISCLOSURE_ASSERTION_VERSION &&
     record.accountSubject === accountSubject &&
     (record.disclosureVersion === DISCLOSURE_VERSION ||
-      (allowPrevious && record.disclosureVersion === 'billing-verification-disclosure-v1')) &&
+      (allowPrevious && ['billing-verification-disclosure-v1', 'billing-verification-disclosure-v2'].includes(record.disclosureVersion))) &&
     record.purpose === DISCLOSURE_PURPOSE &&
     record.acceptedAt instanceof Date &&
     record.statusChangedAt instanceof Date &&
@@ -797,6 +915,7 @@ function validReplay(record: RequestReplayRecord, requestFingerprint: string): b
       'requestFingerprint',
       'attemptGeneration',
       'attemptNonce',
+      'operationKind',
       'tokenFingerprint',
       'phase',
       'outcomeCode',
@@ -806,6 +925,7 @@ function validReplay(record: RequestReplayRecord, requestFingerprint: string): b
       'updatedAt',
       'retentionExpiresAt',
     ]) &&
+    (record.operationKind === 'verify' || record.operationKind === 'restore') &&
     validBase(record) &&
     validOwner(record) &&
     record.requestFingerprint === requestFingerprint &&
@@ -854,6 +974,7 @@ function validBinding(record: PurchaseBindingRecord, tokenFingerprint: string): 
     hasOnlyKeys(record, [
       'contractVersion',
       'keyVersion',
+      'tokenEnvelope',
       'tokenFingerprint',
       'accountSubject',
       'planId',
@@ -880,7 +1001,7 @@ function validBinding(record: PurchaseBindingRecord, tokenFingerprint: string): 
       'updatedAt',
       'retentionExpiresAt',
     ]) &&
-    validBase(record) &&
+    validBase(record, true) && validEnvelope(record.tokenEnvelope) &&
     record.tokenFingerprint === tokenFingerprint &&
     isFingerprint(record.tokenFingerprint) &&
     isFingerprint(record.accountSubject) &&
@@ -1127,4 +1248,19 @@ function validLeaseAndCooldown(
     return leaseExpiresAt === undefined && cooldownUntil instanceof Date;
   }
   return leaseExpiresAt === undefined && cooldownUntil === undefined;
+}
+
+function isLegacy(value: unknown): boolean {
+  return value !== null && typeof value === 'object' && 'contractVersion' in value && value.contractVersion === 'play-billing-v1';
+}
+function validIndex(record: AccountIndex, subject: string): boolean {
+  return hasOnlyKeys(record, ['contractVersion','keyVersion','accountSubject','revision','current','candidate','inactive','updatedAt']) &&
+    record.contractVersion === CONTRACT_VERSION && record.keyVersion === ACTIVE_KEY_VERSION && record.accountSubject === subject &&
+    Number.isSafeInteger(record.revision) && record.revision > 0 && record.updatedAt instanceof Date &&
+    (record.current !== undefined || record.candidate !== undefined) &&
+    (record.current === undefined || isFingerprint(record.current)) &&
+    (record.candidate === undefined || isFingerprint(record.candidate)) &&
+    (record.inactive === undefined || (hasOnlyKeys(record.inactive, ['tokenFingerprint','verifiedAt','reason']) &&
+      isFingerprint(record.inactive.tokenFingerprint) && record.inactive.verifiedAt instanceof Date &&
+      ['expired','on_hold','paused','revoked','pending'].includes(record.inactive.reason)));
 }

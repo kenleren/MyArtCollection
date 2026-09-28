@@ -1,3 +1,5 @@
+import { BillingDeadline } from './deadline.js';
+import { DisabledTokenCustody, validToken, type TokenCustody } from './token_custody.js';
 import {
   CONTRACT_VERSION,
   DISCLOSURE_PURPOSE,
@@ -25,6 +27,7 @@ import type {
 import type { BillingIdentifiers } from './crypto.js';
 import {
   BillingRepository,
+  AccountConflictError,
   UnsafeBillingRecordError,
   type AttemptHandle,
   type PaidCommit,
@@ -32,7 +35,6 @@ import {
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const MAX_REQUEST_BYTES = 8_192;
-const MAX_TOKEN_LENGTH = 4_096;
 const PLAY_PORTION_DEADLINE_MS = 45_000;
 const PLAY_CALL_DEADLINE_MS = 10_000;
 
@@ -47,6 +49,7 @@ export interface PlayBillingDependencies {
   play: PlaySubscriptionsAdapter;
   clock: Clock;
   hooks?: VerificationHooks;
+  custody?: TokenCustody;
 }
 
 interface EligiblePurchase {
@@ -64,14 +67,16 @@ export class PlayBillingService {
   async acceptDisclosure(
     identity: BillingIdentity,
     input: unknown,
+    deadline = new BillingDeadline(),
   ): Promise<DisclosureResponse | FreeResponse> {
     const request = parseDisclosureRequest(input, true);
     if (request === undefined) {
       return free(validRequestIdFrom(input), 'invalid_request');
     }
     try {
+      deadline.check();
       const subject = this.dependencies.identifiers.accountSubject(identity.uid);
-      await this.dependencies.repository.acceptDisclosure(subject, this.dependencies.clock.now());
+      await this.dependencies.repository.acceptDisclosure(subject, this.dependencies.clock.now(), deadline);
       return { version: CONTRACT_VERSION, requestId: request.requestId, status: 'accepted' };
     } catch {
       return free(request.requestId, 'temporarily_unavailable');
@@ -81,21 +86,24 @@ export class PlayBillingService {
   async revokeDisclosure(
     identity: BillingIdentity,
     input: unknown,
+    deadline = new BillingDeadline(),
   ): Promise<DisclosureResponse | FreeResponse> {
     const request = parseDisclosureRequest(input, false);
     if (request === undefined) {
       return free(validRequestIdFrom(input), 'invalid_request');
     }
     try {
+      deadline.check();
       const subject = this.dependencies.identifiers.accountSubject(identity.uid);
-      await this.dependencies.repository.revokeDisclosure(subject, this.dependencies.clock.now());
+      await this.dependencies.repository.revokeDisclosure(subject, this.dependencies.clock.now(), deadline);
       return { version: CONTRACT_VERSION, requestId: request.requestId, status: 'revoked' };
     } catch {
       return free(request.requestId, 'temporarily_unavailable');
     }
   }
 
-  async verifySubscription(identity: BillingIdentity, input: unknown): Promise<VerifyResponse> {
+  async verifySubscription(identity: BillingIdentity, input: unknown, deadline = new BillingDeadline()): Promise<VerifyResponse> {
+    deadline.check();
     const request = parseVerifyRequest(input);
     if (request === undefined) {
       return free(validRequestIdFrom(input), 'invalid_request');
@@ -120,6 +128,7 @@ export class PlayBillingService {
         requestFingerprint,
         tokenFingerprint,
         this.dependencies.clock.now(),
+        deadline,
       );
     } catch {
       return free(request.requestId, 'temporarily_unavailable');
@@ -129,7 +138,7 @@ export class PlayBillingService {
     }
 
     const attempt = acquisition.attempt;
-    const playDeadline = Date.now() + PLAY_PORTION_DEADLINE_MS;
+    const playDeadline = Math.min(deadline.expiresAt, Date.now() + PLAY_PORTION_DEADLINE_MS);
     let purchase: PlaySubscriptionPurchase;
     try {
       purchase = await this.getSubscription(request.purchaseToken, playDeadline);
@@ -165,6 +174,41 @@ export class PlayBillingService {
     );
   }
 
+  async restoreEntitlement(identity: BillingIdentity, input: unknown, deadline = new BillingDeadline()): Promise<VerifyResponse> {
+    if (!isPlainObject(input) || serializedSize(input) > 1024 ||
+        !hasExactKeys(input, ['version','requestId','billingDisclosureVersion']) ||
+        input.version !== CONTRACT_VERSION || !isCanonicalUuid(input.requestId) ||
+        input.billingDisclosureVersion !== DISCLOSURE_VERSION) return free(validRequestIdFrom(input), 'invalid_request');
+    const requestId = input.requestId;
+    const { repository, identifiers, clock } = this.dependencies;
+    let attempt: AttemptHandle | undefined;
+    try {
+      deadline.check();
+      const acquired = await repository.acquireAccountAttempt(identifiers.accountSubject(identity.uid),
+        identifiers.requestFingerprint(identity.uid, requestId), clock.now(), deadline);
+      if (acquired.kind !== 'acquired') return free(requestId, acquired.kind);
+      attempt = acquired.attempt;
+      if (!attempt.envelope) return free(requestId, 'unsafe_record');
+      const token = await (this.dependencies.custody ?? new DisabledTokenCustody()).decrypt(attempt.envelope, attempt, deadline);
+      if (!validToken(token) || identifiers.tokenFingerprint(token) !== attempt.tokenFingerprint) return free(requestId, 'unsafe_record');
+      deadline.check();
+      if (!await repository.isCurrentAttempt(attempt, clock.now())) return free(requestId, 'not_verified');
+      const purchase = await this.getSubscription(token, deadline.expiresAt);
+      if (purchase.subscriptionState === 'SUBSCRIPTION_STATE_PENDING_PURCHASE_CANCELED') {
+        const product = purchase.lineItems?.[0]?.productId;
+        if (typeof product !== 'string' || !validateLineItemShape(purchase, product)) return free(requestId, 'not_verified');
+        return await this.verifyCanceledPendingPredecessor(identity, {
+          version: CONTRACT_VERSION, requestId, purchaseToken: token, productId: product,
+          billingDisclosureVersion: DISCLOSURE_VERSION,
+        }, purchase, attempt, attempt.accountSubject, identifiers.requestFingerprint(identity.uid, requestId), deadline.expiresAt);
+      }
+      return await this.finishOrdinaryVerification(identity, requestId, token, purchase, attempt, undefined, deadline.expiresAt);
+    } catch {
+      if (attempt) await this.closeWithoutThrow(attempt);
+      return free(requestId, 'temporarily_unavailable');
+    }
+  }
+
   private async verifyCanceledPendingPredecessor(
     identity: BillingIdentity,
     request: VerifyRequest,
@@ -193,6 +237,7 @@ export class PlayBillingService {
         requestFingerprint,
         predecessorFingerprint,
         this.dependencies.clock.now(),
+        successorAttempt.fence!.deadline,
       );
     } catch {
       return free(request.requestId, 'temporarily_unavailable');
@@ -235,8 +280,14 @@ export class PlayBillingService {
       this.dependencies.clock.now(),
     );
     if (eligible === undefined) {
+      const inactive = validatedInactive(purchase, requestedProduct,
+        this.dependencies.identifiers.obfuscatedAccountId(identity.uid), this.dependencies.clock.now());
+      if (inactive !== undefined && attempt.envelope !== undefined) {
+        try { await this.dependencies.repository.recordInactive(attempt, inactive, this.dependencies.clock.now()); }
+        catch { return free(requestId, 'temporarily_unavailable'); }
+      }
       await this.closeWithoutThrow(attempt);
-      return free(requestId, 'not_verified');
+      return free(requestId, inactive === 'pending' ? 'play_pending' : inactive ?? 'not_verified');
     }
 
     const verifiedAt = this.dependencies.clock.now();
@@ -257,7 +308,11 @@ export class PlayBillingService {
         await this.closeWithoutThrow(attempt);
         return free(requestId, 'not_verified');
       }
+      const tokenEnvelope = attempt.envelope ?? await (this.dependencies.custody ?? new DisabledTokenCustody()).encrypt(
+        rawToken, attempt, attempt.fence!.deadline);
+      attempt.fence!.deadline.check();
       const delivered = await this.dependencies.repository.commitDelivery(attempt, {
+        tokenEnvelope,
         planId: eligible.planId,
         productId: eligible.productId,
         normalizedState: eligible.normalizedState,
@@ -308,8 +363,11 @@ export class PlayBillingService {
           'ack_in_progress',
         );
       }
-      return commit === undefined ? free(requestId, 'not_verified') : paid(requestId, commit);
+      if (commit === undefined || !await this.dependencies.repository.isCurrentGrant(attempt, this.dependencies.clock.now())) return free(requestId, 'not_verified');
+      attempt.fence!.deadline.check();
+      return paid(requestId, commit);
     } catch (error) {
+      if (error instanceof AccountConflictError) return free(requestId, 'account_conflict');
       if (error instanceof UnsafeBillingRecordError) {
         return free(requestId, 'unsafe_record');
       }
@@ -340,18 +398,17 @@ function parseVerifyRequest(input: unknown): VerifyRequest | undefined {
   if (!isPlainObject(input) || serializedSize(input) > MAX_REQUEST_BYTES) {
     return undefined;
   }
-  if (!hasExactKeys(input, ['billingDisclosureVersion', 'productId', 'purchaseToken', 'requestId'])) {
+  if (!hasExactKeys(input, ['version', 'billingDisclosureVersion', 'productId', 'purchaseToken', 'requestId'])) {
     return undefined;
   }
   if (
+    input.version !== CONTRACT_VERSION ||
     !isCanonicalUuid(input.requestId) ||
     input.billingDisclosureVersion !== DISCLOSURE_VERSION ||
     typeof input.productId !== 'string' ||
     input.productId.length === 0 ||
     input.productId.length > 128 ||
-    typeof input.purchaseToken !== 'string' ||
-    input.purchaseToken.length === 0 ||
-    input.purchaseToken.length > MAX_TOKEN_LENGTH
+    !validToken(input.purchaseToken)
   ) {
     return undefined;
   }
@@ -473,6 +530,7 @@ function paid(requestId: string, commit: PaidCommit): PaidResponse {
   return {
     version: CONTRACT_VERSION,
     requestId,
+    status: 'paid',
     planId: commit.planId,
     productId: commit.productId,
     state: commit.normalizedState,
@@ -487,6 +545,9 @@ function free(requestId: string | undefined, reason: FreeReason): FreeResponse {
     version: CONTRACT_VERSION,
     ...(requestId === undefined ? {} : { requestId }),
     state: 'free',
+    status: ['no_known_purchase','expired','on_hold','paused','revoked'].includes(reason) ? 'none'
+      : ['in_flight','verification_pending','play_pending'].includes(reason) ? 'pending'
+      : ['temporarily_unavailable','rate_limited'].includes(reason) ? 'unavailable' : 'rejected',
     reason,
   };
 }
@@ -505,6 +566,7 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 
 function hasExactKeys(value: Record<string, unknown>, expected: string[]): boolean {
   const actual = Object.keys(value).sort();
+  expected = [...expected].sort();
   return actual.length === expected.length && actual.every((key, index) => key === expected[index]);
 }
 
@@ -532,5 +594,24 @@ async function withAbsoluteDeadline<T>(operation: Promise<T>, deadline: number):
     if (timer !== undefined) {
       clearTimeout(timer);
     }
+  }
+}
+
+function validatedInactive(purchase: PlaySubscriptionPurchase, product: string | undefined, account: string, now: Date): 'expired' | 'on_hold' | 'paused' | 'revoked' | 'pending' | undefined {
+  const line = purchase.lineItems?.[0];
+  if (purchase.lineItems?.length !== 1 || !line || typeof line.productId !== 'string' ||
+      !(line.productId in PRODUCT_ALLOWLIST) || (product !== undefined && line.productId !== product) ||
+      line.offerDetails?.basePlanId !== 'monthly' || line.offerDetails.offerId !== undefined ||
+      line.autoRenewingPlan === undefined || purchase.externalAccountIdentifiers?.obfuscatedExternalAccountId !== account) return undefined;
+  const expiry = parseTimestamp(line.expiryTime);
+  if (!expiry) return undefined;
+  switch (purchase.subscriptionState) {
+    case 'SUBSCRIPTION_STATE_EXPIRED': return expiry <= now ? 'expired' : undefined;
+    case 'SUBSCRIPTION_STATE_ON_HOLD': return 'on_hold';
+    case 'SUBSCRIPTION_STATE_PAUSED': return 'paused';
+    case 'SUBSCRIPTION_STATE_REVOKED': return 'revoked';
+    case 'SUBSCRIPTION_STATE_PENDING': return 'pending';
+    case 'SUBSCRIPTION_STATE_CANCELED': return expiry <= now ? 'expired' : undefined;
+    default: return undefined;
   }
 }

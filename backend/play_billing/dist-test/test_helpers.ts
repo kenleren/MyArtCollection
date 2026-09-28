@@ -1,3 +1,5 @@
+import type { TokenCustody } from '../src/token_custody.js';
+import { testCustody } from './fake_custody.js';
 import { randomBytes, randomUUID } from 'node:crypto';
 
 import {
@@ -51,6 +53,7 @@ export interface Harness {
   play: FakePlaySubscriptionsAdapter;
   service: PlayBillingService;
   identity: BillingIdentity;
+  custody: TokenCustody;
   identifiers: ReturnType<typeof createBillingIdentifiers>;
 }
 
@@ -60,6 +63,7 @@ export function createHarness(hooks?: VerificationHooks): Harness {
   const repository = new BillingRepository(database, new DeterministicNonceSource());
   const play = new FakePlaySubscriptionsAdapter();
   const identifiers = createBillingIdentifiers(randomBytes(32));
+  const custody = testCustody();
   const identity = { uid: randomBytes(24).toString('base64url') };
   return {
     clock,
@@ -68,7 +72,8 @@ export function createHarness(hooks?: VerificationHooks): Harness {
     play,
     identity,
     identifiers,
-    service: new PlayBillingService({ repository, play, identifiers, clock, hooks }),
+    custody,
+    service: new PlayBillingService({ repository, play, identifiers, clock, hooks, custody }),
   };
 }
 
@@ -83,6 +88,7 @@ export function verifyRequest(
 ): VerifyRequest {
   return {
     requestId,
+    version: 'play-billing-v2',
     billingDisclosureVersion: DISCLOSURE_VERSION,
     productId,
     purchaseToken: token,

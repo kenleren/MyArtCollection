@@ -32,6 +32,10 @@ function createTransactionAdapter(
       const snapshot = await transaction.get(firestore.collection(collection).doc(id));
       return snapshot.exists ? (normalizeFirestoreValue(snapshot.data()) as Value) : undefined;
     },
+    findSubjectBinding: async (subject) => {
+      const result = await transaction.get(firestore.collection('playBillingPurchaseBindings').where('accountSubject', '==', subject).limit(1));
+      return result.empty ? undefined : normalizeFirestoreValue(result.docs[0]!.data());
+    },
     set: <Value>(collection: BillingCollection, id: string, value: Value) => {
       transaction.set(
         firestore.collection(collection).doc(id),

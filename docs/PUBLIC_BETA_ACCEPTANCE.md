@@ -59,4 +59,4 @@ rollover; upgrades raise the month's allowance without resetting use.
 [The identity foundation](PUBLIC_BETA_IDENTITY_SPEC.md) is one source slice,
 not evidence of a completed public paid journey. Account-scoped recovery,
 payment lifecycle, monthly allowance enforcement, deletion and exact-build
-Play/device evidence remain required. The offline creation lease duration is awaiting an owner decision; legacy anonymous paid customers are unknown.
+Play/device evidence remain required. The owner approved seven-day offline creation capped at Play expiry and attests that no real customer subscription payments have occurred. Signed offline leases remain unimplemented. The [disabled account-recovery source slice](PLAY_BILLING_RECOVERY_V2_SPEC.md) does not complete the public payment lifecycle.

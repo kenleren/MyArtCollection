@@ -1,7 +1,8 @@
 # Archivale Play Billing Backend
 
-This package implements the internal-track `play-billing-v1` verification
-contract from `docs/PLAY_BILLING_GATE_SPEC.md`. It is isolated to Firebase
+This package implements the disabled `play-billing-v2` account-recovery
+source contract in `docs/PLAY_BILLING_RECOVERY_V2_SPEC.md`. The earlier internal
+v1 gate remains documented in `docs/PLAY_BILLING_GATE_SPEC.md`. It is isolated to Firebase
 Functions codebase `play-billing` and named Firestore database
 `archivale-play-billing`.
 
@@ -13,10 +14,21 @@ runtime configuration is present. Local and test runtimes therefore fail
 closed. This source change does not authorize deployment, Firebase or Play
 mutation, a purchase, or paid rollout.
 
+Account recovery and new verification additionally require explicit
+`PLAY_BILLING_RECOVERY_ENABLED=enabled`. Custody requires
+`PLAY_BILLING_TOKEN_CUSTODY_ENABLED=enabled`, the non-secret Firebase string
+parameters `PLAY_BILLING_TOKEN_KEY_VERSION` and
+`PLAY_BILLING_TOKEN_RETAINED_VERSIONS` (comma-separated exact approved versions),
+and reviewed KMS IAM. None of these is enabled by source defaults. Fingerprint
+and encryption keys are separate; no agent should inspect credential files.
+
+Active v2 bindings/indexes do not have a TTL based on stale observed expiry.
+Post-expiry/deletion retention and unattended lifecycle remain launch blockers.
+
 ## Local Checks
 
 ```sh
-npm --prefix backend/play_billing ci
+npm --prefix backend/play_billing ci --ignore-scripts
 npm --prefix backend/play_billing test
 npm --prefix backend/play_billing audit --package-lock-only --audit-level=high
 firebase emulators:exec --project demo-archivale-billing --only firestore \
@@ -25,7 +37,11 @@ firebase emulators:exec --project demo-archivale-billing --only firestore \
 npm --prefix backend/play_billing run test:emulator:ci
 ```
 
-The deterministic suite covers disclosure ordering, product/account/state
+Run Firebase/emulator checks with isolated HOME/XDG and no inherited provider
+credentials, using the demo project only. Do not read generated debug logs.
+
+The deterministic suite covers encrypted fresh-install recovery, exact-version
+KMS AAD/integrity, late deadline/disclosure/index fences, disclosure ordering, product/account/state
 validation, delivery-before-acknowledgement, retry cooldowns, token
 single-flight, generation-advancing reclaim, stale-owner rejection,
 canceled-pending predecessor recovery, redaction, named-database targeting,
@@ -34,7 +50,7 @@ Firestore-emulator persistence/CAS coverage.
 
 ## Callable Cost And Configuration Gate
 
-All three billing callables share this minimum-cost internal-test envelope:
+All four billing callables share this minimum-cost internal-test envelope:
 
 - `minInstances=0`, `maxInstances=1`, and `concurrency=10`;
 - existing `us-central1`, 60-second timeout, 512 MiB memory, dedicated runtime
@@ -55,7 +71,7 @@ material:
   access to `(default)` or broker data;
 - negative IAM evidence proving the broker cannot access billing records and
   the verifier cannot access broker, artwork, or attachment records;
-- approved App Check application identity and anonymous Auth configuration;
+- approved App Check application identity and Google-backed Firebase Auth configuration;
 - deployment-owner custody of the non-secret
   `PLAY_BILLING_APPROVED_APP_ID` Firebase parameter;
 - fingerprint-key custody and an explicit active key version;
@@ -67,6 +83,6 @@ material:
 - approved rollback, budget, monitoring, privacy, redteam, and payment-owner
   evidence.
 
-Rollback targets the three callables/codebase, runtime IAM, and the named
+Rollback targets the four callables/codebase, runtime IAM, and the named
 database rules/IAM. Routine rollback must not delete the billing database or
 modify AI broker entitlements.

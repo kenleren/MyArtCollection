@@ -1,3 +1,7 @@
+> Historical internal-v1 contract. The disabled public-beta recovery source
+> transition is specified in [PLAY_BILLING_RECOVERY_V2_SPEC.md](PLAY_BILLING_RECOVERY_V2_SPEC.md).
+> Do not deploy mixed v1/v2 writers or treat the internal limitations below as public-beta acceptance.
+
 # Play Billing Gate Spec
 
 Status: review-ready documentation contract; implementation and deployment remain gated

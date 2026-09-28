@@ -115,6 +115,10 @@ class _BillingPlanScreenState extends State<BillingPlanScreen> {
     }
     final started = await service.purchase(plan);
     if (!mounted) return;
+    if (!started) {
+      await _load(service);
+      return;
+    }
     setState(
       () => _action = started
           ? _BillingAction.verifying
@@ -129,7 +133,7 @@ class _BillingPlanScreenState extends State<BillingPlanScreen> {
             scrollable: true,
             title: const Text('Confirm subscription verification'),
             content: const Text(
-              'Sign in with Google to purchase or restore a subscription. Use the same Archivale Google account when you return or reinstall. Your Play purchasing account may be different. Archivale sends your purchase confirmation to its verification service; collection records, artwork images and documents are not sent. Sign-in does not enable backup or AI research. Your local archive remains available without an account.',
+              'Sign in with Google to purchase or restore a subscription. Use the same Archivale Google account when you return or reinstall. Your Play purchasing account may be different. Archivale stores your purchase confirmation encrypted on its verification service to restore your subscription after reinstalling or changing devices; collection records, artwork images and documents are not sent. Sign-in does not enable backup or AI research. Your local archive remains available without an account.',
             ),
             actions: [
               TextButton(
@@ -253,6 +257,17 @@ class _BillingPlanScreenState extends State<BillingPlanScreen> {
                       'A canceled, expired, paused, or unavailable plan does not remove existing artwork records, edits, reports, exports, or supporting documents.',
                 ),
                 const SizedBox(height: 16),
+                if (_state.plan.playProductId != null ||
+                    _state.lifecycle == EntitlementLifecycle.hold ||
+                    _state.lifecycle == EntitlementLifecycle.paused) ...[
+                  const _BillingPanel(
+                    icon: Icons.info_outline,
+                    title: 'Manage your existing subscription',
+                    body:
+                        'Use Google Play subscription settings to manage your plan. A second subscription cannot be started here.',
+                  ),
+                  const SizedBox(height: 16),
+                ],
                 Text(
                   'Available plans',
                   style: Theme.of(context).textTheme.titleMedium,
@@ -286,11 +301,16 @@ class _BillingPlanScreenState extends State<BillingPlanScreen> {
   }
 
   bool get _purchaseBlocked =>
-      _action != _BillingAction.idle || _state.presentation.blocksPurchase;
+      _action != _BillingAction.idle ||
+      _state.presentation.blocksPurchase ||
+      _state.plan.playProductId != null ||
+      _state.lifecycle == EntitlementLifecycle.hold ||
+      _state.lifecycle == EntitlementLifecycle.paused;
 
   bool get _canRecover =>
       _action == _BillingAction.idle &&
       (_state.presentation == EntitlementPresentation.idle ||
+          _state.presentation == EntitlementPresentation.unavailable ||
           _state.presentation == EntitlementPresentation.verificationPending ||
           _state.presentation == EntitlementPresentation.inFlight ||
           _state.presentation == EntitlementPresentation.playPending ||
@@ -411,6 +431,7 @@ _BillingAction _presentationAction(
   EntitlementPresentation.playPending => _BillingAction.pending,
   EntitlementPresentation.acknowledgementRecovery => _BillingAction.recovering,
   EntitlementPresentation.recoveryExhausted => _BillingAction.recoveryExhausted,
+  EntitlementPresentation.unavailable => _BillingAction.unavailable,
   EntitlementPresentation.restoring => _BillingAction.restoring,
   EntitlementPresentation.refreshing => _BillingAction.refreshing,
 };
@@ -441,7 +462,7 @@ enum _BillingAction {
     verifying => 'Verifying subscription',
     recovering => 'Recovering subscription verification',
     recoveryExhausted => 'Subscription recovery is paused',
-    unavailable => 'Plan change unavailable',
+    unavailable => 'Subscription check unavailable',
   };
 
   String get body => switch (this) {
@@ -457,6 +478,6 @@ enum _BillingAction {
     recoveryExhausted =>
       'Subscription recovery is paused for this unresolved purchase. Archivale remains on Free access.',
     unavailable =>
-      'Play billing or subscription verification is unavailable right now. Archivale remains on Free access.',
+      'Your subscription could not be checked right now. Try Restore purchases again. Your existing archive stays available.',
   };
 }

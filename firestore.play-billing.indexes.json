@@ -30,6 +30,11 @@
       "fieldPath": "retentionExpiresAt",
       "ttl": true,
       "indexes": []
+    },
+    {
+      "collectionGroup": "playBillingPurchaseBindings",
+      "fieldPath": "tokenEnvelope",
+      "indexes": []
     }
   ]
 }

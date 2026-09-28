@@ -45,6 +45,91 @@ void main() {
   setUp(() async => fixture = await _BillingFixture.create());
   tearDown(() => fixture.dispose());
 
+  testWidgets('a restored paid plan cannot start a second subscription', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(360, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(() {
+      tester.view.resetPhysicalSize();
+      tester.view.resetDevicePixelRatio();
+    });
+    fixture.service.state = const EntitlementState(
+      plan: EntitlementPlans.starter,
+      billingStatus: EntitlementBillingStatus.available,
+      lifecycle: EntitlementLifecycle.active,
+    );
+    fixture.service.productsValue = const [
+      PlayProduct(
+        id: 'archivale_collector_monthly',
+        title: 'Collector',
+        description: 'Up to 200 active artworks',
+        price: 'NOK 59.00',
+      ),
+    ];
+    await _pump(tester, fixture);
+    expect(
+      find.text('Manage your existing subscription', skipOffstage: false),
+      findsOneWidget,
+    );
+    await _capture(tester, fixture, 'account-restored-plan-360.png');
+    final choose = find.widgetWithText(
+      FilledButton,
+      'Choose plan',
+      skipOffstage: false,
+    );
+    await tester.scrollUntilVisible(
+      choose,
+      250,
+      scrollable: find.byType(Scrollable).first,
+    );
+    expect(tester.widget<FilledButton>(choose).onPressed, isNull);
+    expect(fixture.service.purchases, isEmpty);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+    'temporary verification failure keeps Restore available and purchase blocked',
+    (tester) async {
+      tester.view.physicalSize = const Size(360, 640);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(() {
+        tester.view.resetPhysicalSize();
+        tester.view.resetDevicePixelRatio();
+      });
+      fixture.service.state = const EntitlementState(
+        plan: EntitlementPlans.free,
+        billingStatus: EntitlementBillingStatus.unavailable,
+        presentation: EntitlementPresentation.unavailable,
+      );
+      fixture.service.productsValue = const [
+        PlayProduct(
+          id: 'archivale_starter_monthly',
+          title: 'Starter',
+          description: 'Up to 50 active artworks',
+          price: 'NOK 35.00',
+        ),
+      ];
+      await _pump(tester, fixture);
+      expect(find.text('Subscription check unavailable'), findsOneWidget);
+      final restore = find.widgetWithText(OutlinedButton, 'Restore purchases');
+      expect(tester.widget<OutlinedButton>(restore).onPressed, isNotNull);
+      await _capture(tester, fixture, 'account-restore-unavailable-360.png');
+      final choose = find.widgetWithText(
+        FilledButton,
+        'Choose plan',
+        skipOffstage: false,
+      );
+      await tester.scrollUntilVisible(
+        choose,
+        250,
+        scrollable: find.byType(Scrollable).first,
+      );
+      expect(tester.widget<FilledButton>(choose).onPressed, isNull);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   testWidgets('shows localized Play details and verifies after disclosure', (
     tester,
   ) async {

@@ -44,6 +44,16 @@ describe('named billing database client rules', () => {
     await assertPermissionDenied(setDoc(probe(firestore), { probe: true }));
   });
 
+  test('deny Google-account reads and writes of account index and custody', async () => {
+    const subject = randomUUID();
+    const firestore = client({ sub: subject, user_id: subject, firebase: { sign_in_provider: 'google.com' } });
+    for (const collection of [COLLECTIONS.accounts, COLLECTIONS.bindings]) {
+      const reference = doc(firestore, collection, randomUUID());
+      await assertPermissionDenied(getDoc(reference));
+      await assertPermissionDenied(setDoc(reference, { probe: true }));
+    }
+  });
+
   test('deny authenticated anonymous-user reads and writes', async () => {
     const subject = randomUUID();
     const firestore = client({

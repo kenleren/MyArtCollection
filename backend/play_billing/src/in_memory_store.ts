@@ -22,6 +22,13 @@ export class InMemoryBillingDatabase implements BillingDatabase {
           const value = working.get(key(collection, id));
           return value === undefined ? undefined : structuredClone(value as Value);
         },
+        findSubjectBinding: async (subject) => {
+          for (const [path, value] of working) {
+            if (path.startsWith('playBillingPurchaseBindings/') && value !== null && typeof value === 'object' &&
+                'accountSubject' in value && value.accountSubject === subject) return structuredClone(value);
+          }
+          return undefined;
+        },
         set: <Value>(collection: BillingCollection, id: string, value: Value) => {
           working.set(key(collection, id), structuredClone(value));
         },
