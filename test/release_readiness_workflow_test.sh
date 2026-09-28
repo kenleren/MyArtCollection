@@ -53,7 +53,17 @@ canonical_flutter_job="$(mktemp "${TMPDIR:-/tmp}/release-readiness-canonical-flu
 fixture_dir="$(mktemp -d "${TMPDIR:-/tmp}/release-readiness-flutter-fixture.XXXXXX")"
 trap 'rm -f "$flutter_job" "$canonical_flutter_job"; rm -rf "$fixture_dir"' EXIT
 [[ "$(grep -Fxc '  flutter-quality:' "$workflow")" = 1 ]]
-awk 'BEGIN { in_job=0 } /^  flutter-quality:$/ { if (in_job) exit 1; in_job=1 } in_job && /^  [A-Za-z0-9_-]+:$/ && $0 != "  flutter-quality:" { exit } in_job { print } END { if (!in_job) exit 1 }' "$workflow" > "$flutter_job"
+# Keep internal blank lines, but exclude the separator before the next job.
+awk '
+  /^  flutter-quality:$/ { in_job=1 }
+  in_job && /^  [A-Za-z0-9_-]+:$/ && $0 != "  flutter-quality:" { exit }
+  in_job {
+    if (NF == 0) { separator=separator $0 ORS; next }
+    printf "%s%s\n", separator, $0
+    separator=""
+  }
+  END { if (!in_job) exit 1 }
+' "$workflow" > "$flutter_job"
 [[ -s "$flutter_job" ]]
 cat > "$canonical_flutter_job" <<'EOF'
   flutter-quality:
@@ -228,7 +238,6 @@ for compiler in '/tmp/compiler' 'clang++ bad' $'clang++\nBAD' 'clang++=bad' 'cla
   [[ "$result" = CUSTODY_NATIVE_REJECTED ]]
 done
 
-for mode in none address,undefined thread; do
-  result="$(CXX=clang++ ATTACHMENT_CUSTODY_SUITE=contract ATTACHMENT_CUSTODY_SANITIZERS="$mode" /bin/bash "$native" 2>&1)"
-  [[ "$(printf '%s\n' "$result" | grep -Ec '^CUSTODY_NATIVE_RESULT suite=contract sanitizer=(none|address,undefined|thread) compiler=clangxx phase=cleanup class=cleanup exit=0 status=pass$')" = 1 ]]
-done
+# Runtime coverage belongs to the six pinned-compiler Android custody steps.
+# This gate checks workflow structure and rejection before compiler execution.
+printf '%s\n' 'Release workflow contract passed.'

@@ -34,6 +34,8 @@ jobs:
             echo "Checkout left a repository credential in local git config" >&2
             exit 1
           fi
+      - name: Validate release workflow contract
+        run: bash test/release_readiness_workflow_test.sh
       - name: Run digest-pinned actionlint
         shell: bash
         run: |

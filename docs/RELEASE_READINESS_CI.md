@@ -35,6 +35,13 @@ branch-protection contract.
 Flutter test files run with one worker because several existing suites mutate
 process-global Flutter/database test state. Serial execution keeps the hosted
 result deterministic while still running every test.
+Formatting, analysis, and serialized tests have separate named steps, so the
+failed phase is visible in GitHub's structured job metadata. Formatting checks
+do not rewrite source files. The workflow-lint job also runs
+`test/release_readiness_workflow_test.sh` to verify this ordering, the locked
+setup, and the separate native custody checks. Native runtime coverage stays
+in the Android job: contract and race suites each run with the pinned compiler
+without sanitizers, with ASan/UBSan, and with TSan.
 The Linux runner maps Roboto and Material Icons from the checksum-verified
 Flutter SDK to the macOS-compatible paths used by the existing screenshot test
 harness, keeping text metrics and lazy-list visibility consistent across hosts.
