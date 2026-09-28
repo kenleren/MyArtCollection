@@ -550,14 +550,14 @@
 {"blob_oid":"4d313bb29d4404917c5d8673b448d2bc2403ff7f","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/dist/test/ci_observability.test.js"}
 {"blob_oid":"298ccd3e2e0ec4b0120282570e9202f8ff0ac1c2","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/dist/test/dispatcher.test.js"}
 {"blob_oid":"1075f1100a04b9b2bf8f2421b9299d4c53a29ccc","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/dist/test/github_pagination.test.js"}
-{"blob_oid":"0be262bf87da61c9fc1e8898c9fbc96bf9639450","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/evidence/artifact-manifest.v2.json"}
+{"blob_oid":"e916794792eac76dff5f1eccb0255d24b8194be5","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/evidence/artifact-manifest.v2.json"}
 {"blob_oid":"28758f90ef72032930eee64b16ae9008c567d291","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/evidence/bundle/bundle-evidence.v1.json"}
 {"blob_oid":"20bb3a5b626961eba1edfb44d15005ff5b11fccd","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/evidence/bundle/import-manifest.v1.json"}
 {"blob_oid":"de101324ede369e00545e2d53d8debaa338b2350","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/evidence/bundle/metafile.json"}
 {"blob_oid":"6f963a79735ba8cb22001ac1a9d95568d5822282","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/evidence/bundle/worker.mjs"}
 {"blob_oid":"95e9420696fa1dbd472d709e9290419a2b72593f","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/evidence/restore-fixture.v1.json"}
 {"blob_oid":"332114915f2c50ee935c4228b0d1d912a2537630","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/evidence/restore-rehearsal.v1.json"}
-{"blob_oid":"87934cc6aca69d81fd97955e407c3680ec5a8d6b","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/evidence/sbom.spdx.json"}
+{"blob_oid":"e0d7ad5d660cc7d2eaef88a2d6157647d646097e","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/evidence/sbom.spdx.json"}
 {"blob_oid":"801d7edd61cecb231e732a75aa87d8d5bcf14a34","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/evidence/sqlite-conformance.v1.json"}
 {"blob_oid":"a9ca2a5245cdf0a1d5aa7c5cad9840afe20035b6","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/evidence/wrangler-preflight.v1.json"}
 {"blob_oid":"3f2f14779b763211b6b7c462739a7312053e4749","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/package-lock.json"}
@@ -605,6 +605,7 @@
 {"blob_oid":"2d730f7dc1f9232370af7beb67ca84be110444af","class":"evaluated-input","mode":"100644","path":"docs/ARCHIVALE_ARCHIVE_V1.md"}
 {"blob_oid":"0aef1a69a7aba9942c9e350a88b357c99407d78b","class":"evaluated-input","mode":"100644","path":"docs/ARCHIVALE_ARCHIVE_V2.md"}
 {"blob_oid":"1b8e77b33be74b0cb7906378dfa5415a8e6998f8","class":"evaluated-input","mode":"100644","path":"docs/ARCHIVALE_BLOG_EDITORIAL_PLAN.md"}
+{"blob_oid":"c8ffa752d26207ab432bc41f30f6fe9a264e6931","class":"evaluated-input","mode":"100644","path":"docs/ARCHIVE_INSPECTION_V2.md"}
 {"blob_oid":"6179eb3dc6c705120222ffa8c4709be12036cf85","class":"evaluated-input","mode":"100644","path":"docs/ARTWORK_RECORD_SCHEMA.md"}
 {"blob_oid":"f00eddaa2d6269a66532d492316a9291c08ffc82","class":"evaluated-input","mode":"100644","path":"docs/ATTACHMENT_CUSTODY_API_V1.md"}
 {"blob_oid":"06038103823e3485faca7ec7b1d75b5cbd028bdf","class":"evaluated-input","mode":"100644","path":"docs/COPY_TRUST_SPEC.md"}
@@ -707,6 +708,11 @@
 {"blob_oid":"f4875ace15a21f0ce54e9caca7d8fbdee88ada3c","class":"evaluated-input","mode":"100644","path":"lib/app/external_references/external_reference_launch_service.dart"}
 {"blob_oid":"b2c7bce25e3062dd82c4b5b6d0bfcbe74108b5d1","class":"evaluated-input","mode":"100644","path":"lib/app/external_references/external_reference_url_codec.dart"}
 {"blob_oid":"a7df34386c3b7f2d539a94ea407c84e75f594ef5","class":"evaluated-input","mode":"100644","path":"lib/app/external_references/external_references_panel.dart"}
+{"blob_oid":"3f18902224c09b264e56351c70147ae0f7f660d6","class":"evaluated-input","mode":"100644","path":"lib/app/import/archive_inspection.dart"}
+{"blob_oid":"f9bc9c1a88bd06c03f1636c24c00fbb1f2cf1c00","class":"evaluated-input","mode":"100644","path":"lib/app/import/archive_inspection_deflate.dart"}
+{"blob_oid":"576ba75d373a79e533db74e9b421a821223d1911","class":"evaluated-input","mode":"100644","path":"lib/app/import/archive_inspection_json.dart"}
+{"blob_oid":"4c54de937ec5c38eff99ed9b37ed17bec605160a","class":"evaluated-input","mode":"100644","path":"lib/app/import/archive_inspection_reader.dart"}
+{"blob_oid":"f0590e5496da5c1016a03d976e261577eb434430","class":"evaluated-input","mode":"100644","path":"lib/app/import/archive_inspection_zip.dart"}
 {"blob_oid":"c921f1ae8c62a1ff05de0ee0c1232c7ad30fe7a9","class":"evaluated-input","mode":"100644","path":"lib/app/import/csv_artwork_import_service.dart"}
 {"blob_oid":"3829dc7a51496206c1d7a7293408545dbcbf8467","class":"evaluated-input","mode":"100644","path":"lib/app/import/csv_import_file_picker.dart"}
 {"blob_oid":"5b0a9560deafb24a6c30eb3a764e7444725e2a7d","class":"evaluated-input","mode":"100644","path":"lib/app/intake/artwork_image_picker.dart"}
@@ -822,6 +828,9 @@
 {"blob_oid":"225f38860c3abbfb56a2f0c1598cf2df39947750","class":"evaluated-input","mode":"100644","path":"test/app_currency_formatter_test.dart"}
 {"blob_oid":"3910238c4424147432f8442da844153a90cdf234","class":"evaluated-input","mode":"100644","path":"test/app_feature_flags_test.dart"}
 {"blob_oid":"1b307437845e6c3756ddab35e460814ea56bc9bc","class":"evaluated-input","mode":"100755","path":"test/apple_build_command_guard_test.sh"}
+{"blob_oid":"205259582382d3b5644d0f6c7e91168d134b2916","class":"evaluated-input","mode":"100644","path":"test/archive_inspection_deflate_test.dart"}
+{"blob_oid":"39191d70b3e82169ed951ac329070f3fc0b3cee6","class":"evaluated-input","mode":"100644","path":"test/archive_inspection_fidelity_test.dart"}
+{"blob_oid":"d9376c4409c796b8bd5fd8e8ffe6907ef40b65fa","class":"evaluated-input","mode":"100644","path":"test/archive_inspection_reader_test.dart"}
 {"blob_oid":"0b3a10905ba0e70677b2b99b8cec6229d021a1a5","class":"evaluated-input","mode":"100644","path":"test/artwork_group_repository_test.dart"}
 {"blob_oid":"cbfb0f7867dc8ac0c515888e61537f9bf45b931c","class":"evaluated-input","mode":"100644","path":"test/artwork_intake_service_test.dart"}
 {"blob_oid":"b4808a7b855e82adf2b24f4e7ebe24ac4e2d1886","class":"evaluated-input","mode":"100644","path":"test/attachment_custody_bridge_test.dart"}
@@ -871,6 +880,7 @@
 {"blob_oid":"e65451349ae99af8cbdfd7c6435e1fc36751648f","class":"evaluated-input","mode":"100644","path":"test/real_export_service_test.dart"}
 {"blob_oid":"f8e7280ef8c8c607929adbcff3c0eac2f4bc8439","class":"evaluated-input","mode":"100755","path":"test/release_readiness_workflow_test.sh"}
 {"blob_oid":"d82127b1a96dc9d657e49709daeca98c4e4e6f55","class":"evaluated-input","mode":"100755","path":"test/safe_apple_build_test.sh"}
+{"blob_oid":"9d225919fa6de3ce7a3f71fa153a87692482c9f7","class":"evaluated-input","mode":"100644","path":"test/support/archive_inspection_fixture.dart"}
 {"blob_oid":"6f6e436ead7731b2cfbe9cc0e27e6a0bf8ee29ae","class":"evaluated-input","mode":"100644","path":"test/support/fake_paid_account_gateway.dart"}
 {"blob_oid":"cd1b2cdbb8475c435209ad620759cbb31cb22f8e","class":"evaluated-input","mode":"100644","path":"test/supporting_attachment_service_test.dart"}
 {"blob_oid":"af369489bb1a8a92eec539b83ee9786a59cf7e92","class":"evaluated-input","mode":"100644","path":"test/supporting_record_attachment_export_contract_test.dart"}
