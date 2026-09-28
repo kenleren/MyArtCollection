@@ -42,7 +42,7 @@ if "$compiler_path" \
 if "$binary" --suite "$suite" >>"$output" 2>&1; then :; else
   code=$?
   if [[ "$code" = 64 ]]; then finish_failure execute invalid "$code"; fi
-  if [[ "$code" = 65 ]]; then finish_failure execute assertion "$code"; fi
+  if (( code == 65 || (code >= 80 && code <= 91) )); then finish_failure execute assertion "$code"; fi
   finish_failure execute runtime "$code"
 fi
 if rm -f "$binary" "$output"; then result cleanup cleanup 0 pass; else code=$?; result cleanup cleanup "$code" fail; exit "$code"; fi

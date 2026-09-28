@@ -241,3 +241,33 @@ done
 # Runtime coverage belongs to the six pinned-compiler Android custody steps.
 # This gate checks workflow structure and rejection before compiler execution.
 printf '%s\n' 'Release workflow contract passed.'
+
+# Keep assertion identifiers distinct from sanitizer failures, notably TSan's 66.
+cat > "$fixture_dir/clang++" <<'COMPILER'
+#!/usr/bin/env bash
+set -euo pipefail
+output_path=''
+while (( $# > 0 )); do
+  if [[ "$1" == -o ]]; then output_path="$2"; shift; fi
+  shift
+done
+[[ -n "$output_path" ]]
+cat > "$output_path" <<'BINARY'
+#!/usr/bin/env bash
+exit "${CUSTODY_FIXTURE_EXIT:?}"
+BINARY
+chmod +x "$output_path"
+COMPILER
+chmod +x "$fixture_dir/clang++"
+for fixture_exit in 65 66 80 86 89 91 92; do
+  expected_class=assertion
+  if [[ "$fixture_exit" == 66 || "$fixture_exit" == 92 ]]; then expected_class=runtime; fi
+  set +e
+  actual_result="$(env -i PATH="$fixture_dir:/usr/bin:/bin" CXX=clang++ \
+    CUSTODY_FIXTURE_EXIT="$fixture_exit" ATTACHMENT_CUSTODY_SUITE=race \
+    ATTACHMENT_CUSTODY_SANITIZERS=thread bash "$repo_root/test/attachment_custody_native_test.sh" 2>&1)"
+  actual_exit=$?
+  set -e
+  [[ "$actual_exit" == "$fixture_exit" ]]
+  [[ "$actual_result" == "CUSTODY_NATIVE_RESULT suite=race sanitizer=thread compiler=clangxx phase=execute class=$expected_class exit=$fixture_exit status=fail" ]]
+done
