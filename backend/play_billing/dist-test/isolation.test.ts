@@ -139,7 +139,7 @@ describe('billing isolation and redaction', () => {
       'archivale-play-billing-verifier@my-art-collections.iam.gserviceaccount.com',
     );
     assert.equal(source.includes("verifyIdToken(authorization.slice('Bearer '.length), true)"), true);
-    assert.equal(source.includes("sign_in_provider !== 'anonymous'"), true);
+    assert.equal(source.includes('isPaidGoogleIdentity(decoded, request.auth.uid)'), true);
     assert.equal(source.includes("defineString('PLAY_BILLING_APPROVED_APP_ID')"), true);
     assert.equal(source.includes('process.env.PLAY_BILLING_APPROVED_APP_ID'), false);
     assert.equal(source.includes('matchesApprovedAppId(approvedAppId, request.app.appId)'), true);

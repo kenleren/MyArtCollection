@@ -4,6 +4,17 @@ Status: review-ready documentation contract; implementation and deployment remai
 Issue: #190
 Date: 2026-07-10
 
+## Identity foundation amendment (#194, 2026-09-28)
+
+The source implementation now requires Google-backed Firebase identity for
+purchase/restore and `billing-verification-disclosure-v2`. See
+[Paid Android identity foundation](PUBLIC_BETA_IDENTITY_SPEC.md) for the
+accepted account-optional product boundary, UID-preserving link, explicit
+collision recovery and staged migration. This amendment supersedes the
+anonymous-only identity and v1 disclosure requirements below. The remaining
+v1 delivery, database, response and memory-only lease contract remains in
+force. This slice does not complete #194 or authorize paid public rollout.
+
 ## Scope And Authority
 
 This is the canonical contract for Archivale's internal-track Android

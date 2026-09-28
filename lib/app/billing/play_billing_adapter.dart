@@ -8,10 +8,11 @@ import 'package:in_app_purchase/in_app_purchase.dart';
 import 'package:in_app_purchase_android/in_app_purchase_android.dart';
 
 import '../research/firebase_research_runtime.dart';
+import '../account/firebase_account_service.dart';
 import 'entitlement_plan.dart';
 
 const _contractVersion = 'play-billing-v1';
-const _disclosureVersion = 'billing-verification-disclosure-v1';
+const _disclosureVersion = 'billing-verification-disclosure-v2';
 const _disclosurePurpose = 'play_subscription_verification';
 const _maxLease = Duration(minutes: 15);
 // A device can start with a stale wall clock. The lease never uses wall time,
@@ -76,7 +77,8 @@ abstract interface class BillingManagementService
   Stream<EntitlementState> get stateChanges;
   Future<List<PlayProduct>> products();
   Future<bool> canRecover();
-  Future<bool> acceptBillingDisclosure();
+  PaidAccountStatus get accountStatus;
+  Future<bool> acceptBillingDisclosure({bool useExistingAccount = false});
   Future<bool> purchase(EntitlementPlan plan);
   Future<void> restore();
   Future<void> refreshForForeground();
@@ -198,7 +200,7 @@ class PlayBillingVerification {
 
 abstract interface class PlayBillingVerifier {
   /// Called only after the billing disclosure has been accepted in the UI.
-  Future<String?> ensureBillingIdentity();
+  Future<String?> ensureBillingIdentity({bool useExistingAccount = false});
   String? currentBillingUserId();
   Future<bool> acceptDisclosure(String requestId);
   Future<PlayBillingVerification> verify({
@@ -210,6 +212,10 @@ abstract interface class PlayBillingVerifier {
 
 /// Optional sanitized identity-change signal. It carries no account details
 /// and lets the entitlement coordinator clear its memory-only lease promptly.
+abstract interface class PlayBillingAccountStatus {
+  PaidAccountStatus get accountStatus;
+}
+
 abstract interface class PlayBillingIdentityObserver {
   Stream<void> get billingIdentityChanges;
 }
@@ -271,52 +277,69 @@ class _FirebasePlayBillingCallable implements PlayBillingCallable {
 }
 
 class FirebasePlayBillingVerifier
-    implements PlayBillingVerifier, PlayBillingIdentityObserver {
+    implements
+        PlayBillingVerifier,
+        PlayBillingIdentityObserver,
+        PlayBillingAccountStatus {
   FirebasePlayBillingVerifier(
     this._runtime, {
     this._callableFactory = const FirebasePlayBillingCallableFactory(),
     DateTime Function()? now,
-  }) : _now = now ?? DateTime.now;
+    FirebaseAccountService? accountService,
+  }) : _accountService =
+           accountService ??
+           FirebaseAccountService(FlutterPaidAccountGateway()),
+       _now = now ?? DateTime.now;
 
   final FirebaseResearchRuntime _runtime;
+  final FirebaseAccountService _accountService;
+  @override
+  PaidAccountStatus get accountStatus => _accountService.status;
   final PlayBillingCallableFactory _callableFactory;
   final DateTime Function() _now;
   final StreamController<void> _billingIdentityChanges =
       StreamController<void>.broadcast();
   bool _identityInitialized = false;
-  StreamSubscription<String?>? _identitySubscription;
-  String? _observedUserId;
+  bool _establishingIdentity = false;
+  StreamSubscription<AccountIdentity?>? _identitySubscription;
+  AccountIdentity? _observedIdentity;
 
   @override
   Stream<void> get billingIdentityChanges => _billingIdentityChanges.stream;
 
   @override
-  Future<String?> ensureBillingIdentity() async {
+  Future<String?> ensureBillingIdentity({
+    bool useExistingAccount = false,
+  }) async {
+    if (_establishingIdentity) return null;
+    _establishingIdentity = true;
     try {
       await _runtime.initializeFirebase();
       await _runtime.initializeAppCheck();
-      await _runtime.signInAnonymously();
-      final uid = _runtime.currentUserId();
+      _observeIdentityChanges();
+      final uid = await _accountService.ensureGoogleAccount(
+        useExistingAccount: useExistingAccount,
+      );
+      _observedIdentity = _accountService.current;
       _identityInitialized = uid != null;
-      _observeIdentityChanges(uid);
       return uid;
     } catch (_) {
       _identityInitialized = false;
+      _accountService.status = PaidAccountStatus.unavailable;
       return null;
+    } finally {
+      _establishingIdentity = false;
     }
   }
 
-  void _observeIdentityChanges(String? initialUid) {
-    _observedUserId = initialUid;
-    if (_runtime is! FirebaseResearchIdentityObserver ||
-        _identitySubscription != null) {
-      return;
-    }
-    final observer = _runtime as FirebaseResearchIdentityObserver;
-    _identitySubscription = observer.userIdChanges.listen((uid) {
-      if (uid == _observedUserId) return;
-      _observedUserId = uid;
-      if (!_billingIdentityChanges.isClosed) {
+  void _observeIdentityChanges() {
+    if (_identitySubscription != null) return;
+    _observedIdentity = _accountService.current;
+    _identitySubscription = _accountService.changes.listen((identity) {
+      if (identity == _observedIdentity) return;
+      _observedIdentity = identity;
+      _identityInitialized = false;
+      if (!_establishingIdentity && !_billingIdentityChanges.isClosed) {
         _billingIdentityChanges.add(null);
       }
     });
@@ -324,7 +347,11 @@ class FirebasePlayBillingVerifier
 
   @override
   String? currentBillingUserId() =>
-      _identityInitialized ? _runtime.currentUserId() : null;
+      _identityInitialized &&
+          _accountService.current?.google == true &&
+          _accountService.current?.anonymous == false
+      ? _accountService.current?.uid
+      : null;
 
   @override
   Future<bool> acceptDisclosure(String requestId) async {
@@ -479,6 +506,7 @@ class PlayBillingEntitlementService implements BillingManagementService {
   String? _currentRequestId;
   String? _currentUid;
   bool _disposed = false;
+  int _identityAttempt = 0;
   bool _disclosureAccepted = false;
   EntitlementPresentation _presentation = EntitlementPresentation.idle;
   EntitlementPresentation? _recoveryFallbackPresentation;
@@ -544,13 +572,27 @@ class PlayBillingEntitlementService implements BillingManagementService {
     return true;
   }
 
+  @override
+  PaidAccountStatus get accountStatus => _verifier is PlayBillingAccountStatus
+      ? (_verifier as PlayBillingAccountStatus).accountStatus
+      : PaidAccountStatus.idle;
+
   /// The caller invokes this only after displaying the billing disclosure.
   @override
-  Future<bool> acceptBillingDisclosure() async {
+  Future<bool> acceptBillingDisclosure({
+    bool useExistingAccount = false,
+  }) async {
     if (!await canRecover()) return false;
-    final entryFence = _captureFence();
-    final uid = await _ensureBillingIdentity();
-    if (!_isFenceCurrent(entryFence) || uid == null) return false;
+    final attempt = ++_identityAttempt;
+    _generation++;
+    _lease = null;
+    _leaseExpiryTimer?.cancel();
+    _currentRequestId = null;
+    _disclosureAccepted = false;
+    final uid = await _ensureBillingIdentity(
+      useExistingAccount: useExistingAccount,
+    );
+    if (_disposed || attempt != _identityAttempt || uid == null) return false;
     if (!await canRecover()) return false;
     final retainUnresolvedRecovery =
         _currentUid == uid && _isUnresolved(_presentation);
@@ -712,7 +754,10 @@ class PlayBillingEntitlementService implements BillingManagementService {
   }
 
   @override
-  void handleAccountChange() => _transitionFree(clearPurchase: true);
+  void handleAccountChange() {
+    _identityAttempt++;
+    _transitionFree(clearPurchase: true);
+  }
 
   Future<void> _onPurchase(PlayPurchase purchase) async {
     if (_disposed) return;
@@ -936,9 +981,13 @@ class PlayBillingEntitlementService implements BillingManagementService {
     }
   }
 
-  Future<String?> _ensureBillingIdentity() async {
+  Future<String?> _ensureBillingIdentity({
+    bool useExistingAccount = false,
+  }) async {
     try {
-      return await _verifier.ensureBillingIdentity();
+      return await _verifier.ensureBillingIdentity(
+        useExistingAccount: useExistingAccount,
+      );
     } catch (_) {
       return null;
     }

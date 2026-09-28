@@ -175,7 +175,7 @@ export class BillingRepository {
   async acceptDisclosure(accountSubject: string, now: Date): Promise<void> {
     await this.database.runTransaction(async (tx) => {
       const existing = await tx.get<DisclosureRecord>(COLLECTIONS.disclosures, accountSubject);
-      if (existing !== undefined && !validDisclosure(existing, accountSubject)) {
+      if (existing !== undefined && !validDisclosure(existing, accountSubject, true)) {
         throw new UnsafeBillingRecordError();
       }
       tx.set<DisclosureRecord>(COLLECTIONS.disclosures, accountSubject, {
@@ -201,7 +201,7 @@ export class BillingRepository {
       if (existing === undefined) {
         return;
       }
-      if (!validDisclosure(existing, accountSubject)) {
+      if (!validDisclosure(existing, accountSubject, true)) {
         throw new UnsafeBillingRecordError();
       }
       tx.set<DisclosureRecord>(COLLECTIONS.disclosures, accountSubject, {
@@ -761,7 +761,7 @@ function validOwner(record: Partial<AttemptOwner>): boolean {
   );
 }
 
-function validDisclosure(record: DisclosureRecord, accountSubject: string): boolean {
+function validDisclosure(record: DisclosureRecord, accountSubject: string, allowPrevious = false): boolean {
   return (
     hasOnlyKeys(record, [
       'contractVersion',
@@ -780,7 +780,8 @@ function validDisclosure(record: DisclosureRecord, accountSubject: string): bool
     validBase(record) &&
     record.assertionVersion === DISCLOSURE_ASSERTION_VERSION &&
     record.accountSubject === accountSubject &&
-    record.disclosureVersion === DISCLOSURE_VERSION &&
+    (record.disclosureVersion === DISCLOSURE_VERSION ||
+      (allowPrevious && record.disclosureVersion === 'billing-verification-disclosure-v1')) &&
     record.purpose === DISCLOSURE_PURPOSE &&
     record.acceptedAt instanceof Date &&
     record.statusChangedAt instanceof Date &&

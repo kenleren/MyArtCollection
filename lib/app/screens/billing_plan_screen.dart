@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../app_dependencies.dart';
+import '../account/firebase_account_service.dart';
 import '../billing/entitlement_plan.dart';
 import '../billing/play_billing_adapter.dart';
 
@@ -79,7 +80,7 @@ class _BillingPlanScreenState extends State<BillingPlanScreen> {
     });
   }
 
-  Future<void> _restore() async {
+  Future<void> _restore({bool useExistingAccount = false}) async {
     final service = _service;
     if (service == null) return;
     if (!await service.canRecover()) {
@@ -93,7 +94,9 @@ class _BillingPlanScreenState extends State<BillingPlanScreen> {
       return;
     }
     setState(() => _action = _BillingAction.restoring);
-    final accepted = await service.acceptBillingDisclosure();
+    final accepted = await service.acceptBillingDisclosure(
+      useExistingAccount: useExistingAccount,
+    );
     if (accepted) await service.restore();
     if (!mounted) return;
     await _load(service);
@@ -107,7 +110,7 @@ class _BillingPlanScreenState extends State<BillingPlanScreen> {
     setState(() => _action = _BillingAction.pending);
     final disclosureAccepted = await service.acceptBillingDisclosure();
     if (!disclosureAccepted) {
-      if (mounted) setState(() => _action = _BillingAction.unavailable);
+      if (mounted) setState(() => _action = _BillingAction.idle);
       return;
     }
     final started = await service.purchase(plan);
@@ -123,9 +126,10 @@ class _BillingPlanScreenState extends State<BillingPlanScreen> {
     return await showDialog<bool>(
           context: context,
           builder: (context) => AlertDialog(
+            scrollable: true,
             title: const Text('Confirm subscription verification'),
             content: const Text(
-              'To verify a Play subscription, Archivale will use the purchase confirmation with its verification service. Your collection records, artwork images, and supporting documents are not needed to verify a subscription. Subscription access is confirmed only after verification succeeds.',
+              'Sign in with Google to purchase or restore a subscription. Use the same Archivale Google account when you return or reinstall. Your Play purchasing account may be different. Archivale sends your purchase confirmation to its verification service; collection records, artwork images and documents are not sent. Sign-in does not enable backup or AI research. Your local archive remains available without an account.',
             ),
             actions: [
               TextButton(
@@ -188,6 +192,34 @@ class _BillingPlanScreenState extends State<BillingPlanScreen> {
                 ),
               if (displayedAction != _BillingAction.idle)
                 const SizedBox(height: 12),
+              if (service?.accountStatus ==
+                  PaidAccountStatus.existingAccount) ...[
+                _BillingPanel(
+                  icon: Icons.account_circle_outlined,
+                  title: 'This Google account already has an Archivale account',
+                  body:
+                      'You can sign in to that account and restore its purchases. Existing local records stay on this device. Purchases from different Archivale accounts are not combined.',
+                  action: OutlinedButton(
+                    onPressed: _action == _BillingAction.idle
+                        ? () => _restore(useExistingAccount: true)
+                        : null,
+                    child: const Text('Sign in to existing account'),
+                  ),
+                ),
+                const SizedBox(height: 12),
+              ],
+              if (service?.accountStatus == PaidAccountStatus.canceled ||
+                  service?.accountStatus == PaidAccountStatus.unavailable) ...[
+                _BillingPanel(
+                  icon: Icons.info_outline,
+                  title: service?.accountStatus == PaidAccountStatus.canceled
+                      ? 'Sign-in canceled'
+                      : 'Sign-in unavailable',
+                  body:
+                      'No purchase was started. Your local archive remains available. You can try purchase or restore again.',
+                ),
+                const SizedBox(height: 12),
+              ],
               if (service == null)
                 const _BillingPanel(
                   icon: Icons.info_outline,

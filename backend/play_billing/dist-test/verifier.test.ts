@@ -563,3 +563,17 @@ describe('PlayBillingService verification contract', () => {
 function bytesDiffer(left: Uint8Array, right: Uint8Array): boolean {
   return left.some((value, index) => value !== right[index]);
 }
+
+
+test('legacy disclosure never authorizes Play but can be affirmatively replaced by v2', async () => {
+  const harness = createHarness();
+  await acceptDisclosure(harness);
+  const subject = harness.identifiers.accountSubject(harness.identity.uid);
+  const record = recordsInCollection(harness.database, COLLECTIONS.disclosures)[0] as Record<string, unknown>;
+  harness.database.setUnsafeRecordForTest(COLLECTIONS.disclosures, subject, {
+    ...record, disclosureVersion: 'billing-verification-disclosure-v1',
+  });
+  assert.equal(await harness.repository.hasCurrentDisclosure(subject, harness.clock.now()), false);
+  await acceptDisclosure(harness);
+  assert.equal(await harness.repository.hasCurrentDisclosure(subject, harness.clock.now()), true);
+});

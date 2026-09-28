@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'package:my_art_collection/app/account/firebase_account_service.dart';
+import 'support/fake_paid_account_gateway.dart';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:my_art_collection/app/billing/entitlement_plan.dart';
@@ -39,6 +41,57 @@ void main() {
     expect((await service.currentState()).plan, EntitlementPlans.starter);
     return delayed;
   }
+
+  test(
+    'Google cancellation never accepts disclosure or launches billing',
+    () async {
+      final gateway = FakePaidAccountGateway()
+        ..credentialNext = () async => null;
+      final callables = FakeCallableFactory(
+        onCall: (_, _) => throw StateError('must not call'),
+      );
+      final firebaseVerifier = FirebasePlayBillingVerifier(
+        FakeFirebaseRuntime(),
+        accountService: FirebaseAccountService(gateway),
+        callableFactory: callables,
+      );
+      final billing = PlayBillingEntitlementService(store, firebaseVerifier);
+      expect(await billing.acceptBillingDisclosure(), isFalse);
+      expect(await billing.purchase(EntitlementPlans.starter), isFalse);
+      await billing.restore();
+      expect(store.restoreCalls, 0);
+      expect(callables.invocations, isEmpty);
+      await billing.dispose();
+      await gateway.events.close();
+    },
+  );
+
+  test(
+    'same UID provider removal fences delayed disclosure completion',
+    () async {
+      final gateway = FakePaidAccountGateway();
+      final response = Completer<Object?>();
+      final firebaseVerifier = FirebasePlayBillingVerifier(
+        FakeFirebaseRuntime(),
+        accountService: FirebaseAccountService(gateway),
+        callableFactory: _DeferredCallableFactory(response),
+      );
+      final billing = PlayBillingEntitlementService(store, firebaseVerifier);
+      final accepting = billing.acceptBillingDisclosure();
+      await tick();
+      gateway.change((uid: 'uid-a', anonymous: false, google: false));
+      await tick();
+      response.complete({
+        'version': 'play-billing-v1',
+        'requestId': 'ignored',
+        'status': 'accepted',
+      });
+      expect(await accepting, isFalse);
+      expect((await billing.currentState()).plan, EntitlementPlans.free);
+      await billing.dispose();
+      await gateway.events.close();
+    },
+  );
 
   test(
     'product lookup returns only fixed Play products and unavailable fails closed',
@@ -690,6 +743,7 @@ void main() {
       );
       final firebaseVerifier = FirebasePlayBillingVerifier(
         runtime,
+        accountService: FirebaseAccountService(FakePaidAccountGateway()),
         callableFactory: callables,
         now: () => wallNow,
       );
@@ -734,6 +788,7 @@ void main() {
       final runtime = FakeFirebaseRuntime();
       final verifier = FirebasePlayBillingVerifier(
         runtime,
+        accountService: FirebaseAccountService(FakePaidAccountGateway()),
         callableFactory: FakeCallableFactory(
           onCall: (_, data) => <String, Object>{
             'version': 'play-billing-v1',
@@ -774,6 +829,7 @@ void main() {
       };
       final verifier = FirebasePlayBillingVerifier(
         runtime,
+        accountService: FirebaseAccountService(FakePaidAccountGateway()),
         callableFactory: FakeCallableFactory(onCall: (_, _) => response),
         now: () => now,
       );
@@ -809,6 +865,7 @@ void main() {
       final serverNow = deviceNow.add(const Duration(hours: 1));
       final verifier = FirebasePlayBillingVerifier(
         FakeFirebaseRuntime(),
+        accountService: FirebaseAccountService(FakePaidAccountGateway()),
         callableFactory: FakeCallableFactory(
           onCall: (_, data) => <String, Object>{
             'version': 'play-billing-v1',
@@ -925,8 +982,9 @@ class FakeVerifier implements PlayBillingVerifier, PlayBillingIdentityObserver {
   }
 
   @override
-  Future<String?> ensureBillingIdentity() async =>
-      await (identityNext?.call() ?? uid);
+  Future<String?> ensureBillingIdentity({
+    bool useExistingAccount = false,
+  }) async => await (identityNext?.call() ?? uid);
 
   @override
   String? currentBillingUserId() => uid;
@@ -1042,4 +1100,28 @@ class _FakeCallable implements PlayBillingCallable {
   @override
   Future<Object?> call(Map<String, Object> data) async =>
       _onCall(_invocation.name, data);
+}
+
+class _DeferredCallableFactory implements PlayBillingCallableFactory {
+  _DeferredCallableFactory(this.response);
+  final Completer<Object?> response;
+  @override
+  PlayBillingCallable create(
+    String name, {
+    required PlayBillingCallableOptions options,
+  }) => _DeferredCallable(response);
+}
+
+class _DeferredCallable implements PlayBillingCallable {
+  _DeferredCallable(this.response);
+  final Completer<Object?> response;
+  @override
+  Future<Object?> call(Map<String, Object> data) async {
+    await response.future;
+    return {
+      'version': 'play-billing-v1',
+      'requestId': data['requestId'],
+      'status': 'accepted',
+    };
+  }
 }

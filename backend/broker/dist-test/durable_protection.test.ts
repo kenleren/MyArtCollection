@@ -1081,3 +1081,56 @@ async function terminalSuccessStore(): Promise<{
   await lifecycle.settle(acquired.record);
   return { db, store };
 }
+
+test('Google identity survives verified protection and broker adapter without resetting quota subject', async () => {
+  const tokens = new Map([['owner-auth-token|owner-app-check-token', {
+    uid: 'owner-uid', appId: 'owner-test-app', signInProvider: 'google.com',
+  }]]);
+  const store = new FakeDurableBrokerStore();
+  const protection = new ConfiguredDurableBrokerProtection(
+    new FakeBrokerTokenVerifier(protectionConfig, tokens), store, store.lifecycle, protectionConfig,
+  );
+  const verified = await protection.verifyIdentity({
+    authorizationHeader: 'Bearer owner-auth-token', appCheckToken: 'owner-app-check-token',
+  });
+  assert.equal(verified.ok, true);
+  if (!verified.ok) throw new Error('expected verified identity');
+  assert.equal(verified.identity.auth.signInProvider, 'google.com');
+  assert.equal(verified.identity.quotaSubject, deriveQuotaSubject({
+    uid: 'owner-uid', appId: 'owner-test-app', projectId: 'my-art-collections',
+    secret: protectionConfig.quotaHmacSecret,
+  }));
+  const response = createHttpResponse();
+  const freshProtection = new ConfiguredDurableBrokerProtection(
+    new FakeBrokerTokenVerifier(protectionConfig, tokens), store, store.lifecycle, protectionConfig,
+  );
+  await createResearchBrokerHttpHandler({
+    env: durableEnv(), dependenciesFactory: () => readyFactory({ protection: freshProtection }),
+  })(createHttpRequest({ data: request() }), response.responder);
+  assert.equal(response.statusCode, 200);
+});
+
+test('Firebase verified provider allowlist accepts Google and rejects unsupported claims before App Check', async () => {
+  for (const provider of ['google.com', 'password', 'apple.com']) {
+    let appChecks = 0;
+    const verifier = new FirebaseAdminBrokerTokenVerifier({
+      auth: { async verifyIdToken(_token, revoked) {
+        assert.equal(revoked, true);
+        return { uid: 'synthetic-user', aud: 'my-art-collections',
+          iss: 'https://securetoken.google.com/my-art-collections',
+          firebase: { sign_in_provider: provider } };
+      } },
+      appCheck: { async verifyToken() {
+        appChecks++;
+        return { appId: 'owner-test-app', alreadyConsumed: false, token: {
+          aud: ['123456789', 'my-art-collections'],
+          iss: 'https://firebaseappcheck.googleapis.com/123456789',
+          sub: 'owner-test-app', app_id: 'owner-test-app',
+        } };
+      } }, config: protectionConfig,
+    });
+    const result = await verifier.verify({ authorizationHeader: 'Bearer synthetic', appCheckToken: 'synthetic' });
+    assert.equal(result.ok, provider === 'google.com');
+    assert.equal(appChecks, provider === 'google.com' ? 1 : 0);
+  }
+});

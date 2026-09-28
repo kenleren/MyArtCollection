@@ -1,3 +1,4 @@
+import 'package:my_art_collection/app/account/firebase_account_service.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -6936,7 +6937,12 @@ class _FakeBillingManagementService implements BillingManagementService {
   }
 
   @override
-  Future<bool> acceptBillingDisclosure() async => true;
+  PaidAccountStatus get accountStatus => PaidAccountStatus.idle;
+
+  @override
+  Future<bool> acceptBillingDisclosure({
+    bool useExistingAccount = false,
+  }) async => true;
 
   @override
   Future<EntitlementState> currentState() async => state;

@@ -170,7 +170,7 @@ export class FirebaseAdminBrokerTokenVerifier implements BrokerTokenVerifier {
       return { ok: false, code: 'wrong_project_auth' };
     }
     const signInProvider = authBody.firebase?.sign_in_provider;
-    if (signInProvider !== 'anonymous') {
+    if (signInProvider !== 'anonymous' && signInProvider !== 'google.com') {
       return { ok: false, code: 'unsupported_auth_provider' };
     }
 
@@ -248,7 +248,7 @@ export class ConfiguredDurableBrokerProtection implements DurableBrokerProtectio
           authVerified: true,
           uid: verified.auth.uid,
           authProjectId: verified.auth.projectId,
-          signInProvider: 'anonymous',
+          signInProvider: verified.auth.signInProvider,
         },
         app: { appId: verified.app.appId, appProjectId: verified.app.projectId },
         quotaSubject,
@@ -717,7 +717,7 @@ export class FakeBrokerTokenVerifier implements BrokerTokenVerifier {
     if (projectId !== this.config.projectId) {
       return { ok: false, code: 'wrong_project_auth' };
     }
-    if ((mapped.signInProvider ?? 'anonymous') !== 'anonymous') {
+    if (mapped.signInProvider !== undefined && mapped.signInProvider !== 'anonymous' && mapped.signInProvider !== 'google.com') {
       return { ok: false, code: 'unsupported_auth_provider' };
     }
     if (this.consumedAppCheckTokens.has(appCheckToken)) {
@@ -729,7 +729,7 @@ export class FakeBrokerTokenVerifier implements BrokerTokenVerifier {
     }
     return {
       ok: true,
-      auth: { uid: mapped.uid, projectId, signInProvider: 'anonymous' },
+      auth: { uid: mapped.uid, projectId, signInProvider: mapped.signInProvider ?? 'anonymous' },
       app: { appId: mapped.appId, projectId },
     };
   }

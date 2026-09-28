@@ -360,7 +360,7 @@ function validateAuthContext(context: BrokerContext): BrokerErrorCondition | und
   if (context.auth_identity.project_id !== context.app_identity.project_id) {
     return 'identity_project_mismatch';
   }
-  if (context.auth_identity.sign_in_provider !== 'anonymous') {
+  if (context.auth_identity.sign_in_provider !== 'anonymous' && context.auth_identity.sign_in_provider !== 'google.com') {
     return 'unsupported_auth_provider';
   }
   if (!/^quota_subject_v1_[a-f0-9]{16,}$/.test(context.quota_subject)) {

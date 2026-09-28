@@ -36,7 +36,7 @@ export interface BrokerContext {
   auth_identity: {
     uid: string;
     project_id: string;
-    sign_in_provider: 'anonymous';
+    sign_in_provider: 'anonymous' | 'google.com';
   };
   app_identity: {
     app_id: string;

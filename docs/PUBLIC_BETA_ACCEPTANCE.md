@@ -50,3 +50,13 @@ be inspected by an agent.
 The first launch decision concerns the complete paid Android journey above.
 An unverified capability must remain an open release requirement; hiding it or
 calling it a preview does not complete this goal.
+
+## Accepted identity and AI-period decisions
+
+Google sign-in is required for purchase and restore only; the local archive
+remains account-optional. AI credits renew by UTC calendar month with no
+rollover; upgrades raise the month's allowance without resetting use.
+[The identity foundation](PUBLIC_BETA_IDENTITY_SPEC.md) is one source slice,
+not evidence of a completed public paid journey. Account-scoped recovery,
+payment lifecycle, monthly allowance enforcement, deletion and exact-build
+Play/device evidence remain required. The offline creation lease duration is awaiting an owner decision; legacy anonymous paid customers are unknown.

@@ -148,7 +148,7 @@ function validateLocalIdentity(identity: BrokerAdapterIdentity): BrokerErrorCond
   if (identity.auth.authProjectId !== identity.app.appProjectId) {
     return 'identity_project_mismatch';
   }
-  if (identity.auth.signInProvider !== 'anonymous') {
+  if (identity.auth.signInProvider !== 'anonymous' && identity.auth.signInProvider !== 'google.com') {
     return 'unsupported_auth_provider';
   }
   return undefined;
@@ -161,7 +161,7 @@ function contextFromIdentity(identity: BrokerAdapterIdentity): BrokerContext {
     auth_identity: {
       uid: identity.auth.uid ?? '',
       project_id: identity.auth.authProjectId ?? '',
-      sign_in_provider: 'anonymous',
+      sign_in_provider: identity.auth.signInProvider as 'anonymous' | 'google.com',
     },
     app_identity: {
       app_id: identity.app.appId ?? '',

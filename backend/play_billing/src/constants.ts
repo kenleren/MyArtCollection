@@ -1,5 +1,5 @@
 export const CONTRACT_VERSION = 'play-billing-v1';
-export const DISCLOSURE_VERSION = 'billing-verification-disclosure-v1';
+export const DISCLOSURE_VERSION = 'billing-verification-disclosure-v2';
 export const DISCLOSURE_ASSERTION_VERSION = 'billing-disclosure-assertion-v1';
 export const DISCLOSURE_PURPOSE = 'play_subscription_verification';
 export const PACKAGE_NAME = 'app.archivale';

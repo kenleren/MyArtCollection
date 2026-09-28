@@ -7,7 +7,7 @@ Issues: #50, #157, #177, #187, #190
 ## Decision
 
 Archivale uses the owner-approved Firebase project `my-art-collections` for
-distribution, anonymous Auth, App Check, the broker Function, and broker-owned
+distribution, Firebase Auth, App Check, the broker Function, and broker-owned
 durable control records. Earlier proposals for a separate paid-broker Firebase
 project are obsolete. A token from any other project is a wrong-project token.
 
@@ -19,7 +19,8 @@ the only deployment and live-test gate.
 
 Every provider-bound research request requires both:
 
-- a Firebase anonymous Auth ID token for `my-art-collections`, verified with
+- a Firebase Auth ID token with verified `anonymous` or `google.com` provider
+  for `my-art-collections`, verified with
   revocation checking, exact audience, exact issuer, and non-empty UID;
 - a fresh limited-use App Check token for `my-art-collections`, verified with
   `consume: true`, exact project ID and number audiences, exact issuer, and an
@@ -40,7 +41,7 @@ must not enter broker logs, telemetry, error bodies, or fixtures.
 
 ## Billing Identity And Consent Separation
 
-The same `my-art-collections` anonymous Auth facility may also be used by the
+The same `my-art-collections` Firebase UID may also be used by the
 Play Billing verifier under `PLAY_BILLING_GATE_SPEC.md`, but the authorities are
 separate:
 
@@ -48,7 +49,7 @@ separate:
   version research consent.
 - Billing identity may be created or reused only after the distinct billing-
   verification disclosure when the collector initiates purchase or restore.
-- The displayed `billing-verification-disclosure-v1` acceptance must be
+- The displayed `billing-verification-disclosure-v2` acceptance must be
   recorded through the billing-owned `acceptPlayBillingDisclosure` callable as
   a current, purpose-bound server assertion before verification. Auth, App
   Check, a request field, UID existence, or this broker's research-consent
@@ -60,7 +61,7 @@ separate:
   collector content or a research request to leave the device.
 - Accepting research consent never proves purchase or authorizes billing
   verification without the billing disclosure.
-- Reuse of one anonymous UID does not merge these authorities. Each route must
+- Reuse of one Firebase UID does not merge these authorities. Each route must
   enforce its own disclosure/consent and purpose-specific gates.
 
 The research broker has no Android Publisher permission and no access to the
@@ -258,3 +259,13 @@ The fake-only test pack must prove:
 Independent task review and redteam/security review are required before this
 implementation can advance. Deployment review under #155 remains required
 before any environment mutation or live request.
+
+## Public-beta identity foundation (#194)
+
+[PUBLIC_BETA_IDENTITY_SPEC.md](PUBLIC_BETA_IDENTITY_SPEC.md) defines the
+Google-linked paid-action identity. The broker propagates the verified provider
+through its adapters rather than relabeling Google as anonymous. Linking keeps
+the UID-derived quota subject; it does not allocate new credits or grant paid
+AI. The accepted UTC calendar-month/no-rollover/upgrade-ceiling policy remains
+unimplemented pending the billing-to-broker allowance slice. All live-provider
+and deployment gates remain unchanged.

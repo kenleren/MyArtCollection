@@ -12,6 +12,7 @@ import {
   BILLING_VERIFIER_SERVICE_ACCOUNT,
 } from './constants.js';
 import type { BillingIdentity } from './contracts.js';
+import { isPaidGoogleIdentity } from './identity.js';
 import { createBillingIdentifiers, CryptoNonceSource } from './crypto.js';
 import { FirestoreBillingDatabase } from './firestore_store.js';
 import { createConfiguredPlaySubscriptionsAdapter } from './play_adapter.js';
@@ -105,10 +106,7 @@ async function verifyCallableIdentity(
   }
   try {
     const decoded = await auth.verifyIdToken(authorization.slice('Bearer '.length), true);
-    if (
-      decoded.uid !== request.auth.uid ||
-      decoded.firebase?.sign_in_provider !== 'anonymous'
-    ) {
+    if (!isPaidGoogleIdentity(decoded, request.auth.uid)) {
       return undefined;
     }
     return { uid: decoded.uid };
