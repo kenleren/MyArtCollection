@@ -1,0 +1,208 @@
+[
+  {
+    "id": "top-level-error",
+    "description": "an allowed graph carrying a top-level npm error",
+    "mutations": [
+      { "target": "audit", "operation": "set", "path": ["error"], "value": { "code": "EAUDIT", "summary": "fixture registry failure" } }
+    ]
+  },
+  {
+    "id": "unknown-top-level-field",
+    "description": "an unknown audit report field",
+    "mutations": [
+      { "target": "audit", "operation": "set", "path": ["unexpected"], "value": true }
+    ]
+  },
+  {
+    "id": "untrusted-advisory-origin",
+    "description": "an attacker-origin advisory URL ending in the approved ID",
+    "mutations": [
+      { "target": "audit", "operation": "set", "path": ["vulnerabilities", "uuid", "via", 0, "url"], "value": "https://attacker.invalid/GHSA-w5hq-g745-h8pq" }
+    ]
+  },
+  {
+    "id": "extra-advisory-field",
+    "description": "an advisory object outside the approved schema",
+    "mutations": [
+      { "target": "audit", "operation": "set", "path": ["vulnerabilities", "uuid", "via", 0, "origin"], "value": "injected" }
+    ]
+  },
+  {
+    "id": "extra-uuid-node-and-effect",
+    "description": "extra UUID nodes and effects",
+    "mutations": [
+      { "target": "audit", "operation": "append", "path": ["vulnerabilities", "uuid", "nodes"], "value": "node_modules/evil/node_modules/uuid" },
+      { "target": "audit", "operation": "append", "path": ["vulnerabilities", "uuid", "effects"], "value": "evil" }
+    ]
+  },
+  {
+    "id": "new-advisory",
+    "description": "a different GitHub advisory",
+    "mutations": [
+      { "target": "audit", "operation": "set", "path": ["vulnerabilities", "uuid", "via", 0, "url"], "value": "https://github.com/advisories/GHSA-xxxx-yyyy-zzzz" }
+    ]
+  },
+  {
+    "id": "high-severity",
+    "description": "a high-severity UUID vulnerability",
+    "mutations": [
+      { "target": "audit", "operation": "set", "path": ["vulnerabilities", "uuid", "severity"], "value": "high" }
+    ]
+  },
+  {
+    "id": "extra-audit-edge",
+    "description": "an extra audit dependency edge",
+    "mutations": [
+      { "target": "audit", "operation": "append", "path": ["vulnerabilities", "firebase-admin", "via"], "value": "evil" }
+    ]
+  },
+  {
+    "id": "rerouted-audit-edge",
+    "description": "a rerouted audit dependency edge",
+    "mutations": [
+      { "target": "audit", "operation": "set", "path": ["vulnerabilities", "@google-cloud/storage", "via"], "value": ["gaxios", "teeny-request"] }
+    ]
+  },
+  {
+    "id": "missing-audit-field",
+    "description": "a malformed vulnerability without effects",
+    "mutations": [
+      { "target": "audit", "operation": "delete", "path": ["vulnerabilities", "uuid", "effects"] }
+    ]
+  },
+  {
+    "id": "changed-audit-metadata",
+    "description": "audit metadata inconsistent with the approved graph",
+    "mutations": [
+      { "target": "audit", "operation": "set", "path": ["metadata", "vulnerabilities", "total"], "value": 9 }
+    ]
+  },
+  {
+    "id": "unsupported-vulnerability-count",
+    "description": "a vulnerability count beyond the one known omitted peer",
+    "mutations": [
+      { "target": "audit", "operation": "set", "path": ["metadata", "vulnerabilities", "moderate"], "value": 10 },
+      { "target": "audit", "operation": "set", "path": ["metadata", "vulnerabilities", "total"], "value": 10 }
+    ]
+  },
+  {
+    "id": "malformed-dependency-metadata",
+    "description": "a nonnumeric audit dependency count",
+    "mutations": [
+      { "target": "audit", "operation": "set", "path": ["metadata", "dependencies", "total"], "value": "253" }
+    ]
+  },
+  {
+    "id": "extra-dependency-metadata-field",
+    "description": "an extra audit dependency metadata field",
+    "mutations": [
+      { "target": "audit", "operation": "set", "path": ["metadata", "dependencies", "injected"], "value": 1 }
+    ]
+  },
+  {
+    "id": "extra-peer-node",
+    "description": "an extra peer-metavulnerability node",
+    "mutations": [
+      { "target": "peerAudit", "operation": "append", "path": ["vulnerabilities", "firebase-functions", "nodes"], "value": "node_modules/evil/node_modules/firebase-functions" }
+    ]
+  },
+  {
+    "id": "extra-peer-effect",
+    "description": "an extra peer-metavulnerability effect",
+    "mutations": [
+      { "target": "peerAudit", "operation": "append", "path": ["vulnerabilities", "firebase-functions", "effects"], "value": "evil" }
+    ]
+  },
+  {
+    "id": "rerouted-peer-edge",
+    "description": "a rerouted peer-metavulnerability edge",
+    "mutations": [
+      { "target": "peerAudit", "operation": "set", "path": ["vulnerabilities", "firebase-functions", "via"], "value": ["uuid"] }
+    ]
+  },
+  {
+    "id": "missing-peer-reverse-effect",
+    "description": "a missing reverse effect for the approved peer edge",
+    "mutations": [
+      { "target": "peerAudit", "operation": "set", "path": ["vulnerabilities", "firebase-admin", "effects"], "value": [] }
+    ]
+  },
+  {
+    "id": "extra-peer-reverse-effect",
+    "description": "an extra reverse effect beside the approved peer edge",
+    "mutations": [
+      { "target": "peerAudit", "operation": "append", "path": ["vulnerabilities", "firebase-admin", "effects"], "value": "evil" }
+    ]
+  },
+  {
+    "id": "unexpected-derived-fix-target",
+    "description": "a full-report remediation target outside the locked direct packages",
+    "mutations": [
+      { "target": "peerAudit", "operation": "set", "path": ["vulnerabilities", "@google-cloud/firestore", "fixAvailable", "name"], "value": "evil" }
+    ]
+  },
+  {
+    "id": "extra-derived-fix-field",
+    "description": "an extra full-report remediation metadata field",
+    "mutations": [
+      { "target": "peerAudit", "operation": "set", "path": ["vulnerabilities", "@google-cloud/firestore", "fixAvailable", "origin"], "value": "injected" }
+    ]
+  },
+  {
+    "id": "rerouted-root-peer",
+    "description": "a rerouted root peer dependency declaration",
+    "mutations": [
+      { "target": "lock", "operation": "set", "path": ["packages", "", "dependencies", "firebase-functions"], "value": "^8.0.0" }
+    ]
+  },
+  {
+    "id": "extra-lock-edge",
+    "description": "an extra vulnerable lock edge",
+    "mutations": [
+      { "target": "lock", "operation": "set", "path": ["packages", "node_modules/firebase-admin", "optionalDependencies", "gaxios"], "value": "^6.0.2" }
+    ]
+  },
+  {
+    "id": "rerouted-lock-range",
+    "description": "a rerouted vulnerable lock range",
+    "mutations": [
+      { "target": "lock", "operation": "set", "path": ["packages", "node_modules/@google-cloud/storage", "dependencies", "gaxios"], "value": "^7.0.0" }
+    ]
+  },
+  {
+    "id": "changed-uuid-version",
+    "description": "a changed top-level UUID version",
+    "mutations": [
+      { "target": "lock", "operation": "set", "path": ["packages", "node_modules/uuid", "version"], "value": "11.1.1" }
+    ]
+  },
+  {
+    "id": "missing-lock-path",
+    "description": "a missing approved lock path",
+    "mutations": [
+      { "target": "lock", "operation": "delete", "path": ["packages", "node_modules/@google-cloud/storage", "dependencies", "teeny-request"] }
+    ]
+  },
+  {
+    "id": "nested-rerouted-uuid",
+    "description": "a nested UUID installation rerouting gaxios",
+    "mutations": [
+      { "target": "lock", "operation": "set", "path": ["packages", "node_modules/gaxios", "dependencies", "uuid"], "value": "^8.3.2" },
+      { "target": "lock", "operation": "set", "path": ["packages", "node_modules/gaxios/node_modules/uuid"], "value": { "version": "8.3.2", "resolved": "https://registry.npmjs.org/uuid/-/uuid-8.3.2.tgz", "integrity": "sha512-fixture" } }
+    ]
+  },
+  {
+    "id": "extra-nested-uuid",
+    "description": "an unrelated nested UUID installation",
+    "mutations": [
+      { "target": "lock", "operation": "set", "path": ["packages", "node_modules/evil/node_modules/uuid"], "value": { "version": "9.0.1", "resolved": "https://registry.npmjs.org/uuid/-/uuid-9.0.1.tgz", "integrity": "sha512-fixture" } }
+    ]
+  },
+  {
+    "id": "changed-package-integrity",
+    "description": "changed integrity for a graph package",
+    "mutations": [
+      { "target": "lock", "operation": "set", "path": ["packages", "node_modules/gaxios", "integrity"], "value": "sha512-fixture" }
+    ]
+  }
+]

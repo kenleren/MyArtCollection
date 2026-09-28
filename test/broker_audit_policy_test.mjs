@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -12,7 +12,14 @@ const execFileAsync = promisify(execFile);
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const script = path.join(repoRoot, 'scripts/check_broker_audit.mjs');
 const fixture = (name) => path.join(repoRoot, 'test/fixtures/broker-audit', name);
-const clean = JSON.parse(await readFile(fixture('clean-audit.json'), 'utf8'));
+const clean = {
+  auditReportVersion: 2,
+  vulnerabilities: {},
+  metadata: {
+    vulnerabilities: { info: 0, low: 0, moderate: 0, high: 0, critical: 0, total: 0 },
+    dependencies: { prod: 160, dev: 1, optional: 94, peer: 0, peerOptional: 0, total: 254 },
+  },
+};
 
 test('accepts two clean audit reports without a date-limited exception', async () => {
   const result = await run();
@@ -21,7 +28,7 @@ test('accepts two clean audit reports without a date-limited exception', async (
 });
 
 for (const input of ['--audit', '--core-audit']) {
-  for (const name of ['expired-exception-audit.json', 'npm-error-audit.json', 'malformed-audit.json']) {
+  for (const name of ['allowed-audit.json', 'npm-error-audit.json', 'malformed-audit.json']) {
     test(`rejects ${name} in ${input}`, async () => {
       const result = await run({ [input]: fixture(name) });
       assert.equal(result.code, 1);
@@ -76,7 +83,7 @@ for (const [name, mutate] of [
 for (const [name, args] of [
   ['clock override', ['--as-of', '2026-07-01']],
   ['severity override', ['--audit-level', 'high']],
-  ['duplicate argument', ['--audit', fixture('clean-audit.json')]],
+  ['duplicate argument', ['--audit', fixture('allowed-audit.json')]],
 ]) {
   test(`rejects ${name}`, async () => {
     const result = await run({}, args);
@@ -101,14 +108,21 @@ test('validates the second report even if the first report is clean', async () =
 });
 
 async function run(overrides = {}, extraArgs = []) {
-  const paths = { '--audit': fixture('clean-audit.json'), '--core-audit': fixture('clean-audit.json'), ...overrides };
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'broker-audit-cli-'));
   try {
-    const result = await execFileAsync(process.execPath, [script, ...Object.entries(paths).flat(), ...extraArgs], {
-      cwd: repoRoot,
-      env: { PATH: process.env.PATH, TZ: 'UTC' },
-    });
-    return { code: 0, ...result };
-  } catch (error) {
-    return { code: error.code, stdout: error.stdout, stderr: error.stderr };
+    const cleanPath = path.join(directory, 'clean-audit.json');
+    await writeFile(cleanPath, JSON.stringify(clean));
+    const paths = { '--audit': cleanPath, '--core-audit': cleanPath, ...overrides };
+    try {
+      const result = await execFileAsync(process.execPath, [script, ...Object.entries(paths).flat(), ...extraArgs], {
+        cwd: repoRoot,
+        env: { PATH: process.env.PATH, TZ: 'UTC' },
+      });
+      return { code: 0, ...result };
+    } catch (error) {
+      return { code: error.code, stdout: error.stdout, stderr: error.stderr };
+    }
+  } finally {
+    await rm(directory, { recursive: true, force: true });
   }
 }

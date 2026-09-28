@@ -149,12 +149,18 @@ used UUID 11; billing overrides only UUID versions below 11.1.1, leaving its
 unrelated UUID 14 installation unchanged. Billing's five high-severity
 transitive findings are fixed within their existing version ranges.
 
-Fixtures cover clean reports, the rejected historical exception, every severity,
+The seven historical fixture files remain as the frozen release-control corpus;
+`allowed-audit.json` now explicitly tests rejection of the retired exception.
+Tests use an inline clean report and cover every severity,
 inconsistent counts, malformed JSON, npm errors, both report inputs, and invalid
 CLI arguments. Audits run before package installation. `npm ci` verifies the
 committed dependency graph and package integrity; the candidate inventory binds
 the lockfiles to the reviewed commit. The forms package likewise requires a
-clean audit. Play Billing retains its high-severity audit gate.
+clean audit. Play Billing retains its high-severity audit gate; its production audit is clean,
+while ten moderate development-tool findings remain. Workers Free retains its
+pinned Miniflare and Wrangler versions, with reviewed Sharp 0.35.4 and Undici
+7.29.1 overrides to fix current advisories. Its production and full-lock audits
+are required to pass their existing severity gates.
 
 Security advisories: [UUID bounds check](https://github.com/uuidjs/uuid/security/advisories/GHSA-w5hq-g745-h8pq)
 and [qs denial of service](https://github.com/ljharb/qs/security/advisories/GHSA-4mjr-xmp4-gh2g).
