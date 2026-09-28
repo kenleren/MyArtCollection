@@ -256,3 +256,78 @@ test('a late committed inactive result cannot reply inactive after newer paid au
   release.resolve(); const stale = await older;
   assert.equal(stale.status, 'rejected'); assert.equal('reason' in stale && stale.reason, 'not_verified');
 });
+
+test('genuine unrelated same-account custody cannot form a dual-pointer replacement chain', async () => {
+  const h = createHarness(); await acceptDisclosure(h);
+  const kms = new FakeKmsTransport(); const service = new PlayBillingService({ ...h, custody: testCustody(kms) });
+  const first = purchaseToken(); const second = purchaseToken();
+  h.play.setPurchase(first, eligiblePurchase(h)); await service.verifySubscription(h.identity, verifyRequest(first));
+  h.clock.advance(20_000);
+  h.play.setPurchase(first, eligiblePurchase(h, { state: 'SUBSCRIPTION_STATE_EXPIRED', expiryOffsetMs: -1 }));
+  await service.restoreEntitlement(h.identity, request());
+  h.play.setPurchase(second, eligiblePurchase(h)); await service.verifySubscription(h.identity, verifyRequest(second));
+  h.clock.advance(20_000);
+  const subject = h.identifiers.accountSubject(h.identity.uid);
+  const firstFingerprint = h.identifiers.tokenFingerprint(first); const secondFingerprint = h.identifiers.tokenFingerprint(second);
+  const index = recordsInCollection(h.database, COLLECTIONS.accounts)[0] as Record<string, unknown>;
+  const binding = recordsInCollection(h.database, COLLECTIONS.bindings).find((v) => (v as Record<string, unknown>).tokenFingerprint === secondFingerprint) as Record<string, unknown>;
+  h.database.setUnsafeRecordForTest(COLLECTIONS.bindings, secondFingerprint, { ...binding, attemptPhase: 'delivery_committed' });
+  h.database.setUnsafeRecordForTest(COLLECTIONS.accounts, subject, { ...index, current: firstFingerprint, candidate: secondFingerprint });
+  h.play.setPurchase(first, eligiblePurchase(h));
+  const beforePlay = h.play.getCalls.length; const beforeCustody = kms.calls.length;
+  const result = await service.restoreEntitlement(h.identity, request());
+  assert.equal('reason' in result && result.reason, 'unsafe_record');
+  assert.equal(h.play.getCalls.length, beforePlay); assert.equal(kms.calls.length, beforeCustody);
+  assert.equal((recordsInCollection(h.database, COLLECTIONS.accounts)[0] as Record<string, unknown>).current, firstFingerprint);
+});
+
+for (const corruption of ['none', 'wrong-predecessor', 'current-successor', 'candidate-successor'] as const) {
+  test(`linked pending delivery recovery validates reciprocal chain: ${corruption}`, async () => {
+    const h = createHarness(); await acceptDisclosure(h);
+    const first = purchaseToken(); const second = purchaseToken();
+    h.play.setPurchase(first, eligiblePurchase(h)); await h.service.verifySubscription(h.identity, verifyRequest(first));
+    h.play.setPurchase(second, eligiblePurchase(h, { linkedPurchaseToken: first, acknowledgementState: 'ACKNOWLEDGEMENT_STATE_PENDING' }));
+    const crashing = new PlayBillingService({ ...h, hooks: { afterDeliveryCommitted: async () => { throw new Error('synthetic crash'); } } });
+    assert.equal((await crashing.verifySubscription(h.identity, verifyRequest(second))).status, 'unavailable');
+    h.clock.advance(90_000);
+    const firstFingerprint = h.identifiers.tokenFingerprint(first); const secondFingerprint = h.identifiers.tokenFingerprint(second);
+    const index = recordsInCollection(h.database, COLLECTIONS.accounts)[0] as Record<string, unknown>;
+    assert.equal(index.current, firstFingerprint); assert.equal(index.candidate, secondFingerprint);
+    if (corruption !== 'none') {
+      const fingerprint = corruption === 'current-successor' ? firstFingerprint : secondFingerprint;
+      const binding = recordsInCollection(h.database, COLLECTIONS.bindings).find((v) => (v as Record<string, unknown>).tokenFingerprint === fingerprint) as Record<string, unknown>;
+      h.database.setUnsafeRecordForTest(COLLECTIONS.bindings, fingerprint, { ...binding,
+        ...(corruption === 'wrong-predecessor' ? { stagedPredecessorFingerprint: 'a'.repeat(64) } : { successorFingerprint: 'a'.repeat(64) }),
+      });
+    }
+    const before = h.play.getCalls.length;
+    const result = await new PlayBillingService(h).restoreEntitlement(h.identity, request());
+    if (corruption === 'none') {
+      assert.equal(result.status, 'paid'); assert.equal(h.play.acknowledgeCalls.length, 1);
+      const old = recordsInCollection(h.database, COLLECTIONS.bindings).find((v) => (v as Record<string, unknown>).tokenFingerprint === firstFingerprint) as Record<string, unknown>;
+      assert.equal(old.successorFingerprint, secondFingerprint); assert.equal(old.bindingState, 'superseded');
+    } else {
+      assert.equal('reason' in result && result.reason, 'unsafe_record');
+      assert.equal(h.play.getCalls.length, before); assert.equal(h.play.acknowledgeCalls.length, 0);
+    }
+  });
+}
+
+test('freshly expired unrelated replacement survives crash before acknowledgement without an obsolete current pointer', async () => {
+  const h = createHarness(); await acceptDisclosure(h);
+  const first = purchaseToken(); const second = purchaseToken();
+  h.play.setPurchase(first, eligiblePurchase(h)); await h.service.verifySubscription(h.identity, verifyRequest(first));
+  h.clock.advance(20_000);
+  h.play.setPurchase(first, eligiblePurchase(h, { state: 'SUBSCRIPTION_STATE_EXPIRED', expiryOffsetMs: -1 }));
+  assert.equal((await h.service.restoreEntitlement(h.identity, request())).status, 'none');
+  h.play.setPurchase(second, eligiblePurchase(h, { acknowledgementState: 'ACKNOWLEDGEMENT_STATE_PENDING' }));
+  const crashing = new PlayBillingService({ ...h, hooks: { afterDeliveryCommitted: async () => { throw new Error('synthetic crash'); } } });
+  assert.equal((await crashing.verifySubscription(h.identity, verifyRequest(second))).status, 'unavailable');
+  const index = recordsInCollection(h.database, COLLECTIONS.accounts)[0] as Record<string, unknown>;
+  assert.equal(index.current, undefined); assert.equal(index.candidate, h.identifiers.tokenFingerprint(second));
+  assert.equal(recordsInCollection(h.database, COLLECTIONS.bindings).length, 2);
+  assert.equal(h.play.acknowledgeCalls.length, 0);
+  h.clock.advance(90_000);
+  assert.equal((await new PlayBillingService(h).restoreEntitlement(h.identity, request())).status, 'paid');
+  assert.equal(h.play.acknowledgeCalls.length, 1);
+});

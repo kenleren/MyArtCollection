@@ -69,11 +69,16 @@ successor retires its predecessor and becomes current in the acknowledgement
 finalization transaction. Unrelated active chains cannot overwrite each other.
 An unrelated expired chain needs a fresh verified-expired observation (within
 15 seconds of the new verification) and the same index revision to be replaced.
+Its obsolete current pointer is cleared atomically when staging the unrelated
+candidate, while the encrypted binding is retained. A crash before acknowledgement
+therefore leaves one discoverable candidate without an invented lineage link.
 
 A restore resolves the index and acquires the existing request/token attempt
 and rate budget before decrypting. Both current and pending index pointers must resolve valid same-account
-bindings before custody or Play work (at most two indexed binding reads). The
-selected token, operation kind and index revision are fenced; duplicate request IDs cannot switch token/action.
+bindings before custody or Play work (at most two indexed binding reads). A
+distinct current/pending pair must be a staged predecessor/successor chain;
+conflicting successor pointers or incompatible delivery phases fail closed.
+The selected token, operation kind and index revision are fenced; duplicate request IDs cannot switch token/action.
 The existing 90-second owner lease, 15-second cooldown and counted Play/ack
 limits remain. Ownership is never adopted by reading a stored nonce.
 

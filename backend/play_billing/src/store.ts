@@ -309,6 +309,7 @@ export class BillingRepository {
             referenced.accountSubject !== accountSubject) return { kind: 'unsafe_record' };
         indexedBindings.set(pointer, referenced);
       }
+      if (!validIndexedChain(index, indexedBindings)) return { kind: 'unsafe_record' };
       const tokenFingerprint = requestedToken ?? index?.candidate ?? index?.current;
       if (tokenFingerprint === undefined) return { kind: 'no_known_purchase' };
       const replay = usesReplay
@@ -545,10 +546,21 @@ export class BillingRepository {
       }
       if (!validEnvelope(input.tokenEnvelope)) return false;
       const previous = index?.candidate ?? index?.current;
-      if (previous !== undefined && previous !== attempt.tokenFingerprint && previous !== input.predecessorFingerprint) {
-        // Replacement requires a freshly verified inactive current chain under this index revision.
-        if (index?.inactive?.tokenFingerprint !== previous || index.inactive.reason !== 'expired' ||
-            input.verifiedAt.getTime() - index.inactive.verifiedAt.getTime() > TOKEN_GET_COOLDOWN_MS) throw new AccountConflictError();
+      const freshlyExpired = (fingerprint: string): boolean => {
+        const observation = index?.inactive;
+        const age = observation ? input.verifiedAt.getTime() - observation.verifiedAt.getTime() : -1;
+        return observation?.tokenFingerprint === fingerprint && observation.reason === 'expired' &&
+          age >= 0 && age <= TOKEN_GET_COOLDOWN_MS;
+      };
+      if (previous !== undefined && previous !== attempt.tokenFingerprint && previous !== input.predecessorFingerprint &&
+          !freshlyExpired(previous)) throw new AccountConflictError();
+      let current = index?.current;
+      if (current !== undefined && current !== attempt.tokenFingerprint && current !== input.predecessorFingerprint) {
+        // An unrelated replacement cannot leave an apparently linked pair.
+        // Remove only the freshly expired current pointer in the same atomic
+        // delivery commit; retained custody remains available for audit/deletion.
+        if (!freshlyExpired(current)) throw new AccountConflictError();
+        current = undefined;
       }
       const binding: PurchaseBindingRecord = {
         contractVersion: CONTRACT_VERSION,
@@ -590,7 +602,7 @@ export class BillingRepository {
       };
       tx.set<AccountIndex>(COLLECTIONS.accounts, attempt.accountSubject, {
         contractVersion: CONTRACT_VERSION, keyVersion: ACTIVE_KEY_VERSION, accountSubject: attempt.accountSubject,
-        revision: (index?.revision ?? 0) + 1, current: index?.current,
+        revision: (index?.revision ?? 0) + 1, current,
         candidate: attempt.tokenFingerprint, updatedAt: input.verifiedAt,
       });
       tx.set<PurchaseBindingRecord>(COLLECTIONS.bindings, attempt.tokenFingerprint, binding);
@@ -1286,4 +1298,21 @@ function validIndex(record: AccountIndex, subject: string): boolean {
     (record.inactive === undefined || (hasOnlyKeys(record.inactive, ['tokenFingerprint','verifiedAt','reason']) &&
       isFingerprint(record.inactive.tokenFingerprint) && record.inactive.verifiedAt instanceof Date &&
       ['expired','on_hold','paused','revoked','pending'].includes(record.inactive.reason)));
+}
+
+/** At most the two index-selected records; no unbounded lineage traversal. */
+function validIndexedChain(index: AccountIndex | undefined, bindings: ReadonlyMap<string, PurchaseBindingRecord>): boolean {
+  if (index === undefined) return true;
+  const current = index.current === undefined ? undefined : bindings.get(index.current);
+  const candidate = index.candidate === undefined ? undefined : bindings.get(index.candidate);
+  if (current?.bindingState === 'superseded' || current?.successorFingerprint !== undefined ||
+      candidate?.bindingState === 'superseded' || candidate?.successorFingerprint !== undefined) return false;
+  if (candidate !== undefined && !['delivery_committed', 'ack_in_progress'].includes(candidate.attemptPhase)) return false;
+  if (current !== undefined && index.current !== index.candidate &&
+      (current.attemptPhase !== 'paid' || current.bindingState !== 'acknowledged_delivery')) return false;
+  if (current !== undefined && candidate !== undefined && index.current !== index.candidate) {
+    return candidate.stagedPredecessorFingerprint === index.current &&
+      (candidate.predecessorFingerprint === undefined || candidate.predecessorFingerprint === index.current);
+  }
+  return true;
 }
