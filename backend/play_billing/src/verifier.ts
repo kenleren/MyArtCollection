@@ -141,7 +141,7 @@ export class PlayBillingService {
     const playDeadline = Math.min(deadline.expiresAt, Date.now() + PLAY_PORTION_DEADLINE_MS);
     let purchase: PlaySubscriptionPurchase;
     try {
-      purchase = await this.getSubscription(request.purchaseToken, playDeadline);
+      purchase = await this.getSubscription(request.purchaseToken, playDeadline, deadline);
     } catch {
       await this.closeWithoutThrow(attempt);
       return free(request.requestId, 'temporarily_unavailable');
@@ -193,7 +193,7 @@ export class PlayBillingService {
       if (!validToken(token) || identifiers.tokenFingerprint(token) !== attempt.tokenFingerprint) return free(requestId, 'unsafe_record');
       deadline.check();
       if (!await repository.isCurrentAttempt(attempt, clock.now())) return free(requestId, 'not_verified');
-      const purchase = await this.getSubscription(token, deadline.expiresAt);
+      const purchase = await this.getSubscription(token, deadline.expiresAt, deadline);
       if (purchase.subscriptionState === 'SUBSCRIPTION_STATE_PENDING_PURCHASE_CANCELED') {
         const product = purchase.lineItems?.[0]?.productId;
         if (typeof product !== 'string' || !validateLineItemShape(purchase, product)) return free(requestId, 'not_verified');
@@ -248,7 +248,7 @@ export class PlayBillingService {
 
     let predecessor: PlaySubscriptionPurchase;
     try {
-      predecessor = await this.getSubscription(linkedToken, playDeadline);
+      predecessor = await this.getSubscription(linkedToken, playDeadline, successorAttempt.fence!.deadline);
     } catch {
       await this.closeWithoutThrow(acquisition.attempt);
       return free(request.requestId, 'temporarily_unavailable');
@@ -283,7 +283,14 @@ export class PlayBillingService {
       const inactive = validatedInactive(purchase, requestedProduct,
         this.dependencies.identifiers.obfuscatedAccountId(identity.uid), this.dependencies.clock.now());
       if (inactive !== undefined && attempt.envelope !== undefined) {
-        try { await this.dependencies.repository.recordInactive(attempt, inactive, this.dependencies.clock.now()); }
+        try {
+          if (!await this.dependencies.repository.recordInactive(attempt, inactive, this.dependencies.clock.now()) ||
+              !await this.dependencies.repository.closeAttempt(attempt, this.dependencies.clock.now())) {
+            return free(requestId, 'not_verified');
+          }
+          attempt.fence!.deadline.check();
+          return free(requestId, inactive === 'pending' ? 'play_pending' : inactive);
+        }
         catch { return free(requestId, 'temporarily_unavailable'); }
       }
       await this.closeWithoutThrow(attempt);
@@ -342,7 +349,7 @@ export class PlayBillingService {
         await this.dependencies.hooks?.afterAcknowledgementStarted?.();
         try {
           await withAbsoluteDeadline(
-            this.dependencies.play.acknowledgeSubscription({
+            () => this.dependencies.play.acknowledgeSubscription({
               packageName: PACKAGE_NAME,
               subscriptionId: eligible.productId,
               token: rawToken,
@@ -350,6 +357,7 @@ export class PlayBillingService {
               timeoutMs: PLAY_CALL_DEADLINE_MS,
             }),
             Math.min(playDeadline, Date.now() + PLAY_CALL_DEADLINE_MS),
+            attempt.fence!.deadline,
           );
         } catch {
           await this.dependencies.repository
@@ -382,14 +390,16 @@ export class PlayBillingService {
   private getSubscription(
     token: string,
     playDeadline: number,
+    invocation: BillingDeadline,
   ): Promise<PlaySubscriptionPurchase> {
     return withAbsoluteDeadline(
-      this.dependencies.play.getSubscription({
+      () => this.dependencies.play.getSubscription({
         packageName: PACKAGE_NAME,
         token,
         timeoutMs: PLAY_CALL_DEADLINE_MS,
       }),
       Math.min(playDeadline, Date.now() + PLAY_CALL_DEADLINE_MS),
+      invocation,
     );
   }
 }
@@ -578,23 +588,16 @@ function serializedSize(value: unknown): number {
   }
 }
 
-async function withAbsoluteDeadline<T>(operation: Promise<T>, deadline: number): Promise<T> {
+async function withAbsoluteDeadline<T>(operation: () => Promise<T>, deadline: number, invocation: BillingDeadline): Promise<T> {
+  // Keep dispatch deferred until both the wall-time budget and permanent
+  // invocation cancellation have been checked, including after late DB results.
+  invocation.check();
   const remaining = deadline - Date.now();
   if (remaining <= 0) {
+    invocation.cancel();
     throw new Error('play deadline exceeded');
   }
-  let timer: NodeJS.Timeout | undefined;
-  const timeout = new Promise<never>((_resolve, reject) => {
-    timer = setTimeout(() => reject(new Error('play deadline exceeded')), remaining);
-    timer.unref();
-  });
-  try {
-    return await Promise.race([operation, timeout]);
-  } finally {
-    if (timer !== undefined) {
-      clearTimeout(timer);
-    }
-  }
+  return invocation.run(operation, remaining);
 }
 
 function validatedInactive(purchase: PlaySubscriptionPurchase, product: string | undefined, account: string, now: Date): 'expired' | 'on_hold' | 'paused' | 'revoked' | 'pending' | undefined {

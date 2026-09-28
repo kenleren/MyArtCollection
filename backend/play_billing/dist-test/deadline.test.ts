@@ -33,3 +33,29 @@ test('late database callback after timeout cannot acquire authority or call Play
   assert.equal(h.play.getCalls.length, 0);
   assert.equal([...h.database.snapshotForTest().keys()].some((k) => k.startsWith(COLLECTIONS.accounts)), false);
 });
+
+test('canceled invocation dispatches no Play lookup after a late committed acquire result', async () => {
+  const h = createHarness(); await h.repository.acceptDisclosure(h.identifiers.accountSubject(h.identity.uid), h.clock.now());
+  const token = purchaseToken(); h.play.setPurchase(token, eligiblePurchase(h));
+  const entered = deferred(); const release = deferred();
+  const acquire = h.repository.acquireAttempt.bind(h.repository);
+  h.repository.acquireAttempt = async (...args) => { const result = await acquire(...args); entered.resolve(); await release.promise; return result; };
+  const deadline = new BillingDeadline();
+  const pending = h.service.verifySubscription(h.identity, verifyRequest(token), deadline);
+  await entered.promise; deadline.cancel(); release.resolve();
+  assert.equal((await pending).status, 'unavailable');
+  assert.equal(h.play.getCalls.length, 0); assert.equal(h.play.acknowledgeCalls.length, 0);
+});
+
+test('canceled invocation dispatches no acknowledgement after a late committed acknowledgement start', async () => {
+  const h = createHarness(); await h.repository.acceptDisclosure(h.identifiers.accountSubject(h.identity.uid), h.clock.now());
+  const token = purchaseToken(); h.play.setPurchase(token, eligiblePurchase(h, { acknowledgementState: 'ACKNOWLEDGEMENT_STATE_PENDING' }));
+  const entered = deferred(); const release = deferred();
+  const begin = h.repository.beginAcknowledgement.bind(h.repository);
+  h.repository.beginAcknowledgement = async (...args) => { const result = await begin(...args); entered.resolve(); await release.promise; return result; };
+  const deadline = new BillingDeadline();
+  const pending = h.service.verifySubscription(h.identity, verifyRequest(token), deadline);
+  await entered.promise; deadline.cancel(); release.resolve();
+  assert.notEqual((await pending).status, 'paid'); assert.equal(h.play.getCalls.length, 1);
+  assert.equal(h.play.acknowledgeCalls.length, 0);
+});

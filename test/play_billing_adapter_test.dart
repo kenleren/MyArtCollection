@@ -247,6 +247,66 @@ void main() {
     },
   );
 
+  test(
+    'receipt-present pending restore preserves the bounded recovery budget',
+    () async {
+      await preparePurchase();
+      verifier.next = (request) => PlayBillingVerification.free(
+        request,
+        outcome: 'pending',
+        reason: 'verification_pending',
+        presentation: EntitlementPresentation.verificationPending,
+      );
+      store.ownedNext = (_) async =>
+          PlayOwnedPurchases(purchases: [purchase(EntitlementPlans.starter)]);
+      store.emit(
+        purchase(EntitlementPlans.starter, state: PlayPurchaseState.pending),
+      );
+      await tick();
+      for (var attempt = 0; attempt < 4; attempt++) {
+        await service.restore();
+      }
+      expect(verifier.restoreRequests, hasLength(2));
+      expect(verifier.requests, hasLength(2));
+      expect(await service.canRecover(), isFalse);
+      expect(
+        (await service.currentState()).presentation,
+        EntitlementPresentation.recoveryExhausted,
+      );
+      expect(store.buyAccountId, isNull);
+    },
+  );
+
+  test(
+    'successful account recovery clears its old pending budget and fallback',
+    () async {
+      await preparePurchase();
+      store.emit(
+        purchase(EntitlementPlans.starter, state: PlayPurchaseState.pending),
+      );
+      await tick();
+      verifier.restoreAccountNext = (request) => PlayBillingVerification.free(
+        request,
+        outcome: 'pending',
+        reason: 'verification_pending',
+        presentation: EntitlementPresentation.verificationPending,
+      );
+      await service.restore();
+      verifier.restoreAccountNext = (request) =>
+          verifier.paidFor(EntitlementPlans.starter, request);
+      await service.restore();
+      expect((await service.currentState()).plan, EntitlementPlans.starter);
+      await service.refreshForForeground();
+      expect(verifier.restoreRequests, hasLength(3));
+      expect((await service.currentState()).plan, EntitlementPlans.starter);
+      expect(
+        (await service.currentState()).presentation,
+        EntitlementPresentation.idle,
+      );
+      expect(await service.canRecover(), isTrue);
+    },
+  );
+
   Future<Completer<PlayBillingVerification>>
   deferOlderVerificationThenInstallNewerLease() async {
     await preparePurchase();

@@ -157,3 +157,102 @@ test('concurrent restore requests serialize before decrypt and same UUID cannot 
   assert.equal(second.status, 'pending'); assert.equal(kms.calls.filter((v) => v === 'decrypt').length, 1);
   gate.resolve(); assert.equal((await first).status, 'paid');
 });
+
+for (const state of ['EXPIRED', 'ON_HOLD', 'PAUSED', 'REVOKED', 'PENDING']) {
+  test(`newer ${state} observation fences an older committed paid reply`, async () => {
+    const h = createHarness(); await acceptDisclosure(h);
+    const token = purchaseToken(); h.play.setPurchase(token, eligiblePurchase(h));
+    const entered = deferred(); const release = deferred(); let first = true;
+    const grant = h.repository.isCurrentGrant.bind(h.repository);
+    h.repository.isCurrentGrant = async (...args) => {
+      if (first) { first = false; entered.resolve(); await release.promise; }
+      return grant(...args);
+    };
+    const older = h.service.verifySubscription(h.identity, verifyRequest(token)); await entered.promise;
+    h.clock.advance(20_000);
+    h.play.setPurchase(token, eligiblePurchase(h, { state: `SUBSCRIPTION_STATE_${state}`, expiryOffsetMs: -1 }));
+    const newer = await h.service.restoreEntitlement(h.identity, request());
+    assert.equal(newer.status, state === 'PENDING' ? 'pending' : 'none');
+    release.resolve(); assert.notEqual((await older).status, 'paid');
+    const index = recordsInCollection(h.database, COLLECTIONS.accounts)[0] as Record<string, unknown>;
+    assert.equal(index.revision, 3);
+    const operation = recordsInCollection(h.database, COLLECTIONS.operations)[0] as Record<string, unknown>;
+    assert.equal(operation.phase, 'free');
+    assert.equal(h.play.getCalls.length, 2);
+  });
+}
+
+test('a newer failed lookup owner still fences an older committed paid reply', async () => {
+  const h = createHarness(); await acceptDisclosure(h);
+  const token = purchaseToken(); h.play.setPurchase(token, eligiblePurchase(h));
+  const entered = deferred(); const release = deferred(); let first = true;
+  const grant = h.repository.isCurrentGrant.bind(h.repository);
+  h.repository.isCurrentGrant = async (...args) => {
+    if (first) { first = false; entered.resolve(); await release.promise; }
+    return grant(...args);
+  };
+  const older = h.service.verifySubscription(h.identity, verifyRequest(token)); await entered.promise;
+  h.clock.advance(20_000); h.play.getError = new Error('synthetic unavailable');
+  assert.equal((await h.service.restoreEntitlement(h.identity, request())).status, 'unavailable');
+  release.resolve(); assert.notEqual((await older).status, 'paid');
+});
+
+test('a delayed inactive observation cannot overwrite a newer paid result or claim authoritative inactivity', async () => {
+  const h = createHarness(); await acceptDisclosure(h);
+  const token = purchaseToken(); h.play.setPurchase(token, eligiblePurchase(h));
+  await h.service.verifySubscription(h.identity, verifyRequest(token)); h.clock.advance(20_000);
+  h.play.setPurchase(token, eligiblePurchase(h, { state: 'SUBSCRIPTION_STATE_EXPIRED', expiryOffsetMs: -1 }));
+  const entered = deferred(); const release = deferred();
+  const inactive = h.repository.recordInactive.bind(h.repository);
+  h.repository.recordInactive = async (...args) => { entered.resolve(); await release.promise; return inactive(...args); };
+  const older = h.service.restoreEntitlement(h.identity, request()); await entered.promise;
+  h.clock.advance(90_000); h.play.setPurchase(token, eligiblePurchase(h));
+  assert.equal((await h.service.restoreEntitlement(h.identity, request())).status, 'paid');
+  const before = recordsInCollection(h.database, COLLECTIONS.accounts)[0];
+  release.resolve(); const stale = await older;
+  assert.equal(stale.status, 'rejected'); assert.equal('reason' in stale && stale.reason, 'not_verified');
+  assert.deepEqual(recordsInCollection(h.database, COLLECTIONS.accounts)[0], before);
+});
+
+for (const invalidPointer of ['current', 'candidate'] as const) {
+  for (const damage of ['missing', 'cross-account', 'malformed'] as const) {
+    test(`both index pointers are checked before custody: ${invalidPointer} is ${damage}`, async () => {
+      const h = createHarness(); await acceptDisclosure(h);
+      const kms = new FakeKmsTransport(); const service = new PlayBillingService({ ...h, custody: testCustody(kms) });
+      const token = purchaseToken(); h.play.setPurchase(token, eligiblePurchase(h));
+      await service.verifySubscription(h.identity, verifyRequest(token)); h.clock.advance(20_000);
+      const subject = h.identifiers.accountSubject(h.identity.uid);
+      const index = recordsInCollection(h.database, COLLECTIONS.accounts)[0] as Record<string, unknown>;
+      const binding = recordsInCollection(h.database, COLLECTIONS.bindings)[0] as Record<string, unknown>;
+      const bad = 'a'.repeat(64);
+      if (damage !== 'missing') h.database.setUnsafeRecordForTest(COLLECTIONS.bindings, bad, {
+        ...binding, tokenFingerprint: bad,
+        ...(damage === 'cross-account' ? { accountSubject: h.identifiers.accountSubject('different-account') } : { ackState: 'invalid' }),
+      });
+      h.database.setUnsafeRecordForTest(COLLECTIONS.accounts, subject, {
+        ...index, current: h.identifiers.tokenFingerprint(token), candidate: h.identifiers.tokenFingerprint(token), [invalidPointer]: bad,
+      });
+      const playCount = h.play.getCalls.length; const custodyCount = kms.calls.length;
+      for (const result of [await service.restoreEntitlement(h.identity, request()),
+        await service.verifySubscription(h.identity, verifyRequest(token))]) {
+        assert.equal(result.status, 'rejected'); assert.equal('reason' in result && result.reason, 'unsafe_record');
+      }
+      assert.equal(h.play.getCalls.length, playCount); assert.equal(kms.calls.length, custodyCount);
+    });
+  }
+}
+
+test('a late committed inactive result cannot reply inactive after newer paid authority', async () => {
+  const h = createHarness(); await acceptDisclosure(h);
+  const token = purchaseToken(); h.play.setPurchase(token, eligiblePurchase(h));
+  await h.service.verifySubscription(h.identity, verifyRequest(token)); h.clock.advance(20_000);
+  h.play.setPurchase(token, eligiblePurchase(h, { state: 'SUBSCRIPTION_STATE_EXPIRED', expiryOffsetMs: -1 }));
+  const entered = deferred(); const release = deferred();
+  const inactive = h.repository.recordInactive.bind(h.repository);
+  h.repository.recordInactive = async (...args) => { const result = await inactive(...args); entered.resolve(); await release.promise; return result; };
+  const older = h.service.restoreEntitlement(h.identity, request()); await entered.promise;
+  h.clock.advance(90_000); h.play.setPurchase(token, eligiblePurchase(h));
+  assert.equal((await h.service.restoreEntitlement(h.identity, request())).status, 'paid');
+  release.resolve(); const stale = await older;
+  assert.equal(stale.status, 'rejected'); assert.equal('reason' in stale && stale.reason, 'not_verified');
+});

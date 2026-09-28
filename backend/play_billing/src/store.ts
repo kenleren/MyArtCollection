@@ -299,13 +299,24 @@ export class BillingRepository {
         const orphan = await tx.findSubjectBinding(accountSubject);
         if (orphan !== undefined) return { kind: isLegacy(orphan) ? 'recovery_required' : 'unsafe_record' };
       }
+      // Validate both references before choosing one; a valid candidate must not
+      // hide an orphaned, cross-account or malformed current binding.
+      const indexedBindings = new Map<string, PurchaseBindingRecord>();
+      for (const pointer of new Set([index?.current, index?.candidate])) {
+        if (pointer === undefined) continue;
+        const referenced = await tx.get<PurchaseBindingRecord>(COLLECTIONS.bindings, pointer);
+        if (referenced === undefined || !validBinding(referenced, pointer) ||
+            referenced.accountSubject !== accountSubject) return { kind: 'unsafe_record' };
+        indexedBindings.set(pointer, referenced);
+      }
       const tokenFingerprint = requestedToken ?? index?.candidate ?? index?.current;
       if (tokenFingerprint === undefined) return { kind: 'no_known_purchase' };
       const replay = usesReplay
         ? await tx.get<RequestReplayRecord>(COLLECTIONS.replays, requestFingerprint)
         : undefined;
       const operation = await tx.get<TokenOperationRecord>(COLLECTIONS.operations, tokenFingerprint);
-      const binding = await tx.get<PurchaseBindingRecord>(COLLECTIONS.bindings, tokenFingerprint);
+      const binding = indexedBindings.get(tokenFingerprint) ??
+        await tx.get<PurchaseBindingRecord>(COLLECTIONS.bindings, tokenFingerprint);
 
       if (binding !== undefined && isLegacy(binding)) return { kind: 'recovery_required' };
       if (kind === 'restore' && (binding === undefined || binding.accountSubject !== accountSubject || !validEnvelope(binding.tokenEnvelope))) return { kind: 'unsafe_record' };
@@ -816,7 +827,12 @@ export class BillingRepository {
   async isCurrentGrant(attempt: AttemptHandle, now: Date): Promise<boolean> {
     return this.guarded(attempt, async (tx, index) => {
       const binding = await tx.get<PurchaseBindingRecord>(COLLECTIONS.bindings, attempt.tokenFingerprint);
-      return index?.current === attempt.tokenFingerprint && ownedBinding(binding, attempt, 'paid') &&
+      const operation = await tx.get<TokenOperationRecord>(COLLECTIONS.operations, attempt.tokenFingerprint);
+      const replay = attempt.usesReplay
+        ? await tx.get<RequestReplayRecord>(COLLECTIONS.replays, attempt.owner.requestFingerprint) : undefined;
+      return index?.current === attempt.tokenFingerprint && index.inactive?.tokenFingerprint !== attempt.tokenFingerprint &&
+        ownedOperation(operation, attempt, 'paid') &&
+        (!attempt.usesReplay || ownedReplayAny(replay, attempt, ['paid'])) && ownedBinding(binding, attempt, 'paid') &&
         binding.bindingState === 'acknowledged_delivery' && binding.ackState === 'acknowledged' && binding.playExpiresAt > now;
     }, false, now);
   }
@@ -837,15 +853,22 @@ export class BillingRepository {
     });
   }
 
-  async recordInactive(attempt: AttemptHandle, reason: string, now: Date): Promise<void> {
-    await this.guarded(attempt, async (tx, index) => {
+  async recordInactive(attempt: AttemptHandle, reason: string, now: Date): Promise<boolean> {
+    const committed = await this.guarded(attempt, async (tx, index) => {
       const operation = await tx.get<TokenOperationRecord>(COLLECTIONS.operations, attempt.tokenFingerprint);
-      if (!ownedOperation(operation, attempt, 'lookup_in_flight') || !index ||
-          (index.current !== attempt.tokenFingerprint && index.candidate !== attempt.tokenFingerprint)) throw new UnsafeBillingRecordError();
+      const replay = attempt.usesReplay
+        ? await tx.get<RequestReplayRecord>(COLLECTIONS.replays, attempt.owner.requestFingerprint) : undefined;
+      if (!ownedOperation(operation, attempt, 'lookup_in_flight') ||
+          (attempt.usesReplay && !ownedReplayAny(replay, attempt, ['lookup_in_flight'])) || !index ||
+          (index.current !== attempt.tokenFingerprint && index.candidate !== attempt.tokenFingerprint)) return false;
       tx.set<AccountIndex>(COLLECTIONS.accounts, attempt.accountSubject, {
-        ...index, inactive: { tokenFingerprint: attempt.tokenFingerprint, reason, verifiedAt: now }, updatedAt: now,
+        ...index, revision: index.revision + 1,
+        inactive: { tokenFingerprint: attempt.tokenFingerprint, reason, verifiedAt: now }, updatedAt: now,
       });
-    }, undefined, now);
+      return true;
+    }, false, now);
+    if (committed) attempt.fence!.indexRevision++;
+    return committed;
   }
 
 }

@@ -71,8 +71,9 @@ An unrelated expired chain needs a fresh verified-expired observation (within
 15 seconds of the new verification) and the same index revision to be replaced.
 
 A restore resolves the index and acquires the existing request/token attempt
-and rate budget before decrypting. The selected token, operation kind and
-index revision are fenced; duplicate request IDs cannot switch token/action.
+and rate budget before decrypting. Both current and pending index pointers must resolve valid same-account
+bindings before custody or Play work (at most two indexed binding reads). The
+selected token, operation kind and index revision are fenced; duplicate request IDs cannot switch token/action.
 The existing 90-second owner lease, 15-second cooldown and counted Play/ack
 limits remain. Ownership is never adopted by reading a stored nonce.
 
@@ -80,7 +81,10 @@ Every disclosure acceptance/revocation gets a fresh server-generated 128-bit
 assertion identity, including after TTL recreation. Delivery, acknowledgement,
 finalization and response authority check that assertion, index revision and
 attempt owner. Unknown state fails closed. A verified inactive observation
-removes authority; a network/KMS error is not evidence of expiry.
+advances the account revision, fencing older paid replies. Final paid replies
+also require the current paid operation/replay owner; inactive replies require
+a committed observation and successful owner-fenced close. A network/KMS error
+is not evidence of expiry.
 
 V2 active bindings and account indexes have no expiry-derived TTL. The existing
 v1 TTL configuration remains for older records. Ciphertext is not indexed.
@@ -113,7 +117,8 @@ string zeroization is not promised. Fake encryption exists only in tests.
 The whole callable has a 55-second deadline starting before authentication;
 individual external operations have at most ten seconds and no hidden retries.
 Timeout permanently invalidates that invocation, including late Auth/body/
-transaction callbacks. Transactions check their fence before and after their
+transaction callbacks. Play lookup and acknowledgement dispatch are deferred
+until immediately after checking the invocation cancellation and time budget. Transactions check their fence before and after their
 callback; no external calls occur inside retryable transactions. Already
 submitted remote work cannot be recalled: no late result may issue client
 authority or start acknowledgement, and persisted state must still pass the

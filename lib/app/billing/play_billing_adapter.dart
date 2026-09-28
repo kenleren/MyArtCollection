@@ -1050,7 +1050,11 @@ class PlayBillingEntitlementService implements BillingManagementService {
           await existing.task;
           return;
         }
-        final task = _verifyPurchase(purchase, uid);
+        final task = _verifyPurchase(
+          purchase,
+          uid,
+          retainUnresolvedRecovery: retainUnresolvedRecovery,
+        );
         final operation = (
           generation: _generation,
           requestId: _currentRequestId,
@@ -1067,8 +1071,15 @@ class PlayBillingEntitlementService implements BillingManagementService {
     }
   }
 
-  Future<void> _verifyPurchase(PlayPurchase purchase, String uid) async {
-    final fence = _beginOperation(uid);
+  Future<void> _verifyPurchase(
+    PlayPurchase purchase,
+    String uid, {
+    required bool retainUnresolvedRecovery,
+  }) async {
+    final fence = _beginOperation(
+      uid,
+      retainUnresolvedRecovery: retainUnresolvedRecovery,
+    );
     _presentation = EntitlementPresentation.verificationPending;
     _publish();
     final verificationStartedAt = _clock.elapsed();
@@ -1112,6 +1123,7 @@ class PlayBillingEntitlementService implements BillingManagementService {
         (expectedProduct != null && result.productId != expectedProduct)) {
       _transitionFree(
         presentation: result.presentation,
+        preserveRecoveryAttempts: _isUnresolved(result.presentation),
         lifecycle: result.lifecycle,
         status: result.outcome == 'unavailable'
             ? EntitlementBillingStatus.unavailable
@@ -1129,6 +1141,7 @@ class PlayBillingEntitlementService implements BillingManagementService {
       _transitionFree();
       return;
     }
+    _resetRecoveryAttempts();
     _lease = _Lease(
       result.plan!,
       expiresAtElapsed,
