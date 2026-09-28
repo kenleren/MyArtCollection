@@ -106,6 +106,12 @@ export interface PlaySubscriptionPurchase {
   externalAccountIdentifiers?: {
     obfuscatedExternalAccountId?: string;
   };
+  outOfAppPurchaseContext?: {
+    expiredExternalAccountIdentifiers?: {
+      obfuscatedExternalAccountId?: string;
+    };
+    expiredPurchaseToken?: string;
+  };
   lineItems?: PlayLineItem[];
 }
 
@@ -113,14 +119,24 @@ export interface PlayGetArguments {
   packageName: 'app.archivale';
   token: string;
   timeoutMs: 10_000;
+  deadline?: PlayCallDeadline;
+}
+
+/** Internal invocation budget; never accepted from the mobile wire. */
+export interface PlayCallDeadline {
+  readonly expiresAt: number;
+  readonly signal: AbortSignal;
 }
 
 export interface PlayAcknowledgeArguments {
   packageName: 'app.archivale';
   subscriptionId: ProductId;
   token: string;
-  body: Record<string, never>;
+  body: Record<string, never> | {
+    externalAccountIds: { obfuscatedAccountId: string };
+  };
   timeoutMs: 10_000;
+  deadline?: PlayCallDeadline;
 }
 
 export interface PlaySubscriptionsAdapter {

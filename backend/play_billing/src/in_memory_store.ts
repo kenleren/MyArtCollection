@@ -6,6 +6,15 @@ export class InMemoryBillingDatabase implements BillingDatabase {
   private records = new Map<string, unknown>();
   private transactionTail: Promise<void> = Promise.resolve();
 
+  async dueEventWork(now: Date, limit: number): Promise<string[]> {
+    if (!Number.isInteger(limit) || limit < 1 || limit > 10) throw new Error('billing event unsafe');
+    return [...this.records.entries()].filter(([path, value]) => {
+      const row = value as { state?: string; dueAt?: Date };
+      return path.startsWith('playBillingEventWork/') && ['ready','retry','working'].includes(row.state ?? '') && row.dueAt instanceof Date && row.dueAt <= now;
+    }).sort(([a,av], [b,bv]) => (av as {dueAt:Date}).dueAt.getTime() - (bv as {dueAt:Date}).dueAt.getTime() || a.localeCompare(b))
+      .slice(0,limit).map(([path]) => path.slice(path.indexOf('/')+1));
+  }
+
   async runTransaction<T>(
     operation: (transaction: BillingTransaction) => Promise<T>,
   ): Promise<T> {
@@ -34,6 +43,10 @@ export class InMemoryBillingDatabase implements BillingDatabase {
             if (path.startsWith('playBillingAccountRoutes/') && value !== null && typeof value === 'object' &&
                 'accountSubject' in value && value.accountSubject === subject) return structuredClone(value);
           }
+          return undefined;
+        },
+        findAnyEventWork: async () => {
+          for (const [path, value] of working) if (path.startsWith('playBillingEventWork/')) return structuredClone(value);
           return undefined;
         },
         set: <Value>(collection: BillingCollection, id: string, value: Value) => {

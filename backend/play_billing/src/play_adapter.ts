@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { GoogleAuth } from 'google-auth-library';
 
 import { PACKAGE_NAME, PRODUCT_ALLOWLIST } from './constants.js';
+import { validOpaqueRoute } from './lifecycle.js';
 import type {
   PlayAcknowledgeArguments,
   PlayGetArguments,
@@ -13,6 +14,8 @@ import type {
 const ANDROID_PUBLISHER_SCOPE = 'https://www.googleapis.com/auth/androidpublisher';
 const ANDROID_PUBLISHER_ROOT = 'https://androidpublisher.googleapis.com/androidpublisher/v3';
 const PLAY_CALL_TIMEOUT_MS = 10_000;
+const GET_BODY_LIMIT = 65_536;
+const ACK_BODY_LIMIT = 4_096;
 
 export interface AndroidPublisherTransport {
   getSubscription(args: PlayGetArguments): Promise<unknown>;
@@ -29,7 +32,10 @@ interface GoogleAuthProvider {
 
 export interface PublisherFetchResponse {
   ok: boolean;
-  json(): Promise<unknown>;
+  status: number;
+  redirected: boolean;
+  headers: Pick<Headers, 'get'>;
+  body: ReadableStream<Uint8Array> | null;
 }
 
 export type PublisherFetch = (
@@ -39,6 +45,7 @@ export type PublisherFetch = (
     headers: Record<string, string>;
     body?: string;
     signal: AbortSignal;
+    redirect: 'error';
   },
 ) => Promise<PublisherFetchResponse>;
 
@@ -55,19 +62,29 @@ const systemDeadlineScheduler: DeadlineScheduler = {
 
 /**
  * Android Publisher REST transport using application-default credentials. It
- * never retries. The caller supplies the exact absolute deadline for each
- * request and receives parsed subscription data or acknowledgement success.
+ * never retries or follows redirects. Authentication, fetch and the bounded
+ * decompressed response stream share one absolute deadline.
  */
 export class GoogleAndroidPublisherTransport implements AndroidPublisherTransport {
   private readonly auth: GoogleAuthProvider;
   private readonly fetch: PublisherFetch;
+  private readonly deadlines: DeadlineScheduler;
+  private readonly now: () => number;
 
-  constructor(options: { auth?: GoogleAuthProvider; fetch?: PublisherFetch } = {}) {
+  constructor(options: {
+    auth?: GoogleAuthProvider;
+    fetch?: PublisherFetch;
+    deadlines?: DeadlineScheduler;
+    now?: () => number;
+  } = {}) {
     this.auth = options.auth ?? new GoogleAuth({ scopes: [ANDROID_PUBLISHER_SCOPE] });
     this.fetch = options.fetch ?? defaultPublisherFetch;
+    this.deadlines = options.deadlines ?? systemDeadlineScheduler;
+    this.now = options.now ?? Date.now;
   }
 
   async getSubscription(args: PlayGetArguments): Promise<unknown> {
+    assertGetArguments(args);
     return this.request(
       'GET',
       `${ANDROID_PUBLISHER_ROOT}/applications/${encodeURIComponent(args.packageName)}` +
@@ -75,18 +92,21 @@ export class GoogleAndroidPublisherTransport implements AndroidPublisherTranspor
       undefined,
       args.timeoutMs,
       true,
+      args.deadline,
     );
   }
 
   async acknowledgeSubscription(args: PlayAcknowledgeArguments): Promise<unknown> {
+    assertAcknowledgeArguments(args);
     return this.request(
       'POST',
       `${ANDROID_PUBLISHER_ROOT}/applications/${encodeURIComponent(args.packageName)}` +
         `/purchases/subscriptions/${encodeURIComponent(args.subscriptionId)}` +
         `/tokens/${encodeURIComponent(args.token)}:acknowledge`,
-      '',
+      isEmptyRecord(args.body) ? '' : JSON.stringify(args.body),
       args.timeoutMs,
       false,
+      args.deadline,
     );
   }
 
@@ -96,23 +116,28 @@ export class GoogleAndroidPublisherTransport implements AndroidPublisherTranspor
     body: string | undefined,
     timeoutMs: number,
     parseResponse: boolean,
+    parent?: PlayGetArguments['deadline'],
   ): Promise<unknown> {
-    const deadline = Date.now() + timeoutMs;
-    try {
-      const client = await withDeadline(this.auth.getClient(), deadline, systemDeadlineScheduler);
-      const authenticatedHeaders = await withDeadline(
-        client.getRequestHeaders(url),
-        deadline,
-        systemDeadlineScheduler,
-      );
-      const headers = normalizeHeaders(authenticatedHeaders);
-      const remaining = deadline - Date.now();
-      if (remaining <= 0) {
-        throw new Error('deadline elapsed');
+    const deadline = Math.min(this.now() + timeoutMs, parent?.expiresAt ?? Infinity);
+    const controller = new AbortController();
+    let cancelBody: (() => void) | undefined;
+    const stop = (): void => {
+      controller.abort();
+      cancelBody?.();
+    };
+    const checkDeadline = (): void => {
+      if (controller.signal.aborted || parent?.signal.aborted || this.now() >= deadline) {
+        stop();
+        throw unavailable();
       }
-      const controller = new AbortController();
-      const cancel = systemDeadlineScheduler.schedule(() => controller.abort(), remaining);
-      try {
+    };
+    try {
+      return await withDeadline((async () => {
+        checkDeadline();
+        const client = await this.auth.getClient();
+        checkDeadline();
+        const headers = normalizeHeaders(await client.getRequestHeaders(url));
+        checkDeadline();
         const response = await this.fetch(url, {
           method,
           headers: {
@@ -122,15 +147,64 @@ export class GoogleAndroidPublisherTransport implements AndroidPublisherTranspor
           },
           ...(body === undefined ? {} : { body }),
           signal: controller.signal,
+          redirect: 'error',
         });
-        if (!response.ok) {
-          throw new Error('publisher rejected request');
+        // Even a fetch implementation that ignores abort must not leave a late
+        // response live or continue into response parsing after the deadline.
+        cancelBody = () => discardBody(response.body);
+        checkDeadline();
+        if (response.redirected || !Number.isInteger(response.status)) {
+          throw rejectedRequest();
         }
-        return parseResponse ? await response.json() : undefined;
-      } finally {
-        cancel();
-      }
-    } catch {
+        if (!response.ok || response.status < 200 || response.status >= 300) {
+          throw httpFailure(response.status);
+        }
+        const limit = parseResponse ? GET_BODY_LIMIT : ACK_BODY_LIMIT;
+        const declaredLength = response.headers.get('content-length');
+        if (declaredLength !== null &&
+            (!/^(0|[1-9][0-9]{0,15})$/.test(declaredLength) || Number(declaredLength) > limit)) {
+          throw malformedResponse();
+        }
+        const chunks: Uint8Array[] = [];
+        let size = 0;
+        if (response.body !== null) {
+          const reader = response.body.getReader();
+          cancelBody = () => { void reader.cancel().catch(() => undefined); };
+          try {
+            for (;;) {
+              checkDeadline();
+              const chunk = await reader.read();
+              checkDeadline();
+              if (chunk.done) break;
+              if (!(chunk.value instanceof Uint8Array) || chunk.value.byteLength > limit - size) {
+                throw malformedResponse();
+              }
+              size += chunk.value.byteLength;
+              if (parseResponse) chunks.push(Uint8Array.from(chunk.value));
+            }
+          } finally {
+            // Cancellation is deliberately not awaited: an injected or broken
+            // stream must not extend the request's absolute deadline.
+            cancelBody();
+            reader.releaseLock();
+            cancelBody = undefined;
+          }
+        }
+        checkDeadline();
+        if (!parseResponse) return undefined;
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks, size)));
+        } catch {
+          throw malformedResponse();
+        }
+        assertBoundedJson(parsed);
+        checkDeadline();
+        return parsed;
+      })(), deadline, this.deadlines, this.now, stop, parent?.signal);
+    } catch (error) {
+      stop();
+      if (error instanceof PlayAdapterError) throw error;
       throw unavailable();
     }
   }
@@ -148,11 +222,15 @@ export class AndroidPublisherSubscriptionsAdapter implements PlaySubscriptionsAd
 
   async getSubscription(args: PlayGetArguments): Promise<PlaySubscriptionPurchase> {
     assertGetArguments(args);
+    assertParentActive(args.deadline);
     try {
       const raw = await withDeadline(
         this.transport.getSubscription(args),
-        Date.now() + args.timeoutMs,
+        Math.min(Date.now() + args.timeoutMs, args.deadline?.expiresAt ?? Infinity),
         this.deadlines,
+        Date.now,
+        undefined,
+        args.deadline?.signal,
       );
       return normalizePurchase(raw);
     } catch (error) {
@@ -165,11 +243,15 @@ export class AndroidPublisherSubscriptionsAdapter implements PlaySubscriptionsAd
 
   async acknowledgeSubscription(args: PlayAcknowledgeArguments): Promise<void> {
     assertAcknowledgeArguments(args);
+    assertParentActive(args.deadline);
     try {
       await withDeadline(
         this.transport.acknowledgeSubscription(args),
-        Date.now() + args.timeoutMs,
+        Math.min(Date.now() + args.timeoutMs, args.deadline?.expiresAt ?? Infinity),
         this.deadlines,
+        Date.now,
+        undefined,
+        args.deadline?.signal,
       );
     } catch (error) {
       if (error instanceof PlayAdapterError) {
@@ -266,22 +348,50 @@ function fakeLookupKey(token: string): string {
   return createHash('sha256').update(token, 'utf8').digest('hex');
 }
 
-class PlayAdapterError extends Error {}
+export type PlayAdapterFailure = 'configuration' | 'transient' | 'not_found' | 'malformed' | 'rejected';
+
+const FAILURE_MESSAGES: Record<PlayAdapterFailure, string> = {
+  configuration: 'Android Publisher configuration is unavailable',
+  transient: 'Android Publisher is temporarily unavailable',
+  not_found: 'Android Publisher purchase was not found',
+  malformed: 'Android Publisher response was malformed',
+  rejected: 'Android Publisher request was rejected',
+};
+
+/** Only fixed classifications cross the transport boundary; never provider data. */
+export class PlayAdapterError extends Error {
+  constructor(readonly classification: PlayAdapterFailure) {
+    super(FAILURE_MESSAGES[classification]);
+  }
+}
+
+export function classifyPlayAdapterError(error: unknown): PlayAdapterFailure {
+  return error instanceof PlayAdapterError ? error.classification : 'transient';
+}
 
 function unavailable(): PlayAdapterError {
-  return new PlayAdapterError('Android Publisher is temporarily unavailable');
+  return new PlayAdapterError('transient');
 }
 
 function rejectedRequest(): PlayAdapterError {
-  return new PlayAdapterError('Android Publisher request was rejected');
+  return new PlayAdapterError('rejected');
 }
 
 function malformedResponse(): PlayAdapterError {
-  return new PlayAdapterError('Android Publisher response was malformed');
+  return new PlayAdapterError('malformed');
+}
+
+function httpFailure(status: number): PlayAdapterError {
+  if (status === 401 || status === 403) return new PlayAdapterError('configuration');
+  if (status === 404 || status === 410) return new PlayAdapterError('not_found');
+  if (status === 408 || status === 409 || status === 429 || (status >= 500 && status <= 599)) return unavailable();
+  return rejectedRequest();
 }
 
 function assertGetArguments(args: PlayGetArguments): void {
   if (
+    !isRecord(args) || Object.keys(args).length !== 3 + Number(Object.hasOwn(args, 'deadline')) ||
+    !validParentDeadline(args.deadline) ||
     args.packageName !== PACKAGE_NAME ||
     !isOpaqueValue(args.token) ||
     args.timeoutMs !== PLAY_CALL_TIMEOUT_MS
@@ -292,25 +402,48 @@ function assertGetArguments(args: PlayGetArguments): void {
 
 function assertAcknowledgeArguments(args: PlayAcknowledgeArguments): void {
   if (
+    !isRecord(args) || Object.keys(args).length !== 5 + Number(Object.hasOwn(args, 'deadline')) ||
+    !validParentDeadline(args.deadline) ||
     args.packageName !== PACKAGE_NAME ||
-    !(args.subscriptionId in PRODUCT_ALLOWLIST) ||
+    typeof args.subscriptionId !== 'string' || !Object.hasOwn(PRODUCT_ALLOWLIST, args.subscriptionId) ||
     !isOpaqueValue(args.token) ||
     args.timeoutMs !== PLAY_CALL_TIMEOUT_MS ||
-    !isEmptyRecord(args.body)
+    !isAcknowledgeBody(args.body)
   ) {
     throw rejectedRequest();
   }
 }
 
 function isOpaqueValue(value: unknown): value is string {
-  return typeof value === 'string' && value.length > 0 && value.length <= 4_096;
+  return typeof value === 'string' && value.length > 0 && boundedString(value);
+}
+
+function validParentDeadline(value: PlayGetArguments['deadline']): boolean {
+  return value === undefined || (value !== null && typeof value === 'object' &&
+    Number.isSafeInteger(value.expiresAt) && value.signal instanceof AbortSignal);
+}
+
+function assertParentActive(value: PlayGetArguments['deadline']): void {
+  if (value !== undefined && (value.signal.aborted || Date.now() >= value.expiresAt)) {
+    throw unavailable();
+  }
 }
 
 function isEmptyRecord(value: unknown): value is Record<string, never> {
   return isRecord(value) && Object.keys(value).length === 0;
 }
 
+function isAcknowledgeBody(value: unknown): boolean {
+  if (isEmptyRecord(value)) return true;
+  return isRecord(value) && Object.keys(value).length === 1 &&
+    Object.hasOwn(value, 'externalAccountIds') && isRecord(value.externalAccountIds) &&
+    Object.keys(value.externalAccountIds).length === 1 &&
+    Object.hasOwn(value.externalAccountIds, 'obfuscatedAccountId') &&
+    validOpaqueRoute(value.externalAccountIds.obfuscatedAccountId);
+}
+
 function normalizePurchase(value: unknown): PlaySubscriptionPurchase {
+  assertBoundedJson(value);
   if (!isRecord(value) || !Array.isArray(value.lineItems)) {
     throw malformedResponse();
   }
@@ -322,6 +455,9 @@ function normalizePurchase(value: unknown): PlaySubscriptionPurchase {
     externalAccountIdentifiers: normalizeExternalAccountIdentifiers(
       value.externalAccountIdentifiers,
     ),
+    ...(value.outOfAppPurchaseContext === undefined ? {} : {
+      outOfAppPurchaseContext: normalizeOutOfAppContext(value.outOfAppPurchaseContext),
+    }),
     lineItems: value.lineItems.map(normalizeLineItem),
   };
 }
@@ -329,14 +465,28 @@ function normalizePurchase(value: unknown): PlaySubscriptionPurchase {
 function normalizeExternalAccountIdentifiers(
   value: unknown,
 ): PlaySubscriptionPurchase['externalAccountIdentifiers'] {
-  if (!isRecord(value)) {
-    return undefined;
-  }
+  if (value === undefined) return undefined;
+  if (!isRecord(value)) throw malformedResponse();
   return { obfuscatedExternalAccountId: optionalString(value.obfuscatedExternalAccountId) };
+}
+
+function normalizeOutOfAppContext(
+  value: unknown,
+): PlaySubscriptionPurchase['outOfAppPurchaseContext'] {
+  if (!isRecord(value)) throw malformedResponse();
+  const identifiers = normalizeExternalAccountIdentifiers(value.expiredExternalAccountIdentifiers);
+  const token = optionalString(value.expiredPurchaseToken);
+  return {
+    ...(identifiers === undefined ? {} : { expiredExternalAccountIdentifiers: identifiers }),
+    ...(token === undefined ? {} : { expiredPurchaseToken: token }),
+  };
 }
 
 function normalizeLineItem(value: unknown): NonNullable<PlaySubscriptionPurchase['lineItems']>[number] {
   if (!isRecord(value)) {
+    throw malformedResponse();
+  }
+  if (value.autoRenewingPlan !== undefined && !isRecord(value.autoRenewingPlan)) {
     throw malformedResponse();
   }
   return {
@@ -350,9 +500,8 @@ function normalizeLineItem(value: unknown): NonNullable<PlaySubscriptionPurchase
 function normalizeOfferDetails(
   value: unknown,
 ): NonNullable<PlaySubscriptionPurchase['lineItems']>[number]['offerDetails'] {
-  if (!isRecord(value)) {
-    return undefined;
-  }
+  if (value === undefined) return undefined;
+  if (!isRecord(value)) throw malformedResponse();
   const offerId = optionalString(value.offerId);
   return {
     basePlanId: optionalString(value.basePlanId),
@@ -361,7 +510,45 @@ function normalizeOfferDetails(
 }
 
 function optionalString(value: unknown): string | undefined {
-  return typeof value === 'string' ? value : undefined;
+  if (value === undefined) return undefined;
+  if (!isOpaqueValue(value)) throw malformedResponse();
+  return value;
+}
+
+function boundedString(value: string): boolean {
+  return value.length <= 4_096 && Buffer.byteLength(value, 'utf8') <= 4_096 &&
+    Buffer.from(value, 'utf8').toString('utf8') === value;
+}
+
+function assertBoundedJson(value: unknown): void {
+  let properties = 0;
+  const visit = (node: unknown, depth: number): void => {
+    if (depth > 12) throw malformedResponse();
+    if (typeof node === 'string') {
+      if (!boundedString(node)) throw malformedResponse();
+    } else if (Array.isArray(node)) {
+      if (node.length > 16) throw malformedResponse();
+      for (const child of node) visit(child, depth + 1);
+    } else if (isRecord(node)) {
+      const keys = Object.keys(node);
+      properties += keys.length;
+      if (properties > 256) throw malformedResponse();
+      for (const key of keys) {
+        if (!boundedString(key)) throw malformedResponse();
+        visit(node[key], depth + 1);
+      }
+    } else if (node !== null && typeof node !== 'boolean' &&
+               !(typeof node === 'number' && Number.isFinite(node))) {
+      throw malformedResponse();
+    }
+  };
+  visit(value, 1);
+}
+
+function discardBody(body: PublisherFetchResponse['body']): void {
+  if (body !== null) {
+    try { void body.cancel().catch(() => undefined); } catch { /* No provider error escapes. */ }
+  }
 }
 
 function normalizeHeaders(value: unknown): Record<string, string> {
@@ -382,28 +569,51 @@ function normalizeHeaders(value: unknown): Record<string, string> {
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value);
+  return value !== null && typeof value === 'object' &&
+    (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null);
 }
 
 function withDeadline<T>(
   operation: Promise<T>,
   deadline: number,
   scheduler: DeadlineScheduler,
+  now: () => number = Date.now,
+  onDeadline: () => void = () => undefined,
+  signal?: AbortSignal,
 ): Promise<T> {
-  const remaining = deadline - Date.now();
-  if (remaining <= 0) {
+  const remaining = deadline - now();
+  if (remaining <= 0 || signal?.aborted) {
+    // Attach a rejection handler even when the operation already began.
+    void operation.catch(() => undefined);
+    onDeadline();
     return Promise.reject(unavailable());
   }
   return new Promise<T>((resolve, reject) => {
-    const cancel = scheduler.schedule(() => reject(unavailable()), remaining);
+    let settled = false;
+    let cancelTimer = (): void => undefined;
+    const cleanup = (): void => {
+      cancelTimer();
+      signal?.removeEventListener('abort', expired);
+    };
+    const expired = (): void => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      onDeadline();
+      reject(unavailable());
+    };
+    signal?.addEventListener('abort', expired, { once: true });
+    cancelTimer = scheduler.schedule(expired, remaining);
     operation.then(
       (value) => {
-        cancel();
-        resolve(value);
+        if (settled) return;
+        if (now() >= deadline) expired();
+        else { settled = true; cleanup(); resolve(value); }
       },
       (error: unknown) => {
-        cancel();
-        reject(error);
+        if (settled) return;
+        if (now() >= deadline) expired();
+        else { settled = true; cleanup(); reject(error); }
       },
     );
   });

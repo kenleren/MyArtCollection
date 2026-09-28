@@ -54,3 +54,5 @@ export {
   verifyPlaySubscription,
   restorePlayEntitlement,
 } from './firebase.js';
+
+export { receivePlayBillingEvent, pumpPlayBillingEvents } from './event_firebase.js';

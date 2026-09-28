@@ -1,5 +1,7 @@
+import { ownsEvent, validEventWork, type EventWorkFence, type EventWorkRecord, type ResolvedEventAccount } from './event_records.js';
+import { OWNERSHIP_PROOF_VERSION, validOwnershipProof, type OwnershipProof } from './ownership_proof.js';
 import { AUTHORITY_VERSION, SNAPSHOT_VERSION, initialAuthority, validAuthority, outboxFor, fingerprint, type AccountAuthority, type AuthorityOutbox, type AuthoritySnapshot, type ObservationSource, type InactiveReason } from './account_authority.js';
-import { LIFECYCLE_VERSION, validLifecycleFields, sameLifecycle, validLifecycleRoot, validReciprocalRoute, routeFor, type LifecycleFields, type LifecycleRoot, type LifecycleRoute } from './lifecycle.js';
+import { LIFECYCLE_VERSION, validLifecycleFields, sameLifecycle, validLifecycleRoot, validReciprocalRoute, validOpaqueRoute, routeFor, type LifecycleFields, type LifecycleRoot, type LifecycleRoute } from './lifecycle.js';
 import type { BillingIdentifiers } from './crypto.js';
 import {
   ACK_COOLDOWN_MS,
@@ -31,11 +33,13 @@ export interface BillingTransaction {
   get<T>(collection: BillingCollection, id: string): Promise<T | undefined>;
   findSubjectBinding(accountSubject: string): Promise<unknown | undefined>;
   findSubjectRoute(accountSubject: string): Promise<unknown | undefined>;
+  findAnyEventWork(): Promise<unknown | undefined>;
   set<T>(collection: BillingCollection, id: string, value: T): void;
 }
 
 export interface BillingDatabase {
   readonly databaseId: string;
+  dueEventWork(now: Date, limit: number): Promise<string[]>;
   runTransaction<T>(operation: (transaction: BillingTransaction) => Promise<T>): Promise<T>;
 }
 
@@ -52,8 +56,9 @@ export interface AttemptHandle extends LifecycleFields {
   owner: AttemptOwner;
   usesReplay: boolean;
   fence?: { assertionId: string; indexRevision: number; deadline: BillingDeadline; kind: 'verify' | 'restore';
-    observationGeneration: number; observationNonce: Uint8Array; source: ObservationSource; publicationRevision: number };
+    observationGeneration: number; observationNonce: Uint8Array; source: ObservationSource; publicationRevision: number; eventWork?: EventWorkFence };
   envelope?: TokenEnvelope;
+  ownershipProof?: OwnershipProof;
 }
 interface AccountIndex extends LifecycleFields {
   contractVersion: typeof CONTRACT_VERSION;
@@ -119,6 +124,7 @@ interface TokenOperationRecord extends BaseRecord, AttemptOwner, LifecycleFields
 interface PurchaseBindingRecord extends Omit<BaseRecord, 'retentionExpiresAt'>, LifecycleFields {
   retentionExpiresAt?: Date;
   tokenEnvelope: TokenEnvelope;
+  ownershipProof?: OwnershipProof;
   tokenFingerprint: string;
   accountSubject: string;
   planId: PlanId;
@@ -166,6 +172,7 @@ export type AcquireResult =
     };
 
 export interface DeliveryInput {
+  ownershipProof?: OwnershipProof;
   tokenEnvelope: TokenEnvelope;
   planId: PlanId;
   productId: ProductId;
@@ -192,6 +199,7 @@ const PROTECTED_PHASES = new Set<OperationPhase>([
 ]);
 
 export class BillingRepository {
+  private readonly auxiliaryExpiry = new WeakMap<AttemptHandle, {current:string; revision:number; generation:number; verifiedAt:Date; expiresAt:number}>();
   constructor(
     private readonly database: BillingDatabase,
     private readonly nonces: NonceSource,
@@ -286,6 +294,12 @@ export class BillingRepository {
       authority.observationGeneration === fence.observationGeneration && bytesEqual(owner.nonce, fence.observationNonce) &&
       owner.requestFingerprint === attempt.owner.requestFingerprint && owner.tokenFingerprint === attempt.tokenFingerprint &&
       owner.source === fence.source;
+  }
+
+  private async validWorkFence(tx: BillingTransaction, fence: EventWorkFence, account: ResolvedEventAccount, now: Date): Promise<boolean> {
+    const work = await tx.get<EventWorkRecord>(COLLECTIONS.eventWork, fence.eventFingerprint);
+    return ownsEvent(work, fence, now) && work.resolved !== undefined &&
+      work.resolved.accountSubject === account.accountSubject && sameLifecycle(work.resolved, account);
   }
 
   private nonce(): Uint8Array {
@@ -406,12 +420,13 @@ export class BillingRepository {
     now: Date,
     deadline = new BillingDeadline(),
     source: ObservationSource = 'foreground',
+    eventWork?: EventWorkFence,
   ): Promise<AcquireResult> {
-    return this.acquire(accountSubject, requestFingerprint, tokenFingerprint, now, true, 'verify', deadline, source);
+    return this.acquire(accountSubject, requestFingerprint, tokenFingerprint, now, true, 'verify', deadline, source, undefined, eventWork);
   }
 
-  acquireAccountAttempt(accountSubject: string, requestFingerprint: string, now: Date, deadline: BillingDeadline, source: ObservationSource = 'foreground'): Promise<AcquireResult> {
-    return this.acquire(accountSubject, requestFingerprint, undefined, now, true, 'restore', deadline, source);
+  acquireAccountAttempt(accountSubject: string, requestFingerprint: string, now: Date, deadline: BillingDeadline, source: ObservationSource = 'foreground', eventWork?: EventWorkFence): Promise<AcquireResult> {
+    return this.acquire(accountSubject, requestFingerprint, undefined, now, true, 'restore', deadline, source, undefined, eventWork);
   }
 
   acquirePredecessorAttempt(
@@ -422,7 +437,7 @@ export class BillingRepository {
     deadline = new BillingDeadline(),
     previous?: AttemptHandle,
   ): Promise<AcquireResult> {
-    return this.acquire(accountSubject, requestFingerprint, tokenFingerprint, now, false, 'verify', deadline, previous?.fence?.source ?? 'foreground', previous);
+    return this.acquire(accountSubject, requestFingerprint, tokenFingerprint, now, false, 'verify', deadline, previous?.fence?.source ?? 'foreground', previous, previous?.fence?.eventWork);
   }
 
   private async acquire(
@@ -435,6 +450,7 @@ export class BillingRepository {
     deadline: BillingDeadline,
     source: ObservationSource,
     previous?: AttemptHandle,
+    eventWork?: EventWorkFence,
   ): Promise<AcquireResult> {
     return this.database.runTransaction(async (tx) => {
       deadline.check();
@@ -451,6 +467,8 @@ export class BillingRepository {
         return { kind: kind === 'restore' ? 'no_known_purchase' : 'recovery_required' };
       }
       if (root.status === 'retired') return { kind: 'recovery_required' };
+      if (source === 'background' && (!eventWork || !await this.validWorkFence(tx, eventWork, root, now))) return { kind: 'unsafe_record' };
+      if (source === 'foreground' && eventWork !== undefined) return { kind: 'unsafe_record' };
       if (root.status !== 'active' || root.assertionId !== disclosure.assertionId) return { kind: 'disclosure_required' };
       if (index !== undefined && (!validIndex(index, accountSubject) || !sameLifecycle(index, root))) return { kind: 'unsafe_record' };
       if (index === undefined) {
@@ -524,7 +542,7 @@ export class BillingRepository {
       if (authority.owner?.leaseExpiresAt !== undefined && authority.owner.leaseExpiresAt > now) return { kind: 'in_flight' };
       if ((!continuing && authority.observationGeneration >= Number.MAX_SAFE_INTEGER) ||
           authority.publicationRevision >= Number.MAX_SAFE_INTEGER) return { kind: 'unsafe_record' };
-      const rate = await tx.get<RateLimitRecord>(COLLECTIONS.rateLimits, accountSubject);
+      const rate = source === 'foreground' ? await tx.get<RateLimitRecord>(COLLECTIONS.rateLimits, accountSubject) : undefined;
       if (rate !== undefined && !validRateLimit(rate, accountSubject)) {
         return { kind: 'unsafe_record' };
       }
@@ -591,7 +609,7 @@ export class BillingRepository {
         updatedAt: now,
         retentionExpiresAt,
       });
-      tx.set<RateLimitRecord>(COLLECTIONS.rateLimits, accountSubject, {
+      if (source === 'foreground') tx.set<RateLimitRecord>(COLLECTIONS.rateLimits, accountSubject, {
         contractVersion: CONTRACT_VERSION,
         keyVersion: ACTIVE_KEY_VERSION,
         accountSubject,
@@ -602,13 +620,100 @@ export class BillingRepository {
       });
       return {
         kind: 'acquired',
-        attempt: { tokenFingerprint, accountSubject, owner, usesReplay, envelope: binding?.tokenEnvelope,
+        attempt: { tokenFingerprint, accountSubject, owner, usesReplay, envelope: binding?.tokenEnvelope, ownershipProof: binding?.ownershipProof,
           lifecycleEpoch: root.lifecycleEpoch, lifecycleGeneration: root.lifecycleGeneration,
           expectedPlayAccountId: root.obfuscatedAccountId,
           fence: { assertionId: disclosure.assertionId, indexRevision: index?.revision ?? 0, deadline, kind,
-            observationGeneration, observationNonce, source, publicationRevision: authority.publicationRevision } },
+            observationGeneration, observationNonce, source, publicationRevision: authority.publicationRevision, eventWork } },
       };
     });
+  }
+
+  /** Bounded opaque routing only; notification claims never establish ownership. */
+  async resolveEventAccount(token: string, signals: { routes: string[]; predecessorFingerprints: string[] }, deadline: BillingDeadline): Promise<(ResolvedEventAccount & { superseded: boolean; productId?: ProductId }) | undefined> {
+    return this.database.runTransaction(async tx => {
+      deadline.check();
+      if (!fingerprint(token) || signals.routes.length > 2 || signals.predecessorFingerprints.length > 2 ||
+          signals.routes.some(route => !validOpaqueRoute(route)) || signals.predecessorFingerprints.some(value => !fingerprint(value))) throw new UnsafeBillingRecordError();
+      const roots: LifecycleRoot[] = [];
+      let superseded = false;
+      let productId: ProductId | undefined;
+      for (const id of new Set([token, ...signals.predecessorFingerprints])) {
+        const binding = await tx.get<PurchaseBindingRecord>(COLLECTIONS.bindings, id);
+        if (binding === undefined) continue;
+        if (!validBinding(binding, id)) throw new UnsafeBillingRecordError();
+        const root = await this.readLifecycle(tx, binding.accountSubject);
+        if (!root || !sameLifecycle(binding, root)) throw new UnsafeBillingRecordError();
+        roots.push(root);
+        if (id === token) { superseded = binding.bindingState === 'superseded'; productId = binding.productId; }
+      }
+      for (const route of new Set(signals.routes)) {
+        const mapped = await tx.get<LifecycleRoute>(COLLECTIONS.routes, this.identifiers.routeFingerprint(route));
+        if (!mapped) throw new UnsafeBillingRecordError();
+        const root = await this.readLifecycle(tx, mapped.accountSubject);
+        if (!root || root.obfuscatedAccountId !== route || !validReciprocalRoute(mapped, root)) throw new UnsafeBillingRecordError();
+        roots.push(root);
+      }
+      const root = roots[0];
+      if (!root) return undefined;
+      if (roots.some(other => other.accountSubject !== root.accountSubject || !sameLifecycle(other, root))) throw new UnsafeBillingRecordError();
+      deadline.check();
+      return { accountSubject: root.accountSubject, lifecycleEpoch: root.lifecycleEpoch, lifecycleGeneration: root.lifecycleGeneration, superseded, productId };
+    });
+  }
+
+  /** Fresh GET signals are checked against the admitted account, never against event data. */
+  async proveOwnership(attempt: AttemptHandle, signals: { directRoute?: string; expiredRoute?: string; linkedFingerprint?: string; expiredFingerprint?: string }, now: Date): Promise<OwnershipProof | undefined> {
+    return this.guarded(attempt, async tx => {
+      if ([signals.directRoute,signals.expiredRoute].some(route => route !== undefined && route !== attempt.expectedPlayAccountId)) return undefined;
+      const peers = new Map<string, PurchaseBindingRecord>();
+      for (const id of new Set([signals.linkedFingerprint, signals.expiredFingerprint])) {
+        if (id === undefined) continue;
+        if (!fingerprint(id) || id === attempt.tokenFingerprint) return undefined;
+        const binding = await tx.get<PurchaseBindingRecord>(COLLECTIONS.bindings,id);
+        if (binding !== undefined) {
+          if (!validBinding(binding,id) || binding.accountSubject !== attempt.accountSubject || !sameLifecycle(binding,attempt) ||
+              (binding.successorFingerprint !== undefined && binding.successorFingerprint !== attempt.tokenFingerprint)) return undefined;
+          peers.set(id,binding);
+        }
+      }
+      const existing = attempt.ownershipProof;
+      if (existing && ((signals.linkedFingerprint !== undefined && existing.predecessorFingerprint !== undefined && existing.predecessorFingerprint !== signals.linkedFingerprint) ||
+          (signals.expiredFingerprint !== undefined && existing.predecessorFingerprint !== undefined && existing.predecessorFingerprint !== signals.expiredFingerprint))) return undefined;
+      const base = {version:OWNERSHIP_PROOF_VERSION as typeof OWNERSHIP_PROOF_VERSION,accountSubject:attempt.accountSubject,tokenFingerprint:attempt.tokenFingerprint,
+        lifecycleEpoch:attempt.lifecycleEpoch,lifecycleGeneration:attempt.lifecycleGeneration};
+      if (signals.expiredRoute !== undefined || (signals.expiredFingerprint !== undefined && peers.has(signals.expiredFingerprint))) {
+        return {...base,kind:'expired_context' as const,...(signals.expiredFingerprint === undefined ? {} : {predecessorFingerprint:signals.expiredFingerprint})};
+      }
+      if (signals.directRoute !== undefined) return existing ?? {...base,kind:'direct_route' as const};
+      if (signals.linkedFingerprint !== undefined && peers.has(signals.linkedFingerprint)) return {...base,kind:'linked_binding' as const,predecessorFingerprint:signals.linkedFingerprint};
+      return existing;
+    }, undefined, now);
+  }
+
+  async competingCurrent(attempt: AttemptHandle, now: Date): Promise<{ tokenFingerprint: string; tokenEnvelope: TokenEnvelope; ownershipProof?: OwnershipProof } | undefined> {
+    return this.guarded(attempt, async (tx,index) => {
+      if (!index?.current || index.current === attempt.tokenFingerprint) return undefined;
+      if (index.candidate !== undefined && index.candidate !== index.current && index.candidate !== attempt.tokenFingerprint) throw new AccountConflictError();
+      const binding = await tx.get<PurchaseBindingRecord>(COLLECTIONS.bindings,index.current);
+      if (!binding || !validBinding(binding,index.current) || binding.accountSubject !== attempt.accountSubject || !sameLifecycle(binding,attempt)) throw new UnsafeBillingRecordError();
+      return {tokenFingerprint:binding.tokenFingerprint,tokenEnvelope:binding.tokenEnvelope,ownershipProof:binding.ownershipProof};
+    }, undefined, now);
+  }
+
+  /** Call only immediately after a fresh expiry GET under this exact admitted attempt.
+   * The proof is scoped by the closure/attempt owner and index revision, never serialized. */
+  async recordAuxiliaryExpiry(attempt: AttemptHandle, current: string, verifiedAt: Date): Promise<boolean> {
+    const result = await this.guarded(attempt, async (tx,index) => {
+      if (!index || index.current !== current || current === attempt.tokenFingerprint ||
+          (index.candidate !== undefined && index.candidate !== current && index.candidate !== attempt.tokenFingerprint)) return false;
+      const binding = await tx.get<PurchaseBindingRecord>(COLLECTIONS.bindings,current);
+      if (!binding || !validBinding(binding,current) || binding.accountSubject !== attempt.accountSubject || !sameLifecycle(binding,attempt)) return false;
+      attempt.fence!.deadline.check();
+      return true;
+    }, false, verifiedAt);
+    if (result) this.auxiliaryExpiry.set(attempt,{current,revision:attempt.fence!.indexRevision,generation:attempt.fence!.observationGeneration,verifiedAt,expiresAt:Date.now()+TOKEN_GET_COOLDOWN_MS});
+    return result;
   }
 
   async markVerifiedOwner(
@@ -689,7 +794,7 @@ export class BillingRepository {
     }, false, now);
   }
 
-  async commitDelivery(attempt: AttemptHandle, input: DeliveryInput): Promise<boolean> {
+  async commitDelivery(attempt: AttemptHandle, input: DeliveryInput, now = input.verifiedAt): Promise<boolean> {
     const result = await this.guarded(attempt, async (tx, index) => {
       const operation = await tx.get<TokenOperationRecord>(
         COLLECTIONS.operations,
@@ -728,9 +833,13 @@ export class BillingRepository {
           return false;
         }
       }
-      if (!validEnvelope(input.tokenEnvelope)) return false;
+      if (!validEnvelope(input.tokenEnvelope) || (input.ownershipProof !== undefined && !validOwnershipProof(input.ownershipProof, attempt))) return false;
       const previous = index?.candidate ?? index?.current;
       const freshlyExpired = (fingerprint: string): boolean => {
+        const proof = this.auxiliaryExpiry.get(attempt);
+        if (proof && proof.current === fingerprint && proof.revision === (index?.revision ?? 0) &&
+            proof.generation === attempt.fence!.observationGeneration && Date.now() <= proof.expiresAt && now.getTime() >= proof.verifiedAt.getTime() &&
+            now.getTime() - proof.verifiedAt.getTime() <= TOKEN_GET_COOLDOWN_MS) return true;
         const observation = index?.inactive;
         const age = observation ? input.verifiedAt.getTime() - observation.verifiedAt.getTime() : -1;
         return observation?.tokenFingerprint === fingerprint && observation.reason === 'expired' &&
@@ -751,6 +860,7 @@ export class BillingRepository {
         contractVersion: CONTRACT_VERSION,
         keyVersion: ACTIVE_KEY_VERSION,
         tokenEnvelope: input.tokenEnvelope,
+        ownershipProof: input.ownershipProof ?? existing?.ownershipProof,
         tokenFingerprint: attempt.tokenFingerprint,
         accountSubject: attempt.accountSubject,
         planId: input.planId,
@@ -805,8 +915,8 @@ export class BillingRepository {
         });
       }
       return true;
-    }, false, input.verifiedAt);
-    if (result) attempt.fence!.indexRevision++;
+    }, false, now);
+    if (result) { attempt.fence!.indexRevision++; this.auxiliaryExpiry.delete(attempt); }
     return result;
   }
 
@@ -1067,6 +1177,7 @@ export class BillingRepository {
       const authority = await this.readAuthority(tx, root);
       if (!this.currentObservation(authority, attempt) ||
           (authority!.owner!.leaseExpiresAt !== undefined && authority!.owner!.leaseExpiresAt! <= now)) return fallback;
+      if (fence.source === 'background' && (!fence.eventWork || !await this.validWorkFence(tx, fence.eventWork, root, now))) return fallback;
       const result = await action(tx, index, authority!, root);
       fence.deadline.check();
       return result;
@@ -1132,7 +1243,7 @@ function validOwner(record: Partial<AttemptOwner>): boolean {
   );
 }
 
-function validDisclosure(record: DisclosureRecord, accountSubject: string, allowPrevious = false): boolean {
+export function validDisclosure(record: DisclosureRecord, accountSubject: string, allowPrevious = false): boolean {
   return (
     hasOnlyKeys(record, [
       'contractVersion',
@@ -1251,6 +1362,7 @@ function validBinding(record: PurchaseBindingRecord, tokenFingerprint: string): 
       'contractVersion',
       'keyVersion',
       'tokenEnvelope',
+      'ownershipProof',
       'tokenFingerprint',
       'accountSubject',
       'planId',
@@ -1278,6 +1390,7 @@ function validBinding(record: PurchaseBindingRecord, tokenFingerprint: string): 
       'retentionExpiresAt',
     ]) &&
     validLifecycleFields(record) && validBase(record, true) && validEnvelope(record.tokenEnvelope) &&
+    (record.ownershipProof === undefined || validOwnershipProof(record.ownershipProof, record)) &&
     record.tokenFingerprint === tokenFingerprint &&
     isFingerprint(record.tokenFingerprint) &&
     isFingerprint(record.accountSubject) &&
@@ -1469,7 +1582,7 @@ function optionalFingerprint(value: unknown): boolean {
 }
 
 function isProductId(value: unknown): value is ProductId {
-  return typeof value === 'string' && value in PRODUCT_ALLOWLIST;
+  return typeof value === 'string' && Object.hasOwn(PRODUCT_ALLOWLIST, value);
 }
 
 function isReplayPhase(value: unknown): value is RequestReplayRecord['phase'] {

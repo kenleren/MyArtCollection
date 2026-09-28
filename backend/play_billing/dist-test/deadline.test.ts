@@ -17,7 +17,7 @@ test('per-operation timeout permanently invalidates original 55-second invocatio
 test('late database callback after timeout cannot acquire authority or call Play', async () => {
   const h = createHarness(); const gate = deferred(); let delay = false;
   const database: BillingDatabase = {
-    databaseId: h.database.databaseId,
+    databaseId: h.database.databaseId, dueEventWork: (now, limit) => h.database.dueEventWork(now, limit),
     runTransaction: (operation) => h.database.runTransaction(async (tx) => {
       if (delay) await gate.promise;
       return operation(tx);

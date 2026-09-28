@@ -1,0 +1,42 @@
+{
+  "version": "play-billing-events-disabled-v1",
+  "enabled": false,
+  "project": "my-art-collections",
+  "database": "archivale-play-billing",
+  "package": "app.archivale",
+  "topic": "projects/my-art-collections/topics/archivale-play-rtdn",
+  "source": "//pubsub.googleapis.com/projects/my-art-collections/topics/archivale-play-rtdn",
+  "eventType": "google.cloud.pubsub.topic.v1.messagePublished",
+  "ingressExport": "receivePlayBillingEvent",
+  "pumpExport": "pumpPlayBillingEvents",
+  "runtimeAccount": "archivale-play-lifecycle-worker@my-art-collections.iam.gserviceaccount.com",
+  "requiredTriggerAccount": "archivale-play-rtdn-trigger@my-art-collections.iam.gserviceaccount.com",
+  "triggerIdentityConfiguredBySdk": false,
+  "topicPublisher": "google-play-developer-notifications@system.gserviceaccount.com",
+  "region": "us-central1",
+  "timeoutSeconds": 60,
+  "memory": "512MiB",
+  "maxInstances": 1,
+  "concurrency": 1,
+  "managedRetry": true,
+  "pumpSchedule": "every 1 minutes",
+  "approvedEventKeyVersions": [],
+  "defaultLimits": { "rows": 0, "admissions": 0, "gets": 0, "discoveries": 0, "kms": 0, "acknowledgements": 0 },
+  "syntheticCeilings": { "rows": 20000, "admissions": 120, "gets": 120, "discoveries": 30, "kms": 60, "acknowledgements": 30 },
+  "provisioningReadbackRequired": [
+    "private authenticated managed ingress with no allUsers or allAuthenticatedUsers invoker",
+    "separate trigger principal and service-scoped invoker",
+    "scheduler authentication and service-scoped invoker",
+    "topic publisher allowlist and managed retry delivery window",
+    "named database only and bounded due-work index",
+    "full KMS key version allowlist and purpose-limited KMS authority",
+    "Publisher subscription GET and ACK permissions only",
+    "no runtime Auth-list, topic-publisher, default-database or broker-write authority",
+    "owner-approved capacity, alert ownership, retention and privacy policy"
+  ],
+  "rollback": [
+    "disable event flags so ingress rejects and pump stops before dependency construction",
+    "preserve event custody, account custody, capacity and all high-water markers",
+    "stop and drain old foreground and event writers before any ownership-proof cutover"
+  ]
+}

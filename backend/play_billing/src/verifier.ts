@@ -1,3 +1,4 @@
+import type { EventWorkFence } from './event_records.js';
 import { fingerprint, type ObservationSource } from './account_authority.js';
 import { BillingDeadline } from './deadline.js';
 import { DisabledTokenCustody, validToken, type TokenCustody } from './token_custody.js';
@@ -69,6 +70,7 @@ export interface AccountObservationContext {
   accountSubject: string;
   requestFingerprint: string;
   source: ObservationSource;
+  eventWork?: EventWorkFence;
 }
 
 export class PlayBillingService {
@@ -143,7 +145,7 @@ export class PlayBillingService {
     observation: { kind: 'verify' | 'restore'; input: unknown }, deadline = new BillingDeadline()): Promise<VerifyResponse> {
     if (!context || !fingerprint(context.accountSubject) || !fingerprint(context.requestFingerprint) ||
         !['foreground','background'].includes(context.source) ||
-        Object.keys(context).some(key => !['accountSubject','requestFingerprint','source'].includes(key))) return free(undefined, 'invalid_request');
+        Object.keys(context).some(key => !['accountSubject','requestFingerprint','source','eventWork'].includes(key))) return free(undefined, 'invalid_request');
     if (observation.kind === 'verify') return this.verifyObservation(context, observation.input, deadline);
     if (observation.kind === 'restore') return this.restoreObservation(context, observation.input, deadline);
     return free(undefined, 'invalid_request');
@@ -177,6 +179,7 @@ export class PlayBillingService {
         this.dependencies.clock.now(),
         deadline,
         context.source,
+        context.eventWork,
       );
     } catch (error) {
       return free(request.requestId, error instanceof UnsafeBillingRecordError ? 'unsafe_record' : 'temporarily_unavailable');
@@ -240,7 +243,7 @@ export class PlayBillingService {
     try {
       deadline.check();
       const acquired = await repository.acquireAccountAttempt(context.accountSubject,
-        context.requestFingerprint, clock.now(), deadline, context.source);
+        context.requestFingerprint, clock.now(), deadline, context.source, context.eventWork);
       if (acquired.kind !== 'acquired') return free(requestId, acquired.kind);
       attempt = acquired.attempt;
       if (!attempt.envelope) return free(requestId, 'unsafe_record');
@@ -328,14 +331,30 @@ export class PlayBillingService {
     requestedProduct: string | undefined,
     playDeadline: number,
   ): Promise<VerifyResponse> {
+    // Only fresh provider signals, resolved under the admitted account/job fences,
+    // can authorize custody. An established same-token proof permits Play to omit
+    // transient resubscription context after ACK; contradictions still reject.
+    let ownershipProof;
+    try {
+      const linked = purchase.linkedPurchaseToken;
+      const expired = purchase.outOfAppPurchaseContext?.expiredPurchaseToken;
+      ownershipProof = await this.dependencies.repository.proveOwnership(attempt, {
+        directRoute: purchase.externalAccountIdentifiers?.obfuscatedExternalAccountId,
+        expiredRoute: purchase.outOfAppPurchaseContext?.expiredExternalAccountIdentifiers?.obfuscatedExternalAccountId,
+        linkedFingerprint: linked === undefined ? undefined : this.dependencies.identifiers.tokenFingerprint(linked),
+        expiredFingerprint: expired === undefined ? undefined : this.dependencies.identifiers.tokenFingerprint(expired),
+      }, this.dependencies.clock.now());
+    } catch { return free(requestId,'unsafe_record'); }
+    if (!ownershipProof) { await this.closeWithoutThrow(attempt); return free(requestId,'not_verified'); }
+    const ownedPurchase = {...purchase, externalAccountIdentifiers:{obfuscatedExternalAccountId:attempt.expectedPlayAccountId}};
     const eligible = validateEligiblePurchase(
-      purchase,
+      ownedPurchase,
       requestedProduct,
       attempt.expectedPlayAccountId,
       this.dependencies.clock.now(),
     );
     if (eligible === undefined) {
-      const inactive = validatedInactive(purchase, requestedProduct,
+      const inactive = validatedInactive(ownedPurchase, requestedProduct,
         attempt.expectedPlayAccountId, this.dependencies.clock.now());
       if (inactive !== undefined) {
         try {
@@ -354,8 +373,21 @@ export class PlayBillingService {
       return free(requestId, inactive === 'pending' ? 'play_pending' : inactive ?? 'not_verified');
     }
 
-    const verifiedAt = this.dependencies.clock.now();
+    let verifiedAt = this.dependencies.clock.now();
     try {
+      if (ownershipProof.kind === 'expired_context' && attempt.envelope === undefined) {
+        const current = await this.dependencies.repository.competingCurrent(attempt, this.dependencies.clock.now());
+        if (current) {
+          const context = {...attempt,tokenFingerprint:current.tokenFingerprint};
+          const currentToken = await (this.dependencies.custody ?? new DisabledTokenCustody()).decrypt(current.tokenEnvelope,context,attempt.fence!.deadline);
+          if (this.dependencies.identifiers.tokenFingerprint(currentToken) !== current.tokenFingerprint ||
+              !await this.dependencies.repository.isCurrentAttempt(attempt,this.dependencies.clock.now())) return free(requestId,'unsafe_record');
+          const observed = await this.getSubscription(currentToken,playDeadline,attempt.fence!.deadline);
+          if (validatedInactive(observed,undefined,attempt.expectedPlayAccountId,this.dependencies.clock.now()) !== 'expired') throw new AccountConflictError();
+          if (!await this.dependencies.repository.recordAuxiliaryExpiry(attempt,current.tokenFingerprint,this.dependencies.clock.now())) return free(requestId,'not_verified');
+        }
+      }
+      verifiedAt = this.dependencies.clock.now();
       const ownerAccepted = await this.dependencies.repository.markVerifiedOwner(
         attempt,
         eligible.productId,
@@ -378,6 +410,7 @@ export class PlayBillingService {
       attempt.fence!.deadline.check();
       const delivered = await this.dependencies.repository.commitDelivery(attempt, {
         tokenEnvelope,
+        ownershipProof,
         planId: eligible.planId,
         productId: eligible.productId,
         normalizedState: eligible.normalizedState,
@@ -385,7 +418,7 @@ export class PlayBillingService {
         verifiedAt,
         playAcknowledged: eligible.playAcknowledged,
         predecessorFingerprint,
-      });
+      }, this.dependencies.clock.now());
       if (!delivered) {
         return free(requestId, 'not_verified');
       }
@@ -407,15 +440,17 @@ export class PlayBillingService {
         await this.dependencies.hooks?.afterAcknowledgementStarted?.();
         try {
           if (!await this.dependencies.repository.isCurrentAttempt(attempt, this.dependencies.clock.now(), 'ack_in_progress')) return free(requestId, 'not_verified');
+          const acknowledgementDeadline = Math.min(playDeadline, attempt.fence!.deadline.expiresAt, Date.now() + PLAY_CALL_DEADLINE_MS);
           await withAbsoluteDeadline(
             () => this.dependencies.play.acknowledgeSubscription({
               packageName: PACKAGE_NAME,
               subscriptionId: eligible.productId,
               token: rawToken,
-              body: {},
+              body: ownershipProof.kind === 'expired_context' ? {externalAccountIds:{obfuscatedAccountId:attempt.expectedPlayAccountId}} : {},
               timeoutMs: PLAY_CALL_DEADLINE_MS,
+              deadline: {expiresAt: acknowledgementDeadline, signal: attempt.fence!.deadline.signal},
             }),
-            Math.min(playDeadline, Date.now() + PLAY_CALL_DEADLINE_MS),
+            acknowledgementDeadline,
             attempt.fence!.deadline,
           );
         } catch {
@@ -451,13 +486,15 @@ export class PlayBillingService {
     playDeadline: number,
     invocation: BillingDeadline,
   ): Promise<PlaySubscriptionPurchase> {
+    const callDeadline = Math.min(playDeadline, invocation.expiresAt, Date.now() + PLAY_CALL_DEADLINE_MS);
     return withAbsoluteDeadline(
       () => this.dependencies.play.getSubscription({
         packageName: PACKAGE_NAME,
         token,
         timeoutMs: PLAY_CALL_DEADLINE_MS,
+        deadline: {expiresAt: callDeadline, signal: invocation.signal},
       }),
-      Math.min(playDeadline, Date.now() + PLAY_CALL_DEADLINE_MS),
+      callDeadline,
       invocation,
     );
   }
@@ -514,7 +551,7 @@ function validateLineItemShape(
   if (
     lineItem === undefined ||
     typeof lineItem.productId !== 'string' ||
-    !(lineItem.productId in PRODUCT_ALLOWLIST) ||
+    !(Object.hasOwn(PRODUCT_ALLOWLIST, lineItem.productId)) ||
     lineItem.productId !== requestedProduct
   ) {
     return undefined;
@@ -535,7 +572,7 @@ function validateEligiblePurchase(
   const productId = lineItem?.productId;
   if (
     typeof productId !== 'string' ||
-    !(productId in PRODUCT_ALLOWLIST) ||
+    !(Object.hasOwn(PRODUCT_ALLOWLIST, productId)) ||
     (requestedProduct !== undefined && productId !== requestedProduct) ||
     lineItem.autoRenewingPlan === undefined ||
     lineItem.offerDetails?.basePlanId !== 'monthly' ||
@@ -662,7 +699,7 @@ async function withAbsoluteDeadline<T>(operation: () => Promise<T>, deadline: nu
 function validatedInactive(purchase: PlaySubscriptionPurchase, product: string | undefined, account: string, now: Date): 'expired' | 'on_hold' | 'paused' | 'revoked' | 'pending' | undefined {
   const line = purchase.lineItems?.[0];
   if (purchase.lineItems?.length !== 1 || !line || typeof line.productId !== 'string' ||
-      !(line.productId in PRODUCT_ALLOWLIST) || (product !== undefined && line.productId !== product) ||
+      !(Object.hasOwn(PRODUCT_ALLOWLIST, line.productId)) || (product !== undefined && line.productId !== product) ||
       line.offerDetails?.basePlanId !== 'monthly' || line.offerDetails.offerId !== undefined ||
       line.autoRenewingPlan === undefined || purchase.externalAccountIdentifiers?.obfuscatedExternalAccountId !== account) return undefined;
   const expiry = parseTimestamp(line.expiryTime);

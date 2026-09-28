@@ -1,5 +1,24 @@
 {
-  "indexes": [],
+  "indexes": [
+    {
+      "collectionGroup": "playBillingEventWork",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "state",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "dueAt",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "__name__",
+          "order": "ASCENDING"
+        }
+      ]
+    }
+  ],
   "fieldOverrides": [
     {
       "collectionGroup": "playBillingDisclosureAssertions",
@@ -54,6 +73,61 @@
     {
       "collectionGroup": "playBillingAuthorityOutbox",
       "fieldPath": "snapshot",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "playBillingEventWork",
+      "fieldPath": "envelope",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "playBillingEventWork",
+      "fieldPath": "resolved",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "playBillingEventWork",
+      "fieldPath": "nonce",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "playBillingEventWork",
+      "fieldPath": "attemptStarts",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "playBillingEventWork",
+      "fieldPath": "dispatchTotals",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "playBillingEventWork",
+      "fieldPath": "payloadDigest",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "playBillingEventWork",
+      "fieldPath": "tokenFingerprint",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "playBillingEventControl",
+      "fieldPath": "starts",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "playBillingEventControl",
+      "fieldPath": "totals",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "playBillingEventControl",
+      "fieldPath": "admissionStarts",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "playBillingPurchaseBindings",
+      "fieldPath": "ownershipProof",
       "indexes": []
     }
   ]

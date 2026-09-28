@@ -170,7 +170,7 @@ test('retirement during encryption prevents encrypted delivery and acknowledgeme
 test('canceled late prepare transaction cannot create a route', async () => {
   const h = createHarness(); await h.service.acceptDisclosure(h.identity, disclosure());
   const entered = deferred(); const release = deferred();
-  const database: BillingDatabase = { databaseId: h.database.databaseId, runTransaction: (action) => h.database.runTransaction(async (tx) => {
+  const database: BillingDatabase = { databaseId: h.database.databaseId, dueEventWork: (now, limit) => h.database.dueEventWork(now, limit), runTransaction: (action) => h.database.runTransaction(async (tx) => {
     entered.resolve(); await release.promise; return action(tx);
   }) };
   const repo = new BillingRepository(database, new DeterministicNonceSource(), h.identifiers);

@@ -1,10 +1,11 @@
 /** One wall-time budget starts before authentication; no external call retries. */
 export class BillingDeadline {
-  private invalidated = false;
-  cancel(): void { this.invalidated = true; }
+  private readonly controller = new AbortController();
+  readonly signal = this.controller.signal;
+  cancel(): void { this.controller.abort(); }
   constructor(readonly expiresAt = Date.now() + 55_000) {}
   check(): void {
-    if (this.invalidated || Date.now() >= this.expiresAt) throw new Error('billing deadline elapsed');
+    if (this.signal.aborted || Date.now() >= this.expiresAt) { this.cancel(); throw new Error('billing deadline elapsed'); }
   }
   async run<T>(operation: () => Promise<T>, maximumMs = 10_000): Promise<T> {
     this.check();

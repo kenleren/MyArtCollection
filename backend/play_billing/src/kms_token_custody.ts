@@ -6,6 +6,7 @@ import {
   type TokenContext, type TokenCustody, type TokenEnvelope,
 } from './token_custody.js';
 
+export class KmsConfigurationError extends Error { constructor(){super('token custody configuration unavailable');} }
 export interface KmsTransport {
   request(resource: string, action: 'encrypt' | 'decrypt', body: Record<string, string>, deadline: BillingDeadline): Promise<unknown>;
 }
@@ -23,26 +24,30 @@ export class GoogleKmsTransport implements KmsTransport {
   async request(resource: string, action: 'encrypt' | 'decrypt', body: Record<string, string>, deadline: BillingDeadline): Promise<unknown> {
     const call = new BillingDeadline(Math.min(deadline.expiresAt, Date.now() + 10_000));
     const controller = new AbortController();
+    const cancel = () => { call.cancel(); controller.abort(); };
+    deadline.signal.addEventListener('abort',cancel,{once:true});
     const timer = setTimeout(() => controller.abort(), Math.max(0, call.expiresAt - Date.now()));
     try {
       return await call.run(async () => {
+        deadline.check();
         const url = `https://cloudkms.googleapis.com/v1/${resource}:${action}`;
         const client = await this.auth.getClient();
-        call.check();
+        call.check(); deadline.check();
         const headers = await client.getRequestHeaders(url);
-        call.check();
+        call.check(); deadline.check();
         headers.set('content-type', 'application/json');
         const response = await this.fetch(url, {
           method: 'POST', headers, body: JSON.stringify(body), signal: controller.signal,
           redirect: 'error',
         });
-        if (!response.ok || response.body === null) throw custodyUnavailable();
+        if(response.status===401 || response.status===403) {await response.body?.cancel();throw new KmsConfigurationError();}
+        if (!response.ok || response.body === null) {await response.body?.cancel();throw custodyUnavailable();}
         const reader = response.body.getReader();
         const chunks: Uint8Array[] = [];
         let count = 0;
         try {
           while (true) {
-            call.check();
+            call.check(); deadline.check();
             const next = await reader.read();
             if (next.done) break;
             count += next.value.length;
@@ -50,11 +55,11 @@ export class GoogleKmsTransport implements KmsTransport {
             chunks.push(next.value);
           }
         } finally { await reader.cancel(); }
-        call.check();
+        call.check(); deadline.check();
         return JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown;
       });
-    } catch { throw custodyUnavailable(); }
-    finally { clearTimeout(timer); controller.abort(); }
+    } catch(error) { throw error instanceof KmsConfigurationError ? error : custodyUnavailable(); }
+    finally { clearTimeout(timer); deadline.signal.removeEventListener('abort',cancel); controller.abort(); }
   }
 }
 export class GoogleKmsTokenCustody implements TokenCustody {
@@ -79,7 +84,7 @@ export class GoogleKmsTokenCustody implements TokenCustody {
           !validBase64(value.ciphertext, 16_384) ||
           crc32c(Buffer.from(value.ciphertext, 'base64')) !== value.ciphertextCrc32c) throw custodyUnavailable();
       return { version: CUSTODY_VERSION, keyVersion: this.encryptionVersion, ciphertext: value.ciphertext };
-    } catch { throw custodyUnavailable(); }
+    } catch(error) { throw error instanceof KmsConfigurationError ? error : custodyUnavailable(); }
   }
   async decrypt(envelope: TokenEnvelope, context: TokenContext, deadline: BillingDeadline): Promise<string> {
     try {
@@ -97,7 +102,7 @@ export class GoogleKmsTokenCustody implements TokenCustody {
       const token = bytes.toString('utf8');
       if (crc32c(bytes) !== value.plaintextCrc32c || !validToken(token) || !Buffer.from(token).equals(bytes)) throw custodyUnavailable();
       return token;
-    } catch { throw custodyUnavailable(); }
+    } catch(error) { throw error instanceof KmsConfigurationError ? error : custodyUnavailable(); }
   }
 }
 function record(value: unknown): Record<string, unknown> {

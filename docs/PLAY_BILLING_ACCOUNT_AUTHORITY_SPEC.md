@@ -126,3 +126,5 @@ L4 broker credits/deletion, seven-day offline creation, retention/privacy/spend
 policy, operational monitoring and real Play purchase/lifecycle evidence are
 still required before public paid launch. No owner retention or pricing decision
 is implied by these disabled source records.
+
+Stage B now has a disabled source implementation described in [PLAY_BILLING_EVENTS_SPEC.md](PLAY_BILLING_EVENTS_SPEC.md). Its event job fence is mandatory for background admission and guarded writes; its deployment and public-launch dependencies remain separate.

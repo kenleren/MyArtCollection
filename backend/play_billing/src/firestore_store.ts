@@ -16,6 +16,14 @@ export class FirestoreBillingDatabase implements BillingDatabase {
     }
   }
 
+  async dueEventWork(now: Date, limit: number): Promise<string[]> {
+    if (!Number.isInteger(limit) || limit < 1 || limit > 10) throw new Error('billing event unsafe');
+    const snapshot = await this.firestore.collection('playBillingEventWork')
+      .where('state', 'in', ['ready','retry','working']).where('dueAt', '<=', now)
+      .orderBy('dueAt').orderBy('__name__').limit(limit).get();
+    return snapshot.docs.map(doc => doc.id);
+  }
+
   runTransaction<T>(operation: (transaction: BillingTransaction) => Promise<T>): Promise<T> {
     return this.firestore.runTransaction(async (firestoreTransaction) =>
       operation(createTransactionAdapter(this.firestore, firestoreTransaction)),
@@ -38,6 +46,10 @@ function createTransactionAdapter(
     },
     findSubjectRoute: async (subject) => {
       const result = await transaction.get(firestore.collection('playBillingAccountRoutes').where('accountSubject', '==', subject).limit(1));
+      return result.empty ? undefined : normalizeFirestoreValue(result.docs[0]!.data());
+    },
+    findAnyEventWork: async () => {
+      const result = await transaction.get(firestore.collection('playBillingEventWork').limit(1));
       return result.empty ? undefined : normalizeFirestoreValue(result.docs[0]!.data());
     },
     set: <Value>(collection: BillingCollection, id: string, value: Value) => {
