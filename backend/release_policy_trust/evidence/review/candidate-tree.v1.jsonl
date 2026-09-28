@@ -1,6 +1,6 @@
 {"blob_oid":"dd56ec11688bbd692f165b78709bfbf44538c79a","class":"evaluated-input","mode":"100644","path":".env.local.example"}
 {"blob_oid":"6831600a09d7f6587949571b1e19139dd157c73d","class":"protected-control","mode":"100644","path":".github/CODEOWNERS"}
-{"blob_oid":"46bd8f94dff48bc7178c27fb1c60c0bd7bbe73ec","class":"protected-control","mode":"100644","path":".github/workflows/release-readiness.yml"}
+{"blob_oid":"c76f179ab407e2c7cb1fd26ad8c3b47ade796aef","class":"protected-control","mode":"100644","path":".github/workflows/release-readiness.yml"}
 {"blob_oid":"6072541dc263f0837c590af755ce5593ebcea7d9","class":"evaluated-input","mode":"100644","path":".gitignore"}
 {"blob_oid":"db887dde90662d8f6e31a95d15d03c0afa59f648","class":"protected-control","mode":"100644","path":".gitleaks.toml"}
 {"blob_oid":"28b1b31b4b5a3bf62c7946519fe8da1929b5102a","class":"protected-control","mode":"100644","path":".gitleaksignore"}
@@ -547,14 +547,14 @@
 {"blob_oid":"4d313bb29d4404917c5d8673b448d2bc2403ff7f","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/dist/test/ci_observability.test.js"}
 {"blob_oid":"298ccd3e2e0ec4b0120282570e9202f8ff0ac1c2","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/dist/test/dispatcher.test.js"}
 {"blob_oid":"1075f1100a04b9b2bf8f2421b9299d4c53a29ccc","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/dist/test/github_pagination.test.js"}
-{"blob_oid":"6aa84e6df109a97575020bfc351aba58784b0779","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/evidence/artifact-manifest.v2.json"}
+{"blob_oid":"1e92559540408cc01d95306fecc0dae9ab52d132","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/evidence/artifact-manifest.v2.json"}
 {"blob_oid":"28758f90ef72032930eee64b16ae9008c567d291","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/evidence/bundle/bundle-evidence.v1.json"}
 {"blob_oid":"20bb3a5b626961eba1edfb44d15005ff5b11fccd","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/evidence/bundle/import-manifest.v1.json"}
 {"blob_oid":"de101324ede369e00545e2d53d8debaa338b2350","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/evidence/bundle/metafile.json"}
 {"blob_oid":"6f963a79735ba8cb22001ac1a9d95568d5822282","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/evidence/bundle/worker.mjs"}
 {"blob_oid":"95e9420696fa1dbd472d709e9290419a2b72593f","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/evidence/restore-fixture.v1.json"}
 {"blob_oid":"332114915f2c50ee935c4228b0d1d912a2537630","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/evidence/restore-rehearsal.v1.json"}
-{"blob_oid":"ab1c083c6de066a1a8f93c9d9afeeb6c8c7b3530","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/evidence/sbom.spdx.json"}
+{"blob_oid":"9357f4e0e01fbc41f85ff27571dea65a62cd9b60","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/evidence/sbom.spdx.json"}
 {"blob_oid":"2e64ec1ee64ed5d9fec8262649425ada23df53fe","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/evidence/sqlite-conformance.v1.json"}
 {"blob_oid":"a9ca2a5245cdf0a1d5aa7c5cad9840afe20035b6","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/evidence/wrangler-preflight.v1.json"}
 {"blob_oid":"81cdfebf4bf74502121fadb78f56d9e35b552c13","class":"protected-control","mode":"100644","path":"backend/release_policy_workers_free/package-lock.json"}
@@ -620,9 +620,10 @@
 {"blob_oid":"f08f5147aef94f5cfc89363c80f3ae1a43948b1e","class":"evaluated-input","mode":"100644","path":"docs/PLAY_BILLING_GATE_SPEC.md"}
 {"blob_oid":"a3906a53cc4cc465cde9393701bdab4ca7b8b57b","class":"evaluated-input","mode":"100644","path":"docs/PRODUCT_PLAN.md"}
 {"blob_oid":"1fa1d77dd8779487f8dfdb1ab344a8177af2fda4","class":"evaluated-input","mode":"100644","path":"docs/PROTOTYPE_STORYBOARD.md"}
+{"blob_oid":"ce6be692e947151289a08afa561de2a3c1f86f6d","class":"evaluated-input","mode":"100644","path":"docs/PUBLIC_BETA_ACCEPTANCE.md"}
 {"blob_oid":"f60bb5794a16a201fb3a18656fe1a59518b1ecd2","class":"protected-control","mode":"100644","path":"docs/RELEASE_POLICY_TRUST.md"}
 {"blob_oid":"abea86b78c0ebba46844971864336f56697f2e15","class":"evaluated-input","mode":"100644","path":"docs/RELEASE_POLICY_WORKERS_ROLLBACK.md"}
-{"blob_oid":"2aa95afe368ecba3e189bfbcfbd42f37e0722f6b","class":"protected-control","mode":"100644","path":"docs/RELEASE_READINESS_CI.md"}
+{"blob_oid":"2fb00257a2e2852810a7fdfe184a65c5de347a6f","class":"protected-control","mode":"100644","path":"docs/RELEASE_READINESS_CI.md"}
 {"blob_oid":"753aec8629757def02ceff0695c71dedb24e7776","class":"protected-control","mode":"100644","path":"docs/SECRET_HYGIENE.md"}
 {"blob_oid":"b6a773ff31d53903bd86af3cedb4625d63b0f4d3","class":"evaluated-input","mode":"100644","path":"docs/SUPPORTING_RECORD_ATTACHMENT_EXPORT_CONTRACT_V1.md"}
 {"blob_oid":"d5662d39dd9bb4fd724fffa674013111fd6dbac9","class":"evaluated-input","mode":"100644","path":"docs/VALUE_TAXONOMY_SPEC.md"}
@@ -862,7 +863,7 @@
 {"blob_oid":"6a43236fbc5414f21532517b10f8e3769347c244","class":"evaluated-input","mode":"100644","path":"test/online_research_service_test.dart"}
 {"blob_oid":"b201e734ff2f3b235b9af11e26ab340e202597a5","class":"evaluated-input","mode":"100644","path":"test/play_billing_adapter_test.dart"}
 {"blob_oid":"5b7b0b198ed3a926b3601e24fc09b8edc5a5b4c8","class":"evaluated-input","mode":"100644","path":"test/real_export_service_test.dart"}
-{"blob_oid":"242b5a3791936006dc05c4d36086e9b69f4ba8c4","class":"evaluated-input","mode":"100755","path":"test/release_readiness_workflow_test.sh"}
+{"blob_oid":"3df9c2eeb886e946d3763ede2ac64c720c57bd18","class":"evaluated-input","mode":"100755","path":"test/release_readiness_workflow_test.sh"}
 {"blob_oid":"d82127b1a96dc9d657e49709daeca98c4e4e6f55","class":"evaluated-input","mode":"100755","path":"test/safe_apple_build_test.sh"}
 {"blob_oid":"cd1b2cdbb8475c435209ad620759cbb31cb22f8e","class":"evaluated-input","mode":"100644","path":"test/supporting_attachment_service_test.dart"}
 {"blob_oid":"af369489bb1a8a92eec539b83ee9786a59cf7e92","class":"evaluated-input","mode":"100644","path":"test/supporting_record_attachment_export_contract_test.dart"}
