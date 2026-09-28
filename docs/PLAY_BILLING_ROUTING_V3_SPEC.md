@@ -46,7 +46,12 @@ New callable `preparePlayPurchase`:
   `temporarily_unavailable`, `rate_limited`. Prepare never grants paid access.
 
 Revoked-checked Google Firebase identity and consumed approved-app App Check
-remain required. Every v3 callable additionally requires the disabled-by-default
+remain required. The shared callable guard accepts only SDK-verified
+`request.app.alreadyConsumed === false`; true, absent or malformed consumption
+state rejects before the additional revoked-token Auth check or billing work.
+The pinned [Functions SDK v7.2.5](https://github.com/firebase/firebase-functions/blob/v7.2.5/src/common/providers/https.ts)
+marks a consumed-but-valid token as valid context, so configuration alone does
+not enforce freshness. Every v3 callable additionally requires the disabled-by-default
 `PLAY_BILLING_ROUTING_ENABLED=enabled`. Prepare, verify and restore also require
 the existing recovery switch; Publisher and custody have their separate gates.
 No disabled default performs credential lookup or a provider call.
@@ -96,6 +101,14 @@ reciprocal root, disclosure assertion, epoch, attempt owner and account revision
 Provider dispatch rechecks current authority after delayed acquire/delivery
 results. Paid/inactive response ordering and both account-chain pointer checks
 from v2 remain mandatory.
+
+An unverified token operation is only a lease/cost record, not durable account
+ownership. Another lifecycle may reclaim it after the existing lease/cooldown
+only when it has no binding, verified account subject or acknowledgement history,
+and its phase is lookup/free/canceled-pending-read-only. Reclamation retains
+cost history and advances owner generation/nonce, so old results and replays
+cannot mutate the new attempt. Verified-owner claims survive subsequent lookups;
+bindings, custody and acknowledgement state never transfer this way.
 
 The internal repository retirement primitive takes an expected epoch/generation
 and atomically retires root/route while advancing generation. It invalidates

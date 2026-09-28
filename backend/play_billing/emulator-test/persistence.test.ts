@@ -54,6 +54,34 @@ describe('named billing database persistence', () => {
     assert.equal(index.current === h.identifiers.tokenFingerprint(token), true);
   });
 
+  test('unbound wrong-account operation is reclaimable on Firestore without transferring ownership', async () => {
+    const h = createHarness(); const persisted = createFirestoreHarness(h.identifiers);
+    const other = { uid: `synthetic-other-${randomUUID()}` };
+    const subject = h.identifiers.accountSubject(h.identity.uid);
+    const otherSubject = h.identifiers.accountSubject(other.uid);
+    await persisted.repository.acceptDisclosure(subject, h.clock.now());
+    const prepared = await persisted.repository.preparePurchase(subject, h.clock.now());
+    assert.equal(prepared.kind, 'ready'); if (prepared.kind !== 'ready') return;
+    await persisted.repository.acceptDisclosure(otherSubject, h.clock.now());
+    await persisted.repository.preparePurchase(otherSubject, h.clock.now());
+    const service = new PlayBillingService({ ...h, repository: persisted.repository });
+    const token = purchaseToken(); const fingerprint = h.identifiers.tokenFingerprint(token);
+    h.play.setPurchase(token, { ...eligiblePurchase(h), externalAccountIdentifiers: { obfuscatedExternalAccountId: prepared.obfuscatedAccountId } });
+    const wrong = await service.verifySubscription(other, verifyRequest(token));
+    assert.equal('reason' in wrong && wrong.reason, 'not_verified');
+    const old = await readRecord(persisted.firestore, COLLECTIONS.operations, fingerprint);
+    assert.equal(old.accountSubject, undefined);
+    h.clock.advance(90_000);
+    assert.equal((await service.verifySubscription(h.identity, verifyRequest(token))).status, 'paid');
+    const owned = await readRecord(persisted.firestore, COLLECTIONS.operations, fingerprint);
+    assert.equal(owned.attemptGeneration, Number(old.attemptGeneration) + 1);
+    assert.equal((await readRecord(persisted.firestore, COLLECTIONS.bindings, fingerprint)).accountSubject, subject);
+    h.clock.advance(90_000);
+    assert.notEqual((await service.verifySubscription(other, verifyRequest(token))).status, 'paid');
+    assert.deepEqual(await readRecord(persisted.firestore, COLLECTIONS.operations, fingerprint), owned);
+    assert.equal(h.play.getCalls.length, 2);
+  });
+
   test('concurrent first registration and lost response preserve one reciprocal Firestore route', async () => {
     const h = createFirestoreHarness(); const subject = opaque(`route-account-${randomUUID()}`);
     await h.repository.acceptDisclosure(subject, h.clock.now());

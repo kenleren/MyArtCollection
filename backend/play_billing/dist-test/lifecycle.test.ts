@@ -208,3 +208,98 @@ for (const boundary of ['acquire', 'decrypt'] as const) {
     if (boundary === 'acquire') assert.equal(kms.calls.length, before);
   });
 }
+
+async function prepareOtherAccount(h: Harness) {
+  const identity = { uid: 'synthetic-other-google-account' };
+  assert.equal((await h.service.acceptDisclosure(identity, disclosure())).status, 'accepted');
+  assert.equal((await h.service.preparePurchase(identity, request())).status, 'ready');
+  return identity;
+}
+
+test('unverified wrong-account attempt cannot poison an unbound token or reset its cooldown/counters', async () => {
+  const h = createHarness(); await acceptDisclosure(h); const other = await prepareOtherAccount(h);
+  const token = purchaseToken(); h.play.setPurchase(token, eligiblePurchase(h));
+  const wrongRequest = verifyRequest(token);
+  const wrong = await h.service.verifySubscription(other, wrongRequest);
+  assert.equal('reason' in wrong && wrong.reason, 'not_verified');
+  const old = recordsInCollection(h.database, COLLECTIONS.operations)[0] as Record<string, unknown>;
+  assert.equal(old.accountSubject, undefined); assert.equal(recordsInCollection(h.database, COLLECTIONS.bindings).length, 0);
+  const early = await h.service.verifySubscription(h.identity, verifyRequest(token));
+  assert.equal('reason' in early && early.reason, 'rate_limited'); assert.equal(h.play.getCalls.length, 1);
+  h.clock.advance(90_000);
+  assert.equal((await h.service.verifySubscription(h.identity, verifyRequest(token))).status, 'paid');
+  const current = recordsInCollection(h.database, COLLECTIONS.operations)[0] as Record<string, unknown>;
+  assert.equal(current.attemptGeneration, Number(old.attemptGeneration) + 1);
+  assert.notDeepEqual(current.attemptNonce, old.attemptNonce);
+  assert.equal(h.play.getCalls.length, 2);
+  assert.equal(recordsInCollection(h.database, COLLECTIONS.rateLimits).length, 2);
+  const before = h.database.snapshotForTest();
+  assert.notEqual((await h.service.verifySubscription(other, wrongRequest)).status, 'paid');
+  assert.deepEqual(h.database.snapshotForTest(), before); assert.equal(h.play.getCalls.length, 2);
+});
+
+test('unverified cross-account lease remains protected; reclaimed attempt fences every late old mutation', async () => {
+  const h = createHarness(); await acceptDisclosure(h); const other = await prepareOtherAccount(h);
+  const token = purchaseToken(); const fingerprint = h.identifiers.tokenFingerprint(token);
+  const prior = await h.repository.acquireAttempt(h.identifiers.accountSubject(other.uid),
+    h.identifiers.requestFingerprint(other.uid, randomUUID()), fingerprint, h.clock.now());
+  assert.equal(prior.kind, 'acquired'); if (prior.kind !== 'acquired') return;
+  h.play.setPurchase(token, eligiblePurchase(h));
+  assert.equal((await h.service.verifySubscription(h.identity, verifyRequest(token))).status, 'pending');
+  assert.equal(h.play.getCalls.length, 0);
+  h.clock.advance(90_000);
+  assert.equal((await h.service.verifySubscription(h.identity, verifyRequest(token))).status, 'paid');
+  const before = h.database.snapshotForTest();
+  assert.equal(await h.repository.markVerifiedOwner(prior.attempt, 'archivale_starter_monthly', h.clock.now()), false);
+  assert.equal(await h.repository.closeAttempt(prior.attempt, h.clock.now()), false);
+  assert.equal(await h.repository.isCurrentAttempt(prior.attempt, h.clock.now()), false);
+  assert.deepEqual(h.database.snapshotForTest(), before);
+});
+
+for (const boundary of ['verified_owner', 'delivery_committed', 'ack_in_progress', 'paid'] as const) {
+  test(`cross-account reacquisition cannot transfer ${boundary} ownership`, async () => {
+    const h = createHarness(); await acceptDisclosure(h); const other = await prepareOtherAccount(h);
+    const token = purchaseToken(); const fingerprint = h.identifiers.tokenFingerprint(token);
+    if (boundary === 'verified_owner') {
+      const acquired = await h.repository.acquireAttempt(h.identifiers.accountSubject(h.identity.uid),
+        h.identifiers.requestFingerprint(h.identity.uid, randomUUID()), fingerprint, h.clock.now());
+      assert.equal(acquired.kind, 'acquired'); if (acquired.kind !== 'acquired') return;
+      assert.equal(await h.repository.markVerifiedOwner(acquired.attempt, 'archivale_starter_monthly', h.clock.now()), true);
+    } else {
+      h.play.setPurchase(token, eligiblePurchase(h, { acknowledgementState: 'ACKNOWLEDGEMENT_STATE_PENDING' }));
+      const service = boundary === 'paid' ? h.service : new PlayBillingService({ ...h, hooks: {
+        ...(boundary === 'delivery_committed' ? { afterDeliveryCommitted: async () => { throw new Error('synthetic crash'); } } :
+          { afterAcknowledgementStarted: async () => { throw new Error('synthetic crash'); } }),
+      } });
+      await service.verifySubscription(h.identity, verifyRequest(token));
+    }
+    const operation = recordsInCollection(h.database, COLLECTIONS.operations)[0] as Record<string, unknown>;
+    assert.equal(operation.phase, boundary);
+    h.clock.advance(90_000);
+    const before = h.database.snapshotForTest(); const calls = h.play.getCalls.length;
+    const result = await h.service.verifySubscription(other, verifyRequest(token));
+    assert.equal('reason' in result && result.reason, 'unsafe_record');
+    assert.deepEqual(h.database.snapshotForTest(), before); assert.equal(h.play.getCalls.length, calls);
+  });
+}
+
+test('same-account retry cannot erase a verified-owner claim before interrupted custody', async () => {
+  const h = createHarness(); await acceptDisclosure(h); const other = await prepareOtherAccount(h);
+  const token = purchaseToken(); const fingerprint = h.identifiers.tokenFingerprint(token);
+  const subject = h.identifiers.accountSubject(h.identity.uid);
+  const acquired = await h.repository.acquireAttempt(subject,
+    h.identifiers.requestFingerprint(h.identity.uid, randomUUID()), fingerprint, h.clock.now());
+  assert.equal(acquired.kind, 'acquired'); if (acquired.kind !== 'acquired') return;
+  assert.equal(await h.repository.markVerifiedOwner(acquired.attempt, 'archivale_starter_monthly', h.clock.now()), true);
+  h.clock.advance(90_000);
+  const retry = await h.repository.acquireAttempt(subject,
+    h.identifiers.requestFingerprint(h.identity.uid, randomUUID()), fingerprint, h.clock.now());
+  assert.equal(retry.kind, 'acquired'); if (retry.kind !== 'acquired') return;
+  assert.equal(await h.repository.closeAttempt(retry.attempt, h.clock.now()), true);
+  assert.equal((recordsInCollection(h.database, COLLECTIONS.operations)[0] as Record<string, unknown>).accountSubject, subject);
+  h.clock.advance(90_000);
+  const before = h.database.snapshotForTest();
+  const result = await h.service.verifySubscription(other, verifyRequest(token));
+  assert.equal('reason' in result && result.reason, 'unsafe_record');
+  assert.deepEqual(h.database.snapshotForTest(), before); assert.equal(h.play.getCalls.length, 0);
+});

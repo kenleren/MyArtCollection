@@ -394,7 +394,9 @@ export class BillingRepository {
       if (replay !== undefined && replay.operationKind !== kind) return { kind: 'replay_conflict' };
       if (
         (replay !== undefined && (!validReplay(replay, requestFingerprint) || !sameLifecycle(replay, root))) ||
-        (operation !== undefined && (!validOperation(operation, tokenFingerprint) || !sameLifecycle(operation, root))) ||
+        (operation !== undefined && (!validOperation(operation, tokenFingerprint) ||
+          (operation.accountSubject !== undefined && operation.accountSubject !== accountSubject) ||
+          (!sameLifecycle(operation, root) && !unverifiedUnboundOperation(operation, binding)))) ||
         (binding !== undefined && (!validBinding(binding, tokenFingerprint) || !sameLifecycle(binding, root)))
       ) {
         return { kind: 'unsafe_record' };
@@ -474,6 +476,9 @@ export class BillingRepository {
         ...owner,
         lifecycleEpoch: root.lifecycleEpoch, lifecycleGeneration: root.lifecycleGeneration,
         tokenFingerprint,
+        // A new lookup must not erase a prior verified-owner claim when custody
+        // was interrupted. Unverified attempts have no accountSubject to retain.
+        ...(operation?.accountSubject === undefined ? {} : { accountSubject: operation.accountSubject }),
         phase: 'lookup_in_flight',
         outcomeCode: 'in_flight',
         leaseExpiresAt,
@@ -1052,6 +1057,19 @@ function validReplay(record: RequestReplayRecord, requestFingerprint: string): b
     validPhaseOutcome(record.phase, record.outcomeCode) &&
     validLeaseAndCooldown(record.phase, record.leaseExpiresAt, record.cooldownUntil)
   );
+}
+
+// An unverified global token attempt is a rate/lease record, not account ownership.
+// Only this narrow pre-ownership state may be reclaimed by another lifecycle;
+// the existing lease, cooldown, nonce/generation and replay checks still apply.
+function unverifiedUnboundOperation(
+  operation: TokenOperationRecord,
+  binding: PurchaseBindingRecord | undefined,
+): boolean {
+  return binding === undefined && operation.accountSubject === undefined &&
+    operation.acknowledgementStartedAt.length === 0 &&
+    (operation.phase === 'lookup_in_flight' || operation.phase === 'free' ||
+      operation.phase === 'canceled_pending_read_only');
 }
 
 function validOperation(record: TokenOperationRecord, tokenFingerprint: string): boolean {
