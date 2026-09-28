@@ -40,6 +40,21 @@
       "collectionGroup": "playBillingLifecycles",
       "fieldPath": "obfuscatedAccountId",
       "indexes": []
+    },
+    {
+      "collectionGroup": "playBillingAccountAuthority",
+      "fieldPath": "owner",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "playBillingAccountAuthority",
+      "fieldPath": "snapshot",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "playBillingAuthorityOutbox",
+      "fieldPath": "snapshot",
+      "indexes": []
     }
   ]
 }

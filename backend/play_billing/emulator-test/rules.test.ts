@@ -47,7 +47,7 @@ describe('named billing database client rules', () => {
   test('deny Google-account reads and writes of account index and custody', async () => {
     const subject = randomUUID();
     const firestore = client({ sub: subject, user_id: subject, firebase: { sign_in_provider: 'google.com' } });
-    for (const collection of [COLLECTIONS.accounts, COLLECTIONS.bindings, COLLECTIONS.lifecycles, COLLECTIONS.routes]) {
+    for (const collection of [COLLECTIONS.accounts, COLLECTIONS.bindings, COLLECTIONS.lifecycles, COLLECTIONS.routes, COLLECTIONS.authorities, COLLECTIONS.authorityOutbox]) {
       const reference = doc(firestore, collection, randomUUID());
       await assertPermissionDenied(getDoc(reference));
       await assertPermissionDenied(setDoc(reference, { probe: true }));

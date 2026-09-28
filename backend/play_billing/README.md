@@ -25,6 +25,10 @@ and encryption keys are separate; no agent should inspect credential files.
 
 Active v3 bindings/indexes and lifecycle roots/routes do not have a TTL based on stale observed expiry.
 Post-expiry/deletion retention and unattended lifecycle remain launch blockers.
+The disabled [account authority Stage A](../../docs/PLAY_BILLING_ACCOUNT_AUTHORITY_SPEC.md)
+adds exclusive cross-token observation admission and atomic latest-state outbox
+records, with durable root markers and no new TTL. No background ingress or
+publisher is enabled; v3 client response/lease limitations remain explicit.
 
 ## Local Checks
 

@@ -1,3 +1,4 @@
+import { AUTHORITY_VERSION, SNAPSHOT_VERSION, initialAuthority, validAuthority, outboxFor, fingerprint, type AccountAuthority, type AuthorityOutbox, type AuthoritySnapshot, type ObservationSource, type InactiveReason } from './account_authority.js';
 import { LIFECYCLE_VERSION, validLifecycleFields, sameLifecycle, validLifecycleRoot, validReciprocalRoute, routeFor, type LifecycleFields, type LifecycleRoot, type LifecycleRoute } from './lifecycle.js';
 import type { BillingIdentifiers } from './crypto.js';
 import {
@@ -50,7 +51,8 @@ export interface AttemptHandle extends LifecycleFields {
   accountSubject: string;
   owner: AttemptOwner;
   usesReplay: boolean;
-  fence?: { assertionId: string; indexRevision: number; deadline: BillingDeadline; kind: 'verify' | 'restore' };
+  fence?: { assertionId: string; indexRevision: number; deadline: BillingDeadline; kind: 'verify' | 'restore';
+    observationGeneration: number; observationNonce: Uint8Array; source: ObservationSource; publicationRevision: number };
   envelope?: TokenEnvelope;
 }
 interface AccountIndex extends LifecycleFields {
@@ -203,7 +205,8 @@ export class BillingRepository {
   private async readLifecycle(tx: BillingTransaction, subject: string): Promise<LifecycleRoot | undefined> {
     const root = await tx.get<LifecycleRoot>(COLLECTIONS.lifecycles, subject);
     if (root === undefined) {
-      if (await tx.findSubjectRoute(subject) !== undefined) throw new UnsafeBillingRecordError();
+      if (await tx.findSubjectRoute(subject) !== undefined || await tx.get(COLLECTIONS.authorities, subject) !== undefined ||
+          await tx.get(COLLECTIONS.authorityOutbox, subject) !== undefined) throw new UnsafeBillingRecordError();
       return undefined;
     }
     if (!validLifecycleRoot(root, subject) || this.identifiers.routeFingerprint(root.obfuscatedAccountId) !== root.routeFingerprint) {
@@ -211,7 +214,78 @@ export class BillingRepository {
     }
     const route = await tx.get<LifecycleRoute>(COLLECTIONS.routes, root.routeFingerprint);
     if (!route || !validReciprocalRoute(route, root)) throw new UnsafeBillingRecordError();
+    await this.readAuthority(tx, root);
     return root;
+  }
+
+  private async readAuthority(tx: BillingTransaction, root: LifecycleRoot): Promise<AccountAuthority | undefined> {
+    const authority = await tx.get<AccountAuthority>(COLLECTIONS.authorities, root.accountSubject);
+    const outbox = await tx.get<AuthorityOutbox>(COLLECTIONS.authorityOutbox, root.accountSubject);
+    if (root.authorityVersion === undefined && authority === undefined && outbox === undefined) return undefined;
+    if (!authority || !outbox || !validAuthority(authority, root, outbox)) throw new UnsafeBillingRecordError();
+    const recoveryToken = authority.acknowledgementRecoveryToken;
+    if (recoveryToken !== undefined) {
+      const index = await tx.get<AccountIndex>(COLLECTIONS.accounts, root.accountSubject);
+      const binding = await tx.get<PurchaseBindingRecord>(COLLECTIONS.bindings, recoveryToken);
+      if (!index || !validIndex(index, root.accountSubject) || !sameLifecycle(index, root) ||
+          (index.current !== recoveryToken && index.candidate !== recoveryToken) || !binding ||
+          !validBinding(binding, recoveryToken) || binding.accountSubject !== root.accountSubject || !sameLifecycle(binding, root)) {
+        throw new UnsafeBillingRecordError();
+      }
+    }
+    return authority;
+  }
+
+  private async firstAuthority(tx: BillingTransaction, root: LifecycleRoot, now: Date): Promise<AccountAuthority> {
+    const fresh = initialAuthority(root, now);
+    // A retired L1 root cannot recover; its old-generation custody is retained,
+    // not adopted. Active cutover must preserve any already-started ACK barrier.
+    if (root.status === 'retired') return fresh;
+    const index = await tx.get<AccountIndex>(COLLECTIONS.accounts, root.accountSubject);
+    if (index !== undefined && (!validIndex(index, root.accountSubject) || !sameLifecycle(index, root))) throw new UnsafeBillingRecordError();
+    if (index === undefined && await tx.findSubjectBinding(root.accountSubject) !== undefined) throw new UnsafeBillingRecordError();
+    const bindings = new Map<string, PurchaseBindingRecord>();
+    for (const pointer of new Set([index?.current, index?.candidate])) {
+      if (pointer === undefined) continue;
+      const binding = await tx.get<PurchaseBindingRecord>(COLLECTIONS.bindings, pointer);
+      if (!binding || !validBinding(binding, pointer) || binding.accountSubject !== root.accountSubject || !sameLifecycle(binding, root)) throw new UnsafeBillingRecordError();
+      bindings.set(pointer, binding);
+    }
+    if (!validIndexedChain(index, bindings)) throw new UnsafeBillingRecordError();
+    const recovery = [...bindings.values()].filter(binding => binding.attemptPhase === 'ack_in_progress' || binding.ackState === 'unknown');
+    if (recovery.length > 1) throw new UnsafeBillingRecordError();
+    return recovery.length === 0 ? fresh : { ...fresh, acknowledgementRecoveryToken: recovery[0].tokenFingerprint };
+  }
+
+  private writeAuthority(tx: BillingTransaction, root: LifecycleRoot, authority: AccountAuthority): void {
+    const marked: LifecycleRoot = { ...root, authorityVersion: AUTHORITY_VERSION,
+      authorityPublicationRevision: authority.publicationRevision };
+    const outbox = outboxFor(authority.snapshot);
+    if (!validAuthority(authority, marked, outbox)) throw new UnsafeBillingRecordError();
+    tx.set(COLLECTIONS.lifecycles, root.accountSubject, marked);
+    tx.set(COLLECTIONS.authorities, root.accountSubject, authority);
+    tx.set(COLLECTIONS.authorityOutbox, root.accountSubject, outbox);
+  }
+
+  private publishAuthority(tx: BillingTransaction, root: LifecycleRoot, authority: AccountAuthority,
+    fields: Pick<AuthoritySnapshot, 'state' | 'verifiedAt'> & Partial<Pick<AuthoritySnapshot, 'reason' | 'planId' | 'productId' | 'tokenFingerprint' | 'playExpiresAt'>>,
+    clearAcknowledgement: boolean): void {
+    if (authority.publicationRevision >= Number.MAX_SAFE_INTEGER) throw new UnsafeBillingRecordError();
+    const publicationRevision = authority.publicationRevision + 1;
+    const snapshot: AuthoritySnapshot = { version: SNAPSHOT_VERSION, accountSubject: root.accountSubject,
+      lifecycleEpoch: root.lifecycleEpoch, lifecycleGeneration: root.lifecycleGeneration,
+      observationGeneration: authority.observationGeneration, publicationRevision, ...fields };
+    this.writeAuthority(tx, root, { ...authority, lifecycleEpoch: root.lifecycleEpoch, lifecycleGeneration: root.lifecycleGeneration,
+      publicationRevision, snapshot,
+      ...(clearAcknowledgement ? { acknowledgementRecoveryToken: undefined } : {}) });
+  }
+
+  private currentObservation(authority: AccountAuthority | undefined, attempt: AttemptHandle): boolean {
+    const fence = attempt.fence; const owner = authority?.owner;
+    return fence !== undefined && authority !== undefined && owner !== undefined &&
+      authority.observationGeneration === fence.observationGeneration && bytesEqual(owner.nonce, fence.observationNonce) &&
+      owner.requestFingerprint === attempt.owner.requestFingerprint && owner.tokenFingerprint === attempt.tokenFingerprint &&
+      owner.source === fence.source;
   }
 
   private nonce(): Uint8Array {
@@ -272,6 +346,8 @@ export class BillingRepository {
       if (existing !== undefined && !validDisclosure(existing, accountSubject, true)) throw new UnsafeBillingRecordError();
       const root = await this.readLifecycle(tx, accountSubject);
       if (status === 'revoked' && existing === undefined && root === undefined) return;
+      const authority = root === undefined ? undefined : await this.readAuthority(tx, root) ?? await this.firstAuthority(tx, root, now);
+      if (authority && authority.observationGeneration >= Number.MAX_SAFE_INTEGER) throw new UnsafeBillingRecordError();
       const assertionId = Buffer.from(this.nonce()).toString('hex');
       deadline.check();
       tx.set<DisclosureRecord>(COLLECTIONS.disclosures, accountSubject, {
@@ -286,6 +362,8 @@ export class BillingRepository {
           status: root.status === 'retired' ? 'retired' : status === 'accepted' ? 'active' : 'consent_paused', updatedAt: now };
         tx.set(COLLECTIONS.lifecycles, accountSubject, updated);
         tx.set(COLLECTIONS.routes, root.routeFingerprint, routeFor(updated));
+        this.publishAuthority(tx, updated, { ...authority!, observationGeneration: authority!.observationGeneration + 1, owner: undefined },
+          { state: 'none', reason: updated.status === 'retired' ? 'retired' : status === 'revoked' ? 'revoked' : 'requires_verification', verifiedAt: now }, updated.status === 'retired');
       }
     });
   }
@@ -296,10 +374,14 @@ export class BillingRepository {
       deadline.check();
       const root = await this.readLifecycle(tx, subject);
       if (!root || !sameLifecycle(root, expected) || root.status === 'retired' || root.lifecycleGeneration >= Number.MAX_SAFE_INTEGER) return false;
+      const authority = await this.readAuthority(tx, root) ?? await this.firstAuthority(tx, root, now);
+      if (authority.observationGeneration >= Number.MAX_SAFE_INTEGER) throw new UnsafeBillingRecordError();
       const retired: LifecycleRoot = { ...root, status: 'retired', lifecycleGeneration: root.lifecycleGeneration + 1, updatedAt: now };
       deadline.check();
       tx.set(COLLECTIONS.lifecycles, subject, retired);
       tx.set(COLLECTIONS.routes, root.routeFingerprint, routeFor(retired));
+      this.publishAuthority(tx, retired, { ...authority, observationGeneration: authority.observationGeneration + 1, owner: undefined },
+        { state: 'none', reason: 'retired', verifiedAt: now }, true);
       return true;
     });
   }
@@ -323,12 +405,13 @@ export class BillingRepository {
     tokenFingerprint: string,
     now: Date,
     deadline = new BillingDeadline(),
+    source: ObservationSource = 'foreground',
   ): Promise<AcquireResult> {
-    return this.acquire(accountSubject, requestFingerprint, tokenFingerprint, now, true, 'verify', deadline);
+    return this.acquire(accountSubject, requestFingerprint, tokenFingerprint, now, true, 'verify', deadline, source);
   }
 
-  acquireAccountAttempt(accountSubject: string, requestFingerprint: string, now: Date, deadline: BillingDeadline): Promise<AcquireResult> {
-    return this.acquire(accountSubject, requestFingerprint, undefined, now, true, 'restore', deadline);
+  acquireAccountAttempt(accountSubject: string, requestFingerprint: string, now: Date, deadline: BillingDeadline, source: ObservationSource = 'foreground'): Promise<AcquireResult> {
+    return this.acquire(accountSubject, requestFingerprint, undefined, now, true, 'restore', deadline, source);
   }
 
   acquirePredecessorAttempt(
@@ -337,8 +420,9 @@ export class BillingRepository {
     tokenFingerprint: string,
     now: Date,
     deadline = new BillingDeadline(),
+    previous?: AttemptHandle,
   ): Promise<AcquireResult> {
-    return this.acquire(accountSubject, requestFingerprint, tokenFingerprint, now, false, 'verify', deadline);
+    return this.acquire(accountSubject, requestFingerprint, tokenFingerprint, now, false, 'verify', deadline, previous?.fence?.source ?? 'foreground', previous);
   }
 
   private async acquire(
@@ -349,9 +433,13 @@ export class BillingRepository {
     usesReplay: boolean,
     kind: 'verify' | 'restore',
     deadline: BillingDeadline,
+    source: ObservationSource,
+    previous?: AttemptHandle,
   ): Promise<AcquireResult> {
     return this.database.runTransaction(async (tx) => {
       deadline.check();
+      if (!fingerprint(accountSubject) || !fingerprint(requestFingerprint) ||
+          (requestedToken !== undefined && !fingerprint(requestedToken)) || !['foreground','background'].includes(source)) return { kind: 'unsafe_record' };
       const disclosure = await tx.get<DisclosureRecord>(COLLECTIONS.disclosures, accountSubject);
       if (!disclosure || !validDisclosure(disclosure, accountSubject) || disclosure.status !== 'accepted' || disclosure.retentionExpiresAt <= now) return { kind: 'disclosure_required' };
       const root = await this.readLifecycle(tx, accountSubject);
@@ -426,6 +514,16 @@ export class BillingRepository {
         return { kind: 'rate_limited' };
       }
 
+      const authority = await this.readAuthority(tx, root) ?? await this.firstAuthority(tx, root, now);
+      const continuing = previous !== undefined && this.currentObservation(authority, previous) &&
+        previous.accountSubject === accountSubject && sameLifecycle(previous, root) &&
+        previous.fence?.assertionId === disclosure.assertionId && previous.owner.requestFingerprint === requestFingerprint &&
+        authority.owner?.phase === 'complete' && previous.fence.indexRevision === (index?.revision ?? 0);
+      if (previous !== undefined && !continuing) return { kind: 'unsafe_record' };
+      if (authority.acknowledgementRecoveryToken !== undefined && authority.acknowledgementRecoveryToken !== tokenFingerprint) return { kind: 'verification_pending' };
+      if (authority.owner?.leaseExpiresAt !== undefined && authority.owner.leaseExpiresAt > now) return { kind: 'in_flight' };
+      if ((!continuing && authority.observationGeneration >= Number.MAX_SAFE_INTEGER) ||
+          authority.publicationRevision >= Number.MAX_SAFE_INTEGER) return { kind: 'unsafe_record' };
       const rate = await tx.get<RateLimitRecord>(COLLECTIONS.rateLimits, accountSubject);
       if (rate !== undefined && !validRateLimit(rate, accountSubject)) {
         return { kind: 'unsafe_record' };
@@ -440,6 +538,7 @@ export class BillingRepository {
         operation?.attemptGeneration ?? 0,
         binding?.attemptGeneration ?? 0,
       );
+      if (highWater >= Number.MAX_SAFE_INTEGER) return { kind: 'unsafe_record' };
       const nonce = this.nonces.nextNonce();
       if (!(nonce instanceof Uint8Array) || nonce.byteLength !== 16) {
         return { kind: 'unsafe_record' };
@@ -453,7 +552,11 @@ export class BillingRepository {
       const retentionExpiresAt = addMs(now, OPERATION_RETENTION_MS);
       const acknowledgementStartedAt = recentStarts(operation?.acknowledgementStartedAt ?? [], now);
 
+      const observationGeneration = continuing ? authority.observationGeneration : authority.observationGeneration + 1;
+      const observationNonce = continuing ? authority.owner!.nonce : this.nonce();
       deadline.check();
+      this.writeAuthority(tx, root, { ...authority, observationGeneration, owner: { requestFingerprint, nonce: observationNonce,
+        tokenFingerprint, source, phase: 'working', leaseExpiresAt } });
       if (usesReplay) {
         tx.set<RequestReplayRecord>(COLLECTIONS.replays, requestFingerprint, {
           contractVersion: CONTRACT_VERSION,
@@ -502,7 +605,8 @@ export class BillingRepository {
         attempt: { tokenFingerprint, accountSubject, owner, usesReplay, envelope: binding?.tokenEnvelope,
           lifecycleEpoch: root.lifecycleEpoch, lifecycleGeneration: root.lifecycleGeneration,
           expectedPlayAccountId: root.obfuscatedAccountId,
-          fence: { assertionId: disclosure.assertionId, indexRevision: index?.revision ?? 0, deadline, kind } },
+          fence: { assertionId: disclosure.assertionId, indexRevision: index?.revision ?? 0, deadline, kind,
+            observationGeneration, observationNonce, source, publicationRevision: authority.publicationRevision } },
       };
     });
   }
@@ -550,7 +654,7 @@ export class BillingRepository {
     now: Date,
     phase: 'free' | 'canceled_pending_read_only' = 'free',
   ): Promise<boolean> {
-    return this.guarded(attempt, async (tx, index) => {
+    return this.guarded(attempt, async (tx, index, authority, root) => {
       const operation = await tx.get<TokenOperationRecord>(
         COLLECTIONS.operations,
         attempt.tokenFingerprint,
@@ -580,6 +684,7 @@ export class BillingRepository {
           updatedAt: now,
         });
       }
+      this.writeAuthority(tx, root, { ...authority, owner: { ...authority.owner!, phase: 'complete', leaseExpiresAt: undefined } });
       return true;
     }, false, now);
   }
@@ -706,7 +811,7 @@ export class BillingRepository {
   }
 
   async beginAcknowledgement(attempt: AttemptHandle, now: Date): Promise<boolean> {
-    return this.guarded(attempt, async (tx, index) => {
+    return this.guarded(attempt, async (tx, index, authority, root) => {
       const operation = await tx.get<TokenOperationRecord>(
         COLLECTIONS.operations,
         attempt.tokenFingerprint,
@@ -748,6 +853,8 @@ export class BillingRepository {
         attemptPhase: 'ack_in_progress',
         updatedAt: now,
       });
+      this.writeAuthority(tx, root, { ...authority, acknowledgementRecoveryToken: attempt.tokenFingerprint,
+        owner: { ...authority.owner!, phase: 'ack_in_progress' } });
       return true;
     }, false, now);
   }
@@ -757,7 +864,7 @@ export class BillingRepository {
     now: Date,
     sourcePhase: 'delivery_committed' | 'ack_in_progress',
   ): Promise<PaidCommit | undefined> {
-    const result = await this.guarded(attempt, async (tx, index) => {
+    const result = await this.guarded(attempt, async (tx, index, authority, root) => {
       const operation = await tx.get<TokenOperationRecord>(
         COLLECTIONS.operations,
         attempt.tokenFingerprint,
@@ -849,6 +956,9 @@ export class BillingRepository {
           updatedAt: now,
         });
       }
+      this.publishAuthority(tx, root, { ...authority, owner: { ...authority.owner!, phase: 'complete', leaseExpiresAt: undefined } },
+        { state: finalized.normalizedState, planId: finalized.planId, productId: finalized.productId,
+          tokenFingerprint: attempt.tokenFingerprint, verifiedAt: finalized.lastVerifiedAt, playExpiresAt: finalized.playExpiresAt }, true);
       return {
         planId: finalized.planId,
         productId: finalized.productId,
@@ -857,12 +967,12 @@ export class BillingRepository {
         verifiedAt: finalized.lastVerifiedAt,
       };
     }, undefined, now);
-    if (result) attempt.fence!.indexRevision++;
+    if (result) { attempt.fence!.indexRevision++; attempt.fence!.publicationRevision++; }
     return result;
   }
 
   async markAcknowledgementUnknown(attempt: AttemptHandle, now: Date): Promise<boolean> {
-    return this.guarded(attempt, async (tx, index) => {
+    return this.guarded(attempt, async (tx, index, authority, root) => {
       const operation = await tx.get<TokenOperationRecord>(
         COLLECTIONS.operations,
         attempt.tokenFingerprint,
@@ -907,6 +1017,8 @@ export class BillingRepository {
           updatedAt: now,
         });
       }
+      this.writeAuthority(tx, root, { ...authority, acknowledgementRecoveryToken: attempt.tokenFingerprint,
+        owner: { ...authority.owner!, phase: 'ack_unknown', leaseExpiresAt: undefined } });
       return true;
     }, false, now);
   }
@@ -918,19 +1030,27 @@ export class BillingRepository {
   }
 
   async isCurrentGrant(attempt: AttemptHandle, now: Date): Promise<boolean> {
-    return this.guarded(attempt, async (tx, index) => {
+    return this.guarded(attempt, async (tx, index, authority) => {
       const binding = await tx.get<PurchaseBindingRecord>(COLLECTIONS.bindings, attempt.tokenFingerprint);
       const operation = await tx.get<TokenOperationRecord>(COLLECTIONS.operations, attempt.tokenFingerprint);
       const replay = attempt.usesReplay
         ? await tx.get<RequestReplayRecord>(COLLECTIONS.replays, attempt.owner.requestFingerprint) : undefined;
-      return index?.current === attempt.tokenFingerprint && index.inactive?.tokenFingerprint !== attempt.tokenFingerprint &&
+      return authority.publicationRevision === attempt.fence!.publicationRevision &&
+        authority.snapshot.observationGeneration === attempt.fence!.observationGeneration && authority.snapshot.state !== 'none' &&
+        index?.current === attempt.tokenFingerprint && index.inactive?.tokenFingerprint !== attempt.tokenFingerprint &&
         ownedOperation(operation, attempt, 'paid') &&
         (!attempt.usesReplay || ownedReplayAny(replay, attempt, ['paid'])) && ownedBinding(binding, attempt, 'paid') &&
         binding.bindingState === 'acknowledged_delivery' && binding.ackState === 'acknowledged' && binding.playExpiresAt > now;
     }, false, now);
   }
 
-  private guarded<T>(attempt: AttemptHandle, action: (tx: BillingTransaction, index: AccountIndex | undefined) => Promise<T>, fallback: T, now: Date): Promise<T> {
+  async isCurrentResponse(attempt: AttemptHandle, now: Date): Promise<boolean> {
+    return this.guarded(attempt, async (_tx, _index, authority) =>
+      authority.owner?.phase === 'complete' && authority.publicationRevision === attempt.fence!.publicationRevision,
+    false, now);
+  }
+
+  private guarded<T>(attempt: AttemptHandle, action: (tx: BillingTransaction, index: AccountIndex | undefined, authority: AccountAuthority, root: LifecycleRoot) => Promise<T>, fallback: T, now: Date): Promise<T> {
     return this.database.runTransaction(async (tx) => {
       const fence = attempt.fence;
       if (!fence) return fallback;
@@ -944,28 +1064,43 @@ export class BillingRepository {
       if (!disclosure || !validDisclosure(disclosure, attempt.accountSubject) || disclosure.status !== 'accepted' || disclosure.retentionExpiresAt <= now ||
           disclosure.assertionId !== fence.assertionId || (index !== undefined && !validIndex(index, attempt.accountSubject)) ||
           (index?.revision ?? 0) !== fence.indexRevision) return fallback;
-      const result = await action(tx, index);
+      const authority = await this.readAuthority(tx, root);
+      if (!this.currentObservation(authority, attempt) ||
+          (authority!.owner!.leaseExpiresAt !== undefined && authority!.owner!.leaseExpiresAt! <= now)) return fallback;
+      const result = await action(tx, index, authority!, root);
       fence.deadline.check();
       return result;
     });
   }
 
-  async recordInactive(attempt: AttemptHandle, reason: string, now: Date): Promise<boolean> {
-    const committed = await this.guarded(attempt, async (tx, index) => {
+  async recordInactive(attempt: AttemptHandle, reason: Exclude<InactiveReason, 'requires_verification' | 'retired'>, now: Date,
+    acknowledgementConfirmed = false): Promise<boolean> {
+    const committed = await this.guarded(attempt, async (tx, index, authority, root) => {
       const operation = await tx.get<TokenOperationRecord>(COLLECTIONS.operations, attempt.tokenFingerprint);
       const replay = attempt.usesReplay
         ? await tx.get<RequestReplayRecord>(COLLECTIONS.replays, attempt.owner.requestFingerprint) : undefined;
       if (!ownedOperation(operation, attempt, 'lookup_in_flight') ||
-          (attempt.usesReplay && !ownedReplayAny(replay, attempt, ['lookup_in_flight'])) || !index ||
-          (index.current !== attempt.tokenFingerprint && index.candidate !== attempt.tokenFingerprint)) return false;
-      tx.set<AccountIndex>(COLLECTIONS.accounts, attempt.accountSubject, {
+          (attempt.usesReplay && !ownedReplayAny(replay, attempt, ['lookup_in_flight']))) return false;
+      const indexed = index !== undefined && (index.current === attempt.tokenFingerprint || index.candidate === attempt.tokenFingerprint);
+      if (indexed) tx.set<AccountIndex>(COLLECTIONS.accounts, attempt.accountSubject, {
         ...index, revision: index.revision + 1,
         inactive: { tokenFingerprint: attempt.tokenFingerprint, reason, verifiedAt: now }, updatedAt: now,
       });
-      return true;
-    }, false, now);
-    if (committed) attempt.fence!.indexRevision++;
-    return committed;
+      const publicationChanged = index === undefined || index.current === attempt.tokenFingerprint ||
+        (index.current === undefined && index.candidate === attempt.tokenFingerprint);
+      if (publicationChanged) this.publishAuthority(tx, root, authority,
+        { state: 'none', reason, tokenFingerprint: attempt.tokenFingerprint, verifiedAt: now },
+        acknowledgementConfirmed || reason === 'expired' || reason === 'revoked');
+      else if (acknowledgementConfirmed || reason === 'expired' || reason === 'revoked') {
+        this.writeAuthority(tx, root, { ...authority, acknowledgementRecoveryToken: undefined });
+      }
+      return { indexed, publicationChanged };
+    }, false as false | { indexed: boolean; publicationChanged: boolean }, now);
+    if (committed) {
+      if (committed.indexed) attempt.fence!.indexRevision++;
+      if (committed.publicationChanged) attempt.fence!.publicationRevision++;
+    }
+    return committed !== false;
   }
 
 }

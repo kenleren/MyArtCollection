@@ -12,6 +12,8 @@ export interface LifecycleRoot extends LifecycleFields {
   assertionId: string;
   createdAt: Date;
   updatedAt: Date;
+  authorityVersion?: 'play-billing-authority-v1';
+  authorityPublicationRevision?: number;
 }
 export interface LifecycleRoute extends LifecycleFields {
   version: typeof ROUTE_VERSION;
@@ -32,7 +34,10 @@ export function validOpaqueRoute(value: unknown): value is string {
 }
 export function validLifecycleRoot(value: LifecycleRoot, subject: string): boolean {
   return exact(value, ['version','accountSubject','status','routeFingerprint','obfuscatedAccountId','assertionId',
-    'lifecycleEpoch','lifecycleGeneration','createdAt','updatedAt']) &&
+    'lifecycleEpoch','lifecycleGeneration','createdAt','updatedAt',
+    ...(value.authorityVersion === undefined && value.authorityPublicationRevision === undefined ? [] : ['authorityVersion','authorityPublicationRevision'])]) &&
+    ((value.authorityVersion === undefined && value.authorityPublicationRevision === undefined) || (value.authorityVersion === 'play-billing-authority-v1' &&
+      Number.isSafeInteger(value.authorityPublicationRevision) && value.authorityPublicationRevision! >= 0)) &&
     value.version === LIFECYCLE_VERSION && value.accountSubject === subject && fingerprint(subject) &&
     validLifecycleFields(value) && status(value.status) && fingerprint(value.routeFingerprint) &&
     validOpaqueRoute(value.obfuscatedAccountId) && assertion(value.assertionId) &&

@@ -133,6 +133,77 @@ describe('named billing database persistence', () => {
     }
   });
 
+  test('different-token Firestore admission is atomic and preserves monotonic account ownership', async () => {
+    const h = createFirestoreHarness(); const subject = opaque(`authority-account-${randomUUID()}`);
+    await h.repository.acceptDisclosure(subject, h.clock.now()); await h.repository.preparePurchase(subject, h.clock.now());
+    const candidates = [1,2,3].map(() => ({ request: opaque(randomUUID()), token: opaque(randomUUID()) }));
+    const results = await Promise.all(candidates.map(candidate => h.repository.acquireAttempt(subject, candidate.request, candidate.token, h.clock.now())));
+    assert.equal(results.filter(r => r.kind === 'acquired').length, 1);
+    assert.equal(results.filter(r => r.kind === 'in_flight').length, 2);
+    const winner = results.find(r => r.kind === 'acquired'); assert.equal(winner?.kind, 'acquired'); if (winner?.kind !== 'acquired') return;
+    const authority = await readRecord(h.firestore, COLLECTIONS.authorities, subject);
+    const root = await readRecord(h.firestore, COLLECTIONS.lifecycles, subject);
+    const outbox = await readRecord(h.firestore, COLLECTIONS.authorityOutbox, subject);
+    assert.equal(authority.observationGeneration, 1); assert.equal(root.authorityPublicationRevision, 0);
+    assert.deepEqual(outbox.snapshot, authority.snapshot);
+    for (const [i, result] of results.entries()) {
+      assert.equal((await h.firestore.collection(COLLECTIONS.operations).doc(candidates[i].token).get()).exists, result.kind === 'acquired');
+      assert.equal((await h.firestore.collection(COLLECTIONS.replays).doc(candidates[i].request).get()).exists, result.kind === 'acquired');
+    }
+    h.clock.advance(ATTEMPT_LEASE_MS);
+    const next = await h.repository.acquireAttempt(subject, opaque(randomUUID()), opaque(randomUUID()), h.clock.now());
+    assert.equal(next.kind, 'acquired');
+    assert.equal((await readRecord(h.firestore, COLLECTIONS.authorities, subject)).observationGeneration, 2);
+    assert.equal(await h.repository.markVerifiedOwner(winner.attempt, 'archivale_starter_monthly', h.clock.now()), false);
+    assert.equal(await h.repository.closeAttempt(winner.attempt, h.clock.now()), false);
+  });
+
+  test('Firestore loss of authority or outbox cannot reset durable lifecycle high-water', async () => {
+    for (const missing of [COLLECTIONS.authorities, COLLECTIONS.authorityOutbox]) {
+      const h = createFirestoreHarness(); const attempt = await stageAcknowledgement(h);
+      const root = await readRecord(h.firestore, COLLECTIONS.lifecycles, attempt.accountSubject);
+      await h.firestore.collection(missing).doc(attempt.accountSubject).delete();
+      await assert.rejects(h.repository.acquireAttempt(attempt.accountSubject, opaque(randomUUID()), opaque(randomUUID()), h.clock.now()));
+      await assert.rejects(h.repository.acceptDisclosure(attempt.accountSubject, h.clock.now()));
+      assert.deepEqual(await readRecord(h.firestore, COLLECTIONS.lifecycles, attempt.accountSubject), root);
+      assert.equal((await h.firestore.collection(missing).doc(attempt.accountSubject).get()).exists, false);
+    }
+  });
+
+  test('paid binding, account index, authority and outbox commit together on Firestore', async () => {
+    const h = createFirestoreHarness(); const attempt = await stageAcknowledgement(h);
+    const original = h.repository.finalizePaid.bind(h.repository);
+    const failingDb = new FirestoreBillingDatabase(h.firestore);
+    const transaction = failingDb.runTransaction.bind(failingDb);
+    failingDb.runTransaction = action => transaction(async tx => {
+      const result = await action(tx); throw new Error('synthetic failure after writes before commit');
+    });
+    const failing = new BillingRepository(failingDb, new CryptoNonceSource(), h.identifiers);
+    await assert.rejects(failing.finalizePaid(attempt, h.clock.now(), 'ack_in_progress'));
+    assert.equal((await readRecord(h.firestore, COLLECTIONS.bindings, attempt.tokenFingerprint)).attemptPhase, 'ack_in_progress');
+    assert.equal((await readRecord(h.firestore, COLLECTIONS.accounts, attempt.accountSubject)).current, undefined);
+    assert.equal((await readRecord(h.firestore, COLLECTIONS.authorities, attempt.accountSubject)).publicationRevision, 0);
+    assert.equal(await original(attempt, h.clock.now(), 'ack_in_progress') !== undefined, true);
+    const authority = await readRecord(h.firestore, COLLECTIONS.authorities, attempt.accountSubject);
+    const root = await readRecord(h.firestore, COLLECTIONS.lifecycles, attempt.accountSubject);
+    assert.equal(authority.publicationRevision, 1); assert.equal(root.authorityPublicationRevision, 1);
+    assert.deepEqual((await readRecord(h.firestore, COLLECTIONS.authorityOutbox, attempt.accountSubject)).snapshot, authority.snapshot);
+    assert.equal((await readRecord(h.firestore, COLLECTIONS.accounts, attempt.accountSubject)).current, attempt.tokenFingerprint);
+  });
+
+  test('Firestore ambiguous ACK barrier survives restart and permits only same-token fresh admission', async () => {
+    const h = createFirestoreHarness(); const old = await stageAcknowledgement(h);
+    assert.equal(await h.repository.markAcknowledgementUnknown(old, h.clock.now()), true);
+    h.clock.advance(ATTEMPT_LEASE_MS);
+    const restarted = new BillingRepository(new FirestoreBillingDatabase(h.firestore), new CryptoNonceSource(), h.identifiers);
+    const other = await restarted.acquireAttempt(old.accountSubject, opaque(randomUUID()), opaque(randomUUID()), h.clock.now());
+    assert.equal(other.kind, 'verification_pending');
+    const same = await restarted.acquireAttempt(old.accountSubject, opaque(randomUUID()), old.tokenFingerprint, h.clock.now());
+    assert.equal(same.kind, 'acquired');
+    assert.equal((await readRecord(h.firestore, COLLECTIONS.authorities, old.accountSubject)).acknowledgementRecoveryToken, old.tokenFingerprint);
+    assert.equal(await restarted.finalizePaid(old, h.clock.now(), 'ack_in_progress'), undefined);
+  });
+
   test('persists opaque owner fields in only the three approved records', async () => {
     const harness = createFirestoreHarness();
     const rawAccountId = `raw-account-${randomUUID()}`;
@@ -256,6 +327,7 @@ function createFirestoreHarness(identifiers: BillingIdentifiers = createBillingI
   clock: FakeClock;
   firestore: Firestore;
   repository: BillingRepository;
+  identifiers: BillingIdentifiers;
 } {
   const app = initializeApp({ projectId: 'demo-archivale-billing' }, randomUUID());
   apps.push(app);
@@ -264,6 +336,7 @@ function createFirestoreHarness(identifiers: BillingIdentifiers = createBillingI
   return {
     clock: new FakeClock(),
     firestore,
+    identifiers,
     repository: new BillingRepository(
       new FirestoreBillingDatabase(firestore),
       new CryptoNonceSource(),

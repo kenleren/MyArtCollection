@@ -66,6 +66,11 @@ it returns no-known-purchase. The locked Android local query ignores its old
 account argument; the facade now queries receipts without one. There is no
 UID-hash fallback for purchase or restore.
 
+The [disabled account authority Stage A](PLAY_BILLING_ACCOUNT_AUTHORITY_SPEC.md)
+extends the server-only root with a durable authority initialization/revision
+marker and adds cross-token admission plus atomic snapshots. It leaves this v3
+mobile wire unchanged.
+
 ## Reciprocal lifecycle authority
 
 The named billing database contains `playBillingLifecycles`, keyed by existing

@@ -104,6 +104,7 @@ describe('billing isolation and redaction', () => {
       'src/contracts.ts',
       'src/crypto.ts',
       'src/lifecycle.ts',
+      'src/account_authority.ts',
       'src/deadline.ts',
       'src/token_custody.ts',
       'src/kms_token_custody.ts',
