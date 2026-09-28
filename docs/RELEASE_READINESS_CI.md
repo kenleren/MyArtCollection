@@ -211,3 +211,9 @@ assertions have stable identifiers:
 These identifiers do not change the assertions, sanitizer settings or 40
 repetitions per scenario. An intermittent assertion must be diagnosed; a later
 passing run does not resolve an earlier failure.
+
+CI also runs twelve additional ASan+UBSan race samples to investigate the
+intermittent Linux assertion observed on candidate `5ffda5c`. Every sample
+retains the same 40 repetitions and fails immediately on any assertion or
+sanitizer error. This is additional stress coverage, never a retry-until-pass
+policy. The fixed exit code identifies the failing assertion without raw logs.
