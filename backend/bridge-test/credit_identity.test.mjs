@@ -13,7 +13,7 @@ import {CreditIdentityService,authorityDigest as brokerDigest,routeForUid as bro
 import {FirestoreCreditIdentityDatabase,CREDIT_COLLECTIONS as C} from '../broker/build/src/credit_identity_store.js';
 import {creditIdentityFixture,TEST_UID,TEST_APP,TEST_ROUTE_KEY,TEST_CONFIG} from '../broker/build/dist-test/credit_identity_fixture.js';
 const req=(route)=>({version:'credit-authority-read-v1',routingKeyVersion:'entitlement-route-v1',route,challenge:'f'.repeat(32)});
-async function setup(firestores){
+export async function setup(firestores){
  const h=createHarness();h.identity={uid:TEST_UID};const db=firestores?new FirestoreBillingDatabase(firestores.billing):h.database;
  const repo=new BillingRepository(db,new DeterministicNonceSource(),h.identifiers),service=new PlayBillingService({...h,repository:repo});
  await service.acceptDisclosure(h.identity,{requestId:randomUUID(),disclosureVersion:DISCLOSURE_VERSION,purpose:DISCLOSURE_PURPOSE,accepted:true});

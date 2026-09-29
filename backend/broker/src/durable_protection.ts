@@ -1,3 +1,4 @@
+import { M as MONTHLY_COLLECTIONS, validWitness, parseControlPair } from './monthly_credit_protocol.js';
 import { createHmac } from 'node:crypto';
 
 import type { BrokerAdapterIdentity } from './adapter.js';
@@ -432,6 +433,15 @@ export class FirestoreRequestLifecycle implements RequestLifecycleStore {
         transaction.get(globalRef),
       ]);
       const control = controlRecordFromSnapshot(controlSnapshot);
+      const monthlyControl = await transaction.get(this.store.firestore.doc(`${MONTHLY_COLLECTIONS.control}/control`));
+      const monthlyInitialization = await transaction.get(this.store.firestore.doc(`${MONTHLY_COLLECTIONS.control}/initialization`));
+      if (control?.monthlyCutover !== undefined || monthlyControl.exists || monthlyInitialization.exists) {
+        try {
+          parseControlPair(monthlyControl.exists ? monthlyControl.data() : undefined,
+            monthlyInitialization.exists ? monthlyInitialization.data() : undefined, control?.monthlyCutover);
+          return { kind: 'migration_required' };
+        } catch { return { kind: 'unsafe_record' }; }
+      }
       const subject = subjectSnapshot.exists
         ? subjectCreditFromSnapshot(subjectSnapshot)
         : { exposed_credits: 0, reserved_count: 0 };
@@ -819,12 +829,13 @@ export function controlRecordFromSnapshot(snapshot: DurableFirestoreDocumentSnap
   perSubjectCreditCap: number;
   brokerCreditCap: number;
   oneInFlightPerSubject: boolean;
+  monthlyCutover?: unknown;
 } | undefined {
   const data = snapshot.data();
   if (
     !snapshot.exists ||
     !isRecord(data) ||
-    !hasExactKeys(data, CONTROL_RECORD_KEYS) ||
+    !(hasExactKeys(data, CONTROL_RECORD_KEYS) || hasExactKeys(data, new Set([...CONTROL_RECORD_KEYS, 'monthlyCutover'])) && validWitness(data.monthlyCutover)) ||
     data.record_version !== CONTROL_RECORD_VERSION ||
     typeof data.breakerOpen !== 'boolean' ||
     nonNegativeInteger(data.perSubjectCreditCap) === undefined ||
@@ -838,6 +849,7 @@ export function controlRecordFromSnapshot(snapshot: DurableFirestoreDocumentSnap
     perSubjectCreditCap: data.perSubjectCreditCap as number,
     brokerCreditCap: data.brokerCreditCap as number,
     oneInFlightPerSubject: data.oneInFlightPerSubject,
+    ...(Object.hasOwn(data, 'monthlyCutover') ? {monthlyCutover:data.monthlyCutover} : {}),
   };
 }
 

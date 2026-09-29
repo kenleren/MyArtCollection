@@ -97,7 +97,7 @@ export function storedRequestMatchesKey(
   return record.quota_subject === quotaSubject && record.request_id === requestId;
 }
 
-function parseTerminalOutcome(value: unknown): BrokerTerminalOutcome | undefined {
+export function parseTerminalOutcome(value: unknown): BrokerTerminalOutcome | undefined {
   if (!isRecord(value)) {
     return undefined;
   }

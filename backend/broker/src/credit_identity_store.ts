@@ -5,15 +5,18 @@ export const CREDIT_COLLECTIONS = {
 } as const;
 export type CreditCollection = (typeof CREDIT_COLLECTIONS)[keyof typeof CREDIT_COLLECTIONS];
 export interface CreditTransaction {
-    get<T>(collection: CreditCollection, id: string): Promise<T | undefined>;
-    set<T>(collection: CreditCollection, id: string, value: T): void;
+    get<T>(collection: string, id: string): Promise<T | undefined>;
+    set<T>(collection: string, id: string, value: T): void;
     readOperator(uid: string): Promise<{
         entitled: boolean;
         breakerOpen: boolean;
     }>;
     findAccountRoute(accountSubject: string): Promise<unknown | undefined>;
+    /** Bounded internal accounting query; never a client-supplied collection. */
+    findFirst?(collection: string, field?: string, value?: string): Promise<unknown | undefined>;
 }
 export interface CreditIdentityDatabase {
+    readonly collectionPrefix?: string;
     transaction<T>(work: (tx: CreditTransaction) => Promise<T>): Promise<T>;
 }
 /** Broker default DB only. No billing DB access or durable UID locator in bridge collections. */
@@ -22,15 +25,17 @@ export class FirestoreCreditIdentityDatabase implements CreditIdentityDatabase {
     constructor(private readonly firestore: DurableFirestoreLike & {
         databaseId?: string;
         collection?: (path: string) => any;
-    }) {
+    }, legacyStore?: FirestoreDurableBrokerStore) {
+        if (legacyStore && legacyStore.firestore !== firestore) fail();
         if (firestore.databaseId !== '(default)')
             fail();
-        this.old = new FirestoreDurableBrokerStore(firestore);
+        this.old = legacyStore ?? new FirestoreDurableBrokerStore(firestore);
     }
+    get collectionPrefix(): string { return this.old.collectionPrefix; }
     transaction<T>(work: (tx: CreditTransaction) => Promise<T>): Promise<T> {
         return this.firestore.runTransaction(async (raw) => work({
-            get: async <V>(collection: CreditCollection, id: string) => { const s = await raw.get(this.firestore.doc(`${collection}/${id}`)); return s.exists ? normalize(s.data()) as V : undefined; },
-            set: <V>(collection: CreditCollection, id: string, value: V) => { raw.set(this.firestore.doc(`${collection}/${id}`), value as Record<string, unknown>); },
+            get: async <V>(collection: string, id: string) => { const s = await raw.get(this.firestore.doc(`${collection}/${id}`)); return s.exists ? normalize(s.data()) as V : undefined; },
+            set: <V>(collection: string, id: string, value: V) => { raw.set(this.firestore.doc(`${collection}/${id}`), value as Record<string, unknown>); },
             readOperator: async (uid) => {
                 const [a, b] = await Promise.all([raw.get(this.old.controlRef()), raw.get(this.old.entitlementRef(uid))]);
                 const control = controlRecordFromSnapshot(a), entitlement = b.exists ? entitlementRecordFromSnapshot(b) : {
@@ -41,6 +46,13 @@ export class FirestoreCreditIdentityDatabase implements CreditIdentityDatabase {
                 return {
                     breakerOpen: control.breakerOpen, entitled: entitlement.entitled
                 };
+            },
+            findFirst: async (collection, field, value) => {
+                if (!this.firestore.collection) fail();
+                let query = this.firestore.collection(collection);
+                if (field !== undefined) query = query.where(field, '==', value);
+                const result = await (raw as any).get(query.limit(1));
+                return result.empty ? undefined : normalize(result.docs[0].data());
             },
             findAccountRoute: async (subject) => {
                 if (!this.firestore.collection)
@@ -65,6 +77,7 @@ function normalize(value: any): any {
 }
 /** Deterministic serial transactions for synthetic tests; never selected by a live factory. */
 export class InMemoryCreditIdentityDatabase implements CreditIdentityDatabase {
+    constructor(readonly collectionPrefix = 'brokerDurable') {}
     private rows = new Map<string, unknown>();
     private tail: Promise<void> = Promise.resolve();
     private operators = new Map<string, {
@@ -83,7 +96,7 @@ export class InMemoryCreditIdentityDatabase implements CreditIdentityDatabase {
         try {
             const rows = structuredClone(this.rows);
             result = await work({
-                get: async <V>(c: CreditCollection, id: string) => structuredClone(rows.get(`${c}/${id}`)) as V | undefined,
+                get: async <V>(c: string, id: string) => structuredClone(rows.get(`${c}/${id}`)) as V | undefined,
                 set: (c, id, v) => { rows.set(`${c}/${id}`, structuredClone(v)); }, readOperator: async (uid) => {
                     const v = this.operators.get(uid);
                     if (!v)
@@ -91,6 +104,12 @@ export class InMemoryCreditIdentityDatabase implements CreditIdentityDatabase {
                     return {
                         ...v
                     };
+                },
+                findFirst: async (collection, field, value) => {
+                    for (const [path, row] of rows)
+                        if (path.startsWith(collection + '/') && (field === undefined || (row as any)?.[field] === value))
+                            return structuredClone(row);
+                    return undefined;
                 },
                 findAccountRoute: async (subject) => {
                     for (const [path, v] of rows)
@@ -113,7 +132,7 @@ export class InMemoryCreditIdentityDatabase implements CreditIdentityDatabase {
     }): void { this.operators.set(uid, {
         ...value
     }); }
-    setForTest(c: CreditCollection, id: string, value: unknown): void { this.rows.set(`${c}/${id}`, structuredClone(value)); }
-    deleteForTest(c: CreditCollection, id: string): void { this.rows.delete(`${c}/${id}`); }
+    setForTest(c: string, id: string, value: unknown): void { this.rows.set(`${c}/${id}`, structuredClone(value)); }
+    deleteForTest(c: string, id: string): void { this.rows.delete(`${c}/${id}`); }
     snapshotForTest(): Map<string, unknown> { return structuredClone(this.rows); }
 }

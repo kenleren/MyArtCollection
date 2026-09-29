@@ -21,6 +21,13 @@ export interface CreditIdentityOptions {
     now?: () => number;
     newNonce?: () => string;
 }
+export interface AccountingIdentity {
+    readonly uid: string;
+    readonly accountSubject: string;
+    readonly route: string;
+    readonly appId: string;
+    readonly signInProvider: 'anonymous' | 'google.com';
+}
 interface Identity {
     uid: string;
     accountSubject: string;
@@ -51,6 +58,8 @@ export interface CreditAccount {
     };
     registrationGeneration: number;
     receiverInitialized: true;
+    /** Opaque accounting extension: safety operations preserve it without parsing. */
+    monthly?: unknown;
 }
 interface Route {
     version: 'broker-credit-route-v1';
@@ -127,8 +136,8 @@ export const accountId = (subject: string) => `${ACCOUNT_KEY}_${subject}`;
 export const routeId = (route: string) => `${ROUTE_KEY}_${route}`;
 const versions = (v: any) => v.accountKeyVersion === ACCOUNT_KEY && v.routingKeyVersion === ROUTE_KEY && hex(v.accountSubject) && hex(v.route) && nonce(v.cutoverId);
 function validConsent(v: unknown): v is Consent { return shape(v, ['status', 'revision', 'assertionId', 'researchVersion', 'bridgeVersion']) && ['accepted', 'revoked'].includes(v.status) && positive(v.revision) && nonce(v.assertionId) && v.researchVersion === 'research-consent-v1' && v.bridgeVersion === 'paid-ai-bridge-consent-v1'; }
-function validAccount(v: unknown): v is CreditAccount {
-    return shape(v, ['version', 'accountKeyVersion', 'accountSubject', 'routingKeyVersion', 'route', 'cutoverId', 'createdAt', 'updatedAt', 'revision', 'consent', 'lastConsentCommand', 'registrationGeneration', 'receiverInitialized']) &&
+export function validAccount(v: unknown): v is CreditAccount {
+    return shape(v, ['version', 'accountKeyVersion', 'accountSubject', 'routingKeyVersion', 'route', 'cutoverId', 'createdAt', 'updatedAt', 'revision', 'consent', 'lastConsentCommand', 'registrationGeneration', 'receiverInitialized'], ['monthly']) &&
         v.version === 'broker-credit-account-v1' && versions(v) && date(v.createdAt) && date(v.updatedAt) && positive(v.revision) && validConsent(v.consent) && count(v.registrationGeneration) && v.receiverInitialized === true &&
         shape(v.lastConsentCommand, ['requestId', 'expectedRevision', 'digest']) && uuid(v.lastConsentCommand.requestId) && count(v.lastConsentCommand.expectedRevision) && hex(v.lastConsentCommand.digest) && v.lastConsentCommand.expectedRevision + 1 === v.consent.revision;
 }
@@ -199,6 +208,7 @@ export class CreditIdentityService {
     readonly policyDigest: string;
     private readonly routingKey: string;
     private readonly accountKey: string;
+    private readonly accountingIdentities = new WeakSet<object>();
     constructor(private readonly options: CreditIdentityOptions) {
         this.config = parseConfig(options.config);
         this.now = options.now ?? Date.now;
@@ -295,7 +305,8 @@ export class CreditIdentityService {
                         createdAt: current?.createdAt ?? now, updatedAt: now, revision: increment(current?.revision ?? 0), consent, lastConsentCommand: {
                             requestId: command.requestId, expectedRevision: command.expectedConsentRevision, digest
                         },
-                        registrationGeneration: current ? increment(current.registrationGeneration) : 0, receiverInitialized: true
+                        registrationGeneration: current ? increment(current.registrationGeneration) : 0, receiverInitialized: true,
+                        ...(current && Object.hasOwn(current, 'monthly') ? {monthly:current.monthly} : {})
                     };
                     const route: Route = {
                         version: 'broker-credit-route-v1', accountKeyVersion: ACCOUNT_KEY, accountSubject: i.accountSubject, routingKeyVersion: ROUTE_KEY, route: i.route, cutoverId: this.config.cutoverId
@@ -546,35 +557,64 @@ export class CreditIdentityService {
             };
         }
     }
+    /** Internal, request-memory capability. No network entrypoint or durable UID locator. */
+    async authenticateAccounting(tokens: VerifyBrokerTokensInput, d: CreditIdentityDeadline): Promise<Readonly<AccountingIdentity>> {
+        const v = await d.run(() => this.options.verifier.verify(tokens));
+        if (!v.ok || v.auth.projectId !== PROJECT || v.app.projectId !== PROJECT ||
+            !this.apps.has(v.app.appId) || !admittedOwner(this.owners, v.auth.uid) ||
+            !['anonymous', 'google.com'].includes(v.auth.signInProvider))
+            fail();
+        const identity = Object.freeze({ uid:v.auth.uid, accountSubject:accountForUid(this.accountKey,v.auth.uid),
+            route:routeForUid(this.routingKey,v.auth.uid), appId:v.app.appId, signInProvider:v.auth.signInProvider as 'anonymous' | 'google.com' });
+        this.accountingIdentities.add(identity);
+        return identity;
+    }
+    async readAccountingIdentity(tx: CreditTransaction, i: Readonly<AccountingIdentity>, d: CreditIdentityDeadline): Promise<CreditAccount> {
+        if (!this.accountingIdentities.has(i) || !admittedOwner(this.owners, i.uid) || !this.apps.has(i.appId))
+            fail();
+        d.check();
+        await this.control(tx);
+        const p = await this.pair(tx, i);
+        if (!p) fail();
+        this.accepted(p);
+        const operator = await tx.readOperator(i.uid);
+        if (!operator.entitled || operator.breakerOpen) fail();
+        d.check();
+        return p.account;
+    }
+    async readAccountingEligibility(tx: CreditTransaction, i: Readonly<AccountingIdentity>, d: CreditIdentityDeadline) {
+        if (!this.accountingIdentities.has(i)) fail();
+        return this.readEligibility(tx, i, d);
+    }
+    accountingPolicyId(): string { return this.config.admissionPolicyId; }
+    private async readEligibility(tx: CreditTransaction, i: Identity, d: CreditIdentityDeadline): Promise<Extract<EligibilityResult, {status:'eligible'}> | undefined> {
+        d.check();
+        if (!admittedOwner(this.owners, i.uid)) fail();
+        await this.control(tx);
+        const p = await this.pair(tx, i);
+        if (!p) return undefined;
+        const operator = await tx.readOperator(i.uid);
+        if (!operator.entitled || operator.breakerOpen || p.account.consent.status !== 'accepted' || p.receiver.status !== 'ready')
+            return undefined;
+        this.bound(p);
+        const s = p.receiver.snapshot!;
+        if (s.state === 'none') return undefined;
+        const cap = Math.min(s.validUntilMs!, s.verifiedAtMs + this.config.authorityMaxAgeMs, d.expiresAt);
+        if (s.verifiedAtMs > this.now() || this.now() >= cap) return undefined;
+        d.check(cap);
+        return { status:'eligible', planId:s.planId!, fence:Object.freeze({
+            accountSubject:i.accountSubject, consentRevision:p.account.consent.revision, assertionId:p.account.consent.assertionId,
+            registrationGeneration:p.account.registrationGeneration, lifecycleEpoch:s.lifecycleEpoch,
+            lifecycleGeneration:s.lifecycleGeneration, publicationRevision:s.publicationRevision, digest:p.receiver.digest!,
+            verifiedAtMs:s.verifiedAtMs, expiresAt:cap,
+        }) };
+    }
     async evaluate(tokens: VerifyBrokerTokensInput, d = this.deadline()): Promise<EligibilityResult> {
         d = d.bounded(50000);
         try {
             return await d.run(async () => {
                 const i = await this.identity(tokens, d);
-                const result = await this.options.database.transaction(async (tx) => {
-                    d.check();
-                    await this.control(tx);
-                    const p = await this.pair(tx, i);
-                    if (!p)
-                        return undefined;
-                    const operator = await tx.readOperator(i.uid);
-                    if (!operator.entitled || operator.breakerOpen || p.account.consent.status !== 'accepted' || p.receiver.status !== 'ready')
-                        return undefined;
-                    this.bound(p);
-                    const s = p.receiver.snapshot!;
-                    if (s.state === 'none')
-                        return undefined;
-                    const cap = Math.min(s.validUntilMs!, s.verifiedAtMs + this.config.authorityMaxAgeMs, d.expiresAt);
-                    if (s.verifiedAtMs > this.now() || this.now() >= cap)
-                        return undefined;
-                    d.check(cap);
-                    return {
-                        status: 'eligible' as const, planId: s.planId!, fence: Object.freeze({
-                            accountSubject: i.accountSubject, consentRevision: p.account.consent.revision, assertionId: p.account.consent.assertionId,
-                            registrationGeneration: p.account.registrationGeneration, lifecycleEpoch: s.lifecycleEpoch, lifecycleGeneration: s.lifecycleGeneration, publicationRevision: s.publicationRevision, digest: p.receiver.digest!, verifiedAtMs: s.verifiedAtMs, expiresAt: cap
-                        })
-                    };
-                });
+                const result = await this.options.database.transaction(tx => this.readEligibility(tx, i, d));
                 if (!result)
                     return {
                         status: 'none'

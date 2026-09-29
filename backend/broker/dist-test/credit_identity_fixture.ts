@@ -13,37 +13,47 @@ export async function creditIdentityFixture(options: {
     verifiedAtMs?: number;
     validUntilMs?: number;
     ready?: boolean;
+    collectionPrefix?: string;
+    appIds?: string[];
+    uid?: string;
+    ownerUids?: string[];
+    database?: InMemoryCreditIdentityDatabase;
 } = {}) {
+    const uid = options.uid ?? TEST_UID;
     let now = options.nowMs ?? 1900000000000;
     let sequence = 0, tokenSequence = 0, consentRevision = 0;
     const consumed = new Set<string>();
+    const tokenApps = new Map<string,string>();
     const clock = { now: () => now, set: (value: number) => { now = value; }, advance: (ms: number) => { now += ms; } };
-    const db = new InMemoryCreditIdentityDatabase();
-    db.setOperator(TEST_UID, { entitled: true, breakerOpen: false });
-    const verifier = new FirebaseAdminBrokerTokenVerifier({ config: { projectId: PROJECT, projectNumber: '123456789', allowedAppIds: new Set([TEST_APP]) }, auth: { verifyIdToken: async (token, revoked) => {
+    const db = options.database ?? new InMemoryCreditIdentityDatabase(options.collectionPrefix);
+    db.setOperator(uid, { entitled: true, breakerOpen: false });
+    const verifier = new FirebaseAdminBrokerTokenVerifier({ config: { projectId: PROJECT, projectNumber: '123456789', allowedAppIds: new Set(options.appIds ?? [TEST_APP]) }, auth: { verifyIdToken: async (token, revoked) => {
                 if (token !== 'synthetic-auth' || !revoked)
                     throw Error('fixed');
-                return { uid: TEST_UID, aud: PROJECT, iss: `https://securetoken.google.com/${PROJECT}`, firebase: { sign_in_provider: 'google.com' } };
+                return { uid, aud: PROJECT, iss: `https://securetoken.google.com/${PROJECT}`, firebase: { sign_in_provider: 'google.com' } };
             } }, appCheck: { verifyToken: async (token, options) => {
                 if (!options.consume)
                     throw Error('fixed');
                 const alreadyConsumed = consumed.has(token);
                 consumed.add(token);
-                return { appId: TEST_APP, alreadyConsumed,
-                    token: { aud: [PROJECT, '123456789'], iss: 'https://firebaseappcheck.googleapis.com/123456789', sub: TEST_APP, app_id: TEST_APP } };
+                const app = tokenApps.get(token) ?? TEST_APP;
+                return { appId: app, alreadyConsumed,
+                    token: { aud: [PROJECT, '123456789'], iss: 'https://firebaseappcheck.googleapis.com/123456789', sub: app, app_id: app } };
             } } });
-    const tokens = () => ({ authorizationHeader: 'Bearer synthetic-auth', appCheckToken: `fresh-app-${++tokenSequence}` });
-    let snapshot: CreditAuthoritySnapshot = { version: 'credit-authority-v1', projectId: PROJECT, routingKeyVersion: ROUTE_KEY, route: routeForUid(TEST_ROUTE_KEY, TEST_UID), enrollmentId: 'c'.repeat(32),
+    const tokens = (app=TEST_APP) => { const token=`fresh-app-${++tokenSequence}`; tokenApps.set(token,app); return {authorizationHeader:'Bearer synthetic-auth',appCheckToken:token}; };
+    let snapshot: CreditAuthoritySnapshot = { version: 'credit-authority-v1', projectId: PROJECT, routingKeyVersion: ROUTE_KEY, route: routeForUid(TEST_ROUTE_KEY, uid), enrollmentId: 'c'.repeat(32),
         lifecycleEpoch: 'd'.repeat(32), lifecycleGeneration: 1, publicationRevision: 1, lifecycleStatus: 'active', state: 'active', verifiedAtMs: options.verifiedAtMs ?? now, planId: 'starter',
         playExpiresAtMs: now + 3600000, validUntilMs: options.validUntilMs ?? now + 300000 };
     let reads = 0;
     const transport = { read: async (request: any) => { reads++; return { version: 'credit-authority-read-result-v1', challenge: request.challenge, snapshot: { ...snapshot }, digest: authorityDigest(snapshot) }; } };
     const constructorOptions: CreditIdentityOptions = { config: TEST_CONFIG, database: db, verifier, transport, routingKey: TEST_ROUTE_KEY, accountKey: TEST_ACCOUNT_KEY,
-        ownerUids: new Set([TEST_UID]), appIds: new Set([TEST_APP]), now: clock.now, newNonce: () => (++sequence).toString(16).padStart(32, '0') };
+        ownerUids: new Set(options.ownerUids ?? [uid]), appIds: new Set(options.appIds ?? [TEST_APP]), now: clock.now, newNonce: () => (++sequence).toString(16).padStart(32, '0') };
     const service = new CreditIdentityService(constructorOptions);
     const pair = service.initialControlsForTest();
-    db.setForTest(C.control, 'control', pair.control);
-    db.setForTest(C.control, 'initialization', pair.initialization);
+    if (!db.snapshotForTest().has(C.control + '/control')) {
+        db.setForTest(C.control, 'control', pair.control);
+        db.setForTest(C.control, 'initialization', pair.initialization);
+    }
     const consent = async (action: 'accept' | 'revoke') => { const r = await service.consent(tokens(), { version: 'credit-consent-command-v1', requestId: randomUUID(), expectedConsentRevision: consentRevision, action, researchVersion: 'research-consent-v1', bridgeVersion: 'paid-ai-bridge-consent-v1' }); if (r.consentRevision !== undefined)
         consentRevision = r.consentRevision; return r; };
     const register = async (expectedRegistrationGeneration = 0, requestId = randomUUID()) => service.register(tokens(), { version: 'credit-registration-v1', requestId, expectedRegistrationGeneration });
@@ -51,7 +61,7 @@ export async function creditIdentityFixture(options: {
         if ((await consent('accept')).status !== 'accepted' || (await register()).status !== 'ready')
             throw Error('fixture setup failed');
     }
-    return { service, db, clock, tokens, consent, register, constructorOptions, transport, accountSubject: accountForUid(TEST_ACCOUNT_KEY, TEST_UID), route: snapshot.route,
+    return { service, db, clock, tokens, consent, register, constructorOptions, transport, accountSubject: accountForUid(TEST_ACCOUNT_KEY, uid), route: snapshot.route,
         evaluate: (deadline?: CreditIdentityDeadline) => service.evaluate(tokens(), deadline), deadline: (durationMs = 50000) => new CreditIdentityDeadline(clock.now() + durationMs, clock.now),
         getSnapshot: () => ({ ...snapshot }), setSnapshot: (value: CreditAuthoritySnapshot) => { snapshot = { ...value }; }, readCount: () => reads };
 }

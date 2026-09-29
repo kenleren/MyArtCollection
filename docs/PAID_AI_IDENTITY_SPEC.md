@@ -139,3 +139,11 @@ separate #194 launch dependency. Real transport/IAM/key provisioning, agreed
 processing copy, retention/deletion/recovery, production capacity/freshness and
 numeric pricing/credits, offline authority and Play-track validation remain gated.
 Old strict-schema billing writers must be drained before any real enrollment.
+
+## Disabled monthly accounting foundation
+
+The separate [monthly credit contract](MONTHLY_AI_CREDITS_SPEC.md) connects the
+actual broker to injected account-month reservation, dispatch and settlement.
+It preserves v1 history and introduces an explicit global new-v1 cutover fence;
+production activation and numeric/free/downgrade policy remain unapproved.
+An L4-A eligibility response remains a read-only observation, not a spend permit.

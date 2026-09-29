@@ -1,3 +1,4 @@
+import type { StoredRequestRecord } from './idempotency.js';
 import { validateCanonicalPayloadV1 } from './canonical_payload.js';
 import {
   CURRENT_CONSENT_COPY_VERSION,
@@ -16,6 +17,7 @@ import { FakeResearchProvider } from './fake_provider.js';
 import {
   InMemoryRequestLifecycle,
   type RequestLifecycleStore,
+  type LifecycleRecord,
   type SettlementIntent,
 } from './request_lifecycle.js';
 import { authorizeProviderRequest } from './provider_authorization.js';
@@ -25,17 +27,25 @@ export interface ProviderProvisioner {
   construct(configuration: unknown): ProviderClient | Promise<ProviderClient>;
 }
 
-export interface BrokerDependencies {
+export type MonthlyDispatchOutcome =
+  | { kind: 'provider_result'; result: ProviderResearchResult }
+  | { kind: 'no_dispatch_terminal'; outcome: BrokerTerminalOutcome }
+  | { kind: 'outcome_unknown' };
+
+export type BrokerDependencies<R extends LifecycleRecord = StoredRequestRecord> = {
   providerProvisioner: ProviderProvisioner;
-  requestLifecycle: RequestLifecycleStore;
+  requestLifecycle: RequestLifecycleStore<R>;
   authorizeProvider: (request: BrokerRequest) => void | Promise<void>;
   now: () => Date;
   orderTrace?: string[];
   testProvider?: ProviderClient;
-}
+} & (
+  | { lifecycleVersion?: 'v1'; dispatchMonthly?: never }
+  | { lifecycleVersion: 'v2'; dispatchMonthly: (record: R, request: BrokerRequest, provider: ProviderClient, completeLate: (result: ProviderResearchResult) => Promise<BrokerResult>) => Promise<MonthlyDispatchOutcome> }
+);
 
 export function createFakeBrokerDependencies(
-  overrides: Partial<BrokerDependencies> & { provider?: ProviderClient } = {},
+  overrides: Partial<Omit<BrokerDependencies, 'lifecycleVersion' | 'dispatchMonthly'>> & { provider?: ProviderClient } = {},
 ): BrokerDependencies {
   const provider = overrides.provider ?? overrides.testProvider ?? new FakeResearchProvider();
   return {
@@ -51,15 +61,15 @@ export function createFakeBrokerDependencies(
   };
 }
 
-export async function handleResearchRequest(
+export async function handleResearchRequest<R extends LifecycleRecord = StoredRequestRecord>(
   request: BrokerRequest,
   context: BrokerContext,
-  dependencies: BrokerDependencies = createFakeBrokerDependencies(),
+  dependencies: BrokerDependencies<R> = createFakeBrokerDependencies() as unknown as BrokerDependencies<R>,
 ): Promise<BrokerResult> {
   const trace = dependencies.orderTrace;
 
   trace?.push('auth_context');
-  const authError = validateAuthContext(context);
+  const authError = validateAuthContext(context, dependencies.lifecycleVersion);
   if (authError !== undefined) {
     return failure(authError, request.request_id);
   }
@@ -115,6 +125,8 @@ export async function handleResearchRequest(
       return failure('dispatch_outcome_unknown', request.request_id);
     case 'credits_exhausted':
       return failure('credits_exhausted', request.request_id);
+    case 'migration_required':
+      return failure('monthly_migration_required', request.request_id);
     case 'unsafe_record':
       return failure('malformed_durable_record', request.request_id);
     case 'reserved':
@@ -163,6 +175,23 @@ export async function handleResearchRequest(
     );
   }
 
+  if (dependencies.lifecycleVersion === 'v2') {
+    let dispatched: MonthlyDispatchOutcome;
+    try {
+      dispatched = await dependencies.dispatchMonthly(record, request, provider, result => completeProviderResult(request, provider, result, record, dependencies, trace));
+    } catch {
+      // An uncertain v2 intent must never enter the legacy automatic refund.
+      return failure('dispatch_outcome_unknown', request.request_id);
+    }
+    if (dispatched.kind === 'outcome_unknown') {
+      return failure('dispatch_outcome_unknown', request.request_id);
+    }
+    if (dispatched.kind === 'no_dispatch_terminal') {
+      return outcomeToResult(dispatched.outcome);
+    }
+    return completeProviderResult(request, provider, dispatched.result, record, dependencies, trace);
+  }
+
   trace?.push('dispatch_persistence');
   let dispatchStarted;
   try {
@@ -202,12 +231,12 @@ export async function handleResearchRequest(
   );
 }
 
-async function completeProviderResult(
+async function completeProviderResult<R extends LifecycleRecord>(
   request: BrokerRequest,
   provider: ProviderClient,
   providerResult: ProviderResearchResult,
-  record: Parameters<RequestLifecycleStore['markDispatchStarted']>[0],
-  dependencies: BrokerDependencies,
+  record: R,
+  dependencies: BrokerDependencies<R>,
   trace: string[] | undefined,
 ): Promise<BrokerResult> {
   switch (providerResult.kind) {
@@ -258,11 +287,11 @@ async function completeProviderResult(
   );
 }
 
-async function terminalError(
-  record: Parameters<RequestLifecycleStore['markDispatchStarted']>[0],
+async function terminalError<R extends LifecycleRecord>(
+  record: R,
   condition: BrokerErrorCondition,
   settlement: SettlementIntent,
-  dependencies: BrokerDependencies,
+  dependencies: BrokerDependencies<R>,
   trace: string[] | undefined,
   retryAfterSeconds?: number,
 ): Promise<BrokerResult> {
@@ -277,11 +306,11 @@ async function terminalError(
   return persistTerminalAndSettle(record, outcome, settlement, dependencies, trace);
 }
 
-async function persistTerminalAndSettle(
-  record: Parameters<RequestLifecycleStore['markDispatchStarted']>[0],
+async function persistTerminalAndSettle<R extends LifecycleRecord>(
+  record: R,
   outcome: BrokerTerminalOutcome,
   settlement: SettlementIntent,
-  dependencies: BrokerDependencies,
+  dependencies: BrokerDependencies<R>,
   trace: string[] | undefined,
 ): Promise<BrokerResult> {
   trace?.push('terminal_persistence');
@@ -295,9 +324,9 @@ async function persistTerminalAndSettle(
   return outcomeToResult(outcome);
 }
 
-async function settlePendingBestEffort(
-  record: Parameters<RequestLifecycleStore['markDispatchStarted']>[0],
-  dependencies: BrokerDependencies,
+async function settlePendingBestEffort<R extends LifecycleRecord>(
+  record: R,
+  dependencies: BrokerDependencies<R>,
   trace: string[] | undefined,
 ): Promise<void> {
   if (record.settlement_state !== 'pending_refund' && record.settlement_state !== 'pending_finalize') {
@@ -345,7 +374,7 @@ function isUuid(value: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(value);
 }
 
-function validateAuthContext(context: BrokerContext): BrokerErrorCondition | undefined {
+function validateAuthContext(context: BrokerContext, version?: 'v1' | 'v2'): BrokerErrorCondition | undefined {
   if (!context.app_check_verified || !context.auth_verified) {
     return 'invalid_auth_token';
   }
@@ -363,7 +392,7 @@ function validateAuthContext(context: BrokerContext): BrokerErrorCondition | und
   if (context.auth_identity.sign_in_provider !== 'anonymous' && context.auth_identity.sign_in_provider !== 'google.com') {
     return 'unsupported_auth_provider';
   }
-  if (!/^quota_subject_v1_[a-f0-9]{16,}$/.test(context.quota_subject)) {
+  if (!(version === 'v2' ? /^credit_account_v2_[a-f0-9]{64}$/ : /^quota_subject_v1_[a-f0-9]{16,}$/).test(context.quota_subject)) {
     return 'invalid_auth_token';
   }
   return undefined;

@@ -280,3 +280,11 @@ with a Play plan. No new endpoint, provider path or monthly allowance is enabled
 The recipient's read-only eligibility fence is not a credit reservation or spend
 permit; current consent/authority/operator controls must be revalidated in the
 future reservation and dispatch transactions.
+
+## Disabled monthly accounting foundation
+
+The separate [monthly credit contract](MONTHLY_AI_CREDITS_SPEC.md) connects the
+actual broker to injected account-month reservation, dispatch and settlement.
+It preserves v1 history and introduces an explicit global new-v1 cutover fence;
+production activation and numeric/free/downgrade policy remain unapproved.
+An L4-A eligibility response remains a read-only observation, not a spend permit.
