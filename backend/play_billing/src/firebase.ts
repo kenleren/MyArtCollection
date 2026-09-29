@@ -1,5 +1,5 @@
+import { createBillingRuntime } from './billing_runtime.js';
 import { BillingDeadline } from './deadline.js';
-import { createConfiguredTokenCustody } from './kms_token_custody.js';
 import { getApp, getApps, initializeApp, type App } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import { getFirestore } from 'firebase-admin/firestore';
@@ -13,9 +13,7 @@ import {
 import { verifyCallableIdentity } from './identity.js';
 import { createBillingIdentifiers, CryptoNonceSource } from './crypto.js';
 import { FirestoreBillingDatabase } from './firestore_store.js';
-import { createConfiguredPlaySubscriptionsAdapter } from './play_adapter.js';
 import { resolveApprovedAppId } from './runtime_config.js';
-import { BillingRepository } from './store.js';
 import { PlayBillingService } from './verifier.js';
 
 const fingerprintKey = defineSecret('PLAY_BILLING_FINGERPRINT_KEY');
@@ -41,7 +39,7 @@ export const preparePlayPurchase = onCall(callableOptions, async (request) => {
   const app = getOrInitializeApp();
   const identity = await deadline.run(() => verifyCallableIdentity(request, getAuth(app), resolveApprovedAppId(approvedAppIdParameter))).catch(() => undefined);
   if (!identity) return identityRejected(request.data);
-  const service = createService(app);
+  const service = await createService(app,deadline,false);
   return service === undefined ? temporarilyUnavailable(request.data)
     : await deadline.run(() => service.preparePurchase(identity, request.data, deadline), 55_000).catch(() => temporarilyUnavailable(request.data));
 });
@@ -54,7 +52,7 @@ export const acceptPlayBillingDisclosure = onCall(callableOptions, async (reques
   if (identity === undefined) {
     return identityRejected(request.data);
   }
-  const service = createService(app);
+  const service = await createService(app,deadline,false);
   return service === undefined
     ? temporarilyUnavailable(request.data)
     : await deadline.run(() => service.acceptDisclosure(identity, request.data, deadline), 55_000).catch(() => temporarilyUnavailable(request.data));
@@ -68,7 +66,7 @@ export const revokePlayBillingDisclosure = onCall(callableOptions, async (reques
   if (identity === undefined) {
     return identityRejected(request.data);
   }
-  const service = createService(app);
+  const service = await createService(app,deadline,false);
   return service === undefined
     ? temporarilyUnavailable(request.data)
     : await deadline.run(() => service.revokeDisclosure(identity, request.data, deadline), 55_000).catch(() => temporarilyUnavailable(request.data));
@@ -83,7 +81,7 @@ export const verifyPlaySubscription = onCall(callableOptions, async (request) =>
   if (identity === undefined) {
     return identityRejected(request.data);
   }
-  const service = createService(app);
+  const service = await createService(app,deadline,true);
   return service === undefined
     ? temporarilyUnavailable(request.data)
     : await deadline.run(() => service.verifySubscription(identity, request.data, deadline), 55_000).catch(() => temporarilyUnavailable(request.data));
@@ -96,31 +94,22 @@ export const restorePlayEntitlement = onCall(callableOptions, async (request) =>
   const app = getOrInitializeApp();
   const identity = await deadline.run(() => verifyCallableIdentity(request, getAuth(app), resolveApprovedAppId(approvedAppIdParameter))).catch(() => undefined);
   if (!identity) return identityRejected(request.data);
-  const service = createService(app);
+  const service = await createService(app,deadline,true);
   return service === undefined ? temporarilyUnavailable(request.data)
     : await deadline.run(() => service.restoreEntitlement(identity, request.data, deadline), 55_000)
       .catch(() => temporarilyUnavailable(request.data));
 });
 
-function createService(app: App): PlayBillingService | undefined {
+async function createService(app: App,deadline:BillingDeadline,providersNeeded:boolean): Promise<PlayBillingService | undefined> {
   try {
-    const identifiers = createBillingIdentifiers(decodeFingerprintKey(fingerprintKey.value()));
-    const database = new FirestoreBillingDatabase(getFirestore(app, BILLING_DATABASE_ID));
-    return new PlayBillingService({
-      repository: new BillingRepository(database, new CryptoNonceSource(), identifiers),
-      identifiers,
-      play: createConfiguredPlaySubscriptionsAdapter({
-        enabled: process.env.PLAY_BILLING_ANDROID_PUBLISHER_ENABLED === 'enabled',
-      }),
-      clock: { now: () => new Date() },
-      custody: createConfiguredTokenCustody(process.env.PLAY_BILLING_TOKEN_CUSTODY_ENABLED === 'enabled' ? {
-        enabled: true, encryptionVersion: tokenKeyVersion.value(),
-        retainedVersions: retainedTokenKeyVersions.value().split(','),
-      } : {}),
-    });
-  } catch {
-    return undefined;
-  }
+    const identifiers=createBillingIdentifiers(decodeFingerprintKey(fingerprintKey.value()));
+    const database=new FirestoreBillingDatabase(getFirestore(app, BILLING_DATABASE_ID));
+    const clock={now:()=>new Date()};
+    const runtime=await createBillingRuntime({database,identifiers,nonces:new CryptoNonceSource(),clock,deadline,providersNeeded,
+      configuration:process.env.PLAY_BILLING_DISPATCH_CONFIG,publisherEnabled:process.env.PLAY_BILLING_ANDROID_PUBLISHER_ENABLED==='enabled',
+      ...(providersNeeded&&process.env.PLAY_BILLING_TOKEN_CUSTODY_ENABLED==='enabled'?{accountCustody:{enabled:true,encryptionVersion:tokenKeyVersion.value(),retainedVersions:retainedTokenKeyVersions.value().split(',')}}:{})});
+    return new PlayBillingService({...runtime,identifiers,clock});
+  }catch{return undefined;}
 }
 
 function decodeFingerprintKey(value: string): Uint8Array {

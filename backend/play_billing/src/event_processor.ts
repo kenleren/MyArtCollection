@@ -1,3 +1,4 @@
+import { eventDispatch } from './dispatch_gate.js';
 import {KmsConfigurationError} from './kms_token_custody.js';
 import { randomUUID } from 'node:crypto';
 import { BillingDeadline } from './deadline.js';
@@ -30,9 +31,8 @@ export class EventProcessor {
       if(reservation.kind==='duplicate') return;
       let envelope:EventEnvelope|undefined;
       if(parsed.token!==undefined) {
-        await deadline.run(()=>this.d.work.charge(reservation.work,'eventKms',this.d.clock.now(),deadline,'reserving'));
         deadline.check();
-        envelope=await deadline.run(()=>this.d.eventCustody.encrypt(parsed.token!,{...descriptor,tokenFingerprint:descriptor.tokenFingerprint!},deadline));
+        envelope=await deadline.run(()=>this.d.eventCustody.encrypt(parsed.token!,{...descriptor,tokenFingerprint:descriptor.tokenFingerprint!},deadline,eventDispatch(reservation.work,'reserving')));
       }
       await deadline.run(()=>this.d.work.admitCiphertext(reservation.work,envelope,this.d.clock.now(),deadline));
     } catch(error) {
@@ -56,42 +56,29 @@ export class EventProcessor {
     } catch(error) { throw new EventWorkError(error instanceof EventWorkError ? error.reason : 'transient'); }
   }
   private async process(work:EventWorkRecord, deadline:BillingDeadline):Promise<void> {
-    const used={gets:0,kms:0,acks:0};
-    let workFailure:EventReason|undefined;
     let providerFailure:ReturnType<typeof classifyPlayAdapterError>|undefined;
-    const charge=async(kind:CostKind)=>{
-      const group=kind==='ack'?'acks':kind==='eventKms'||kind==='accountKms'?'kms':'gets';
-      if(used[group]>=(group==='acks'?1:3)) throw new EventWorkError('transient');
-      used[group]++;
-      try { await deadline.run(()=>this.d.work.charge(work,kind,this.d.clock.now(),deadline)); }
-      catch(error) {if(error instanceof EventWorkError && error.reason!=='disabled') workFailure=error.reason;throw error;}
-      deadline.check();
-    };
     const get=async(args:Parameters<PlaySubscriptionsAdapter['getSubscription']>[0], discovery=false)=>{
-      await charge(discovery?'discoveryGet':'verificationGet');
       try { deadline.check(); return await deadline.run(()=>this.d.play.getSubscription(args)); }
       catch(error) { providerFailure=classifyPlayAdapterError(error); throw new EventWorkError(providerFailure==='configuration'?'configuration':'transient'); }
     };
     const play:PlaySubscriptionsAdapter={getSubscription:args=>get(args),acknowledgeSubscription:async args=>{
-      await charge('ack');
       try { deadline.check(); await deadline.run(()=>this.d.play.acknowledgeSubscription(args)); }
       catch(error) { providerFailure=classifyPlayAdapterError(error); throw new EventWorkError(providerFailure==='configuration'?'configuration':'transient'); }
     }};
-    const custody:TokenCustody={encrypt:async(token,context,invocation)=>{
-      await charge('accountKms'); deadline.check(); try {return await this.d.accountCustody.encrypt(token,context,invocation);} catch(error){if(error instanceof KmsConfigurationError) providerFailure='configuration';throw error;}
-    },decrypt:async(envelope,context,invocation)=>{
-      await charge('accountKms'); deadline.check(); try {return await this.d.accountCustody.decrypt(envelope,context,invocation);} catch(error){if(error instanceof KmsConfigurationError) providerFailure='configuration';throw error;}
+    const custody:TokenCustody={encrypt:async(token,context,invocation,dispatch)=>{
+      deadline.check(); try {return await this.d.accountCustody.encrypt(token,context,invocation,dispatch);} catch(error){if(error instanceof KmsConfigurationError) providerFailure='configuration';throw error;}
+    },decrypt:async(envelope,context,invocation,dispatch)=>{
+      deadline.check(); try {return await this.d.accountCustody.decrypt(envelope,context,invocation,dispatch);} catch(error){if(error instanceof KmsConfigurationError) providerFailure='configuration';throw error;}
     }};
     let outcome:'completed'|'retry'|'blocked'='retry', reason:EventReason='transient';
     try {
       if(!work.envelope || !work.tokenFingerprint) throw new EventWorkError('unsafe');
-      await charge('eventKms');
-      const token=await deadline.run(()=>this.d.eventCustody.decrypt(work.envelope!,{eventFingerprint:work.eventFingerprint,payloadDigest:work.payloadDigest,tokenFingerprint:work.tokenFingerprint!},deadline));
+      const token=await deadline.run(()=>this.d.eventCustody.decrypt(work.envelope!,{eventFingerprint:work.eventFingerprint,payloadDigest:work.payloadDigest,tokenFingerprint:work.tokenFingerprint!},deadline,eventDispatch(work,'working')));
       if(this.d.identifiers.tokenFingerprint(token)!==work.tokenFingerprint) throw new EventWorkError('unsafe');
       let resolved=await deadline.run(()=>this.d.repository.resolveEventAccount(work.tokenFingerprint!,{routes:[],predecessorFingerprints:[]},deadline));
       let discovery:PlaySubscriptionPurchase|undefined;
       if(!resolved) {
-        discovery=await get({packageName:PACKAGE_NAME,token,timeoutMs:10_000,deadline},true);
+        discovery=await get({packageName:PACKAGE_NAME,token,timeoutMs:10_000,deadline,dispatch:eventDispatch(work,'working')},true);
         const routes=[discovery.externalAccountIdentifiers?.obfuscatedExternalAccountId,
           discovery.outOfAppPurchaseContext?.expiredExternalAccountIdentifiers?.obfuscatedExternalAccountId].filter((s):s is string=>s!==undefined);
         const predecessorFingerprints=[discovery.linkedPurchaseToken,discovery.outOfAppPurchaseContext?.expiredPurchaseToken]
@@ -114,7 +101,6 @@ export class EventProcessor {
       if(error instanceof UnsafeBillingRecordError) {outcome='blocked';reason='unsafe';}
       else if(error instanceof EventWorkError) {if(error.reason==='configuration') providerFailure='configuration';reason=error.reason==='disabled'?'configuration':error.reason;outcome=['unsafe','unresolved','budget','configuration'].includes(reason)?'blocked':'retry';}
     }
-    if(workFailure && ['unsafe','retired','consent','budget','configuration'].includes(workFailure)) {outcome='blocked';reason=workFailure;}
     if(providerFailure==='configuration') { await deadline.run(()=>this.d.work.openCircuit(this.d.clock.now(),deadline)); outcome='blocked';reason='configuration'; }
     else if(providerFailure==='not_found'||providerFailure==='malformed'||providerFailure==='rejected') {outcome='blocked';reason='unsupported';}
     await deadline.run(()=>this.d.work.finish(work,outcome,reason,this.d.clock.now(),deadline));

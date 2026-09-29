@@ -1,3 +1,5 @@
+import { seedDispatch,testDispatchConfig,meteredPlay,meteredCustody } from './dispatch_fixtures.js';
+import { DispatchGate } from '../src/dispatch_gate.js';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {randomUUID} from 'node:crypto';
@@ -11,8 +13,9 @@ import type {LifecycleRoot} from '../src/lifecycle.js';
 import type {AccountAuthority} from '../src/account_authority.js';
 import {createHarness,acceptDisclosure,eligiblePurchase,purchaseToken,verifyRequest,DeterministicNonceSource,deferred} from './test_helpers.js';
 const policy={activeMs:60_000,retryMs:30_000,maxRetryMs:900_000}; // Synthetic only.
-function setup(){const h=createHarness();h.repository=new BillingRepository(h.database,new DeterministicNonceSource(),h.identifiers,policy);h.service=new PlayBillingService(h);
- const processor=new ReconciliationProcessor({repository:h.repository,identifiers:h.identifiers,clock:h.clock,play:h.play,custody:h.custody});return {...h,processor};}
+function setup(){const h=createHarness();h.repository=new BillingRepository(h.database,new DeterministicNonceSource(),h.identifiers,policy,undefined,()=>h.clock.now());h.service=new PlayBillingService(h);
+ const config=testDispatchConfig();seedDispatch(h.database,h.clock.now(),config);const gate=new DispatchGate(h.repository,config,h.identifiers);
+ const processor=new ReconciliationProcessor({repository:h.repository,identifiers:h.identifiers,clock:h.clock,play:meteredPlay(gate,h.play),custody:meteredCustody(gate,h.custody)});return {...h,processor};}
 type H=ReturnType<typeof setup>;
 const subject=(h:H)=>h.identifiers.accountSubject(h.identity.uid);
 const row=<T>(h:H,c:string)=>h.database.snapshotForTest().get(c+'/'+subject(h)) as T;

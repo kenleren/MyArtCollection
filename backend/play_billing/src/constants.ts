@@ -21,6 +21,7 @@ export const REVOKED_RETENTION_MS = 30 * 24 * 60 * 60_000;
 export const BINDING_RETENTION_MS = 30 * 24 * 60 * 60_000;
 
 export const COLLECTIONS = {
+  dispatchControl: 'playBillingDispatchControl',
   reconcileWork: 'playBillingReconcileWork',
   reconcileExceptions: 'playBillingReconcileMigrationExceptions',
   eventWork: 'playBillingEventWork',

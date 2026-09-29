@@ -1,3 +1,4 @@
+import { LOCAL_DISPATCH_VERSION, LOCAL_CAPS, validCounts, type DispatchCounts } from './dispatch_budget.js';
 import { createHash } from 'node:crypto';
 import { PRODUCT_ALLOWLIST, type PlanId, type ProductId } from './constants.js';
 import type { NormalizedPaidState } from './contracts.js';
@@ -15,6 +16,8 @@ export interface ObservationOwner {
   source: ObservationSource;
   phase: 'working' | 'ack_in_progress' | 'ack_unknown' | 'complete';
   leaseExpiresAt?: Date;
+  dispatchVersion?: typeof LOCAL_DISPATCH_VERSION;
+  dispatchCounts?: DispatchCounts;
 }
 export interface AuthoritySnapshot extends LifecycleFields {
   version: typeof SNAPSHOT_VERSION;
@@ -82,7 +85,8 @@ export function validAuthority(a: AccountAuthority, root: LifecycleRoot, outbox:
     outbox.digest !== snapshotDigest(a.snapshot) || outbox.digest !== snapshotDigest(outbox.snapshot)) return false;
   if (a.owner === undefined) return a.acknowledgementRecoveryToken === undefined || fingerprint(a.acknowledgementRecoveryToken);
   const o = a.owner;
-  return shape(o, ['requestFingerprint','nonce','tokenFingerprint','source','phase'], ['leaseExpiresAt']) &&
+  return shape(o, ['requestFingerprint','nonce','tokenFingerprint','source','phase'], ['leaseExpiresAt','dispatchVersion','dispatchCounts']) &&
+    ((o.dispatchVersion===undefined && o.dispatchCounts===undefined)||(o.dispatchVersion===LOCAL_DISPATCH_VERSION && o.dispatchCounts!==undefined && validCounts(o.dispatchCounts,LOCAL_CAPS))) &&
     a.observationGeneration > 0 && fingerprint(o.requestFingerprint) && fingerprint(o.tokenFingerprint) &&
     o.nonce instanceof Uint8Array && o.nonce.byteLength === 16 && ['foreground','background'].includes(o.source) &&
     ['working','ack_in_progress','ack_unknown','complete'].includes(o.phase) &&

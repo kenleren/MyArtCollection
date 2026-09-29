@@ -1,5 +1,8 @@
+import { registerDispatchBudgetTests } from './dispatch_budget_cases.js';
+import { testDispatchConfig,legacyControls } from '../dist-test/dispatch_fixtures.js';
+import { initialDispatchControls } from '../src/dispatch_budget.js';
 import assert from 'node:assert/strict';
-import test,{after} from 'node:test';
+import test,{after,before} from 'node:test';
 import {randomUUID,createHash} from 'node:crypto';
 import {initializeApp,deleteApp} from 'firebase-admin/app';
 import {getFirestore} from 'firebase-admin/firestore';
@@ -19,7 +22,9 @@ const ids=createBillingIdentifiers(Buffer.alloc(32,9));
 const nonces=new CryptoNonceSource();
 const repository=new BillingRepository(database,nonces,ids);
 const clock={now:new Date('2033-01-01T00:00:00Z')};
-const work=new EventWorkRepository(database,nonces,BOUNDED_EVENT_LIMITS,()=>0);
+const config=testDispatchConfig();
+before(async()=>{const pair=initialDispatchControls(config,clock.now,'e'.repeat(64),{kind:'verified_new'});await firestore.runTransaction(async tx=>{for(const [id,value]of Object.entries(pair))tx.set(firestore.collection(COLLECTIONS.dispatchControl).doc(id),value);for(const [id,value]of Object.entries(legacyControls()))tx.set(firestore.collection(COLLECTIONS.eventControl).doc(id),value);});});
+const work=new EventWorkRepository(database,nonces,BOUNDED_EVENT_LIMITS,()=>0,config);
 const hash=()=>createHash('sha256').update(randomUUID()).digest('hex');
 const descriptor=()=>({eventFingerprint:hash(),payloadDigest:hash(),tokenFingerprint:hash(),category:'subscription' as const});
 const envelope={version:EVENT_CUSTODY_VERSION,keyVersion:TEST_KEY,ciphertext:'AAAA'} as const;
@@ -40,7 +45,7 @@ test('named Firestore due query reclaims crashed work once and retains charges a
  const d=await ready();const first=await work.claim(d.eventFingerprint,clock.now,deadline());assert.ok(first);
  await work.charge(first,'discoveryGet',clock.now,deadline());clock.now=new Date(clock.now.getTime()+90_000);
  assert.ok((await database.dueEventWork(clock.now,10)).includes(d.eventFingerprint));
- const restarted=new EventWorkRepository(new FirestoreBillingDatabase(firestore),nonces,BOUNDED_EVENT_LIMITS,()=>0);
+ const restarted=new EventWorkRepository(new FirestoreBillingDatabase(firestore),nonces,BOUNDED_EVENT_LIMITS,()=>0,config);
  const claimed=await Promise.all([work.claim(d.eventFingerprint,clock.now,deadline()),restarted.claim(d.eventFingerprint,clock.now,deadline())]);
  assert.equal(claimed.filter(Boolean).length,1);const current=claimed.find(Boolean)!;assert.equal(current.generation,first.generation+1);assert.equal(current.dispatchTotals.discoveryGet,1);
  await assert.rejects(work.finish(first,'completed','none',clock.now,deadline()),/unsafe/);
@@ -60,3 +65,7 @@ test('named Firestore two resolved event tokens contend for one account owner an
  const acquired=results.find(result=>result.kind==='acquired');assert.ok(acquired?.kind==='acquired');
  if(acquired.kind==='acquired') assert.equal(await repository.markVerifiedOwner(acquired.attempt,'archivale_starter_monthly',clock.now),false);
 });
+
+// Common controls are project-wide: run these cases after the legacy event cases
+// in the same test worker, not against independently seeded parallel fixtures.
+registerDispatchBudgetTests();

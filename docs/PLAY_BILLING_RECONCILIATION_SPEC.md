@@ -1,5 +1,7 @@
 # Known-account reconciliation — disabled L3-A (#194)
 
+The disabled L3-B1 [shared dispatch budget](PLAY_BILLING_DISPATCH_BUDGET_SPEC.md) now meters the injected processor through the same account/transport gate as foreground and events. It adds no reconciliation pump or production cadence.
+
 This source slice adds atomic scheduling and an injected one-job integration.
 It adds no Firebase export, runtime dispatcher, provider client, financial-list
 transport, migration runner or public/mobile contract. Production construction

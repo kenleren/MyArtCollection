@@ -1,3 +1,4 @@
+import { protocolGate } from './dispatch_fixtures.js';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { BillingDeadline } from '../src/deadline.js';
@@ -52,7 +53,7 @@ test('KMS integrity flags, ciphertext CRC, version and malformed plaintext fail 
 test('transport bounds response body and rejects redirects and non-success without raw errors', async () => {
   const auth = { getClient: async () => ({ getRequestHeaders: async () => new Headers() }) };
   for (const response of [new Response('x'.repeat(32769)), new Response('synthetic failure', { status: 500 })]) {
-    const transport = new GoogleKmsTransport({ auth, fetch: async (_url, init) => {
+    const transport = new GoogleKmsTransport({gate:protocolGate(), auth, fetch: async (_url, init) => {
       assert.equal(init.redirect, 'error'); return response;
     } });
     await assert.rejects(transport.request(TEST_KEY, 'encrypt', {}, new BillingDeadline()), { message: 'token custody unavailable' });
@@ -61,7 +62,7 @@ test('transport bounds response body and rejects redirects and non-success witho
 
 test('late auth and body completions cannot resume a timed-out custody request', async () => {
   const authGate = deferred(); let fetches = 0;
-  const transport = new GoogleKmsTransport({
+  const transport = new GoogleKmsTransport({gate:protocolGate(),
     auth: { getClient: async () => { await authGate.promise; return { getRequestHeaders: async () => new Headers() }; } },
     fetch: async () => { fetches++; return new Response('{}'); },
   });
@@ -70,7 +71,7 @@ test('late auth and body completions cannot resume a timed-out custody request',
   assert.equal(fetches, 0);
   let bodyController!: ReadableStreamDefaultController<Uint8Array>;
   const body = new ReadableStream<Uint8Array>({ start(controller) { bodyController = controller; } });
-  const bodyTransport = new GoogleKmsTransport({
+  const bodyTransport = new GoogleKmsTransport({gate:protocolGate(),
     auth: { getClient: async () => ({ getRequestHeaders: async () => new Headers() }) },
     fetch: async () => new Response(body),
   });

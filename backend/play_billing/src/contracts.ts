@@ -1,3 +1,4 @@
+import type { DispatchCapability } from './dispatch_gate.js';
 import type { PlanId, ProductId } from './constants.js';
 
 export type FreeReason =
@@ -120,6 +121,7 @@ export interface PlayGetArguments {
   token: string;
   timeoutMs: 10_000;
   deadline?: PlayCallDeadline;
+  dispatch?: DispatchCapability;
 }
 
 /** Internal invocation budget; never accepted from the mobile wire. */
@@ -137,6 +139,7 @@ export interface PlayAcknowledgeArguments {
   };
   timeoutMs: 10_000;
   deadline?: PlayCallDeadline;
+  dispatch?: DispatchCapability;
 }
 
 export interface PlaySubscriptionsAdapter {

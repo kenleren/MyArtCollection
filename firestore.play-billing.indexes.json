@@ -182,6 +182,31 @@
       "collectionGroup": "playBillingReconcileWork",
       "fieldPath": "completedObservation",
       "indexes": []
+    },
+    {
+      "collectionGroup": "playBillingDispatchControl",
+      "fieldPath": "starts",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "playBillingDispatchControl",
+      "fieldPath": "totals",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "playBillingDispatchControl",
+      "fieldPath": "legacy",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "playBillingDispatchControl",
+      "fieldPath": "legacyHead",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "playBillingEventWork",
+      "fieldPath": "dispatchBase",
+      "indexes": []
     }
   ]
 }

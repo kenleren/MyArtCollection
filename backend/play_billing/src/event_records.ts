@@ -1,3 +1,4 @@
+import { LOCAL_DISPATCH_VERSION } from './dispatch_budget.js';
 import { fingerprint, counter } from './account_authority.js';
 import { validLifecycleFields, type LifecycleFields } from './lifecycle.js';
 import { validKeyVersion, validBase64 } from './token_custody.js';
@@ -30,6 +31,8 @@ export interface EventWorkRecord extends EventWorkFence {
   attemptStarts: Date[];
   totalAttempts: number;
   dispatchTotals: Record<CostKind, number>;
+  dispatchVersion?: typeof LOCAL_DISPATCH_VERSION;
+  dispatchBase?: Record<CostKind, number>;
 }
 export interface EventDescriptor { eventFingerprint: string; payloadDigest: string; tokenFingerprint?: string; category: EventWorkRecord['category'] }
 export interface EventLimits { rows: number; admissions: number; gets: number; discoveries: number; kms: number; acknowledgements: number }
@@ -49,13 +52,14 @@ export function validEventEnvelope(v: unknown): v is EventEnvelope {
 }
 export function validEventWork(v: EventWorkRecord, id: string): boolean {
   return shape(v, ['version','eventFingerprint','payloadDigest','category','state','receivedAt','dueAt','generation','nonce','reason','attemptStarts','totalAttempts','dispatchTotals'],
-    ['tokenFingerprint','leaseExpiresAt','envelope','resolved']) && v.version === EVENT_WORK_VERSION && v.eventFingerprint === id && fingerprint(id) && fingerprint(v.payloadDigest) &&
+    ['tokenFingerprint','leaseExpiresAt','envelope','resolved','dispatchVersion','dispatchBase']) && v.version === EVENT_WORK_VERSION && v.eventFingerprint === id && fingerprint(id) && fingerprint(v.payloadDigest) &&
     (v.tokenFingerprint === undefined || fingerprint(v.tokenFingerprint)) && ['subscription','unsupported','test','one_time','void','refund_review'].includes(v.category) && (['test','refund_review'].includes(v.category) ? v.tokenFingerprint === undefined : v.tokenFingerprint !== undefined) &&
     ['reserving','ready','working','retry','completed','blocked'].includes(v.state) && finiteDate(v.receivedAt) && finiteDate(v.dueAt) &&
     counter(v.generation) && v.generation > 0 && v.nonce instanceof Uint8Array && v.nonce.byteLength === 16 &&
     ['none','transient','unsafe','unresolved','consent','retired','budget','unsupported','configuration'].includes(v.reason) &&
     Array.isArray(v.attemptStarts) && v.attemptStarts.length <= 12 && v.attemptStarts.every(finiteDate) && counter(v.totalAttempts) && v.totalAttempts >= v.attemptStarts.length &&
     shape(v.dispatchTotals, [...COST_KINDS]) && COST_KINDS.every(k => counter(v.dispatchTotals[k])) &&
+    ((v.dispatchVersion===undefined&&v.dispatchBase===undefined)||(v.dispatchVersion===LOCAL_DISPATCH_VERSION&&v.dispatchBase!==undefined&&shape(v.dispatchBase,[...COST_KINDS])&&COST_KINDS.every(k=>counter(v.dispatchBase![k])&&v.dispatchBase![k]<=v.dispatchTotals[k]))) &&
     (v.resolved === undefined || validResolved(v.resolved)) && (v.envelope === undefined || validEventEnvelope(v.envelope)) &&
     ((v.state === 'reserving' || v.state === 'working') ? finiteDate(v.leaseExpiresAt) && v.dueAt.getTime() === v.leaseExpiresAt.getTime() : v.leaseExpiresAt === undefined) &&
     (v.state !== 'reserving' || v.envelope === undefined) &&

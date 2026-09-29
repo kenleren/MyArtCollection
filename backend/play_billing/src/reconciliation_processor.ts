@@ -18,17 +18,8 @@ export class ReconciliationProcessor {
     const selected=claimed.selectedDemand;
     const requestFingerprint=this.d.identifiers.reconciliationFingerprint(subject,claimed.lifecycleEpoch,claimed.ownerGeneration,claimed.nonce,
       JSON.stringify([claimed.lifecycleGeneration,claimed.assertionId,selected.kind,selected.tokenFingerprint,selected.demandRevision,selected.indexRevision]));
-    const used={get:0,ack:0,kms:0};
-    const charge=async(kind:keyof typeof used)=>{
-      if(++used[kind]>(kind==='ack'?1:3))throw new Error('billing reconciliation budget');
-      await deadline.run(()=>this.d.repository.reserveReconciliation(work.fence,kind,this.d.clock.now(),deadline,requestFingerprint));deadline.check();
-    };
-    const play:PlaySubscriptionsAdapter={getSubscription:async args=>{await charge('get');deadline.check();return this.d.play.getSubscription(args);},
-      acknowledgeSubscription:async args=>{await charge('ack');deadline.check();return this.d.play.acknowledgeSubscription(args);}};
-    const custody:TokenCustody={encrypt:async(token,context,callDeadline)=>{await charge('kms');deadline.check();return this.d.custody.encrypt(token,context,callDeadline);},
-      decrypt:async(envelope,context,callDeadline)=>{await charge('kms');deadline.check();return this.d.custody.decrypt(envelope,context,callDeadline);}};
     try{
-      const service=new PlayBillingService({repository:this.d.repository,identifiers:this.d.identifiers,clock:this.d.clock,play,custody});
+      const service=new PlayBillingService({repository:this.d.repository,identifiers:this.d.identifiers,clock:this.d.clock,play:this.d.play,custody:this.d.custody});
       return await deadline.run(()=>service.processAccountObservation({accountSubject:subject,requestFingerprint,source:'background',work},
         {kind:'restore',input:{version:CONTRACT_VERSION,requestId:randomUUID(),billingDisclosureVersion:DISCLOSURE_VERSION}},deadline),Math.max(1,deadline.expiresAt-Date.now()));
     } finally {

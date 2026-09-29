@@ -101,6 +101,9 @@ describe('billing isolation and redaction', () => {
   test('billing source has no logging or AI entitlement writes', async () => {
     const sourceFiles = [
       'src/constants.ts',
+      'src/billing_runtime.ts',
+      'src/dispatch_budget.ts',
+      'src/dispatch_gate.ts',
       'src/contracts.ts',
       'src/crypto.ts',
       'src/lifecycle.ts',

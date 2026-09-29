@@ -1,5 +1,7 @@
 # Disabled Play event processing: L2 Stage B
 
+The disabled L3-B1 [shared dispatch budget](PLAY_BILLING_DISPATCH_BUDGET_SPEC.md) now composes physical event/account costs with foreground and reconciliation limits. It preserves this event history and removes first-use control initialization. This source change does not activate the worker.
+
 This source adds a bounded RTDN inbox and retry worker for the account authority
 engine. It is disabled, unprovisioned and not public-launch acceptance. The mobile
 v3 contract is unchanged. No reconciliation sweep, void scan, broker publisher,

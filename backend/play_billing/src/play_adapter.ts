@@ -1,3 +1,5 @@
+import { BillingDeadline } from './deadline.js';
+import { DispatchGate, authFailure, type DispatchCapability, type DispatchDescriptor } from './dispatch_gate.js';
 import { createHash } from 'node:crypto';
 
 import { GoogleAuth } from 'google-auth-library';
@@ -66,6 +68,7 @@ const systemDeadlineScheduler: DeadlineScheduler = {
  * decompressed response stream share one absolute deadline.
  */
 export class GoogleAndroidPublisherTransport implements AndroidPublisherTransport {
+  private readonly gate:DispatchGate;
   private readonly auth: GoogleAuthProvider;
   private readonly fetch: PublisherFetch;
   private readonly deadlines: DeadlineScheduler;
@@ -76,7 +79,10 @@ export class GoogleAndroidPublisherTransport implements AndroidPublisherTranspor
     fetch?: PublisherFetch;
     deadlines?: DeadlineScheduler;
     now?: () => number;
+    gate?:DispatchGate;
   } = {}) {
+    if(!options.gate)throw new PlayAdapterError('configuration');
+    this.gate=options.gate;
     this.auth = options.auth ?? new GoogleAuth({ scopes: [ANDROID_PUBLISHER_SCOPE] });
     this.fetch = options.fetch ?? defaultPublisherFetch;
     this.deadlines = options.deadlines ?? systemDeadlineScheduler;
@@ -92,7 +98,7 @@ export class GoogleAndroidPublisherTransport implements AndroidPublisherTranspor
       undefined,
       args.timeoutMs,
       true,
-      args.deadline,
+      args.deadline, args.dispatch, this.gate.playDescriptor(args.dispatch,'play_get',args.token),
     );
   }
 
@@ -106,7 +112,7 @@ export class GoogleAndroidPublisherTransport implements AndroidPublisherTranspor
       isEmptyRecord(args.body) ? '' : JSON.stringify(args.body),
       args.timeoutMs,
       false,
-      args.deadline,
+      args.deadline, args.dispatch, this.gate.playDescriptor(args.dispatch,'play_ack',args.token,args.subscriptionId,args.body),
     );
   }
 
@@ -117,6 +123,7 @@ export class GoogleAndroidPublisherTransport implements AndroidPublisherTranspor
     timeoutMs: number,
     parseResponse: boolean,
     parent?: PlayGetArguments['deadline'],
+    dispatch?:DispatchCapability, descriptor?:DispatchDescriptor,
   ): Promise<unknown> {
     const deadline = Math.min(this.now() + timeoutMs, parent?.expiresAt ?? Infinity);
     const controller = new AbortController();
@@ -131,14 +138,20 @@ export class GoogleAndroidPublisherTransport implements AndroidPublisherTranspor
         throw unavailable();
       }
     };
+    let authStage=false;
     try {
       return await withDeadline((async () => {
         checkDeadline();
+        if(!parent||!dispatch||!descriptor)throw new PlayAdapterError('configuration');
+        const ticket=await this.gate.reserve(dispatch,descriptor,{expiresAt:deadline,signal:parent.signal});
+        checkDeadline();
+        authStage=true;
         const client = await this.auth.getClient();
         checkDeadline();
         const headers = normalizeHeaders(await client.getRequestHeaders(url));
         checkDeadline();
-        const response = await this.fetch(url, {
+        authStage=false;
+        const response = await this.gate.consume(ticket,()=>this.fetch(url, {
           method,
           headers: {
             ...headers,
@@ -148,7 +161,7 @@ export class GoogleAndroidPublisherTransport implements AndroidPublisherTranspor
           ...(body === undefined ? {} : { body }),
           signal: controller.signal,
           redirect: 'error',
-        });
+        }));
         // Even a fetch implementation that ignores abort must not leave a late
         // response live or continue into response parsing after the deadline.
         cancelBody = () => discardBody(response.body);
@@ -204,6 +217,12 @@ export class GoogleAndroidPublisherTransport implements AndroidPublisherTranspor
       })(), deadline, this.deadlines, this.now, stop, parent?.signal);
     } catch (error) {
       stop();
+      if(!parent?.signal.aborted&&this.now()<deadline&&((error instanceof PlayAdapterError&&error.classification==='configuration')||(authStage&&authFailure(error)==='configuration'))){
+        const failed=new BillingDeadline(deadline);
+        const cancel=()=>failed.cancel();
+        if(parent?.signal.aborted)cancel();else parent?.signal.addEventListener('abort',cancel,{once:true});
+        try{await this.gate.configurationFailure(failed);}finally{parent?.signal.removeEventListener('abort',cancel);}throw new PlayAdapterError('configuration');
+      }
       if (error instanceof PlayAdapterError) throw error;
       throw unavailable();
     }
@@ -265,6 +284,7 @@ export class AndroidPublisherSubscriptionsAdapter implements PlaySubscriptionsAd
 export interface PlayAdapterConfiguration {
   enabled?: boolean;
   transportFactory?: () => AndroidPublisherTransport;
+  gate?:DispatchGate;
 }
 
 /**
@@ -274,11 +294,11 @@ export interface PlayAdapterConfiguration {
 export function createConfiguredPlaySubscriptionsAdapter(
   configuration: PlayAdapterConfiguration = {},
 ): PlaySubscriptionsAdapter {
-  if (configuration.enabled !== true) {
+  if (configuration.enabled !== true || !configuration.gate) {
     return new DisabledPlaySubscriptionsAdapter();
   }
   return new AndroidPublisherSubscriptionsAdapter(
-    configuration.transportFactory?.() ?? new GoogleAndroidPublisherTransport(),
+    configuration.transportFactory?.() ?? new GoogleAndroidPublisherTransport({gate:configuration.gate}),
   );
 }
 
@@ -390,7 +410,7 @@ function httpFailure(status: number): PlayAdapterError {
 
 function assertGetArguments(args: PlayGetArguments): void {
   if (
-    !isRecord(args) || Object.keys(args).length !== 3 + Number(Object.hasOwn(args, 'deadline')) ||
+    !isRecord(args) || Object.keys(args).length !== 3 + Number(Object.hasOwn(args, 'deadline')) + Number(Object.hasOwn(args,'dispatch')) ||
     !validParentDeadline(args.deadline) ||
     args.packageName !== PACKAGE_NAME ||
     !isOpaqueValue(args.token) ||
@@ -402,7 +422,7 @@ function assertGetArguments(args: PlayGetArguments): void {
 
 function assertAcknowledgeArguments(args: PlayAcknowledgeArguments): void {
   if (
-    !isRecord(args) || Object.keys(args).length !== 5 + Number(Object.hasOwn(args, 'deadline')) ||
+    !isRecord(args) || Object.keys(args).length !== 5 + Number(Object.hasOwn(args, 'deadline')) + Number(Object.hasOwn(args,'dispatch')) ||
     !validParentDeadline(args.deadline) ||
     args.packageName !== PACKAGE_NAME ||
     typeof args.subscriptionId !== 'string' || !Object.hasOwn(PRODUCT_ALLOWLIST, args.subscriptionId) ||

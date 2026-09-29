@@ -1,3 +1,4 @@
+import { protocolGate,protocolCapability } from './dispatch_fixtures.js';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { describe, test } from 'node:test';
@@ -18,12 +19,14 @@ import {
 
 const getArguments: PlayGetArguments = {
   packageName: 'app.archivale',
+  dispatch:protocolCapability,deadline:{expiresAt:Date.now()+55_000,signal:new AbortController().signal},
   token: 'opaque-test-value',
   timeoutMs: 10_000,
 };
 
 const acknowledgeArguments: PlayAcknowledgeArguments = {
   packageName: 'app.archivale',
+  dispatch:protocolCapability,deadline:{expiresAt:Date.now()+55_000,signal:new AbortController().signal},
   subscriptionId: 'archivale_starter_monthly',
   token: 'opaque-test-value',
   body: {},
@@ -139,7 +142,7 @@ function streamBody(chunks: Uint8Array[], close = true): {
 }
 
 function withFetch(fetch: PublisherFetch, clock?: ManualDeadline): GoogleAndroidPublisherTransport {
-  return new GoogleAndroidPublisherTransport({
+  return new GoogleAndroidPublisherTransport({gate:protocolGate(),
     auth: fakeAuth, fetch,
     ...(clock === undefined ? {} : { now: clock.now, deadlines: clock }),
   });
@@ -243,7 +246,7 @@ describe('Android Publisher PlaySubscriptionsAdapter', () => {
       body?: string;
       contentType?: string;
     }> = [];
-    const transport = new GoogleAndroidPublisherTransport({
+    const transport = new GoogleAndroidPublisherTransport({gate:protocolGate(),
       auth: {
         async getClient() {
           return { async getRequestHeaders() { return new Headers(); } };
@@ -284,7 +287,7 @@ describe('Android Publisher PlaySubscriptionsAdapter', () => {
 
   test('accepts an HTTP 200 acknowledgement with an empty response without parsing or retrying', async () => {
     let attempts = 0;
-    const transport = new GoogleAndroidPublisherTransport({
+    const transport = new GoogleAndroidPublisherTransport({gate:protocolGate(),
       auth: {
         async getClient() {
           return { async getRequestHeaders() { return {}; } };
@@ -303,7 +306,7 @@ describe('Android Publisher PlaySubscriptionsAdapter', () => {
 
   test('accepts an HTTP 204 acknowledgement with an empty response without parsing or retrying', async () => {
     let attempts = 0;
-    const transport = new GoogleAndroidPublisherTransport({
+    const transport = new GoogleAndroidPublisherTransport({gate:protocolGate(),
       auth: {
         async getClient() {
           return { async getRequestHeaders() { return {}; } };
@@ -322,7 +325,7 @@ describe('Android Publisher PlaySubscriptionsAdapter', () => {
 
   test('fails closed after one acknowledgement attempt on an HTTP failure', async () => {
     let attempts = 0;
-    const transport = new GoogleAndroidPublisherTransport({
+    const transport = new GoogleAndroidPublisherTransport({gate:protocolGate(),
       auth: {
         async getClient() {
           return { async getRequestHeaders() { return {}; } };
@@ -343,7 +346,7 @@ describe('Android Publisher PlaySubscriptionsAdapter', () => {
 
   test('does not construct or call a live transport unless explicitly enabled', async () => {
     let constructions = 0;
-    const adapter = createConfiguredPlaySubscriptionsAdapter({
+    const adapter = createConfiguredPlaySubscriptionsAdapter({gate:protocolGate(),
       transportFactory: () => {
         constructions += 1;
         return new FakePublisherTransport();
@@ -358,7 +361,7 @@ describe('Android Publisher PlaySubscriptionsAdapter', () => {
   test('constructs the injected Publisher transport only when explicitly enabled', async () => {
     const transport = new FakePublisherTransport();
     let constructions = 0;
-    const adapter = createConfiguredPlaySubscriptionsAdapter({
+    const adapter = createConfiguredPlaySubscriptionsAdapter({gate:protocolGate(),
       enabled: true,
       transportFactory: () => {
         constructions += 1;
@@ -502,7 +505,7 @@ describe('bounded Android Publisher transport', () => {
     let fetchCalls = 0;
     const route = Buffer.alloc(32, 7).toString('base64url');
     const extended = { externalAccountIds: { obfuscatedAccountId: route } };
-    const transport = new GoogleAndroidPublisherTransport({
+    const transport = new GoogleAndroidPublisherTransport({gate:protocolGate(),
       auth: { async getClient() { authCalls += 1; return fakeAuth.getClient(); } },
       fetch: async (_url, init) => {
         fetchCalls += 1;
@@ -544,7 +547,7 @@ describe('bounded Android Publisher transport', () => {
     let headers = 0;
     let fetches = 0;
     const client = deferred<{ getRequestHeaders(): Promise<object> }>();
-    const transport = new GoogleAndroidPublisherTransport({
+    const transport = new GoogleAndroidPublisherTransport({gate:protocolGate(),
       auth: { getClient: () => client.promise }, deadlines: clock, now: clock.now,
       fetch: async () => { fetches += 1; return Response.json(normalizedPurchase); },
     });
@@ -560,7 +563,7 @@ describe('bounded Android Publisher transport', () => {
     const clock = new ManualDeadline();
     let fetches = 0;
     const headers = deferred<object>();
-    const transport = new GoogleAndroidPublisherTransport({
+    const transport = new GoogleAndroidPublisherTransport({gate:protocolGate(),
       auth: { async getClient() {
         clock.time = 9_000;
         return { getRequestHeaders: () => headers.promise };
@@ -615,7 +618,7 @@ describe('bounded Android Publisher transport', () => {
   test('does no authentication when its caller is already canceled or out of time', async () => {
     let authentications = 0;
     let fetches = 0;
-    const transport = new GoogleAndroidPublisherTransport({
+    const transport = new GoogleAndroidPublisherTransport({gate:protocolGate(),
       auth: { async getClient() { authentications += 1; return fakeAuth.getClient(); } },
       fetch: async () => { fetches += 1; return Response.json(normalizedPurchase); },
     });
@@ -643,7 +646,7 @@ describe('bounded Android Publisher transport', () => {
         const client = { async getRequestHeaders() {
           lookups += 1; return stage === 'headers' ? headers.promise : {};
         } };
-        const transport = new GoogleAndroidPublisherTransport({
+        const transport = new GoogleAndroidPublisherTransport({gate:protocolGate(),
           auth: { async getClient() { return stage === 'client' ? auth.promise : client; } },
           fetch: async () => { fetches += 1; return new Response(null, { status: 204 }); },
         });
@@ -666,7 +669,7 @@ describe('bounded Android Publisher transport', () => {
     const headers = deferred<object>();
     let fetches = 0;
     const caller = new AbortController();
-    const transport = new GoogleAndroidPublisherTransport({
+    const transport = new GoogleAndroidPublisherTransport({gate:protocolGate(),
       auth: { async getClient() { return { getRequestHeaders: () => headers.promise }; } },
       now: clock.now, deadlines: clock,
       fetch: async () => { fetches += 1; return Response.json(normalizedPurchase); },

@@ -1,3 +1,4 @@
+import type { DispatchCapability } from './dispatch_gate.js';
 import { validLifecycleFields, type LifecycleFields } from './lifecycle.js';
 import { BILLING_DATABASE_ID, PACKAGE_NAME } from './constants.js';
 import type { BillingDeadline } from './deadline.js';
@@ -11,8 +12,8 @@ export interface TokenEnvelope {
   ciphertext: string;
 }
 export interface TokenCustody {
-  encrypt(token: string, context: TokenContext, deadline: BillingDeadline): Promise<TokenEnvelope>;
-  decrypt(envelope: TokenEnvelope, context: TokenContext, deadline: BillingDeadline): Promise<string>;
+  encrypt(token: string, context: TokenContext, deadline: BillingDeadline, dispatch?: DispatchCapability): Promise<TokenEnvelope>;
+  decrypt(envelope: TokenEnvelope, context: TokenContext, deadline: BillingDeadline, dispatch?: DispatchCapability): Promise<string>;
 }
 export class DisabledTokenCustody implements TokenCustody {
   async encrypt(): Promise<TokenEnvelope> { throw custodyUnavailable(); }

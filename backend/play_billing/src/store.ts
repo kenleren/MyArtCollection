@@ -1,3 +1,6 @@
+import { LOCAL_DISPATCH_VERSION, emptyDispatchCounts, LOCAL_CAPS, DispatchError, digest, groupFor, readLegacyDispatchHistory, readDispatchControls, proposeDispatch, writeDispatchControls, proposeOpenCircuit, type DispatchConfiguration } from './dispatch_budget.js';
+import { attemptFrom, type DispatchCapability, type DispatchDescriptor, type DispatchReservation } from './dispatch_gate.js';
+import { EventWorkRepository } from './event_work.js';
 import { type InternalWork, type ReconcileFence, type ReconcileWork, type ReconcilePolicy, type CompletedObservation, type MigrationException, validMigrationException, validPolicy, validWork, ownsWork, marked, initialWork, reschedule, fenceFor, selection, increment, selectedEqual } from './reconciliation_work.js';
 import { ownsEvent, type EventWorkFence, type EventWorkRecord, type ResolvedEventAccount } from './event_records.js';
 import { OWNERSHIP_PROOF_VERSION, validOwnershipProof, type OwnershipProof } from './ownership_proof.js';
@@ -208,10 +211,79 @@ export class BillingRepository {
     private readonly nonces: NonceSource,
     private readonly identifiers: Pick<BillingIdentifiers, 'routeFingerprint'>,
     private readonly reconciliationPolicy?: ReconcilePolicy,
+    private readonly dispatchEvents?: EventWorkRepository,
+    private readonly dispatchClock:()=>Date=()=>new Date(),
   ) { if (reconciliationPolicy && !validPolicy(reconciliationPolicy)) throw new Error('billing reconciliation policy unavailable'); }
 
   get databaseId(): string {
     return this.database.databaseId;
+  }
+
+  /** Shared physical reservation and read-only final validation. No provider code runs inside this transaction. */
+  async dispatch(cap:DispatchCapability,d:DispatchDescriptor,c:DispatchConfiguration,deadline:BillingDeadline,minimumRevision?:number):Promise<DispatchReservation> {
+    if (!cap || !d || cap.tokenFingerprint!==d.tokenFingerprint)throw new DispatchError();
+    if (!('attempt' in cap)) {
+      if (!this.dispatchEvents)throw new DispatchError();
+      return this.dispatchEvents.dispatch(cap,d,c,deadline,minimumRevision,this.dispatchClock);
+    }
+    const attempt=attemptFrom(cap,deadline);
+    const result=await this.guarded(attempt,async(tx,index,authority,root)=>{
+      const operation=await tx.get<TokenOperationRecord>(COLLECTIONS.operations,attempt.tokenFingerprint);
+      const replay=attempt.usesReplay?await tx.get<RequestReplayRecord>(COLLECTIONS.replays,attempt.owner.requestFingerprint):undefined;
+      const disclosure=await tx.get<DisclosureRecord>(COLLECTIONS.disclosures,attempt.accountSubject);
+      const binding=await tx.get<PurchaseBindingRecord>(COLLECTIONS.bindings,cap.tokenFingerprint);
+      const controls=await readDispatchControls(tx,c,this.dispatchClock());
+      const history=await readLegacyDispatchHistory(tx,controls,this.dispatchClock());if(history.budget.circuit)throw new DispatchError('configuration');
+      if(!['lookup_in_flight','verified_owner','ack_in_progress'].includes(cap.phase)||!ownedOperation(operation,attempt,cap.phase)||
+        (attempt.usesReplay&&!ownedReplayAny(replay,attempt,[cap.phase==='verified_owner'?'lookup_in_flight':cap.phase]))||!disclosure||!authority.owner?.leaseExpiresAt||!operation!.leaseExpiresAt||
+        authority.owner.dispatchVersion!==LOCAL_DISPATCH_VERSION||!authority.owner.dispatchCounts)throw new DispatchError('stale');
+      if(cap.kind==='account_auxiliary_current'){
+        if(cap.phase!=='lookup_in_flight'||index?.current!==cap.tokenFingerprint||cap.tokenFingerprint===attempt.tokenFingerprint||
+          (index.candidate!==undefined&&index.candidate!==index.current&&index.candidate!==attempt.tokenFingerprint)||
+          !binding||!validBinding(binding,cap.tokenFingerprint)||binding.accountSubject!==attempt.accountSubject||!sameLifecycle(binding,attempt)||
+          digest(binding.tokenEnvelope)!==cap.envelopeDigest||!['play_get','kms_decrypt'].includes(d.action))throw new DispatchError();
+      }else if(cap.tokenFingerprint!==attempt.tokenFingerprint)throw new DispatchError();
+      if(d.action==='play_get'&&(cap.phase!=='lookup_in_flight'||d.purpose!=='subscription'))throw new DispatchError();
+      if(d.action==='kms_encrypt'&&(cap.kind!=='account_selected'||cap.phase!=='verified_owner'||d.purpose!=='account'||binding!==undefined))throw new DispatchError();
+      if(d.action==='kms_decrypt'&&(cap.phase!=='lookup_in_flight'||d.purpose!=='account'||!binding||!validBinding(binding,cap.tokenFingerprint)||
+        binding.accountSubject!==attempt.accountSubject||!sameLifecycle(binding,attempt)||digest(binding.tokenEnvelope)!==cap.envelopeDigest||d.envelopeDigest!==cap.envelopeDigest))throw new DispatchError();
+      if(d.action==='play_ack'&&(cap.kind!=='account_selected'||cap.phase!=='ack_in_progress'||d.purpose!=='subscription'||
+        authority.owner.phase!=='ack_in_progress'||authority.acknowledgementRecoveryToken!==attempt.tokenFingerprint||!ownedBinding(binding,attempt,'ack_in_progress')||
+        binding.productId!==d.product||binding.accountSubject!==attempt.accountSubject||!sameLifecycle(binding,attempt)||
+        d.bodyDigest!==digest(binding.ownershipProof?.kind==='expired_context'?{externalAccountIds:{obfuscatedAccountId:attempt.expectedPlayAccountId}}:{})))throw new DispatchError();
+      const source:DispatchReservation['source']=attempt.fence!.source==='foreground'?'foreground':attempt.fence!.work?.kind==='event'?'event':'reconciliation';
+      const g=groupFor(d.action);if(!['play_get','play_ack','kms_encrypt','kms_decrypt'].includes(d.action))throw new DispatchError();
+      const oldCounts=authority.owner.dispatchCounts;
+      let expiry=Math.min(+authority.owner.leaseExpiresAt,+operation!.leaseExpiresAt,+disclosure.retentionExpiresAt,...(replay?.leaseExpiresAt?[+replay.leaseExpiresAt]:[]));
+      let eventWrite:(()=>void)|undefined;let legacyHead:{revision:number;digest:string}|undefined;let reconcile:ReconcileWork|undefined;
+      if(source==='event'){
+        if(!this.dispatchEvents||attempt.fence!.work?.kind!=='event')throw new DispatchError();
+        const proposed=await this.dispatchEvents.prepareDispatch(tx,attempt.fence!.work.fence,d.action==='play_get'?'verificationGet':d.action==='play_ack'?'ack':'accountKms',this.dispatchClock(),minimumRevision===undefined);
+        eventWrite=proposed.write;legacyHead=proposed.legacyHead;expiry=Math.min(expiry,proposed.expiresAt);
+      }else if(source==='reconciliation'){
+        if(attempt.fence!.work?.kind!=='reconciliation')throw new DispatchError();
+        reconcile=await this.readWork(tx,root);if(!ownsWork(reconcile,attempt.fence!.work.fence,this.dispatchClock()))throw new DispatchError('stale');expiry=Math.min(expiry,+reconcile.leaseExpiresAt!);
+      }
+      const now=this.dispatchClock();
+      // Recheck absolute times AFTER every asynchronous read, including the common controls.
+      deadline.check();if(+now>=expiry||controls.budget.circuit.state!=='closed')throw new DispatchError('stale');
+      if(minimumRevision!==undefined){if(controls.budget.revision<minimumRevision)throw new DispatchError();return {revision:controls.budget.revision,source,expiresAt:expiry};}
+      if(oldCounts[g]>=LOCAL_CAPS[g])throw new DispatchError('budget');
+      const next=proposeDispatch(controls,c,source,d.action,now);if(legacyHead)next.budget.legacyHead=legacyHead;
+      if(reconcile)tx.set(COLLECTIONS.reconcileWork,root.accountSubject,{...reconcile,dispatchTotals:{...reconcile.dispatchTotals,[g]:increment(reconcile.dispatchTotals[g])}});
+      eventWrite?.();
+      this.writeAuthority(tx,root,{...authority,owner:{...authority.owner,dispatchCounts:{...oldCounts,[g]:oldCounts[g]+1}}});
+      writeDispatchControls(tx,next);return {revision:next.budget.revision,source,expiresAt:expiry};
+    },undefined,this.dispatchClock());
+    if(!result)throw new DispatchError('stale');return result;
+  }
+  async openDispatchCircuit(c:DispatchConfiguration,deadline:BillingDeadline):Promise<void>{
+    await this.database.runTransaction(async tx=>{
+      deadline.check();const controls=await readDispatchControls(tx,c,this.dispatchClock());
+      const legacy=await readLegacyDispatchHistory(tx,controls,this.dispatchClock());
+      const now=this.dispatchClock();deadline.check();const next=proposeOpenCircuit(controls,now);
+      next.budget.legacyHead=legacy.openedHead;legacy.open();writeDispatchControls(tx,next);
+    });
   }
 
   private async readLifecycle(tx: BillingTransaction, subject: string, allowUnmarked = false): Promise<LifecycleRoot | undefined> {
@@ -798,7 +870,9 @@ export class BillingRepository {
         Object.assign(root,marked(root,changed));tx.set(COLLECTIONS.reconcileWork,accountSubject,changed);
       }
       this.writeAuthority(tx, root, { ...authority, observationGeneration, owner: { requestFingerprint, nonce: observationNonce,
-        tokenFingerprint, source, phase: 'working', leaseExpiresAt } });
+        tokenFingerprint, source, phase: 'working', leaseExpiresAt,
+        dispatchVersion: continuing ? authority.owner!.dispatchVersion : LOCAL_DISPATCH_VERSION,
+        dispatchCounts: continuing ? authority.owner!.dispatchCounts : emptyDispatchCounts() } });
       if (usesReplay) {
         tx.set<RequestReplayRecord>(COLLECTIONS.replays, requestFingerprint, {
           contractVersion: CONTRACT_VERSION,

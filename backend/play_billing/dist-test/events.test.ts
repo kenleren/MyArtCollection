@@ -1,3 +1,6 @@
+import { seedDispatch,testDispatchConfig,meteredPlay,meteredCustody,protocolGate,protocolCapability } from './dispatch_fixtures.js';
+import { DispatchGate } from '../src/dispatch_gate.js';
+import { BillingRepository } from '../src/store.js';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {randomUUID} from 'node:crypto';
@@ -20,8 +23,11 @@ export function notification(token?:string,id=randomUUID()):unknown {
 }
 function setup(limits=BOUNDED_EVENT_LIMITS) {
  const h=createHarness(),kms=new FakeKmsTransport(),eventCustody=new KmsEventTokenCustody(TEST_KEY,[TEST_KEY],kms);
- const work=new EventWorkRepository(h.database,new DeterministicNonceSource(),limits);
- const processor=new EventProcessor({work,repository:h.repository,identifiers:h.identifiers,eventCustody,accountCustody:h.custody,play:h.play,clock:h.clock});
+ const config=testDispatchConfig();seedDispatch(h.database,h.clock.now(),config);
+ const work=new EventWorkRepository(h.database,new DeterministicNonceSource(),limits,()=>0,config);
+ const repository=new BillingRepository(h.database,new DeterministicNonceSource(),h.identifiers,undefined,work,()=>h.clock.now());
+ const gate=new DispatchGate(repository,config,h.identifiers);
+ const processor=new EventProcessor({work,repository,identifiers:h.identifiers,eventCustody:meteredCustody(gate,eventCustody,'event'),accountCustody:meteredCustody(gate,h.custody),play:meteredPlay(gate,h.play),clock:h.clock});
  return {...h,kms,eventCustody,work,processor};
 }
 function jobs(h:ReturnType<typeof setup>):EventWorkRecord[] {return [...h.database.snapshotForTest()].filter(([k])=>k.startsWith(COLLECTIONS.eventWork+'/')).map(([,v])=>v as EventWorkRecord);}
@@ -208,7 +214,7 @@ test('KMS authentication or headers completing after parent cancellation never s
  const {GoogleKmsTransport}=await import('../src/kms_token_custody.js');
  for(const phase of ['auth','headers'] as const){
   const entered=deferred(),release=deferred();let fetches=0;
-  const transport=new GoogleKmsTransport({auth:{getClient:async()=>{if(phase==='auth'){entered.resolve();await release.promise;}return {getRequestHeaders:async()=>{if(phase==='headers'){entered.resolve();await release.promise;}return new Headers();}};}},fetch:async()=>{fetches++;throw Error('must not fetch');}});
+  const transport=new GoogleKmsTransport({gate:protocolGate(),auth:{getClient:async()=>{if(phase==='auth'){entered.resolve();await release.promise;}return {getRequestHeaders:async()=>{if(phase==='headers'){entered.resolve();await release.promise;}return new Headers();}};}},fetch:async()=>{fetches++;throw Error('must not fetch');}});
   const invocation=deadline();const pending=transport.request(TEST_KEY,'encrypt',{},invocation);await entered.promise;invocation.cancel();release.resolve();
   await assert.rejects(pending,/custody unavailable/);assert.equal(fetches,0);
  }
@@ -243,7 +249,7 @@ test('inherited product names are never members of the closed subscription catal
 test('KMS 401/403 uses fixed configuration classification and opens ingress circuit',async()=>{
  const {KmsConfigurationError,GoogleKmsTransport}=await import('../src/kms_token_custody.js');
  for(const status of [401,403]){
-  const transport=new GoogleKmsTransport({auth:{getClient:async()=>({getRequestHeaders:async()=>new Headers()})},fetch:async()=>new Response('untrusted-provider-detail',{status})});
+  const transport=new GoogleKmsTransport({gate:protocolGate(),auth:{getClient:async()=>({getRequestHeaders:async()=>new Headers()})},fetch:async()=>new Response('untrusted-provider-detail',{status})});
   await assert.rejects(transport.request(TEST_KEY,'encrypt',{},deadline()),error=>error instanceof KmsConfigurationError && !error.message.includes('untrusted'));
  }
  const h=setup();h.kms.beforeCall=async()=>{throw new KmsConfigurationError();};

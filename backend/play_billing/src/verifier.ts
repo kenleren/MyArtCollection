@@ -1,3 +1,4 @@
+import { accountDispatch, type DispatchCapability } from './dispatch_gate.js';
 import type { InternalWork } from './reconciliation_work.js';
 import { fingerprint, type ObservationSource } from './account_authority.js';
 import { BillingDeadline } from './deadline.js';
@@ -193,7 +194,7 @@ export class PlayBillingService {
     let purchase: PlaySubscriptionPurchase;
     try {
       if (!await repository.isCurrentAttempt(attempt, this.dependencies.clock.now())) return free(request.requestId, 'not_verified');
-      purchase = await this.getSubscription(request.purchaseToken, playDeadline, deadline);
+      purchase = await this.getSubscription(request.purchaseToken, playDeadline, deadline, accountDispatch(attempt,'lookup_in_flight'));
     } catch {
       await this.closeWithoutThrow(attempt);
       return free(request.requestId, 'temporarily_unavailable');
@@ -248,11 +249,11 @@ export class PlayBillingService {
       attempt = acquired.attempt;
       if (!attempt.envelope) return free(requestId, 'unsafe_record');
       if (!await repository.isCurrentAttempt(attempt, clock.now())) return free(requestId, 'not_verified');
-      const token = await (this.dependencies.custody ?? new DisabledTokenCustody()).decrypt(attempt.envelope, attempt, deadline);
+      const token = await (this.dependencies.custody ?? new DisabledTokenCustody()).decrypt(attempt.envelope, attempt, deadline, accountDispatch(attempt,'lookup_in_flight'));
       if (!validToken(token) || identifiers.tokenFingerprint(token) !== attempt.tokenFingerprint) return free(requestId, 'unsafe_record');
       deadline.check();
       if (!await repository.isCurrentAttempt(attempt, clock.now())) return free(requestId, 'not_verified');
-      const purchase = await this.getSubscription(token, deadline.expiresAt, deadline);
+      const purchase = await this.getSubscription(token, deadline.expiresAt, deadline, accountDispatch(attempt,'lookup_in_flight'));
       if (purchase.subscriptionState === 'SUBSCRIPTION_STATE_PENDING_PURCHASE_CANCELED') {
         const product = purchase.lineItems?.[0]?.productId;
         if (typeof product !== 'string' || !validateLineItemShape(purchase, product)) return free(requestId, 'not_verified');
@@ -308,7 +309,7 @@ export class PlayBillingService {
     let predecessor: PlaySubscriptionPurchase;
     try {
       if (!await this.dependencies.repository.isCurrentAttempt(acquisition.attempt, this.dependencies.clock.now())) return free(request.requestId, 'not_verified');
-      predecessor = await this.getSubscription(linkedToken, playDeadline, successorAttempt.fence!.deadline);
+      predecessor = await this.getSubscription(linkedToken, playDeadline, successorAttempt.fence!.deadline,accountDispatch(acquisition.attempt,'lookup_in_flight'));
     } catch {
       await this.closeWithoutThrow(acquisition.attempt);
       return free(request.requestId, 'temporarily_unavailable');
@@ -379,10 +380,10 @@ export class PlayBillingService {
         const current = await this.dependencies.repository.competingCurrent(attempt, this.dependencies.clock.now());
         if (current) {
           const context = {...attempt,tokenFingerprint:current.tokenFingerprint};
-          const currentToken = await (this.dependencies.custody ?? new DisabledTokenCustody()).decrypt(current.tokenEnvelope,context,attempt.fence!.deadline);
+          const currentToken = await (this.dependencies.custody ?? new DisabledTokenCustody()).decrypt(current.tokenEnvelope,context,attempt.fence!.deadline,accountDispatch(attempt,'lookup_in_flight',current));
           if (this.dependencies.identifiers.tokenFingerprint(currentToken) !== current.tokenFingerprint ||
               !await this.dependencies.repository.isCurrentAttempt(attempt,this.dependencies.clock.now())) return free(requestId,'unsafe_record');
-          const observed = await this.getSubscription(currentToken,playDeadline,attempt.fence!.deadline);
+          const observed = await this.getSubscription(currentToken,playDeadline,attempt.fence!.deadline,accountDispatch(attempt,'lookup_in_flight',current));
           if (validatedInactive(observed,undefined,attempt.expectedPlayAccountId,this.dependencies.clock.now()) !== 'expired') throw new AccountConflictError();
           if (!await this.dependencies.repository.recordAuxiliaryExpiry(attempt,current.tokenFingerprint,this.dependencies.clock.now())) return free(requestId,'not_verified');
         }
@@ -413,7 +414,7 @@ export class PlayBillingService {
       }
       if (!await this.dependencies.repository.isCurrentAttempt(attempt, this.dependencies.clock.now(), 'verified_owner')) return free(requestId, 'not_verified');
       const tokenEnvelope = attempt.envelope ?? await (this.dependencies.custody ?? new DisabledTokenCustody()).encrypt(
-        rawToken, attempt, attempt.fence!.deadline);
+        rawToken, attempt, attempt.fence!.deadline,accountDispatch(attempt,'verified_owner'));
       attempt.fence!.deadline.check();
       const delivered = await this.dependencies.repository.commitDelivery(attempt, {
         tokenEnvelope,
@@ -454,6 +455,7 @@ export class PlayBillingService {
               subscriptionId: eligible.productId,
               token: rawToken,
               body: ownershipProof.kind === 'expired_context' ? {externalAccountIds:{obfuscatedAccountId:attempt.expectedPlayAccountId}} : {},
+              dispatch:accountDispatch(attempt,'ack_in_progress'),
               timeoutMs: PLAY_CALL_DEADLINE_MS,
               deadline: {expiresAt: acknowledgementDeadline, signal: attempt.fence!.deadline.signal},
             }),
@@ -492,12 +494,14 @@ export class PlayBillingService {
     token: string,
     playDeadline: number,
     invocation: BillingDeadline,
+    dispatch:DispatchCapability,
   ): Promise<PlaySubscriptionPurchase> {
     const callDeadline = Math.min(playDeadline, invocation.expiresAt, Date.now() + PLAY_CALL_DEADLINE_MS);
     return withAbsoluteDeadline(
       () => this.dependencies.play.getSubscription({
         packageName: PACKAGE_NAME,
         token,
+        dispatch,
         timeoutMs: PLAY_CALL_DEADLINE_MS,
         deadline: {expiresAt: callDeadline, signal: invocation.signal},
       }),

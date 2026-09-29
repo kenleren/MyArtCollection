@@ -1,3 +1,4 @@
+import { BillingDeadline } from './deadline.js';
 import { EventWorkError, EVENT_SOURCE, EVENT_TYPE, EVENT_TOPIC, CLOSED_EVENT_LIMITS, BOUNDED_EVENT_LIMITS, type EventLimits } from './event_records.js';
 import { validKeyVersion } from './token_custody.js';
 // Filled only by a separately reviewed provisioning change; no live key is approved here.
@@ -26,12 +27,13 @@ export function eventRuntimeConfiguration(env:Record<string,string|undefined>, a
       !retainedVersions.includes(encryptionVersion)||retainedVersions.some(v=>!validKeyVersion(v)||!approvedVersions.includes(v))) throw new EventWorkError('configuration');
   return {enabled:true,limits,encryptionVersion,retainedVersions};
 }
-export interface EventRuntime {ingest(event:unknown):Promise<void>;pump():Promise<void>}
+export interface EventRuntime {ingest(event:unknown,deadline?:BillingDeadline):Promise<void>;pump(deadline?:BillingDeadline):Promise<void>}
 /** Used by the actual exported SDK callbacks and directly injectable in tests. */
-export function eventHandlers(configuration:()=>EventRuntimeConfiguration|undefined, create:(config:EventRuntimeConfiguration)=>EventRuntime) {
+export function eventHandlers(configuration:()=>EventRuntimeConfiguration|undefined, create:(config:EventRuntimeConfiguration,deadline:BillingDeadline)=>EventRuntime|Promise<EventRuntime>) {
   const run=async(kind:'ingest'|'pump',event?:unknown)=>{
-    try { const config=configuration(); if(!config) {if(kind==='ingest') throw new EventWorkError('disabled');return;} const service=create(config);
-      if(kind==='ingest') await service.ingest(event); else await service.pump();
+    const deadline=new BillingDeadline(Date.now()+(kind==='ingest'?55_000:50_000));
+    try { const config=configuration(); if(!config) {if(kind==='ingest') throw new EventWorkError('disabled');return;} const service=await deadline.run(()=>Promise.resolve(create(config,deadline)));
+      if(kind==='ingest') await deadline.run(()=>service.ingest(event,deadline),55_000); else await deadline.run(()=>service.pump(deadline),50_000);
     } catch(error) {throw new EventWorkError(error instanceof EventWorkError?error.reason:'transient');}
   };
   return {ingest:(event:unknown)=>run('ingest',event),pump:()=>run('pump')};
