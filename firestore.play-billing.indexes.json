@@ -1,5 +1,56 @@
 {
-  "indexes": [],
+  "indexes": [
+    {
+      "collectionGroup": "playBillingEventWork",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "state",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "dueAt",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "__name__",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "playBillingReconcileWork",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "state",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "dueAt",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "__name__",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "playBillingEventWork",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "financial.orderFingerprint",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "financialRole",
+          "order": "ASCENDING"
+        }
+      ]
+    }
+  ],
   "fieldOverrides": [
     {
       "collectionGroup": "playBillingDisclosureAssertions",
@@ -29,6 +80,146 @@
       "collectionGroup": "playBillingRateLimits",
       "fieldPath": "retentionExpiresAt",
       "ttl": true,
+      "indexes": []
+    },
+    {
+      "collectionGroup": "playBillingPurchaseBindings",
+      "fieldPath": "tokenEnvelope",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "playBillingLifecycles",
+      "fieldPath": "obfuscatedAccountId",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "playBillingAccountAuthority",
+      "fieldPath": "owner",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "playBillingAccountAuthority",
+      "fieldPath": "snapshot",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "playBillingAuthorityOutbox",
+      "fieldPath": "snapshot",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "playBillingEventWork",
+      "fieldPath": "envelope",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "playBillingEventWork",
+      "fieldPath": "resolved",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "playBillingEventWork",
+      "fieldPath": "nonce",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "playBillingEventWork",
+      "fieldPath": "attemptStarts",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "playBillingEventWork",
+      "fieldPath": "dispatchTotals",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "playBillingEventWork",
+      "fieldPath": "payloadDigest",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "playBillingEventWork",
+      "fieldPath": "tokenFingerprint",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "playBillingEventControl",
+      "fieldPath": "starts",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "playBillingEventControl",
+      "fieldPath": "totals",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "playBillingEventControl",
+      "fieldPath": "admissionStarts",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "playBillingPurchaseBindings",
+      "fieldPath": "ownershipProof",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "playBillingReconcileWork",
+      "fieldPath": "currentDemand",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "playBillingReconcileWork",
+      "fieldPath": "candidateDemand",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "playBillingReconcileWork",
+      "fieldPath": "selectedDemand",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "playBillingReconcileWork",
+      "fieldPath": "nonce",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "playBillingReconcileWork",
+      "fieldPath": "attemptStarts",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "playBillingReconcileWork",
+      "fieldPath": "dispatchTotals",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "playBillingReconcileWork",
+      "fieldPath": "completedObservation",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "playBillingDispatchControl",
+      "fieldPath": "starts",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "playBillingDispatchControl",
+      "fieldPath": "totals",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "playBillingDispatchControl",
+      "fieldPath": "legacy",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "playBillingDispatchControl",
+      "fieldPath": "legacyHead",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "playBillingEventWork",
+      "fieldPath": "dispatchBase",
       "indexes": []
     }
   ]

@@ -161,3 +161,13 @@ Tests use injected fakes only and cover golden canonical bytes, Unicode and
 array ordering, image encoding/size mismatch, hash mismatch, fixed safe errors,
 rate-limit default/clamp, no provider setup on prechecks, response grounding,
 terminal failure persistence, and secret-safe source boundaries.
+
+## Disabled paid-authority bridge projection
+
+The L4-A schema in `PAID_AI_IDENTITY_SPEC.md` admits only a canonical, bounded
+subscription-authority projection between injected service capabilities. It never
+forwards the internal billing snapshot wholesale. New broker records/messages
+exclude UID and reversible UID locators, token/fingerprint, Play route, product or
+order ID, artwork, and arbitrary provider metadata. The shared entitlement route
+is pseudonymous data, not anonymous telemetry or sender authentication. No bridge
+identifiers or raw failures are logged, and no production transport is added.

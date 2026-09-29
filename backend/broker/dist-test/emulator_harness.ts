@@ -76,6 +76,7 @@ class EmulatorAppCheckVerifier implements FirebaseAdminAppCheckLike {
     assert.equal(options.consume, true);
     this.calls += 1;
     return {
+      alreadyConsumed: false,
       appId,
       token: {
         aud: [projectId, projectNumber],

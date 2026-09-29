@@ -1,3 +1,4 @@
+import 'package:my_art_collection/app/account/firebase_account_service.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -589,7 +590,8 @@ void main() {
       await tester.tap(find.byTooltip('Delete group').last);
       await tester.pumpAndSettle();
       await tester.tap(find.widgetWithText(FilledButton, 'Delete'));
-      await pumpLiveData(tester);
+      // Do not leave while the database deletion/reload is still in flight.
+      await waitForFinderAbsent(tester, find.text('Studio Local'));
       await returnToDetail();
       expect(find.text('Studio Local'), findsNothing);
       final loan = await tester.runAsync(
@@ -875,6 +877,9 @@ void main() {
       expect(find.byTooltip('Replace document'), findsOneWidget);
       expect(find.byTooltip('Remove document'), findsOneWidget);
       expect(tester.takeException(), isNull);
+      // Remaining document-screen database reads need real event-loop turns;
+      // pumpAndSettle only advances fake time while the spinner animates.
+      await waitForFinderAbsent(tester, find.byType(CircularProgressIndicator));
       await tester.pumpAndSettle();
       await warmBoundaryRaster(tester, boundaryKey);
       await captureBoundaryToArtifacts(
@@ -2903,10 +2908,19 @@ void main() {
       expect(find.text('Supporting UI Artwork'), findsWidgets);
       expect(find.text('Saved with this artwork'), findsOneWidget);
 
-      await pressAsyncButton(
-        tester,
-        find.widgetWithText(FilledButton, 'Choose a supporting photo'),
+      final choosePhoto = find.widgetWithText(
+        FilledButton,
+        'Choose a supporting photo',
       );
+      await tester.ensureVisible(choosePhoto);
+      await tester.pump();
+      // File validation and SQLite work must finish before assertions or
+      // teardown; the generic helper only waits a fixed 200 ms.
+      final importPhoto =
+          tester.widget<FilledButton>(choosePhoto).onPressed!
+              as Future<void> Function();
+      await tester.runAsync(importPhoto);
+      await tester.pump();
 
       expect(find.text('Supporting photo imported'), findsOneWidget);
       expect(
@@ -5986,6 +6000,17 @@ Future<void> waitForFinder(
   fail('Finder not found. Visible text: ${visibleTexts.join(' | ')}');
 }
 
+Future<void> waitForFinderAbsent(WidgetTester tester, Finder finder) async {
+  for (var attempt = 0; attempt < 100; attempt += 1) {
+    await tester.runAsync(
+      () async => Future<void>.delayed(const Duration(milliseconds: 50)),
+    );
+    await tester.pump(const Duration(milliseconds: 100));
+    if (finder.evaluate().isEmpty) return;
+  }
+  fail('Expected the asynchronous UI operation to finish: $finder');
+}
+
 Future<void> pressAsyncButton(WidgetTester tester, Finder finder) async {
   await tester.ensureVisible(finder);
   await tester.pump();
@@ -6936,7 +6961,12 @@ class _FakeBillingManagementService implements BillingManagementService {
   }
 
   @override
-  Future<bool> acceptBillingDisclosure() async => true;
+  PaidAccountStatus get accountStatus => PaidAccountStatus.idle;
+
+  @override
+  Future<bool> acceptBillingDisclosure({
+    bool useExistingAccount = false,
+  }) async => true;
 
   @override
   Future<EntitlementState> currentState() async => state;

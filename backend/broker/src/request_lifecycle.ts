@@ -10,6 +10,7 @@ import {
   parseStoredRequest,
   storedRequestMatchesKey,
   type StoredRequestRecord,
+  type SettlementState,
 } from './idempotency.js';
 
 export const RESERVATION_LEASE_MILLISECONDS = 60_000;
@@ -30,28 +31,34 @@ export interface AcquireRequestInput {
   now: Date;
 }
 
-export type AcquireRequestResult =
-  | { kind: 'reserved'; record: StoredRequestRecord }
-  | { kind: 'replay'; record: StoredRequestRecord; outcome: BrokerTerminalOutcome }
+export interface LifecycleRecord {
+  request_id: string;
+  settlement_state: SettlementState;
+}
+
+export type AcquireRequestResult<R extends LifecycleRecord = StoredRequestRecord> =
+  | { kind: 'reserved'; record: R }
+  | { kind: 'replay'; record: R; outcome: BrokerTerminalOutcome }
   | { kind: 'conflict' }
   | { kind: 'in_flight' }
   | { kind: 'outcome_unknown' }
   | { kind: 'credits_exhausted' }
-  | { kind: 'unsafe_record' };
+  | { kind: 'unsafe_record' }
+  | { kind: 'migration_required' };
 
-export type DispatchStartResult =
+export type DispatchStartResult<R extends LifecycleRecord = StoredRequestRecord> =
   | { kind: 'started' }
-  | { kind: 'lease_expired'; record: StoredRequestRecord; outcome: BrokerTerminalOutcome };
+  | { kind: 'lease_expired'; record: R; outcome: BrokerTerminalOutcome };
 
-export interface RequestLifecycleStore {
-  acquire(input: AcquireRequestInput): Promise<AcquireRequestResult>;
-  markDispatchStarted(record: StoredRequestRecord, now: Date): Promise<DispatchStartResult>;
+export interface RequestLifecycleStore<R extends LifecycleRecord = StoredRequestRecord> {
+  acquire(input: AcquireRequestInput): Promise<AcquireRequestResult<R>>;
+  markDispatchStarted(record: R, now: Date): Promise<DispatchStartResult<R>>;
   persistTerminal(
-    record: StoredRequestRecord,
+    record: R,
     outcome: BrokerTerminalOutcome,
     settlement: SettlementIntent,
   ): Promise<void>;
-  settle(record: StoredRequestRecord): Promise<void>;
+  settle(record: R): Promise<void>;
 }
 
 export interface InMemoryRequestLifecycleOptions {

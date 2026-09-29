@@ -1,0 +1,4 @@
+{
+  "firestore": { "database": "archivale-play-billing", "rules": "firestore.rules" },
+  "emulators": { "firestore": { "host": "127.0.0.1", "port": 8080 }, "ui": { "enabled": false }, "singleProjectMode": false }
+}

@@ -235,7 +235,7 @@ describe('PlayBillingService verification contract', () => {
       harness.identity,
       verifyRequest(purchaseToken()),
     );
-    assert.deepEqual(Object.keys(result).sort(), ['reason', 'requestId', 'state', 'version']);
+    assert.deepEqual(Object.keys(result).sort(), ['reason', 'requestId', 'state', 'status', 'version']);
     assert.equal('reason' in result && result.reason, 'temporarily_unavailable');
     assert.equal(harness.play.acknowledgeCalls.length, 0);
   });
@@ -279,13 +279,15 @@ describe('PlayBillingService verification contract', () => {
       accepted: true,
     });
     assert.equal('status' in disclosure && disclosure.status, 'accepted');
+    await harness.repository.preparePurchase(harness.identifiers.accountSubject(otherIdentity.uid), harness.clock.now());
     harness.play.setPurchase(
       token,
       eligiblePurchase(harness, { accountIdentity: otherIdentity }),
     );
     const second = await harness.service.verifySubscription(otherIdentity, verifyRequest(token));
     assert.equal(second.state, 'free');
-    assert.equal('reason' in second && second.reason, 'not_verified');
+    assert.equal('reason' in second && second.reason, 'unsafe_record');
+    assert.equal(harness.play.getCalls.length, 1);
     assert.equal(recordsInCollection(harness.database, COLLECTIONS.bindings).length, 1);
   });
 
@@ -563,3 +565,17 @@ describe('PlayBillingService verification contract', () => {
 function bytesDiffer(left: Uint8Array, right: Uint8Array): boolean {
   return left.some((value, index) => value !== right[index]);
 }
+
+
+test('legacy disclosure never authorizes Play but can be affirmatively replaced by v3', async () => {
+  const harness = createHarness();
+  await acceptDisclosure(harness);
+  const subject = harness.identifiers.accountSubject(harness.identity.uid);
+  const record = recordsInCollection(harness.database, COLLECTIONS.disclosures)[0] as Record<string, unknown>;
+  harness.database.setUnsafeRecordForTest(COLLECTIONS.disclosures, subject, {
+    ...record, disclosureVersion: 'billing-verification-disclosure-v1',
+  });
+  assert.equal(await harness.repository.hasCurrentDisclosure(subject, harness.clock.now()), false);
+  await acceptDisclosure(harness);
+  assert.equal(await harness.repository.hasCurrentDisclosure(subject, harness.clock.now()), true);
+});

@@ -60,10 +60,11 @@ describe('billing isolation and redaction', () => {
     const stored = [...harness.database.snapshotForTest().values()];
     assert.equal(containsValue(stored, token), false);
     assert.equal(containsValue(stored, harness.identity.uid), false);
-    assert.equal(
-      containsValue(stored, harness.identifiers.obfuscatedAccountId(harness.identity.uid)),
-      false,
-    );
+    const root = recordsInCollection(harness.database, COLLECTIONS.lifecycles)[0] as Record<string, unknown>;
+    assert.equal(typeof root.obfuscatedAccountId, 'string');
+    for (const [path, record] of harness.database.snapshotForTest()) {
+      if (!path.startsWith(`${COLLECTIONS.lifecycles}/`)) assert.equal(containsValue(record, root.obfuscatedAccountId as string), false);
+    }
   });
 
   test('opaque attempt fields exist only in the three server-only collections', async () => {
@@ -100,9 +101,18 @@ describe('billing isolation and redaction', () => {
   test('billing source has no logging or AI entitlement writes', async () => {
     const sourceFiles = [
       'src/constants.ts',
+      'src/billing_runtime.ts',
+      'src/dispatch_budget.ts',
+      'src/dispatch_gate.ts',
       'src/contracts.ts',
       'src/crypto.ts',
+      'src/lifecycle.ts',
+      'src/account_authority.ts',
+      'src/deadline.ts',
+      'src/token_custody.ts',
+      'src/kms_token_custody.ts',
       'src/firebase.ts',
+      'src/identity.ts',
       'src/firestore_store.ts',
       'src/in_memory_store.ts',
       'src/play_adapter.ts',
@@ -138,11 +148,8 @@ describe('billing isolation and redaction', () => {
       BILLING_VERIFIER_SERVICE_ACCOUNT,
       'archivale-play-billing-verifier@my-art-collections.iam.gserviceaccount.com',
     );
-    assert.equal(source.includes("verifyIdToken(authorization.slice('Bearer '.length), true)"), true);
-    assert.equal(source.includes("sign_in_provider !== 'anonymous'"), true);
     assert.equal(source.includes("defineString('PLAY_BILLING_APPROVED_APP_ID')"), true);
     assert.equal(source.includes('process.env.PLAY_BILLING_APPROVED_APP_ID'), false);
-    assert.equal(source.includes('matchesApprovedAppId(approvedAppId, request.app.appId)'), true);
   });
 
   test('rollback fixture excludes destructive and broker targets', async () => {

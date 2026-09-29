@@ -230,6 +230,7 @@ struct ExportPair {
 
 bool directory_identity_matches(int parent, const std::string& name, int opened);
 bool entry_identity_matches(int parent, const std::string& name, const struct stat& expected);
+bool export_payload_matches(int fd, uint64_t expected_size, const std::string& expected_sha256);
 
 Fd open_export_file_at(int parent, const std::string& name, struct stat* opened_status) {
   struct stat named {};
@@ -249,7 +250,16 @@ Fd open_export_file_at(int parent, const std::string& name, struct stat* opened_
   return file;
 }
 
-ExportPair open_export_pair(const std::string& platform_root, const std::string& source_path) {
+ExportPair open_export_pair(const std::string& platform_root, const std::string& source_path,
+                            uint64_t expected_size, const std::string& expected_sha256) {
+  // Link counts and raced inode observations cannot identify a publication.
+  // Authority comes from the caller's prepublication content capability, never
+  // from the adjacent, mutable metadata file.
+  if (expected_size == 0 || expected_size > static_cast<uint64_t>(std::numeric_limits<int64_t>::max()) ||
+      expected_sha256.size() != 64 ||
+      !std::all_of(expected_sha256.begin(), expected_sha256.end(), [](unsigned char ch) {
+        return (ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f');
+      })) return {};
   const std::string prefix = platform_root + "/generated_exports/";
   if (platform_root.empty() || source_path.rfind(prefix, 0) != 0) return {};
   const std::string relative = source_path.substr(prefix.size());
@@ -284,6 +294,7 @@ ExportPair open_export_pair(const std::string& platform_root, const std::string&
       kind_directory.get(), payload_name + ".json", &metadata_status);
   if (!payload.valid() || !metadata.valid()) return {};
   run_boundary("export.afterPairOpen");
+  if (!export_payload_matches(payload.get(), expected_size, expected_sha256)) return {};
 
   struct stat final_payload {};
   struct stat final_metadata {};
@@ -633,6 +644,26 @@ class Sha256 {
   size_t used_ = 0;
   size_t total_ = 0;
 };
+
+bool export_payload_matches(int fd, uint64_t expected_size, const std::string& expected_sha256) {
+  struct stat status {};
+  if (fstat(fd, &status) != 0 || status.st_size < 0 ||
+      static_cast<uint64_t>(status.st_size) != expected_size || lseek(fd, 0, SEEK_SET) < 0) return false;
+  Sha256 hash;
+  std::array<unsigned char, 65536> buffer{};
+  uint64_t total = 0;
+  while (total < expected_size) {
+    const size_t remaining = static_cast<size_t>(std::min<uint64_t>(buffer.size(), expected_size - total));
+    const ssize_t count = read(fd, buffer.data(), remaining);
+    if (count <= 0) return false;
+    total += static_cast<uint64_t>(count);
+    hash.update(buffer.data(), static_cast<size_t>(count));
+  }
+  // A concurrent append cannot turn verification into an unbounded read.
+  unsigned char extra;
+  return read(fd, &extra, 1) == 0 && hash.finish() == expected_sha256 &&
+         lseek(fd, 0, SEEK_SET) >= 0;
+}
 
 bool hash_fd(int fd, uint64_t* size, std::string* digest) {
   if (lseek(fd, 0, SEEK_SET) < 0) return false;
@@ -2435,8 +2466,9 @@ Java_app_archivale_AttachmentCustodyJni_execute(
 
 extern "C" JNIEXPORT jintArray JNICALL
 Java_app_archivale_AttachmentCustodyJni_openExportPair(
-    JNIEnv* env, jobject, jstring root, jstring source) {
-  auto pair = custody::open_export_pair(from_jstring(env, root), from_jstring(env, source));
+    JNIEnv* env, jobject, jstring root, jstring source, jlong expected_size, jstring expected_sha256) {
+  auto pair = custody::open_export_pair(from_jstring(env, root), from_jstring(env, source),
+      expected_size > 0 ? static_cast<uint64_t>(expected_size) : 0, from_jstring(env, expected_sha256));
   const jsize size = pair.valid() ? 2 : 0;
   jintArray output = env->NewIntArray(size);
   if (output == nullptr || size == 0) return output;

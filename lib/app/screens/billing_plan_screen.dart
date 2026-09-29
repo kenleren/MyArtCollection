@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../app_dependencies.dart';
+import '../account/firebase_account_service.dart';
 import '../billing/entitlement_plan.dart';
 import '../billing/play_billing_adapter.dart';
 
@@ -79,7 +80,7 @@ class _BillingPlanScreenState extends State<BillingPlanScreen> {
     });
   }
 
-  Future<void> _restore() async {
+  Future<void> _restore({bool useExistingAccount = false}) async {
     final service = _service;
     if (service == null) return;
     if (!await service.canRecover()) {
@@ -93,7 +94,9 @@ class _BillingPlanScreenState extends State<BillingPlanScreen> {
       return;
     }
     setState(() => _action = _BillingAction.restoring);
-    final accepted = await service.acceptBillingDisclosure();
+    final accepted = await service.acceptBillingDisclosure(
+      useExistingAccount: useExistingAccount,
+    );
     if (accepted) await service.restore();
     if (!mounted) return;
     await _load(service);
@@ -107,11 +110,15 @@ class _BillingPlanScreenState extends State<BillingPlanScreen> {
     setState(() => _action = _BillingAction.pending);
     final disclosureAccepted = await service.acceptBillingDisclosure();
     if (!disclosureAccepted) {
-      if (mounted) setState(() => _action = _BillingAction.unavailable);
+      if (mounted) setState(() => _action = _BillingAction.idle);
       return;
     }
     final started = await service.purchase(plan);
     if (!mounted) return;
+    if (!started) {
+      await _load(service);
+      return;
+    }
     setState(
       () => _action = started
           ? _BillingAction.verifying
@@ -123,9 +130,12 @@ class _BillingPlanScreenState extends State<BillingPlanScreen> {
     return await showDialog<bool>(
           context: context,
           builder: (context) => AlertDialog(
+            scrollable: true,
             title: const Text('Confirm subscription verification'),
             content: const Text(
-              'To verify a Play subscription, Archivale will use the purchase confirmation with its verification service. Your collection records, artwork images, and supporting documents are not needed to verify a subscription. Subscription access is confirmed only after verification succeeds.',
+              'Sign in with Google to purchase or restore a subscription. Use the same account on every device; your Play purchasing account may differ.\n\n'
+              'Archivale stores an account reference and sends it to Google Play to link your purchases. It stores your purchase confirmation encrypted on its servers for restore on another device or installation. Your collection records, artwork images and documents are not sent.\n\n'
+              'Sign-in does not enable backup or AI research. Your local archive remains available without an account.',
             ),
             actions: [
               TextButton(
@@ -188,6 +198,34 @@ class _BillingPlanScreenState extends State<BillingPlanScreen> {
                 ),
               if (displayedAction != _BillingAction.idle)
                 const SizedBox(height: 12),
+              if (service?.accountStatus ==
+                  PaidAccountStatus.existingAccount) ...[
+                _BillingPanel(
+                  icon: Icons.account_circle_outlined,
+                  title: 'This Google account already has an Archivale account',
+                  body:
+                      'You can sign in to that account and restore its purchases. Existing local records stay on this device. Purchases from different Archivale accounts are not combined.',
+                  action: OutlinedButton(
+                    onPressed: _action == _BillingAction.idle
+                        ? () => _restore(useExistingAccount: true)
+                        : null,
+                    child: const Text('Sign in to existing account'),
+                  ),
+                ),
+                const SizedBox(height: 12),
+              ],
+              if (service?.accountStatus == PaidAccountStatus.canceled ||
+                  service?.accountStatus == PaidAccountStatus.unavailable) ...[
+                _BillingPanel(
+                  icon: Icons.info_outline,
+                  title: service?.accountStatus == PaidAccountStatus.canceled
+                      ? 'Sign-in canceled'
+                      : 'Sign-in unavailable',
+                  body:
+                      'No purchase was started. Your local archive remains available. You can try purchase or restore again.',
+                ),
+                const SizedBox(height: 12),
+              ],
               if (service == null)
                 const _BillingPanel(
                   icon: Icons.info_outline,
@@ -221,6 +259,17 @@ class _BillingPlanScreenState extends State<BillingPlanScreen> {
                       'A canceled, expired, paused, or unavailable plan does not remove existing artwork records, edits, reports, exports, or supporting documents.',
                 ),
                 const SizedBox(height: 16),
+                if (_state.plan.playProductId != null ||
+                    _state.lifecycle == EntitlementLifecycle.hold ||
+                    _state.lifecycle == EntitlementLifecycle.paused) ...[
+                  const _BillingPanel(
+                    icon: Icons.info_outline,
+                    title: 'Manage your existing subscription',
+                    body:
+                        'Use Google Play subscription settings to manage your plan. A second subscription cannot be started here.',
+                  ),
+                  const SizedBox(height: 16),
+                ],
                 Text(
                   'Available plans',
                   style: Theme.of(context).textTheme.titleMedium,
@@ -254,11 +303,16 @@ class _BillingPlanScreenState extends State<BillingPlanScreen> {
   }
 
   bool get _purchaseBlocked =>
-      _action != _BillingAction.idle || _state.presentation.blocksPurchase;
+      _action != _BillingAction.idle ||
+      _state.presentation.blocksPurchase ||
+      _state.plan.playProductId != null ||
+      _state.lifecycle == EntitlementLifecycle.hold ||
+      _state.lifecycle == EntitlementLifecycle.paused;
 
   bool get _canRecover =>
       _action == _BillingAction.idle &&
       (_state.presentation == EntitlementPresentation.idle ||
+          _state.presentation == EntitlementPresentation.unavailable ||
           _state.presentation == EntitlementPresentation.verificationPending ||
           _state.presentation == EntitlementPresentation.inFlight ||
           _state.presentation == EntitlementPresentation.playPending ||
@@ -379,6 +433,7 @@ _BillingAction _presentationAction(
   EntitlementPresentation.playPending => _BillingAction.pending,
   EntitlementPresentation.acknowledgementRecovery => _BillingAction.recovering,
   EntitlementPresentation.recoveryExhausted => _BillingAction.recoveryExhausted,
+  EntitlementPresentation.unavailable => _BillingAction.unavailable,
   EntitlementPresentation.restoring => _BillingAction.restoring,
   EntitlementPresentation.refreshing => _BillingAction.refreshing,
 };
@@ -409,7 +464,7 @@ enum _BillingAction {
     verifying => 'Verifying subscription',
     recovering => 'Recovering subscription verification',
     recoveryExhausted => 'Subscription recovery is paused',
-    unavailable => 'Plan change unavailable',
+    unavailable => 'Subscription check unavailable',
   };
 
   String get body => switch (this) {
@@ -425,6 +480,6 @@ enum _BillingAction {
     recoveryExhausted =>
       'Subscription recovery is paused for this unresolved purchase. Archivale remains on Free access.',
     unavailable =>
-      'Play billing or subscription verification is unavailable right now. Archivale remains on Free access.',
+      'Your subscription could not be checked right now. Try Restore purchases again. Your existing archive stays available.',
   };
 }

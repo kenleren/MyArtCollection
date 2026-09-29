@@ -1,3 +1,4 @@
+import { admittedOwner } from './credit_admission.js';
 import { handleBrokerAdapterRequest, parseBrokerRequest } from './adapter.js';
 import type { BrokerDependencies } from './broker.js';
 import { CURRENT_CONSENT_COPY_VERSION } from './contracts.js';
@@ -178,7 +179,7 @@ export function createResearchBrokerHttpHandler(options: ResearchBrokerHttpHandl
       );
       return;
     }
-    if (!configured.ownerUidAllowlist.has(identityResult.identity.auth.uid ?? '')) {
+    if (!admittedOwner(configured.ownerUidAllowlist, identityResult.identity.auth.uid ?? '')) {
       sendError(response, 'forbidden_uid');
       return;
     }

@@ -1,5 +1,9 @@
 import 'dart:async';
+import 'package:my_art_collection/app/account/firebase_account_service.dart';
 import 'dart:io';
+import 'dart:ui' as ui;
+import 'package:flutter/services.dart';
+import 'package:flutter/rendering.dart';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -19,13 +23,112 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 void main() {
   late _BillingFixture fixture;
 
-  setUpAll(() {
+  setUpAll(() async {
+    if (const bool.fromEnvironment('CAPTURE_BILLING_VISUALS')) {
+      await (FontLoader(
+        'Roboto',
+      )..addFont(rootBundle.load('assets/fonts/Roboto-Regular.ttf'))).load();
+      final icons = File(
+        '/opt/homebrew/share/flutter/bin/cache/artifacts/material_fonts/MaterialIcons-Regular.otf',
+      );
+      if (icons.existsSync()) {
+        final bytes = await icons.readAsBytes();
+        await (FontLoader(
+          'MaterialIcons',
+        )..addFont(Future.value(ByteData.sublistView(bytes)))).load();
+      }
+    }
     sqfliteFfiInit();
     databaseFactory = databaseFactoryFfi;
   });
 
   setUp(() async => fixture = await _BillingFixture.create());
   tearDown(() => fixture.dispose());
+
+  testWidgets('a restored paid plan cannot start a second subscription', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(360, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(() {
+      tester.view.resetPhysicalSize();
+      tester.view.resetDevicePixelRatio();
+    });
+    fixture.service.state = const EntitlementState(
+      plan: EntitlementPlans.starter,
+      billingStatus: EntitlementBillingStatus.available,
+      lifecycle: EntitlementLifecycle.active,
+    );
+    fixture.service.productsValue = const [
+      PlayProduct(
+        id: 'archivale_collector_monthly',
+        title: 'Collector',
+        description: 'Up to 200 active artworks',
+        price: 'NOK 59.00',
+      ),
+    ];
+    await _pump(tester, fixture);
+    expect(
+      find.text('Manage your existing subscription', skipOffstage: false),
+      findsOneWidget,
+    );
+    await _capture(tester, fixture, 'account-restored-plan-360.png');
+    final choose = find.widgetWithText(
+      FilledButton,
+      'Choose plan',
+      skipOffstage: false,
+    );
+    await tester.scrollUntilVisible(
+      choose,
+      250,
+      scrollable: find.byType(Scrollable).first,
+    );
+    expect(tester.widget<FilledButton>(choose).onPressed, isNull);
+    expect(fixture.service.purchases, isEmpty);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+    'temporary verification failure keeps Restore available and purchase blocked',
+    (tester) async {
+      tester.view.physicalSize = const Size(360, 640);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(() {
+        tester.view.resetPhysicalSize();
+        tester.view.resetDevicePixelRatio();
+      });
+      fixture.service.state = const EntitlementState(
+        plan: EntitlementPlans.free,
+        billingStatus: EntitlementBillingStatus.unavailable,
+        presentation: EntitlementPresentation.unavailable,
+      );
+      fixture.service.productsValue = const [
+        PlayProduct(
+          id: 'archivale_starter_monthly',
+          title: 'Starter',
+          description: 'Up to 50 active artworks',
+          price: 'NOK 35.00',
+        ),
+      ];
+      await _pump(tester, fixture);
+      expect(find.text('Subscription check unavailable'), findsOneWidget);
+      final restore = find.widgetWithText(OutlinedButton, 'Restore purchases');
+      expect(tester.widget<OutlinedButton>(restore).onPressed, isNotNull);
+      await _capture(tester, fixture, 'account-restore-unavailable-360.png');
+      final choose = find.widgetWithText(
+        FilledButton,
+        'Choose plan',
+        skipOffstage: false,
+      );
+      await tester.scrollUntilVisible(
+        choose,
+        250,
+        scrollable: find.byType(Scrollable).first,
+      );
+      expect(tester.widget<FilledButton>(choose).onPressed, isNull);
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets('shows localized Play details and verifies after disclosure', (
     tester,
@@ -63,6 +166,83 @@ void main() {
 
     expect(fixture.service.disclosureCalls, 1);
     expect(fixture.service.purchases, [EntitlementPlans.starter.id]);
+  });
+
+  testWidgets('mobile sign-in cancellation starts no purchase or restore', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(360, 640);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(() {
+      tester.view.resetPhysicalSize();
+      tester.view.resetDevicePixelRatio();
+    });
+    fixture.service.disclosureResult = false;
+    fixture.service.accountStatus = PaidAccountStatus.canceled;
+    await _pump(tester, fixture);
+    await tester.ensureVisible(
+      find.widgetWithText(OutlinedButton, 'Restore purchases'),
+    );
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Restore purchases'));
+    await tester.pumpAndSettle();
+    expect(
+      find.textContaining('Sign in with Google to purchase or restore'),
+      findsOneWidget,
+    );
+    expect(
+      find.textContaining(
+        'stores an account reference and sends it to Google Play',
+      ),
+      findsOneWidget,
+    );
+    await _capture(tester, fixture, 'google-routing-disclosure-360.png');
+    await tester.drag(
+      find.descendant(
+        of: find.byType(AlertDialog),
+        matching: find.byType(SingleChildScrollView),
+      ),
+      const Offset(0, -420),
+    );
+    await tester.pumpAndSettle();
+    await _capture(tester, fixture, 'google-routing-disclosure-bottom-360.png');
+    await tester.tap(find.widgetWithText(FilledButton, 'Continue'));
+    await tester.pumpAndSettle();
+    expect(fixture.service.restoreCalls, 0);
+    expect(fixture.service.purchases, isEmpty);
+    await tester.drag(
+      find.byKey(const ValueKey('billing-plan-scrollable')),
+      const Offset(0, 600),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Sign-in canceled'), findsOneWidget);
+    await _capture(tester, fixture, 'google-routing-canceled-360.png');
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('collision requires explicit sign-in to existing account', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(360, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(() {
+      tester.view.resetPhysicalSize();
+      tester.view.resetDevicePixelRatio();
+    });
+    fixture.service.accountStatus = PaidAccountStatus.existingAccount;
+    await _pump(tester, fixture);
+    await _capture(tester, fixture, 'google-collision-360.png');
+    final recover = find.widgetWithText(
+      OutlinedButton,
+      'Sign in to existing account',
+    );
+    await tester.ensureVisible(recover);
+    await tester.tap(recover);
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Continue'));
+    await tester.pumpAndSettle();
+    expect(fixture.service.existingAccountRequested, isTrue);
+    expect(fixture.service.restoreCalls, 1);
+    expect(fixture.service.purchases, isEmpty);
   });
 
   testWidgets('restore and lifecycle fallback states remain honest', (
@@ -404,17 +584,42 @@ void main() {
 
 Future<void> _pump(WidgetTester tester, _BillingFixture fixture) async {
   await tester.pumpWidget(
-    ArchivaleApp(
-      initialRoute: AppRoutes.billing,
-      dependencies: fixture.dependencies,
+    RepaintBoundary(
+      key: fixture.captureKey,
+      child: ArchivaleApp(
+        initialRoute: AppRoutes.billing,
+        dependencies: fixture.dependencies,
+      ),
     ),
   );
   await tester.pumpAndSettle();
 }
 
+Future<void> _capture(
+  WidgetTester tester,
+  _BillingFixture fixture,
+  String name,
+) async {
+  if (!const bool.fromEnvironment('CAPTURE_BILLING_VISUALS')) return;
+  final boundary =
+      fixture.captureKey.currentContext!.findRenderObject()!
+          as RenderRepaintBoundary;
+  boundary.markNeedsPaint();
+  await tester.pump();
+  await tester.runAsync(() async {
+    final image = await boundary.toImage(pixelRatio: 2);
+    final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
+    image.dispose();
+    final output = File('build/billing-identity-visuals/$name');
+    await output.parent.create(recursive: true);
+    await output.writeAsBytes(bytes!.buffer.asUint8List());
+  });
+}
+
 class _BillingFixture {
   _BillingFixture(this.directory, this.repository, this.attachmentStore);
 
+  final GlobalKey captureKey = GlobalKey();
   final Directory directory;
   final LocalArtworkRepository repository;
   final LocalAttachmentStore attachmentStore;
@@ -458,6 +663,8 @@ class _FakeBillingService implements BillingManagementService {
   int productReads = 0;
   int recoveryChecks = 0;
   bool canRecoverValue = true;
+  bool disclosureResult = true;
+  bool existingAccountRequested = false;
   FutureOr<List<PlayProduct>> Function()? productsNext;
   final List<String> purchases = [];
   final StreamController<EntitlementState> _stateChanges =
@@ -478,9 +685,15 @@ class _FakeBillingService implements BillingManagementService {
   }
 
   @override
-  Future<bool> acceptBillingDisclosure() async {
+  PaidAccountStatus accountStatus = PaidAccountStatus.idle;
+
+  @override
+  Future<bool> acceptBillingDisclosure({
+    bool useExistingAccount = false,
+  }) async {
     disclosureCalls++;
-    return true;
+    existingAccountRequested = useExistingAccount;
+    return disclosureResult;
   }
 
   @override

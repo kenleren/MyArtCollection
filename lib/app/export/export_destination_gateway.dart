@@ -50,6 +50,8 @@ class SystemExportDestinationGateway implements ExportDestinationGateway {
           'sourcePath': validated.file.path,
           'suggestedName': validated.displayName,
           'mimeType': validated.mimeType,
+          'expectedByteSize': validated.byteSize,
+          'expectedSha256': validated.checksumSha256,
         });
         return switch (outcome) {
           'completed' => ExportDestinationResult.completed,

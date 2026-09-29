@@ -5,7 +5,7 @@ import type {
 import { Timestamp } from 'firebase-admin/firestore';
 
 import { BILLING_DATABASE_ID } from './constants.js';
-import type { BillingCollection, BillingDatabase, BillingTransaction } from './store.js';
+import type { BillingCollection, BillingDatabase, BillingTransaction, ReconciliationDue } from './store.js';
 
 export class FirestoreBillingDatabase implements BillingDatabase {
   readonly databaseId = BILLING_DATABASE_ID;
@@ -14,6 +14,25 @@ export class FirestoreBillingDatabase implements BillingDatabase {
     if (firestore.databaseId !== BILLING_DATABASE_ID) {
       throw new Error('billing Firestore database mismatch');
     }
+  }
+
+  async dueEventWork(now: Date, limit: number): Promise<string[]> {
+    if (!Number.isInteger(limit) || limit < 1 || limit > 10) throw new Error('billing event unsafe');
+    const snapshot = await this.firestore.collection('playBillingEventWork')
+      .where('state', 'in', ['ready','retry','working']).where('dueAt', '<=', now)
+      .orderBy('dueAt').orderBy('__name__').limit(limit).get();
+    return snapshot.docs.map(doc => doc.id);
+  }
+
+  async dueReconciliationWork(now: Date, limit: number): Promise<ReconciliationDue[]> {
+    if (!Number.isInteger(limit) || limit < 1 || limit > 10) throw new Error('billing reconciliation unsafe');
+    const snapshot = await this.firestore.collection('playBillingReconcileWork')
+      .where('state', 'in', ['ready','retry','working']).where('dueAt', '<=', now)
+      .orderBy('dueAt').orderBy('__name__').limit(limit).select('dueAt','lastSuccessfulVerificationAt').get();
+    return snapshot.docs.map(doc => {
+      const v=normalizeFirestoreValue(doc.data()) as {dueAt:Date;lastSuccessfulVerificationAt?:Date};
+      return {accountSubject:doc.id,dueAt:v.dueAt,...(v.lastSuccessfulVerificationAt===undefined?{}:{lastSuccessfulVerificationAt:v.lastSuccessfulVerificationAt})};
+    });
   }
 
   runTransaction<T>(operation: (transaction: BillingTransaction) => Promise<T>): Promise<T> {
@@ -31,6 +50,27 @@ function createTransactionAdapter(
     get: async <Value>(collection: BillingCollection, id: string) => {
       const snapshot = await transaction.get(firestore.collection(collection).doc(id));
       return snapshot.exists ? (normalizeFirestoreValue(snapshot.data()) as Value) : undefined;
+    },
+    findSubjectBinding: async (subject) => {
+      const result = await transaction.get(firestore.collection('playBillingPurchaseBindings').where('accountSubject', '==', subject).limit(1));
+      return result.empty ? undefined : normalizeFirestoreValue(result.docs[0]!.data());
+    },
+    findSubjectRoute: async (subject) => {
+      const result = await transaction.get(firestore.collection('playBillingAccountRoutes').where('accountSubject', '==', subject).limit(1));
+      return result.empty ? undefined : normalizeFirestoreValue(result.docs[0]!.data());
+    },
+    findSubjectBrokerRoute: async (subject) => {
+      const result = await transaction.get(firestore.collection('playBillingBrokerRoutes').where('accountSubject', '==', subject).limit(1));
+      return result.empty ? undefined : normalizeFirestoreValue(result.docs[0]!.data());
+    },
+    findFinancialAnchorHistory: async (order) => {
+      const result = await transaction.get(firestore.collection('playBillingEventWork')
+        .where('financial.orderFingerprint', '==', order).where('financialRole', 'in', ['owner', 'alias', 'conflict']).limit(1));
+      return result.empty ? undefined : normalizeFirestoreValue(result.docs[0]!.data());
+    },
+    findAnyEventWork: async () => {
+      const result = await transaction.get(firestore.collection('playBillingEventWork').limit(1));
+      return result.empty ? undefined : normalizeFirestoreValue(result.docs[0]!.data());
     },
     set: <Value>(collection: BillingCollection, id: string, value: Value) => {
       transaction.set(

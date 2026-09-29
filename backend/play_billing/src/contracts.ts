@@ -1,6 +1,15 @@
+import type { DispatchCapability } from './dispatch_gate.js';
 import type { PlanId, ProductId } from './constants.js';
 
 export type FreeReason =
+  | 'no_known_purchase'
+  | 'recovery_required'
+  | 'account_conflict'
+  | 'expired'
+  | 'on_hold'
+  | 'paused'
+  | 'revoked'
+  | 'play_pending'
   | 'invalid_request'
   | 'identity_rejected'
   | 'disclosure_required'
@@ -15,6 +24,7 @@ export type FreeReason =
 export type NormalizedPaidState = 'active' | 'grace' | 'canceled';
 
 export interface VerifyRequest {
+  version: 'play-billing-v3';
   requestId: string;
   billingDisclosureVersion: string;
   productId: string;
@@ -22,7 +32,8 @@ export interface VerifyRequest {
 }
 
 export interface PaidResponse {
-  version: 'play-billing-v1';
+  status: 'paid';
+  version: 'play-billing-v3';
   requestId: string;
   planId: PlanId;
   productId: ProductId;
@@ -33,7 +44,8 @@ export interface PaidResponse {
 }
 
 export interface FreeResponse {
-  version: 'play-billing-v1';
+  status: 'none' | 'pending' | 'unavailable' | 'rejected';
+  version: 'play-billing-v3';
   requestId?: string;
   state: 'free';
   reason: FreeReason;
@@ -53,7 +65,7 @@ export interface DisclosureRequest {
 }
 
 export interface DisclosureResponse {
-  version: 'play-billing-v1';
+  version: 'play-billing-v3';
   requestId: string;
   status: 'accepted' | 'revoked';
 }
@@ -95,6 +107,12 @@ export interface PlaySubscriptionPurchase {
   externalAccountIdentifiers?: {
     obfuscatedExternalAccountId?: string;
   };
+  outOfAppPurchaseContext?: {
+    expiredExternalAccountIdentifiers?: {
+      obfuscatedExternalAccountId?: string;
+    };
+    expiredPurchaseToken?: string;
+  };
   lineItems?: PlayLineItem[];
 }
 
@@ -102,14 +120,26 @@ export interface PlayGetArguments {
   packageName: 'app.archivale';
   token: string;
   timeoutMs: 10_000;
+  deadline?: PlayCallDeadline;
+  dispatch?: DispatchCapability;
+}
+
+/** Internal invocation budget; never accepted from the mobile wire. */
+export interface PlayCallDeadline {
+  readonly expiresAt: number;
+  readonly signal: AbortSignal;
 }
 
 export interface PlayAcknowledgeArguments {
   packageName: 'app.archivale';
   subscriptionId: ProductId;
   token: string;
-  body: Record<string, never>;
+  body: Record<string, never> | {
+    externalAccountIds: { obfuscatedAccountId: string };
+  };
   timeoutMs: 10_000;
+  deadline?: PlayCallDeadline;
+  dispatch?: DispatchCapability;
 }
 
 export interface PlaySubscriptionsAdapter {
@@ -123,4 +153,12 @@ export interface Clock {
 
 export interface NonceSource {
   nextNonce(): Uint8Array;
+}
+
+export interface PrepareResponse {
+  version: 'play-billing-v3';
+  requestId: string;
+  status: 'ready';
+  obfuscatedAccountId: string;
+  lifecycleEpoch: string;
 }

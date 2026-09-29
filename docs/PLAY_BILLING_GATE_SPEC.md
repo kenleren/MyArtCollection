@@ -1,8 +1,23 @@
+> Historical internal-v1 contract. The disabled public-beta recovery source
+> transition is specified in [PLAY_BILLING_RECOVERY_V2_SPEC.md](PLAY_BILLING_RECOVERY_V2_SPEC.md).
+> Do not deploy mixed v1/v2 writers or treat the internal limitations below as public-beta acceptance.
+
 # Play Billing Gate Spec
 
 Status: review-ready documentation contract; implementation and deployment remain gated
 Issue: #190
 Date: 2026-07-10
+
+## Identity foundation amendment (#194, 2026-09-28)
+
+The source implementation now requires Google-backed Firebase identity for
+purchase/restore and `billing-verification-disclosure-v2`. See
+[Paid Android identity foundation](PUBLIC_BETA_IDENTITY_SPEC.md) for the
+accepted account-optional product boundary, UID-preserving link, explicit
+collision recovery and staged migration. This amendment supersedes the
+anonymous-only identity and v1 disclosure requirements below. The remaining
+v1 delivery, database, response and memory-only lease contract remains in
+force. This slice does not complete #194 or authorize paid public rollout.
 
 ## Scope And Authority
 
@@ -886,3 +901,16 @@ Current Google guidance was rechecked for #190 on 2026-07-10:
 - [`purchases.subscriptions.acknowledge`](https://developers.google.com/android-publisher/api-ref/rest/v3/purchases.subscriptions/acknowledge)
 - [Manage multiple Firestore databases and database IAM](https://firebase.google.com/docs/firestore/manage-databases)
 - [Firestore Security Rules and server IAM boundary](https://firebase.google.com/docs/firestore/security/rules-conditions)
+
+
+### Disabled financial notification follow-on (F1)
+
+The [event specification](PLAY_BILLING_EVENTS_SPEC.md#f1-order-aware-full-subscription-voids-disabled)
+now defines a disabled, order-aware RTDN path for newly received full-subscription
+voids whose tokens already have a valid account binding. It always rechecks current
+account custody through Restore; an old renewal/order is not entitlement or credit
+reversal authority. Required completion receipts, reciprocal order anchors, legacy
+v1 preservation and existing shared dispatch budgets are source controls only.
+Package-list/backstop coverage, unresolved tokens, retention/deletion and live
+financial/store evidence remain open #194 requirements. This extension does not
+change the internal v1 acceptance boundary or authorize public paid activation.

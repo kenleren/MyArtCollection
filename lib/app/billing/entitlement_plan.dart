@@ -124,6 +124,7 @@ enum EntitlementPresentation {
   delayedVerification,
   acknowledgementRecovery,
   recoveryExhausted,
+  unavailable,
   restoring,
   refreshing;
 

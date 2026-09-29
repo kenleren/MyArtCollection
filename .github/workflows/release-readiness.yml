@@ -34,6 +34,8 @@ jobs:
             echo "Checkout left a repository credential in local git config" >&2
             exit 1
           fi
+      - name: Validate release workflow contract
+        run: bash test/release_readiness_workflow_test.sh
       - name: Run digest-pinned actionlint
         shell: bash
         run: |
@@ -136,11 +138,12 @@ jobs:
           sudo ln -s "$roboto" /System/Library/Fonts/SFNS.ttf
       - name: Fetch locked Flutter dependencies
         run: flutter pub get --enforce-lockfile
-      - name: Check formatting, analysis, and tests
-        run: |
-          dart format --set-exit-if-changed lib test
-          flutter analyze
-          flutter test --concurrency=1
+      - name: Check Flutter formatting
+        run: dart format --output=none --set-exit-if-changed lib test
+      - name: Analyze Flutter project
+        run: flutter analyze
+      - name: Run serialized Flutter tests
+        run: flutter test --concurrency=1
 
   android-debug-package:
     name: Android debug package
@@ -164,13 +167,32 @@ jobs:
           bash test/gradle_wrapper_validation_test.sh
       - name: Validate native attachment viewer policy
         run: bash test/attachment_native_viewer_policy_test.sh
-      - name: Test native attachment custody crash and race contracts
+      - name: Test native attachment custody instrumentation contract
         run: |
           bash test/attachment_custody_instrumentation_contract_test.sh
-          bash test/attachment_custody_native_test.sh
-          ATTACHMENT_CUSTODY_SANITIZERS=address,undefined bash test/attachment_custody_native_test.sh
-          ATTACHMENT_CUSTODY_SANITIZERS=thread bash test/attachment_custody_native_test.sh
-          bash test/attachment_custody_release_symbol_test.sh
+      - name: Require pinned native attachment custody compiler
+        run: command -v g++-13
+      - name: Test native attachment custody contract (host)
+        run: CXX=g++-13 ATTACHMENT_CUSTODY_SUITE=contract ATTACHMENT_CUSTODY_SANITIZERS=none bash test/attachment_custody_native_test.sh
+      - name: Test native attachment custody race (host)
+        run: CXX=g++-13 ATTACHMENT_CUSTODY_SUITE=race ATTACHMENT_CUSTODY_SANITIZERS=none bash test/attachment_custody_native_test.sh
+      - name: Test native attachment custody contract (ASan+UBSan)
+        run: CXX=g++-13 ATTACHMENT_CUSTODY_SUITE=contract ATTACHMENT_CUSTODY_SANITIZERS=address,undefined bash test/attachment_custody_native_test.sh
+      - name: Test native attachment custody race (ASan+UBSan)
+        run: CXX=g++-13 ATTACHMENT_CUSTODY_SUITE=race ATTACHMENT_CUSTODY_SANITIZERS=address,undefined bash test/attachment_custody_native_test.sh
+      - name: Stress native attachment custody race (ASan+UBSan)
+        shell: bash
+        run: |
+          set -euo pipefail
+          for ((attempt = 0; attempt < 12; attempt++)); do
+            CXX=g++-13 ATTACHMENT_CUSTODY_SUITE=race ATTACHMENT_CUSTODY_SANITIZERS=address,undefined bash test/attachment_custody_native_test.sh
+          done
+      - name: Test native attachment custody contract (TSan)
+        run: CXX=g++-13 ATTACHMENT_CUSTODY_SUITE=contract ATTACHMENT_CUSTODY_SANITIZERS=thread bash test/attachment_custody_native_test.sh
+      - name: Test native attachment custody race (TSan)
+        run: CXX=g++-13 ATTACHMENT_CUSTODY_SUITE=race ATTACHMENT_CUSTODY_SANITIZERS=thread bash test/attachment_custody_native_test.sh
+      - name: Test native attachment custody release symbols
+        run: bash test/attachment_custody_release_symbol_test.sh
       - name: Set up Temurin Java
         uses: actions/setup-java@0f481fcb613427c0f801b606911222b5b6f3083a
         with:
@@ -319,12 +341,11 @@ jobs:
             "$RUNNER_TEMP/broker-core-audit.json" \
             > "$RUNNER_TEMP/broker-audit-runtime-evidence.sha256"
           test "$(wc -l < "$RUNNER_TEMP/broker-audit-runtime-evidence.sha256")" -eq 2
-          test "$full_audit_status" -eq 1 || { echo "full npm audit did not report the expected policy input" >&2; exit 1; }
-          test "$core_audit_status" -eq 1 || { echo "peer-omitted npm audit did not report the expected policy input" >&2; exit 1; }
+          test "$full_audit_status" -eq 0 || { echo "full npm audit did not report a clean result" >&2; exit 1; }
+          test "$core_audit_status" -eq 0 || { echo "peer-omitted npm audit did not report a clean result" >&2; exit 1; }
           node scripts/check_broker_audit.mjs \
             --audit "$RUNNER_TEMP/broker-audit.json" \
-            --core-audit "$RUNNER_TEMP/broker-core-audit.json" \
-            --lock backend/broker/package-lock.json
+            --core-audit "$RUNNER_TEMP/broker-core-audit.json"
       - name: Test broker audit parser fixtures
         run: node --test test/broker_audit_policy_test.mjs
       - name: Require a clean forms dependency audit

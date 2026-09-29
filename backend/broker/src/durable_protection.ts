@@ -1,3 +1,4 @@
+import { M as MONTHLY_COLLECTIONS, validWitness, parseControlPair } from './monthly_credit_protocol.js';
 import { createHmac } from 'node:crypto';
 
 import type { BrokerAdapterIdentity } from './adapter.js';
@@ -170,7 +171,7 @@ export class FirebaseAdminBrokerTokenVerifier implements BrokerTokenVerifier {
       return { ok: false, code: 'wrong_project_auth' };
     }
     const signInProvider = authBody.firebase?.sign_in_provider;
-    if (signInProvider !== 'anonymous') {
+    if (signInProvider !== 'anonymous' && signInProvider !== 'google.com') {
       return { ok: false, code: 'unsupported_auth_provider' };
     }
 
@@ -183,8 +184,8 @@ export class FirebaseAdminBrokerTokenVerifier implements BrokerTokenVerifier {
     } catch {
       return { ok: false, code: 'invalid_app_check_token' };
     }
-    if (appBody.alreadyConsumed === true) {
-      return { ok: false, code: 'app_check_replayed' };
+    if (appBody.alreadyConsumed !== false) {
+      return { ok: false, code: appBody.alreadyConsumed === true ? 'app_check_replayed' : 'invalid_app_check_token' };
     }
     if (!appCheckTokenMatchesProject(
       appBody.token,
@@ -248,7 +249,7 @@ export class ConfiguredDurableBrokerProtection implements DurableBrokerProtectio
           authVerified: true,
           uid: verified.auth.uid,
           authProjectId: verified.auth.projectId,
-          signInProvider: 'anonymous',
+          signInProvider: verified.auth.signInProvider,
         },
         app: { appId: verified.app.appId, appProjectId: verified.app.projectId },
         quotaSubject,
@@ -432,6 +433,15 @@ export class FirestoreRequestLifecycle implements RequestLifecycleStore {
         transaction.get(globalRef),
       ]);
       const control = controlRecordFromSnapshot(controlSnapshot);
+      const monthlyControl = await transaction.get(this.store.firestore.doc(`${MONTHLY_COLLECTIONS.control}/control`));
+      const monthlyInitialization = await transaction.get(this.store.firestore.doc(`${MONTHLY_COLLECTIONS.control}/initialization`));
+      if (control?.monthlyCutover !== undefined || monthlyControl.exists || monthlyInitialization.exists) {
+        try {
+          parseControlPair(monthlyControl.exists ? monthlyControl.data() : undefined,
+            monthlyInitialization.exists ? monthlyInitialization.data() : undefined, control?.monthlyCutover);
+          return { kind: 'migration_required' };
+        } catch { return { kind: 'unsafe_record' }; }
+      }
       const subject = subjectSnapshot.exists
         ? subjectCreditFromSnapshot(subjectSnapshot)
         : { exposed_credits: 0, reserved_count: 0 };
@@ -717,7 +727,7 @@ export class FakeBrokerTokenVerifier implements BrokerTokenVerifier {
     if (projectId !== this.config.projectId) {
       return { ok: false, code: 'wrong_project_auth' };
     }
-    if ((mapped.signInProvider ?? 'anonymous') !== 'anonymous') {
+    if (mapped.signInProvider !== undefined && mapped.signInProvider !== 'anonymous' && mapped.signInProvider !== 'google.com') {
       return { ok: false, code: 'unsupported_auth_provider' };
     }
     if (this.consumedAppCheckTokens.has(appCheckToken)) {
@@ -729,7 +739,7 @@ export class FakeBrokerTokenVerifier implements BrokerTokenVerifier {
     }
     return {
       ok: true,
-      auth: { uid: mapped.uid, projectId, signInProvider: 'anonymous' },
+      auth: { uid: mapped.uid, projectId, signInProvider: mapped.signInProvider ?? 'anonymous' },
       app: { appId: mapped.appId, projectId },
     };
   }
@@ -814,17 +824,18 @@ function ledgerRecordFromSnapshot(snapshot: DurableFirestoreDocumentSnapshot): L
   return snapshot.exists ? parseLedgerRecord(snapshot.data()) : undefined;
 }
 
-function controlRecordFromSnapshot(snapshot: DurableFirestoreDocumentSnapshot): {
+export function controlRecordFromSnapshot(snapshot: DurableFirestoreDocumentSnapshot): {
   breakerOpen: boolean;
   perSubjectCreditCap: number;
   brokerCreditCap: number;
   oneInFlightPerSubject: boolean;
+  monthlyCutover?: unknown;
 } | undefined {
   const data = snapshot.data();
   if (
     !snapshot.exists ||
     !isRecord(data) ||
-    !hasExactKeys(data, CONTROL_RECORD_KEYS) ||
+    !(hasExactKeys(data, CONTROL_RECORD_KEYS) || hasExactKeys(data, new Set([...CONTROL_RECORD_KEYS, 'monthlyCutover'])) && validWitness(data.monthlyCutover)) ||
     data.record_version !== CONTROL_RECORD_VERSION ||
     typeof data.breakerOpen !== 'boolean' ||
     nonNegativeInteger(data.perSubjectCreditCap) === undefined ||
@@ -838,10 +849,11 @@ function controlRecordFromSnapshot(snapshot: DurableFirestoreDocumentSnapshot): 
     perSubjectCreditCap: data.perSubjectCreditCap as number,
     brokerCreditCap: data.brokerCreditCap as number,
     oneInFlightPerSubject: data.oneInFlightPerSubject,
+    ...(Object.hasOwn(data, 'monthlyCutover') ? {monthlyCutover:data.monthlyCutover} : {}),
   };
 }
 
-function entitlementRecordFromSnapshot(
+export function entitlementRecordFromSnapshot(
   snapshot: DurableFirestoreDocumentSnapshot,
 ): { entitled: boolean } | undefined {
   const data = snapshot.data();

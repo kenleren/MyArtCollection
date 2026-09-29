@@ -35,6 +35,13 @@ branch-protection contract.
 Flutter test files run with one worker because several existing suites mutate
 process-global Flutter/database test state. Serial execution keeps the hosted
 result deterministic while still running every test.
+Formatting, analysis, and serialized tests have separate named steps, so the
+failed phase is visible in GitHub's structured job metadata. Formatting checks
+do not rewrite source files. The workflow-lint job also runs
+`test/release_readiness_workflow_test.sh` to verify this ordering, the locked
+setup, and the separate native custody checks. Native runtime coverage stays
+in the Android job: contract and race suites each run with the pinned compiler
+without sanitizers, with ASan/UBSan, and with TSan.
 The Linux runner maps Roboto and Material Icons from the checksum-verified
 Flutter SDK to the macOS-compatible paths used by the existing screenshot test
 harness, keeping text metrics and lazy-list visibility consistent across hosts.
@@ -125,61 +132,38 @@ clean-environment negative test exercises every protected name. The job
 supplies no Dart defines, credentials, release signing, deploy action, artifact
 upload, Firebase CLI command, or provider call.
 
-## Broker audit exception
+## Clean broker dependency audits
 
-`scripts/check_broker_audit.mjs` is fail-closed. Until **2026-08-31**, it
-accepts only moderate `GHSA-w5hq-g745-h8pq` in the current eight-node broker
-audit graph. The policy validates both npm's full report and a separately
-fetched `--omit=peer` report. Both must use audit report version 2 with no
-top-level error or unknown report fields. The peer-omitted report and all
-eight core entries in the full report must match exact vulnerability names,
-ranges, directness, `via`, `nodes`, `effects`, vulnerability counts, and the
-advisory's source, trusted GitHub origin/path, CWE, CVSS, and affected range.
-npm's aggregate dependency counters vary when peer dependencies are omitted;
-the checker requires their exact npm v2 field set and nonnegative integer types
-while deriving topology only from exact vulnerability objects and lock paths.
-The peer-omitted report may also retain exactly one omitted moderate peer in
-its aggregate counters (8 or 9 moderate/total); every other severity and any
-larger count remains zero/fail-closed.
-When npm removes the peer entry, peer-omitted fix metadata is exact. npm may
-retarget remediation advice in the full peer-aware report only to the two
-locked direct Firebase packages, and that advice must retain the exact npm v2
-field set and value types.
+The broker has no dependency-audit exception. The previous UUID exception
+expired on 2026-08-31 and has been removed. CI requires exit code zero from
+both fresh full and `--omit=peer` lockfile audits, then validates both npm v2
+reports with `scripts/check_broker_audit.mjs`. Both must have an empty
+vulnerability map and zero counts at every severity. Missing or malformed
+fields, unexpected report shapes, npm errors, and invalid dependency counts
+fail closed. There is no date or severity override.
 
-npm may add only its known derived `firebase-functions > firebase-admin`
-peer-metavulnerability entry to the full report. That entry must have the exact
-field set, direct state, `via`, empty effects, and top-level node; its range and
-fix recommendation must retain the npm v2 types. The full report must also add
-exactly the matching `firebase-admin` reverse effect for `firebase-functions`.
-npm may retain the same exact node and reverse effect under `--omit=peer`; no
-other peer entry or effect is accepted. The lock binds both
-directions to exact top-level `firebase-functions@7.2.5` and
-`firebase-admin@13.10.0` installations. Any other peer package or peer graph
-change fails.
+The lockfile pins patched UUID 11.1.1 and qs 6.16.0 through reviewed npm
+overrides without changing the Firebase SDK versions. UUID 11 retains the
+CommonJS `v4` API used by the affected Google dependencies. Forms already
+used UUID 11; billing overrides only UUID versions below 11.1.1, leaving its
+unrelated UUID 14 installation unchanged. Billing's five high-severity
+transitive findings are fixed within their existing version ranges.
 
-The lock policy also checks exact registry URLs, integrity values, dependency
-fields/ranges, concrete resolved paths, and a single top-level UUID
-installation. The complete approved paths from `firebase-admin` to the locked
-`uuid@9.0.1` are:
+The seven historical fixture files remain as the frozen release-control corpus;
+`allowed-audit.json` now explicitly tests rejection of the retired exception.
+Tests use an inline clean report and cover every severity,
+inconsistent counts, malformed JSON, npm errors, both report inputs, and invalid
+CLI arguments. Audits run before package installation. `npm ci` verifies the
+committed dependency graph and package integrity; the candidate inventory binds
+the lockfiles to the reviewed commit. The forms package likewise requires a
+clean audit. Play Billing retains its high-severity audit gate; its production audit is clean,
+while ten moderate development-tool findings remain. Workers Free retains its
+pinned Miniflare and Wrangler versions, with reviewed Sharp 0.35.4 and Undici
+7.29.1 overrides to fix current advisories. Its production and full-lock audits
+are required to pass their existing severity gates.
 
-1. `firebase-admin > @google-cloud/firestore > google-gax > uuid`
-2. `firebase-admin > @google-cloud/firestore > google-gax > retry-request > teeny-request > uuid`
-3. `firebase-admin > @google-cloud/storage > gaxios > uuid`
-4. `firebase-admin > @google-cloud/storage > retry-request > teeny-request > uuid`
-5. `firebase-admin > @google-cloud/storage > teeny-request > uuid`
-
-The forms package has no exception: any npm audit finding fails CI. Audit gates
-and parser fixtures run before `npm ci` or package lifecycle/test scripts. For
-the broker, a top-level npm error, untrusted or changed advisory, extra node or
-effect, extra or rerouted audit/lock edge, nested or duplicate UUID install,
-changed package range/version/integrity, severity change, malformed output,
-audit-command failure, or expiry fails the workflow. Fixtures cover those
-cases, exact pre/post-expiry dates, invalid calendar dates, and timestamp-shaped
-clock input. The deterministic clock is available only through an exported test
-helper; the production CLI has no clock override and rejects `--as-of`.
-
-This exception is a review reminder, not a risk acceptance for deployment.
-Updating or removing it needs a separately reviewed lockfile and policy change.
+Security advisories: [UUID bounds check](https://github.com/uuidjs/uuid/security/advisories/GHSA-w5hq-g745-h8pq)
+and [qs denial of service](https://github.com/ljharb/qs/security/advisories/GHSA-4mjr-xmp4-gh2g).
 
 ## Owner protection handoff
 
@@ -204,3 +188,32 @@ green check named `Release readiness`, repository controls must block merge
 until the trusted workflow or required CODEOWNERS/latest-push review approves
 the change. Ruleset, branch-protection, merge, and administrator changes remain
 human-owned and are outside this implementation task.
+
+## Native race failure diagnostics
+
+A native test failure remains fatal. The host harness reports only its fixed
+exit code through `CUSTODY_NATIVE_RESULT`; raw compiler/harness output is
+removed. Exit 64 means invalid invocation and 65 means an otherwise unclassified
+assertion. ThreadSanitizer's exit 66 remains a runtime/sanitizer failure. Race
+assertions have stable identifiers:
+
+| Exit | Assertion |
+| --- | --- |
+| 80 | Leaf-race publication setup failed |
+| 81 / 82 | Leaf race changed the outside sentinel during attempts / after join |
+| 83 | Intermediate-race publication setup failed |
+| 84 / 85 | Intermediate race changed the outside sentinel during attempts / after join |
+| 86 | Export leaf race opened an outside payload |
+| 87 / 88 | Export leaf race changed the outside sentinel during attempts / after join |
+| 89 | Export intermediate race opened an outside payload |
+| 90 / 91 | Export intermediate race changed the outside sentinel during attempts / after join |
+
+These identifiers do not change the assertions, sanitizer settings or 40
+repetitions per scenario. An intermittent assertion must be diagnosed; a later
+passing run does not resolve an earlier failure.
+
+CI also runs twelve additional ASan+UBSan race samples to investigate the
+intermittent Linux assertion observed on candidate `5ffda5c`. Every sample
+retains the same 40 repetitions and fails immediately on any assertion or
+sanitizer error. This is additional stress coverage, never a retry-until-pass
+policy. The fixed exit code identifies the failing assertion without raw logs.

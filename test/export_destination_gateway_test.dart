@@ -1,5 +1,7 @@
+import 'dart:convert';
 import 'dart:io';
 
+import 'package:crypto/crypto.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:my_art_collection/app/export/export_artifact_store.dart';
@@ -46,8 +48,69 @@ void main() {
       'sourcePath': artifact.file.path,
       'suggestedName': artifact.displayName,
       'mimeType': 'application/pdf',
+      'expectedByteSize': artifact.byteSize,
+      'expectedSha256': artifact.checksumSha256,
     });
   });
+
+  test(
+    'reopened store cannot recover publication authority from sidecars',
+    () async {
+      final report = await _commitReport(store);
+      final archive = await _commitArchive(store);
+      expect(
+        await store.latest(ExportArtifactKind.report, subjectId: 'artwork-1'),
+        isNotNull,
+      );
+      expect(await store.latest(ExportArtifactKind.archive), isNotNull);
+      final reopened = await ExportArtifactStore.openAt(store.root);
+      expect(
+        await reopened.latest(
+          ExportArtifactKind.report,
+          subjectId: 'artwork-1',
+        ),
+        isNull,
+      );
+      expect(await reopened.latest(ExportArtifactKind.archive), isNull);
+      expect(await reopened.validate(report), isNull);
+      expect(await reopened.validate(archive), isNull);
+      expect(await report.file.exists(), isTrue);
+      expect(await archive.file.exists(), isTrue);
+    },
+  );
+
+  test(
+    'consistent payload and sidecar substitution cannot refresh authority',
+    () async {
+      var nativeCalls = 0;
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (_) async {
+            nativeCalls++;
+            return 'completed';
+          });
+      final artifact = await _commitArchive(store);
+      final revalidated = (await artifact.revalidate())!;
+      final metadataFile = File('${artifact.file.path}.json');
+      final metadata =
+          jsonDecode(await metadataFile.readAsString()) as Map<String, dynamic>;
+      final replacement = [7, 8, 9];
+      await artifact.file.writeAsBytes(replacement, flush: true);
+      metadata['checksum_sha256'] = sha256.convert(replacement).toString();
+      await metadataFile.writeAsString(jsonEncode(metadata), flush: true);
+      expect(await artifact.revalidate(), isNull);
+      expect(await revalidated.revalidate(), isNull);
+      expect(await store.latest(ExportArtifactKind.archive), isNull);
+      final gateway = SystemExportDestinationGateway(
+        saveCopyChannel: channel,
+        useNativeMobileSaveCopy: true,
+      );
+      expect(
+        await gateway.saveCopy(revalidated),
+        ExportDestinationResult.unavailable,
+      );
+      expect(nativeCalls, 0);
+    },
+  );
 
   test(
     'mobile save copy preserves dismissed and unavailable outcomes',

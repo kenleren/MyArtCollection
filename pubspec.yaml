@@ -50,6 +50,7 @@ dependencies:
   firebase_crashlytics: ^5.2.4
   firebase_remote_config: ^6.5.3
   firebase_auth: ^6.5.4
+  google_sign_in: ^7.2.0
   firebase_app_check: ^0.4.5
   cloud_functions: ^6.0.7
   in_app_purchase: ^3.2.3
