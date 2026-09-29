@@ -1,0 +1,42 @@
+{
+  "version": "play-billing-reconciliation-disabled-v1",
+  "sourceContract": {
+    "enabled": false,
+    "project": "my-art-collections",
+    "database": "archivale-play-billing",
+    "packageName": "app.archivale",
+    "runtimeAccount": "archivale-play-lifecycle-worker@my-art-collections.iam.gserviceaccount.com",
+    "region": "us-central1",
+    "timeoutSeconds": 60,
+    "memory": "512MiB",
+    "maxInstances": 1,
+    "concurrency": 1,
+    "minInstances": 0,
+    "schedule": "every 1 minutes",
+    "timeZone": "UTC",
+    "retryCount": 0,
+    "invocationMs": 50000,
+    "selectionLimit": 10,
+    "jobConcurrency": 1,
+    "minimumStartMs": 5000
+  },
+  "pumpExport": "pumpPlayBillingReconciliation",
+  "schedulerIdentityConfiguredBySdk": false,
+  "productionCadenceApproved": false,
+  "defaultPolicy": null,
+  "provisioningReadbackRequired": [
+    "accepted B1 paired common and retained L2 controls with approved allocations and cutover history",
+    "owner approved wake cadence, polling policy, foreground headroom and alert ownership",
+    "private authenticated Scheduler invocation, exact invoker identity, no public principal",
+    "fixed runtime account and named database only, bounded due index",
+    "approved full KMS versions and purpose-limited key authority",
+    "implemented Publisher calls restricted to subscription GET and ACK; broader app-scoped Play role authority reviewed",
+    "verified new-state proof or separately accepted migration and historical policy-blocked enrollment coverage",
+    "inactive-current recovery, retention, outage and freshness policy separately resolved"
+  ],
+  "rollback": [
+    "disable reconciliation config before dependency construction, preserve all work and history",
+    "stop and drain incompatible writers before policy or ledger cutover",
+    "no runtime reset, backfill or circuit auto-close"
+  ]
+}

@@ -106,7 +106,7 @@ for(const outcome of ['paid','inactive'] as const)test(`completed ${outcome} rec
   await h.repository.acceptDisclosure(subject(h),now);return original(attempt,now);};
  const result=await h.processor.processOne(subject(h));assert.notEqual(result?.status,'paid');assert.equal(result&&'reason'in result&&result.reason,'not_verified');assert.ok(captured?.completedObservation);assert.equal(work(h).completedObservation,undefined);
 });
-test('two concurrent claims admit exactly one and query limit is bounded',async()=>{const h=setup();await seed(h);h.clock.advance(61_000);assert.deepEqual(await h.database.dueReconciliationWork(h.clock.now(),10),[subject(h)]);await assert.rejects(h.database.dueReconciliationWork(h.clock.now(),11));const claims=await Promise.all([0,1].map(()=>h.repository.claimReconciliation(subject(h),h.clock.now(),new BillingDeadline())));assert.equal(claims.filter(Boolean).length,1);});
+test('two concurrent claims admit exactly one and query limit is bounded',async()=>{const h=setup();await seed(h);h.clock.advance(61_000);assert.deepEqual((await h.database.dueReconciliationWork(h.clock.now(),10)).map(r=>r.accountSubject),[subject(h)]);await assert.rejects(h.database.dueReconciliationWork(h.clock.now(),11));const claims=await Promise.all([0,1].map(()=>h.repository.claimReconciliation(subject(h),h.clock.now(),new BillingDeadline())));assert.equal(claims.filter(Boolean).length,1);});
 
 test('canceled pending successor can refresh only its indexed predecessor under the same job',async()=>{
  const h=setup();const old=await seed(h),next=await candidate(h,old);h.play.setPurchase(next,eligiblePurchase(h,{state:'SUBSCRIPTION_STATE_PENDING_PURCHASE_CANCELED',linkedPurchaseToken:old}));
@@ -164,13 +164,13 @@ test('unmarked retirement exception survives partial core loss and forbids new l
 
 test('expired oldest consent is atomically blocked so bounded query reaches healthy account',async()=>{
  const h=setup();await seed(h);h.clock.advance(366*86_400_000);const other={...h,identity:{uid:'synthetic-second'}};await acceptDisclosure(other);const token=purchaseToken();h.play.setPurchase(token,eligiblePurchase(other));await h.service.verifySubscription(other.identity,verifyRequest(token));h.clock.advance(61_000);
- assert.deepEqual(await h.database.dueReconciliationWork(h.clock.now(),1),[subject(h)]);const before=work(h);assert.equal(await h.processor.processOne(subject(h)),undefined);
+ assert.deepEqual((await h.database.dueReconciliationWork(h.clock.now(),1)).map(r=>r.accountSubject),[subject(h)]);const before=work(h);assert.equal(await h.processor.processOne(subject(h)),undefined);
  assert.equal(work(h).state,'blocked');assert.equal(work(h).reason,'consent');assert.deepEqual(work(h).dispatchTotals,before.dispatchTotals);assert.deepEqual(work(h).attemptStarts,before.attemptStarts);assert.equal(work(h).ownerGeneration,before.ownerGeneration+1);
- assert.deepEqual(await h.database.dueReconciliationWork(h.clock.now(),1),[h.identifiers.accountSubject(other.identity.uid)]);
+ assert.deepEqual((await h.database.dueReconciliationWork(h.clock.now(),1)).map(r=>r.accountSubject),[h.identifiers.accountSubject(other.identity.uid)]);
 });
 test('exhausted rolling-day attempts move due head to finite window boundary without resetting counts',async()=>{
  const h=setup();await seed(h);h.clock.advance(61_000);const old=work(h);old.attemptStarts=Array.from({length:12},()=>h.clock.now());h.database.setUnsafeRecordForTest(COLLECTIONS.reconcileWork,subject(h),old);
- assert.equal(await h.processor.processOne(subject(h)),undefined);assert.equal(work(h).state,'retry');assert.equal(work(h).reason,'budget');assert.equal(work(h).attemptStarts.length,12);assert.equal(+work(h).dueAt,+h.clock.now()+86_400_001);assert.deepEqual(await h.database.dueReconciliationWork(h.clock.now(),10),[]);
+ assert.equal(await h.processor.processOne(subject(h)),undefined);assert.equal(work(h).state,'retry');assert.equal(work(h).reason,'budget');assert.equal(work(h).attemptStarts.length,12);assert.equal(+work(h).dueAt,+h.clock.now()+86_400_001);assert.deepEqual((await h.database.dueReconciliationWork(h.clock.now(),10)).map(r=>r.accountSubject),[]);
 });
 test('one-job deadline bounds delayed admission and fences late GET without renewing cleanup deadline',async()=>{
  const h=setup();await seed(h);h.clock.advance(61_000);const entered=deferred(),release=deferred();const acquire=h.repository.acquireAccountAttempt.bind(h.repository);

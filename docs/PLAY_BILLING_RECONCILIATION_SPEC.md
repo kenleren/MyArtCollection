@@ -1,11 +1,11 @@
-# Known-account reconciliation — disabled L3-A (#194)
+# Known-account reconciliation — disabled L3-A/B2 (#194)
 
-The disabled L3-B1 [shared dispatch budget](PLAY_BILLING_DISPATCH_BUDGET_SPEC.md) now meters the injected processor through the same account/transport gate as foreground and events. It adds no reconciliation pump or production cadence.
+The L3-B1 [shared dispatch budget](PLAY_BILLING_DISPATCH_BUDGET_SPEC.md) meters every reconciliation dispatch through the same account/transport gate as foreground and events. B2 adds a disabled scheduled adapter and bounded cohort reporting; it supplies no approved production polling policy or activation.
 
-This source slice adds atomic scheduling and an injected one-job integration.
-It adds no Firebase export, runtime dispatcher, provider client, financial-list
-transport, migration runner or public/mobile contract. Production construction
-and polling remain closed. Independent payment/privacy output review is required.
+The A foundation supplies atomic scheduling and an injected one-job integration.
+B2 composes that processor into a scheduler without changing account authority,
+financial-list transports, migration or public/mobile contracts. Production polling
+remains closed. Independent payment/privacy output review is required.
 
 ## Schedule and authority
 
@@ -73,13 +73,13 @@ limits. Claims use a 90-second lease, at most 12 starts per rolling day, safe
 integer high-waters and fresh nonces on reclaim. Provider wrappers reserve durable
 get/ACK/KMS totals before dispatch and impose per-job maxima of three GETs,
 three custody calls and one ACK. Retry/reclaim preserves counters. A bounded
-named-database due query returns at most ten rows; no automatic pump is exported.
+named-database due query returns at most ten rows. B2 now exports the disabled pump described below.
 Expired disclosure atomically blocks work. Exhausted daily attempts and temporary
 account/token/ACK waits move the query due time to a finite next boundary while
 retaining demand age and counters, so non-actionable heads do not starve later
 accounts. Whole service execution and cleanup share the original absolute
 invocation deadline; canceled cleanup does not wait behind held admission.
-L3-B must add shared project quota reservations before any production use.
+B1 supplies shared project reservations; its separately approved cutover and allocations remain activation gates.
 
 **Every inactive current result** (expired, revoked, on hold, paused or pending)
 removes only its scheduling demand when no ACK barrier remains. The binding,
@@ -121,3 +121,30 @@ runtime pump, paginated void traversal and applied coverage, polling/retention/
 deletion policy, provider provisioning and live operational evidence. Monthly
 credits, broker entitlement application and offline access remain separate. No
 retention duration, pricing, provider activation or public-launch claim is made.
+
+
+## B2 disabled scheduled adapter
+
+`pumpPlayBillingReconciliation` is a scheduled SDK export with a 60-second function timeout, one instance/concurrent invocation, no managed retries and a source-only `every 1 minutes` UTC registration. These are disabled implementation/test settings, not production cadence or infrastructure approval. Scheduler authentication and service-scoped invoker IAM require separate provisioning/readback; the runtime account option and Scheduler headers do not prove caller identity. Deploying even a disabled schedule has infrastructure cost and is not authorized by source acceptance.
+
+`PLAY_BILLING_RECONCILIATION_CONFIG` is absent by default. The exact enabled JSON is `{version:"play-billing-reconciliation-runtime-v1",enabled:true,policy:{activeMs,retryMs,maxRetryMs}}`; exact disabled JSON contains only version and enabled:false. Input is bounded to 1 KiB. The existing policy bounds are parser ceilings: activeMs 60,000–86,400,000; retryMs at least 15,000; maxRetryMs at least retryMs and at most 3,600,000. The retained 12-starts-per-day admission limit still constrains achievable cadence. No production values are supplied.
+
+All three factories use `createReconciliationAwareBillingRuntime`, which parses the same optional policy before delegating to the actual shared factory. Missing/malformed optional policy never prevents foreground payments or fail-safe accept/prepare/revoke/retire. Safety-only construction still performs zero budget reads. Constructing a runtime does not change existing ready or policy-blocked records. Only existing semantic transactions reschedule; with no valid policy they preserve counters/history and follow existing blocked/policy-blocked/retired behavior. No background scan enrolls old policy-blocked/unmarked accounts or repairs unsafe markers.
+
+The scheduled configuration gate runs before secrets, Admin, database or ADC construction. Disabled is a quiet no-op. Enabled requires exact project, existing routing/recovery/Publisher/account-custody flags, valid key syntax, and a valid common configuration with positive global/reconciliation GET/ACK/KMS dimensions. Missing/partial/corrupt/open durable controls fail closed before due selection. Key syntax is not provisioning approval. The scheduled factory needs account custody, not event ciphertext keys or a fabricated RTDN. An internal dependency-loading seam tests this actual factory with synthetic transports.
+
+One absolute 50-second invocation starts before configuration/loading/control reads. Query/control operations remain bounded by ten seconds and the remaining invocation budget. Exactly one indexed query selects up to ten ready/retry/working rows ordered by dueAt and document ID. The projection returns only subject, due date and optional last-success date internally. Claims remain authoritative and re-read current root/work/consent/index/authority. Query metadata never grants work. A concurrent success newer than the query cutoff gives unknown advisory lag rather than invalidating an otherwise valid cohort.
+
+Jobs run serially, each subject at most once, sharing the original deadline; no further job starts with less than five seconds remaining. There is no drain loop, cursor, global lock, independent provider budget or inline retry. Existing 90-second leases/new owner nonces support overlapping callbacks and crash reclaim. Expired consent blocks due work; temporary owner/cooldown waits and daily-budget exhaustion move dueAt to a future boundary. Budget denial can consume a genuine job admission and cause bounded retry, but refunds or resets no counter. Neither exhausted allocations nor corrupt records carry a fairness/freshness guarantee.
+
+Classification is deadline-first, then `reason:unsafe_record` before any status count, then typed unsafe exceptions. Unsafe stops the batch. Any other thrown process error stops partial_failure without inspecting its message. Other returned statuses may continue under the existing per-job fences. Only none with expired/on_hold/paused/revoked counts as inactive; other none results have a separate count. Undefined, unavailable and best-effort cleanup prove neither integrity nor durable deferral. Scheduler rejects only fixed sanitized failure text, with retryCount zero; later wakes alone may reclaim durable work.
+
+## Bounded cohort observability
+
+At most one summary contains only fixed version/outcome, counts bounded to ten, and coarse timing buckets. Counts cover selected/started/not-started, unclaimed, paid, explicit inactive, other none, pending, unavailable, rejected and errors. Lag buckets describe only the query-time selected cohort; concurrent metadata can already be stale. No subject/token/fingerprint, request ID, product, key path, generation, nonce, raw error, response field or exact timestamp reaches logs. The underlying scheduler SDK logs exception messages, so all escaping messages are fixed locally.
+
+Reporting is best-effort and bounded to min(250 ms, original remaining time), with the original cancellation signal. Rejected/late observer failures are absorbed; a held observer cannot extend work or launch retries. Reporting timeout alone does not change a successful batch; original invocation expiry takes precedence. A successful run means only its selected cohort was visited, including possible skips/failures. Empty selection proves only no matching initialized due rows at that instant.
+
+Global freshness, blocked/policy-blocked population, migration-exception totals and complete enrollment coverage are **unmeasured**. There is no extra scan, count aggregation or health collection. Activation requires approved actual cadence/allocations/headroom/alerts and exact named-state coverage: verified new state or an independently accepted migration/enrollment procedure. No-payments attestation is not emptiness. Existing inactive-current polling limits, retention choices, total-outage gaps and emitted-response/mobile-lease limitations remain unchanged.
+
+Validation uses actual construction/transport seams, strict config/SDK export checks, reason-first health tests, synthetic races, and named Firestore emulator queries. B2 emulator cohorts use explicit isolated demo projects with the same named database so they cannot select another worker's accounts or reset its singleton control history. One isolated factory/pump-versus-foreground test retains actual shared gates and durable last-unit accounting; simpler lifecycle/query tests deliberately use synthetic providers and do not claim metering proof.

@@ -1,5 +1,5 @@
 import { BILLING_DATABASE_ID } from './constants.js';
-import type { BillingCollection, BillingDatabase, BillingTransaction } from './store.js';
+import type { BillingCollection, BillingDatabase, BillingTransaction, ReconciliationDue } from './store.js';
 
 export class InMemoryBillingDatabase implements BillingDatabase {
   readonly databaseId = BILLING_DATABASE_ID;
@@ -15,13 +15,13 @@ export class InMemoryBillingDatabase implements BillingDatabase {
       .slice(0,limit).map(([path]) => path.slice(path.indexOf('/')+1));
   }
 
-  async dueReconciliationWork(now: Date, limit: number): Promise<string[]> {
+  async dueReconciliationWork(now: Date, limit: number): Promise<ReconciliationDue[]> {
     if (!Number.isInteger(limit) || limit < 1 || limit > 10) throw new Error('billing reconciliation unsafe');
     return [...this.records.entries()].filter(([path, value]) => {
       const row = value as { state?: string; dueAt?: Date };
       return path.startsWith('playBillingReconcileWork/') && ['ready','retry','working'].includes(row.state ?? '') && row.dueAt instanceof Date && row.dueAt <= now;
     }).sort(([a,av], [b,bv]) => (av as {dueAt:Date}).dueAt.getTime() - (bv as {dueAt:Date}).dueAt.getTime() || a.localeCompare(b))
-      .slice(0,limit).map(([path]) => path.slice(path.indexOf('/')+1));
+      .slice(0,limit).map(([path,value]) => {const row=value as ReconciliationDue;return {accountSubject:path.slice(path.indexOf('/')+1),dueAt:new Date(row.dueAt),...(row.lastSuccessfulVerificationAt===undefined?{}:{lastSuccessfulVerificationAt:new Date(row.lastSuccessfulVerificationAt)})};});
   }
 
   async runTransaction<T>(

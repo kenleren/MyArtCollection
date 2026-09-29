@@ -41,10 +41,12 @@ export interface BillingTransaction {
   set<T>(collection: BillingCollection, id: string, value: T): void;
 }
 
+export interface ReconciliationDue { accountSubject:string; dueAt:Date; lastSuccessfulVerificationAt?:Date }
+
 export interface BillingDatabase {
   readonly databaseId: string;
   dueEventWork(now: Date, limit: number): Promise<string[]>;
-  dueReconciliationWork?(now: Date, limit: number): Promise<string[]>;
+  dueReconciliationWork?(now: Date, limit: number): Promise<ReconciliationDue[]>;
   runTransaction<T>(operation: (transaction: BillingTransaction) => Promise<T>): Promise<T>;
 }
 

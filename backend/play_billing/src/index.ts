@@ -56,3 +56,5 @@ export {
 } from './firebase.js';
 
 export { receivePlayBillingEvent, pumpPlayBillingEvents } from './event_firebase.js';
+
+export { pumpPlayBillingReconciliation } from './reconciliation_firebase.js';

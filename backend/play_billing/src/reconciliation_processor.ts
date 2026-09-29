@@ -7,8 +7,8 @@ import type { TokenCustody } from './token_custody.js';
 import { BillingRepository } from './store.js';
 import { PlayBillingService } from './verifier.js';
 import type { InternalWork } from './reconciliation_work.js';
-/** Injected, one-job source integration only. No runtime export, credentials or
- * automatic pump. Production must remain closed until the shared budget layer. */
+/** One authoritative job, injected into the disabled bounded scheduled pump.
+ * Claims, service work and cleanup retain one original invocation deadline. */
 export class ReconciliationProcessor {
   constructor(private readonly d:{repository:BillingRepository;identifiers:BillingIdentifiers;clock:Clock;play:PlaySubscriptionsAdapter;custody:TokenCustody}){}
   async processOne(subject:string,deadline=new BillingDeadline(Date.now()+50_000)):Promise<VerifyResponse|undefined>{

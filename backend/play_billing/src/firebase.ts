@@ -1,4 +1,4 @@
-import { createBillingRuntime } from './billing_runtime.js';
+import { createReconciliationAwareBillingRuntime } from './reconciliation_runtime.js';
 import { BillingDeadline } from './deadline.js';
 import { getApp, getApps, initializeApp, type App } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
@@ -105,9 +105,9 @@ async function createService(app: App,deadline:BillingDeadline,providersNeeded:b
     const identifiers=createBillingIdentifiers(decodeFingerprintKey(fingerprintKey.value()));
     const database=new FirestoreBillingDatabase(getFirestore(app, BILLING_DATABASE_ID));
     const clock={now:()=>new Date()};
-    const runtime=await createBillingRuntime({database,identifiers,nonces:new CryptoNonceSource(),clock,deadline,providersNeeded,
+    const runtime=await createReconciliationAwareBillingRuntime({database,identifiers,nonces:new CryptoNonceSource(),clock,deadline,providersNeeded,
       configuration:process.env.PLAY_BILLING_DISPATCH_CONFIG,publisherEnabled:process.env.PLAY_BILLING_ANDROID_PUBLISHER_ENABLED==='enabled',
-      ...(providersNeeded&&process.env.PLAY_BILLING_TOKEN_CUSTODY_ENABLED==='enabled'?{accountCustody:{enabled:true,encryptionVersion:tokenKeyVersion.value(),retainedVersions:retainedTokenKeyVersions.value().split(',')}}:{})});
+      ...(providersNeeded&&process.env.PLAY_BILLING_TOKEN_CUSTODY_ENABLED==='enabled'?{accountCustody:{enabled:true,encryptionVersion:tokenKeyVersion.value(),retainedVersions:retainedTokenKeyVersions.value().split(',')}}:{})},process.env.PLAY_BILLING_RECONCILIATION_CONFIG);
     return new PlayBillingService({...runtime,identifiers,clock});
   }catch{return undefined;}
 }

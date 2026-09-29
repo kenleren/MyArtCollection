@@ -324,3 +324,25 @@ for (const source of ['foreground', 'background'] as const) {
   });
  }
 }
+
+test('actual shared event factory seam propagates optional policy into atomic reconciliation scheduling',async t=>{
+ const {createReconciliationAwareBillingRuntime,RECONCILIATION_RUNTIME_VERSION}=await import('../src/reconciliation_runtime.js');
+ const {PlayBillingService}=await import('../src/verifier.js');
+ const {FakeClock}=await import('./test_helpers.js');
+ t.mock.timers.enable({apis:['Date'],now:Date.now()});
+ const h=createHarness();h.clock=new FakeClock(new Date());const config=testDispatchConfig();seedDispatch(h.database,h.clock.now(),config);
+ const policy={activeMs:60_000,retryMs:30_000,maxRetryMs:900_000},kms=new FakeKmsTransport();
+ const runtime=await createReconciliationAwareBillingRuntime({database:h.database,identifiers:h.identifiers,nonces:new DeterministicNonceSource(),clock:h.clock,deadline:new BillingDeadline(),providersNeeded:true,
+  configuration:JSON.stringify(config),publisherEnabled:true,accountCustody:{enabled:true,encryptionVersion:TEST_KEY,retainedVersions:[TEST_KEY]},events:{limits:BOUNDED_EVENT_LIMITS,encryptionVersion:TEST_KEY,retainedVersions:[TEST_KEY]},
+  providerFactories:{play:gate=>meteredPlay(gate,h.play),custody:gate=>meteredCustody(gate,h.custody),eventCustody:gate=>meteredCustody(gate,new KmsEventTokenCustody(TEST_KEY,[TEST_KEY],kms),'event')}},
+  JSON.stringify({version:RECONCILIATION_RUNTIME_VERSION,enabled:true,policy}));
+ assert.ok(runtime.events&&runtime.eventCustody);h.repository=runtime.repository;h.service=new PlayBillingService({...h,...runtime});await acceptDisclosure(h);
+ const token=purchaseToken();h.play.setPurchase(token,eligiblePurchase(h));assert.equal((await h.service.verifySubscription(h.identity,verifyRequest(token))).status,'paid');
+ h.clock.advance(20_000);t.mock.timers.tick(20_000);
+ const processor=new EventProcessor({repository:runtime.repository,work:runtime.events,identifiers:h.identifiers,clock:h.clock,play:runtime.play,accountCustody:runtime.custody,eventCustody:runtime.eventCustody});
+ await processor.ingest(notification(token));await processor.pump();
+ const subject=h.identifiers.accountSubject(h.identity.uid),records=h.database.snapshotForTest(),work=records.get(COLLECTIONS.reconcileWork+'/'+subject) as any;
+ assert.equal(work.state,'ready');assert.equal(+work.dueAt,+h.clock.now()+policy.activeMs);assert.equal(+work.lastSuccessfulVerificationAt,+h.clock.now());
+ assert.deepEqual((records.get(COLLECTIONS.authorityOutbox+'/'+subject) as any).snapshot,(records.get(COLLECTIONS.authorities+'/'+subject) as any).snapshot);
+ assert.ok((records.get(COLLECTIONS.dispatchControl+'/budget') as any).totals.event.play_get>0);
+});

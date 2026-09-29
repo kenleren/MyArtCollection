@@ -1,4 +1,4 @@
-import { createBillingRuntime } from './billing_runtime.js';
+import { createReconciliationAwareBillingRuntime } from './reconciliation_runtime.js';
 import { dispatchConfiguration } from './dispatch_budget.js';
 import {getApp,getApps,initializeApp} from 'firebase-admin/app';
 import {getFirestore} from 'firebase-admin/firestore';
@@ -30,9 +30,9 @@ const handlers=eventHandlers(()=>{
   const identifiers=createBillingIdentifiers(bytes), nonces=new CryptoNonceSource();
   const database=new FirestoreBillingDatabase(getFirestore(app,BILLING_DATABASE_ID));
   const clock={now:()=>new Date()};
-  const runtime=await createBillingRuntime({database,identifiers,nonces,clock,deadline,providersNeeded:true,
+  const runtime=await createReconciliationAwareBillingRuntime({database,identifiers,nonces,clock,deadline,providersNeeded:true,
     configuration:process.env.PLAY_BILLING_DISPATCH_CONFIG,publisherEnabled:true,events:config,
-    accountCustody:{enabled:true,encryptionVersion:process.env.PLAY_BILLING_TOKEN_KEY_VERSION!,retainedVersions:process.env.PLAY_BILLING_TOKEN_RETAINED_VERSIONS!.split(',')}});
+    accountCustody:{enabled:true,encryptionVersion:process.env.PLAY_BILLING_TOKEN_KEY_VERSION!,retainedVersions:process.env.PLAY_BILLING_TOKEN_RETAINED_VERSIONS!.split(',')}},process.env.PLAY_BILLING_RECONCILIATION_CONFIG);
   if(!runtime.events||!runtime.eventCustody||!runtime.gate)throw new EventWorkError('configuration');
   return new EventProcessor({identifiers,repository:runtime.repository,work:runtime.events,clock,
     eventCustody:runtime.eventCustody,accountCustody:runtime.custody,play:runtime.play});

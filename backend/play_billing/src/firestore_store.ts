@@ -5,7 +5,7 @@ import type {
 import { Timestamp } from 'firebase-admin/firestore';
 
 import { BILLING_DATABASE_ID } from './constants.js';
-import type { BillingCollection, BillingDatabase, BillingTransaction } from './store.js';
+import type { BillingCollection, BillingDatabase, BillingTransaction, ReconciliationDue } from './store.js';
 
 export class FirestoreBillingDatabase implements BillingDatabase {
   readonly databaseId = BILLING_DATABASE_ID;
@@ -24,12 +24,15 @@ export class FirestoreBillingDatabase implements BillingDatabase {
     return snapshot.docs.map(doc => doc.id);
   }
 
-  async dueReconciliationWork(now: Date, limit: number): Promise<string[]> {
+  async dueReconciliationWork(now: Date, limit: number): Promise<ReconciliationDue[]> {
     if (!Number.isInteger(limit) || limit < 1 || limit > 10) throw new Error('billing reconciliation unsafe');
     const snapshot = await this.firestore.collection('playBillingReconcileWork')
       .where('state', 'in', ['ready','retry','working']).where('dueAt', '<=', now)
-      .orderBy('dueAt').orderBy('__name__').limit(limit).get();
-    return snapshot.docs.map(doc => doc.id);
+      .orderBy('dueAt').orderBy('__name__').limit(limit).select('dueAt','lastSuccessfulVerificationAt').get();
+    return snapshot.docs.map(doc => {
+      const v=normalizeFirestoreValue(doc.data()) as {dueAt:Date;lastSuccessfulVerificationAt?:Date};
+      return {accountSubject:doc.id,dueAt:v.dueAt,...(v.lastSuccessfulVerificationAt===undefined?{}:{lastSuccessfulVerificationAt:v.lastSuccessfulVerificationAt})};
+    });
   }
 
   runTransaction<T>(operation: (transaction: BillingTransaction) => Promise<T>): Promise<T> {
