@@ -54,6 +54,13 @@ export class InMemoryBillingDatabase implements BillingDatabase {
           }
           return undefined;
         },
+        findSubjectBrokerRoute: async (subject) => {
+          for (const [path, value] of working) {
+            if (path.startsWith('playBillingBrokerRoutes/') && value !== null && typeof value === 'object' &&
+                'accountSubject' in value && value.accountSubject === subject) return structuredClone(value);
+          }
+          return undefined;
+        },
         findAnyEventWork: async () => {
           for (const [path, value] of working) if (path.startsWith('playBillingEventWork/')) return structuredClone(value);
           return undefined;

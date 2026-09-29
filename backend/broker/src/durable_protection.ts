@@ -183,8 +183,8 @@ export class FirebaseAdminBrokerTokenVerifier implements BrokerTokenVerifier {
     } catch {
       return { ok: false, code: 'invalid_app_check_token' };
     }
-    if (appBody.alreadyConsumed === true) {
-      return { ok: false, code: 'app_check_replayed' };
+    if (appBody.alreadyConsumed !== false) {
+      return { ok: false, code: appBody.alreadyConsumed === true ? 'app_check_replayed' : 'invalid_app_check_token' };
     }
     if (!appCheckTokenMatchesProject(
       appBody.token,
@@ -814,7 +814,7 @@ function ledgerRecordFromSnapshot(snapshot: DurableFirestoreDocumentSnapshot): L
   return snapshot.exists ? parseLedgerRecord(snapshot.data()) : undefined;
 }
 
-function controlRecordFromSnapshot(snapshot: DurableFirestoreDocumentSnapshot): {
+export function controlRecordFromSnapshot(snapshot: DurableFirestoreDocumentSnapshot): {
   breakerOpen: boolean;
   perSubjectCreditCap: number;
   brokerCreditCap: number;
@@ -841,7 +841,7 @@ function controlRecordFromSnapshot(snapshot: DurableFirestoreDocumentSnapshot): 
   };
 }
 
-function entitlementRecordFromSnapshot(
+export function entitlementRecordFromSnapshot(
   snapshot: DurableFirestoreDocumentSnapshot,
 ): { entitled: boolean } | undefined {
   const data = snapshot.data();

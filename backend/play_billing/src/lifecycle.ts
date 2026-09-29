@@ -15,6 +15,8 @@ export interface LifecycleRoot extends LifecycleFields {
   reconcileVersion?: 'play-billing-reconcile-v1';
   reconcileScheduleRevision?: number;
   reconcileOwnerGeneration?: number;
+  /** Opaque to core payment safety; bridge operations validate its separate schema. */
+  brokerBridge?: unknown;
   authorityVersion?: 'play-billing-authority-v1';
   authorityPublicationRevision?: number;
 }
@@ -38,6 +40,7 @@ export function validOpaqueRoute(value: unknown): value is string {
 export function validLifecycleRoot(value: LifecycleRoot, subject: string): boolean {
   return exact(value, ['version','accountSubject','status','routeFingerprint','obfuscatedAccountId','assertionId',
     'lifecycleEpoch','lifecycleGeneration','createdAt','updatedAt',
+    ...(Object.hasOwn(value, 'brokerBridge') ? ['brokerBridge'] : []),
     ...(value.reconcileVersion === undefined && value.reconcileScheduleRevision === undefined && value.reconcileOwnerGeneration === undefined ? [] : ['reconcileVersion','reconcileScheduleRevision','reconcileOwnerGeneration']),
     ...(value.authorityVersion === undefined && value.authorityPublicationRevision === undefined ? [] : ['authorityVersion','authorityPublicationRevision'])]) &&
     ((value.authorityVersion === undefined && value.authorityPublicationRevision === undefined) || (value.authorityVersion === 'play-billing-authority-v1' &&

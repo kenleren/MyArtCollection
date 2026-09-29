@@ -269,3 +269,14 @@ the UID-derived quota subject; it does not allocate new credits or grant paid
 AI. The accepted UTC calendar-month/no-rollover/upgrade-ceiling policy remains
 unimplemented pending the billing-to-broker allowance slice. All live-provider
 and deployment gates remain unchanged.
+
+## Disabled stable paid-account foundation (L4-A)
+
+`PAID_AI_IDENTITY_SPEC.md` defines a separate, app-independent account identity and
+privacy-minimized billing authority recipient. Existing v1 app-scoped request,
+ledger, uncertain-dispatch and lifetime usage remain unchanged. The operator
+entitlement record remains an independent research control and is not overwritten
+with a Play plan. No new endpoint, provider path or monthly allowance is enabled.
+The recipient's read-only eligibility fence is not a credit reservation or spend
+permit; current consent/authority/operator controls must be revalidated in the
+future reservation and dispatch transactions.

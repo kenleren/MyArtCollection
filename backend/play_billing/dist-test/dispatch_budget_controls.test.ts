@@ -237,6 +237,7 @@ describe('common billing dispatch control boundaries', () => {
             : id === 'budget' && (mode === 'budget-only' || mode === 'both') ? present.budget : undefined) as T | undefined;
         },
         async findSubjectBinding() { throw new Error('unexpected query'); },
+        async findSubjectBrokerRoute(){throw new Error("unexpected query");},
         async findSubjectRoute() { throw new Error('unexpected query'); },
         async findAnyEventWork() { throw new Error('unexpected query'); },
         set() { writes++; },

@@ -37,6 +37,7 @@ export interface BillingTransaction {
   get<T>(collection: BillingCollection, id: string): Promise<T | undefined>;
   findSubjectBinding(accountSubject: string): Promise<unknown | undefined>;
   findSubjectRoute(accountSubject: string): Promise<unknown | undefined>;
+  findSubjectBrokerRoute(accountSubject: string): Promise<unknown | undefined>;
   findAnyEventWork(): Promise<unknown | undefined>;
   set<T>(collection: BillingCollection, id: string, value: T): void;
 }
@@ -98,7 +99,7 @@ interface BaseRecord {
   retentionExpiresAt: Date;
 }
 
-interface DisclosureRecord extends BaseRecord {
+export interface DisclosureRecord extends BaseRecord {
   assertionId: string;
   assertionVersion: typeof DISCLOSURE_ASSERTION_VERSION;
   accountSubject: string;
@@ -288,12 +289,16 @@ export class BillingRepository {
     });
   }
 
+  /** Bridge reuses the same core consistency checks without owning payment authority. */
+  readLifecycleForBridge(tx: BillingTransaction, subject: string): Promise<LifecycleRoot | undefined> { return this.readLifecycle(tx, subject); }
+
   private async readLifecycle(tx: BillingTransaction, subject: string, allowUnmarked = false): Promise<LifecycleRoot | undefined> {
     const root = await tx.get<LifecycleRoot>(COLLECTIONS.lifecycles, subject);
     const work = await tx.get<ReconcileWork>(COLLECTIONS.reconcileWork, subject);
     const exception = await tx.get<MigrationException>(COLLECTIONS.reconcileExceptions, subject);
     if (root === undefined) {
-      if (exception !== undefined || work !== undefined || await tx.findSubjectRoute(subject) !== undefined || await tx.get(COLLECTIONS.authorities, subject) !== undefined ||
+      if (exception !== undefined || work !== undefined || await tx.get(COLLECTIONS.brokerBindings, subject) !== undefined ||
+          await tx.findSubjectBrokerRoute(subject) !== undefined || await tx.findSubjectRoute(subject) !== undefined || await tx.get(COLLECTIONS.authorities, subject) !== undefined ||
           await tx.get(COLLECTIONS.authorityOutbox, subject) !== undefined) throw new UnsafeBillingRecordError();
       return undefined;
     }

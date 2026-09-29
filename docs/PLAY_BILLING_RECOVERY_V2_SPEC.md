@@ -157,3 +157,16 @@ Primary protocol references checked 2026-09-28:
 [KMS encrypt](https://docs.cloud.google.com/kms/docs/reference/rest/v1/projects.locations.keyRings.cryptoKeys/encrypt),
 [KMS decrypt](https://docs.cloud.google.com/kms/docs/reference/rest/v1/projects.locations.keyRings.cryptoKeys/decrypt),
 [KMS AAD](https://docs.cloud.google.com/kms/docs/additional-authenticated-data).
+
+## Disabled L4-A broker enrollment
+
+The source-only contract in `PAID_AI_IDENTITY_SPEC.md` adds an optional, strictly
+validated bridge association under an existing authenticated lifecycle. It does
+not change purchase/restore responses or payment-authority publication. Core
+revocation/retirement preserve the known optional extension without relying on
+bridge controls; bridge corruption blocks enabling bridge use. Surviving bridge
+history prevents ordinary root recreation after partial loss. A dedicated shared
+routing HMAC and new broker-private account HMAC replace the earlier proposed
+raw-UID crossing; neither the Play route nor existing billing key is shared.
+No enrollment is reachable from a production export, and writer/schema cutover
+requires independent activation/migration evidence.

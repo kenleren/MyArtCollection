@@ -59,6 +59,10 @@ function createTransactionAdapter(
       const result = await transaction.get(firestore.collection('playBillingAccountRoutes').where('accountSubject', '==', subject).limit(1));
       return result.empty ? undefined : normalizeFirestoreValue(result.docs[0]!.data());
     },
+    findSubjectBrokerRoute: async (subject) => {
+      const result = await transaction.get(firestore.collection('playBillingBrokerRoutes').where('accountSubject', '==', subject).limit(1));
+      return result.empty ? undefined : normalizeFirestoreValue(result.docs[0]!.data());
+    },
     findAnyEventWork: async () => {
       const result = await transaction.get(firestore.collection('playBillingEventWork').limit(1));
       return result.empty ? undefined : normalizeFirestoreValue(result.docs[0]!.data());
