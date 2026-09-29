@@ -1,4 +1,4 @@
-# Disabled Play event processing: L2 Stage B
+# Disabled Play event processing: L2 Stage B and F1
 
 The disabled L3-B1 [shared dispatch budget](PLAY_BILLING_DISPATCH_BUDGET_SPEC.md) now composes physical event/account costs with foreground and reconciliation limits. It preserves this event history and removes first-use control initialization. This source change does not activate the worker.
 
@@ -40,9 +40,11 @@ has depth 8, 64 properties, arrays 16 and strings 4,096 UTF-8 bytes. `message.js
 is never used. Exactly one subtype and the app package/version are required.
 Known subscription types request fresh verification; unknown integer types keep
 an encrypted token in blocked work. Test notifications make no provider call.
-One-time, void and refund-review notifications have explicit blocked,
-non-granting categories. Pending-refund credentials, order IDs, routes and full
-payloads are never retained. Full void/refund handling remains a launch dependency.
+One-time and refund-review notifications have explicit blocked,
+non-granting categories. With the full-void opt-in absent, void notifications also
+retain the original blocked v1 behavior. The disabled F1 extension below handles
+only new, known-token full-subscription void work. Pending-refund credentials, order IDs, routes and full
+payloads are never retained. Package-list and full refund coverage remain launch dependencies.
 The [official RTDN reference](https://developer.android.com/google/play/billing/rtdn-reference)
 is the notification schema, not entitlement authority.
 
@@ -141,3 +143,92 @@ there is no lossless-total-outage claim. Production gates include private IAM an
 key-version readback, real purchase/RTDN/ACK/late-resubscription evidence, outage and
 rollback rehearsal, L3 reconciliation/void coverage, broker/credits/deletion and
 approved offline access. This source does not close #194 or authorize paid launch.
+
+
+## F1: order-aware full-subscription voids (disabled)
+
+`PLAY_BILLING_FULL_VOID_ENABLED` accepts only absent/`disabled` (false) or
+`enabled` (true); malformed values reject before dependency construction. The
+existing event, custody, key allowlist and common-budget gates still apply. This
+extension adds no function, schedule, provider endpoint, permission or budget
+allocation. Source defaults and the deployment fixture remain disabled.
+
+A new supported notification uses `play-event-work-v2`. The order is a nonempty,
+canonical UTF-8 string of at most 1024 bytes without control characters. Positive
+and zero int32 product/refund values are accepted for classification; only product
+1/refund 1 is supported. Product 2 is explicitly one-time, quantity refund 2 is
+unsupported, and unknown enum values are quarantined. Those dispositions retain
+fingerprints and classification without token encryption or provider work.
+
+Legacy recognition precedes new admission validation. The baseline parser still
+computes message identity and raw payload hash under its original bounds. An
+exact retained v1 duplicate (including old empty/control/long orders or negative
+safe-integer enums) keeps its terminal record unchanged; expired reserving v1
+work follows the original reclaim path. New v2 admission rejects those malformed
+values. Flag-disabled new work preserves v1 behavior. This is compatibility, not
+permission to enrich or promote old blocked voids.
+
+Raw order IDs never persist. `financialOrderFingerprint` uses HMAC domain
+`archivale-play-financial-order-v1` over `[package, orderId]`. Canonical semantic
+SHA256 binds financial version, package, order/token fingerprints and enums.
+Message-key replay protection separately retains the original payload hash.
+`playBillingFinancialOrders` holds one immutable full-subscription order anchor
+pointing reciprocally to its canonical event. Owner/alias/conflict/quarantine are
+closed roles; same-order different-message duplicates are aliases, while changed
+token or contradictory known product type is a conflict. Partial events remain
+independent and do not suppress a later full event. Different renewal orders
+sharing a token remain distinct.
+
+Anchor and canonical event are created atomically with one existing event-capacity
+slot; aliases/conflicts consume one ordinary message slot each, without new
+custody or provider dispatch. Existing lifetime row bounds also bound anchor
+count. The declared named-database index queries order fingerprint plus role
+(owner/alias/conflict), limit one, before recreating any absent anchor. Missing
+reciprocal state rejects; no counter reset, TTL, deletion or repair is introduced.
+Coherent loss of an anchor and all its reciprocal history is not detectable from
+a global row count alone. A reserving crash still requires original matching
+message redelivery; another-message alias cannot invent or repair its ciphertext.
+
+Only canonical supported owners enter the existing event pump. They decrypt the
+existing purpose-separated event envelope, resolve an already bound token to its
+account/epoch, and call the actual account Restore verifier **regardless of whether
+the historical token is superseded**. No financial-token discovery GET occurs in
+F1. Unknown tokens remain blocked/unresolved, not confirmed non-subscription or
+verified financial coverage. Current index, chain and ACK barriers select the
+actual purchase to verify. An old renewal's void can correctly finish with current
+paid authority; neither notification metadata nor historical token expiry writes
+entitlement or AI-credit accounting.
+
+All physical KMS/GET/ACK calls use the existing event source, immutable dispatch
+tickets, common and legacy ledgers and original deadlines. Reciprocal financial
+ownership is reread before metered actions and account work. No new ledger version,
+initializer or cost pool exists. Consent, retirement, index, epoch, account-wide
+observation and deferred-auth fences remain authoritative. Safety-only disclosure
+revoke/retire do not read optional financial records.
+
+A canonical owner is completed if and only if it has a valid
+`play-financial-verification-v1` receipt. Generic event `finish(completed)` rejects
+these owners. Only `finishFinancialObservation` can atomically record completion:
+it rereads the current root/disclosure/index/authority/outbox, exact event owner
+and anchor, and requires the matching background operation's completed authority.
+Its fixed receipt records opaque subject/epoch, request fingerprint, observation
+and publication revisions, snapshot digest, verification time and paid or explicit
+inactive outcome. It is not a continuing grant, order attribution or refund ledger.
+Newer authority/withdrawal wins; a crash after authority commit before receipt may
+require a later budgeted fresh verification. A post-commit response delay cannot
+undo already committed database state.
+
+Disabling the flag stops/reclassifies pending reserving/ready/retry/working owners
+when encountered. Completed owners with receipts and terminal aliases/conflicts/
+quarantines remain immutable exact duplicates. No automatic rearming follows a
+flag change. Historical blocked v1 voids and new disabled pending rows require an
+explicit coverage/recovery inventory before activation; no-payments attestation
+is not database emptiness or permission to reset them.
+
+F1 tests use synthetic auth/fetch behind actual runtime/transport/dispatch classes
+and the named Firestore emulator. They establish source behavior, not live Play,
+IAM, delivery, refund or operational acceptance. Package-list fixed-window paging,
+RTDN/list convergence, unknown-product/token recovery, retention/deletion, approved
+capacity/cadence and real provider/store evidence remain separate launch work.
+Non-revoking refunds are not covered by the void-list API either. No refund,
+ReviewRefund or sharing of usage evidence is implemented or authorized.

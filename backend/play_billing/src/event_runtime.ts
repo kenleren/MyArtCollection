@@ -8,10 +8,12 @@ export const EVENT_TRIGGER_ACCOUNT='archivale-play-rtdn-trigger@my-art-collectio
 export const EVENT_DEPLOYMENT_CONTRACT=Object.freeze({project:'my-art-collections',topic:EVENT_TOPIC,source:EVENT_SOURCE,type:EVENT_TYPE,
   packageName:'app.archivale',database:'archivale-play-billing',runtimeAccount:EVENT_RUNTIME_ACCOUNT,triggerAccount:EVENT_TRIGGER_ACCOUNT,
   region:'us-central1',timeoutSeconds:60,memory:'512MiB',maxInstances:1,concurrency:1,defaultLimits:CLOSED_EVENT_LIMITS});
-export interface EventRuntimeConfiguration {enabled:boolean; limits:EventLimits; encryptionVersion:string; retainedVersions:string[]}
+export interface EventRuntimeConfiguration {enabled:boolean; limits:EventLimits; fullVoidsEnabled?:boolean; encryptionVersion:string; retainedVersions:string[]}
 /** Validates all non-secret configuration before constructing ADC or a database. */
 export function eventRuntimeConfiguration(env:Record<string,string|undefined>, approvedVersions:readonly string[]=APPROVED_EVENT_KEY_VERSIONS):EventRuntimeConfiguration|undefined {
   if(env.PLAY_BILLING_EVENTS_ENABLED!=='enabled') return undefined;
+  const voidFlag=env.PLAY_BILLING_FULL_VOID_ENABLED;
+  if(voidFlag!==undefined && voidFlag!=='disabled' && voidFlag!=='enabled') throw new EventWorkError('configuration');
   if(env.GCLOUD_PROJECT!=='my-art-collections') throw new EventWorkError('configuration');
   if(env.PLAY_BILLING_ROUTING_ENABLED!=='enabled'||env.PLAY_BILLING_RECOVERY_ENABLED!=='enabled'||
       env.PLAY_BILLING_ANDROID_PUBLISHER_ENABLED!=='enabled'||env.PLAY_BILLING_TOKEN_CUSTODY_ENABLED!=='enabled') throw new EventWorkError('configuration');
@@ -25,7 +27,7 @@ export function eventRuntimeConfiguration(env:Record<string,string|undefined>, a
   }
   if(Object.values(limits).some(n=>n===0)||!validKeyVersion(encryptionVersion)||retainedVersions.length>8||
       !retainedVersions.includes(encryptionVersion)||retainedVersions.some(v=>!validKeyVersion(v)||!approvedVersions.includes(v))) throw new EventWorkError('configuration');
-  return {enabled:true,limits,encryptionVersion,retainedVersions};
+  return {enabled:true,limits,encryptionVersion,retainedVersions,fullVoidsEnabled:voidFlag==='enabled'};
 }
 export interface EventRuntime {ingest(event:unknown,deadline?:BillingDeadline):Promise<void>;pump(deadline?:BillingDeadline):Promise<void>}
 /** Used by the actual exported SDK callbacks and directly injectable in tests. */

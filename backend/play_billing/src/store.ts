@@ -1,10 +1,11 @@
+import { FINANCIAL_EVENT_VERSION, validFinancialReciprocal, type FinancialVerification } from './financial_void.js';
 import { LOCAL_DISPATCH_VERSION, emptyDispatchCounts, LOCAL_CAPS, DispatchError, digest, groupFor, readLegacyDispatchHistory, readDispatchControls, proposeDispatch, writeDispatchControls, proposeOpenCircuit, type DispatchConfiguration } from './dispatch_budget.js';
 import { attemptFrom, type DispatchCapability, type DispatchDescriptor, type DispatchReservation } from './dispatch_gate.js';
 import { EventWorkRepository } from './event_work.js';
 import { type InternalWork, type ReconcileFence, type ReconcileWork, type ReconcilePolicy, type CompletedObservation, type MigrationException, validMigrationException, validPolicy, validWork, ownsWork, marked, initialWork, reschedule, fenceFor, selection, increment, selectedEqual } from './reconciliation_work.js';
 import { ownsEvent, type EventWorkFence, type EventWorkRecord, type ResolvedEventAccount } from './event_records.js';
 import { OWNERSHIP_PROOF_VERSION, validOwnershipProof, type OwnershipProof } from './ownership_proof.js';
-import { AUTHORITY_VERSION, SNAPSHOT_VERSION, initialAuthority, validAuthority, outboxFor, fingerprint, type AccountAuthority, type AuthorityOutbox, type AuthoritySnapshot, type ObservationSource, type InactiveReason } from './account_authority.js';
+import { AUTHORITY_VERSION, SNAPSHOT_VERSION, initialAuthority, validAuthority, outboxFor, snapshotDigest, fingerprint, type AccountAuthority, type AuthorityOutbox, type AuthoritySnapshot, type ObservationSource, type InactiveReason } from './account_authority.js';
 import { LIFECYCLE_VERSION, validLifecycleFields, sameLifecycle, validLifecycleRoot, validReciprocalRoute, validOpaqueRoute, routeFor, type LifecycleFields, type LifecycleRoot, type LifecycleRoute } from './lifecycle.js';
 import type { BillingIdentifiers } from './crypto.js';
 import {
@@ -39,6 +40,7 @@ export interface BillingTransaction {
   findSubjectRoute(accountSubject: string): Promise<unknown | undefined>;
   findSubjectBrokerRoute(accountSubject: string): Promise<unknown | undefined>;
   findAnyEventWork(): Promise<unknown | undefined>;
+  findFinancialAnchorHistory?(orderFingerprint: string): Promise<unknown | undefined>;
   set<T>(collection: BillingCollection, id: string, value: T): void;
 }
 
@@ -212,7 +214,7 @@ export class BillingRepository {
   constructor(
     private readonly database: BillingDatabase,
     private readonly nonces: NonceSource,
-    private readonly identifiers: Pick<BillingIdentifiers, 'routeFingerprint'>,
+    private readonly identifiers: Pick<BillingIdentifiers, 'routeFingerprint' | 'eventOperationFingerprint'>,
     private readonly reconciliationPolicy?: ReconcilePolicy,
     private readonly dispatchEvents?: EventWorkRepository,
     private readonly dispatchClock:()=>Date=()=>new Date(),
@@ -392,8 +394,42 @@ export class BillingRepository {
 
   private async validWorkFence(tx: BillingTransaction, fence: EventWorkFence, account: ResolvedEventAccount, now: Date): Promise<boolean> {
     const work = await tx.get<EventWorkRecord>(COLLECTIONS.eventWork, fence.eventFingerprint);
-    return ownsEvent(work, fence, now) && work.resolved !== undefined &&
+    return ownsEvent(work, fence, now) && await validFinancialReciprocal(tx, work) &&
+      (work.version !== FINANCIAL_EVENT_VERSION || (this.dispatchEvents?.fullVoidsEnabled === true && work.financialRole === 'owner')) && work.resolved !== undefined &&
       work.resolved.accountSubject === account.accountSubject && sameLifecycle(work.resolved, account);
+  }
+
+  /** Only this transaction can complete a financial owner; it records existing authority, never creates it. */
+  async finishFinancialObservation(fence: EventWorkFence, deadline: BillingDeadline): Promise<boolean> {
+    return this.database.runTransaction(async tx => {
+      deadline.check();
+      const work = await tx.get<EventWorkRecord>(COLLECTIONS.eventWork,fence.eventFingerprint);
+      if (!ownsEvent(work,fence,this.dispatchClock()) || work.version !== FINANCIAL_EVENT_VERSION || work.financialRole !== 'owner' ||
+          this.dispatchEvents?.fullVoidsEnabled !== true || !await validFinancialReciprocal(tx,work) || !work.resolved) throw new UnsafeBillingRecordError();
+      const root = await this.readLifecycle(tx,work.resolved.accountSubject);
+      if (!root || root.status !== 'active' || !sameLifecycle(root,work.resolved)) return false;
+      const disclosure = await tx.get<DisclosureRecord>(COLLECTIONS.disclosures,root.accountSubject);
+      const index = await tx.get<AccountIndex>(COLLECTIONS.accounts,root.accountSubject);
+      await this.validatePointers(tx,root,index);
+      const authority = await this.readAuthority(tx,root);
+      const requestFingerprint = this.identifiers.eventOperationFingerprint(work.eventFingerprint,work.generation);
+      const now = this.dispatchClock();
+      deadline.check();
+      if (!ownsEvent(work,fence,now) || !disclosure || !validDisclosure(disclosure,root.accountSubject) ||
+          disclosure.status !== 'accepted' || disclosure.assertionId !== root.assertionId || disclosure.retentionExpiresAt <= now ||
+          !authority || authority.owner?.requestFingerprint !== requestFingerprint || authority.owner.source !== 'background' ||
+          authority.owner.phase !== 'complete' || authority.snapshot.observationGeneration !== authority.observationGeneration ||
+          authority.snapshot.publicationRevision !== authority.publicationRevision || authority.snapshot.verifiedAt > now) return false;
+      const snapshot = authority.snapshot;
+      if (snapshot.state === 'none' ? !['expired','on_hold','paused','revoked','pending'].includes(snapshot.reason ?? '') : !snapshot.playExpiresAt || snapshot.playExpiresAt <= now) return false;
+      const verification: FinancialVerification = {version:'play-financial-verification-v1',accountSubject:root.accountSubject,
+        lifecycleEpoch:root.lifecycleEpoch,lifecycleGeneration:root.lifecycleGeneration,requestFingerprint,
+        observationGeneration:authority.observationGeneration,publicationRevision:authority.publicationRevision,
+        snapshotDigest:snapshotDigest(snapshot),verifiedAt:snapshot.verifiedAt,outcome:snapshot.state==='none'?'inactive':'paid',
+        ...(snapshot.state==='none'?{reason:snapshot.reason as FinancialVerification['reason']}:{})};
+      tx.set(COLLECTIONS.eventWork,work.eventFingerprint,{...work,state:'completed',reason:'none',leaseExpiresAt:undefined,dueAt:now,verification});
+      return true;
+    });
   }
 
   private async readWork(tx: BillingTransaction, root: LifecycleRoot): Promise<ReconcileWork> {

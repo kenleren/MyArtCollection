@@ -1,3 +1,4 @@
+import { FINANCIAL_EVENT_VERSION, validFinancialEvent, type FinancialVoid, type FinancialRole, type FinancialVerification } from './financial_void.js';
 import { LOCAL_DISPATCH_VERSION } from './dispatch_budget.js';
 import { fingerprint, counter } from './account_authority.js';
 import { validLifecycleFields, type LifecycleFields } from './lifecycle.js';
@@ -12,12 +13,16 @@ export const EVENT_SOURCE = `//pubsub.googleapis.com/${EVENT_TOPIC}`;
 export const EVENT_TYPE = 'google.cloud.pubsub.topic.v1.messagePublished';
 export const COST_KINDS = ['discoveryGet','verificationGet','eventKms','accountKms','ack'] as const;
 export type CostKind = typeof COST_KINDS[number];
-export type EventReason = 'none' | 'transient' | 'unsafe' | 'unresolved' | 'consent' | 'retired' | 'budget' | 'unsupported' | 'configuration';
+export type EventReason = 'none' | 'transient' | 'unsafe' | 'unresolved' | 'consent' | 'retired' | 'budget' | 'unsupported' | 'configuration' | 'duplicate_order' | 'financial_conflict' | 'unknown_enum' | 'unsupported_one_time' | 'unsupported_partial';
 export interface EventEnvelope { version: typeof EVENT_CUSTODY_VERSION; keyVersion: string; ciphertext: string }
 export interface ResolvedEventAccount extends LifecycleFields { accountSubject: string }
 export interface EventWorkFence { eventFingerprint: string; generation: number; nonce: Uint8Array }
 export interface EventWorkRecord extends EventWorkFence {
-  version: typeof EVENT_WORK_VERSION;
+  version: typeof EVENT_WORK_VERSION | typeof FINANCIAL_EVENT_VERSION;
+  financial?: FinancialVoid;
+  financialRole?: FinancialRole;
+  financialOwnerEventFingerprint?: string;
+  verification?: FinancialVerification;
   payloadDigest: string;
   tokenFingerprint?: string;
   category: 'subscription' | 'unsupported' | 'test' | 'one_time' | 'void' | 'refund_review';
@@ -51,12 +56,14 @@ export function validEventEnvelope(v: unknown): v is EventEnvelope {
     validKeyVersion(v.keyVersion) && typeof v.ciphertext === 'string' && validBase64(v.ciphertext, 8192);
 }
 export function validEventWork(v: EventWorkRecord, id: string): boolean {
+  if (!record(v)) return false;
   return shape(v, ['version','eventFingerprint','payloadDigest','category','state','receivedAt','dueAt','generation','nonce','reason','attemptStarts','totalAttempts','dispatchTotals'],
-    ['tokenFingerprint','leaseExpiresAt','envelope','resolved','dispatchVersion','dispatchBase']) && v.version === EVENT_WORK_VERSION && v.eventFingerprint === id && fingerprint(id) && fingerprint(v.payloadDigest) &&
+    ['tokenFingerprint','leaseExpiresAt','envelope','resolved','dispatchVersion','dispatchBase', ...(v.version === FINANCIAL_EVENT_VERSION ? ['financial','financialRole','financialOwnerEventFingerprint','verification'] : [])]) &&
+    (v.version === EVENT_WORK_VERSION || validFinancialEvent(v)) && v.eventFingerprint === id && fingerprint(id) && fingerprint(v.payloadDigest) &&
     (v.tokenFingerprint === undefined || fingerprint(v.tokenFingerprint)) && ['subscription','unsupported','test','one_time','void','refund_review'].includes(v.category) && (['test','refund_review'].includes(v.category) ? v.tokenFingerprint === undefined : v.tokenFingerprint !== undefined) &&
     ['reserving','ready','working','retry','completed','blocked'].includes(v.state) && finiteDate(v.receivedAt) && finiteDate(v.dueAt) &&
     counter(v.generation) && v.generation > 0 && v.nonce instanceof Uint8Array && v.nonce.byteLength === 16 &&
-    ['none','transient','unsafe','unresolved','consent','retired','budget','unsupported','configuration'].includes(v.reason) &&
+    ['none','transient','unsafe','unresolved','consent','retired','budget','unsupported','configuration', ...(v.version === FINANCIAL_EVENT_VERSION ? ['duplicate_order','financial_conflict','unknown_enum','unsupported_one_time','unsupported_partial'] : [])].includes(v.reason) &&
     Array.isArray(v.attemptStarts) && v.attemptStarts.length <= 12 && v.attemptStarts.every(finiteDate) && counter(v.totalAttempts) && v.totalAttempts >= v.attemptStarts.length &&
     shape(v.dispatchTotals, [...COST_KINDS]) && COST_KINDS.every(k => counter(v.dispatchTotals[k])) &&
     ((v.dispatchVersion===undefined&&v.dispatchBase===undefined)||(v.dispatchVersion===LOCAL_DISPATCH_VERSION&&v.dispatchBase!==undefined&&shape(v.dispatchBase,[...COST_KINDS])&&COST_KINDS.every(k=>counter(v.dispatchBase![k])&&v.dispatchBase![k]<=v.dispatchTotals[k]))) &&

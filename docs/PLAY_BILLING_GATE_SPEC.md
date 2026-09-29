@@ -901,3 +901,16 @@ Current Google guidance was rechecked for #190 on 2026-07-10:
 - [`purchases.subscriptions.acknowledge`](https://developers.google.com/android-publisher/api-ref/rest/v3/purchases.subscriptions/acknowledge)
 - [Manage multiple Firestore databases and database IAM](https://firebase.google.com/docs/firestore/manage-databases)
 - [Firestore Security Rules and server IAM boundary](https://firebase.google.com/docs/firestore/security/rules-conditions)
+
+
+### Disabled financial notification follow-on (F1)
+
+The [event specification](PLAY_BILLING_EVENTS_SPEC.md#f1-order-aware-full-subscription-voids-disabled)
+now defines a disabled, order-aware RTDN path for newly received full-subscription
+voids whose tokens already have a valid account binding. It always rechecks current
+account custody through Restore; an old renewal/order is not entitlement or credit
+reversal authority. Required completion receipts, reciprocal order anchors, legacy
+v1 preservation and existing shared dispatch budgets are source controls only.
+Package-list/backstop coverage, unresolved tokens, retention/deletion and live
+financial/store evidence remain open #194 requirements. This extension does not
+change the internal v1 acceptance boundary or authorize public paid activation.

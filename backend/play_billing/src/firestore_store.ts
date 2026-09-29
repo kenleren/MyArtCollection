@@ -63,6 +63,11 @@ function createTransactionAdapter(
       const result = await transaction.get(firestore.collection('playBillingBrokerRoutes').where('accountSubject', '==', subject).limit(1));
       return result.empty ? undefined : normalizeFirestoreValue(result.docs[0]!.data());
     },
+    findFinancialAnchorHistory: async (order) => {
+      const result = await transaction.get(firestore.collection('playBillingEventWork')
+        .where('financial.orderFingerprint', '==', order).where('financialRole', 'in', ['owner', 'alias', 'conflict']).limit(1));
+      return result.empty ? undefined : normalizeFirestoreValue(result.docs[0]!.data());
+    },
     findAnyEventWork: async () => {
       const result = await transaction.get(firestore.collection('playBillingEventWork').limit(1));
       return result.empty ? undefined : normalizeFirestoreValue(result.docs[0]!.data());

@@ -35,6 +35,20 @@
           "order": "ASCENDING"
         }
       ]
+    },
+    {
+      "collectionGroup": "playBillingEventWork",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "financial.orderFingerprint",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "financialRole",
+          "order": "ASCENDING"
+        }
+      ]
     }
   ],
   "fieldOverrides": [

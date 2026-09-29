@@ -1,11 +1,12 @@
 import { createHmac, randomBytes } from 'node:crypto';
 
-import { ACTIVE_KEY_VERSION } from './constants.js';
+import { ACTIVE_KEY_VERSION, PACKAGE_NAME } from './constants.js';
 import type { NonceSource } from './contracts.js';
 
 export interface BillingIdentifiers {
   keyVersion: typeof ACTIVE_KEY_VERSION;
   accountSubject(uid: string): string;
+  financialOrderFingerprint(orderId: string): string;
   requestFingerprint(uid: string, requestId: string): string;
   tokenFingerprint(purchaseToken: string): string;
   routeFingerprint(obfuscatedAccountId: string): string;
@@ -22,6 +23,7 @@ export function createBillingIdentifiers(key: Uint8Array): BillingIdentifiers {
     createHmac('sha256', key).update(`${domain}\n${value}`, 'utf8').digest('hex');
   return {
     keyVersion: ACTIVE_KEY_VERSION,
+    financialOrderFingerprint: (order) => hmac('archivale-play-financial-order-v1', JSON.stringify([PACKAGE_NAME, order])),
     accountSubject: (uid) => hmac('archivale-play-subject-v1', uid),
     requestFingerprint: (uid, requestId) =>
       hmac('archivale-play-request-v1', `${uid}\n${requestId}`),

@@ -1,3 +1,4 @@
+import { FINANCIAL_EVENT_VERSION, financialVoid } from './financial_void.js';
 import { eventDispatch } from './dispatch_gate.js';
 import {KmsConfigurationError} from './kms_token_custody.js';
 import { randomUUID } from 'node:crypto';
@@ -27,7 +28,7 @@ export class EventProcessor {
       deadline.check(); const parsed=parseRtdn(event);
       const descriptor={eventFingerprint:this.d.identifiers.eventFingerprint(EVENT_TOPIC,parsed.messageId),payloadDigest:parsed.payloadDigest,
         category:parsed.category,...(parsed.token===undefined?{}:{tokenFingerprint:this.d.identifiers.tokenFingerprint(parsed.token)})};
-      const reservation=await deadline.run(()=>this.d.work.reserve(descriptor,this.d.clock.now(),deadline));
+      const reservation=await deadline.run(()=>this.d.work.reserve(descriptor,this.d.clock.now(),deadline,parsed.rawVoid && descriptor.tokenFingerprint ? financialVoid(parsed.rawVoid,descriptor.tokenFingerprint,this.d.identifiers) : undefined));
       if(reservation.kind==='duplicate') return;
       let envelope:EventEnvelope|undefined;
       if(parsed.token!==undefined) {
@@ -77,6 +78,7 @@ export class EventProcessor {
       if(this.d.identifiers.tokenFingerprint(token)!==work.tokenFingerprint) throw new EventWorkError('unsafe');
       let resolved=await deadline.run(()=>this.d.repository.resolveEventAccount(work.tokenFingerprint!,{routes:[],predecessorFingerprints:[]},deadline));
       let discovery:PlaySubscriptionPurchase|undefined;
+      if(!resolved && work.version===FINANCIAL_EVENT_VERSION) throw new EventWorkError('unresolved');
       if(!resolved) {
         discovery=await get({packageName:PACKAGE_NAME,token,timeoutMs:10_000,deadline,dispatch:eventDispatch(work,'working')},true);
         const routes=[discovery.externalAccountIdentifiers?.obfuscatedExternalAccountId,
@@ -92,8 +94,13 @@ export class EventProcessor {
       const input={version:CONTRACT_VERSION,requestId:randomUUID(),billingDisclosureVersion:DISCLOSURE_VERSION};
       const result=await deadline.run(()=>service.processAccountObservation({accountSubject:account.accountSubject,source:'background',
         requestFingerprint:this.d.identifiers.eventOperationFingerprint(work.eventFingerprint,work.generation),work:{kind:'event',fence:work}},
-        superseded?{kind:'restore',input}:{kind:'verify',input:{...input,purchaseToken:token,productId:productId??discovery?.lineItems?.[0]?.productId}},deadline),50_000);
-      if(result.status==='paid' || ('reason'in result && ['expired','on_hold','paused','play_pending'].includes(result.reason))) { outcome='completed'; reason='none'; }
+        (work.version===FINANCIAL_EVENT_VERSION || superseded)?{kind:'restore',input}:{kind:'verify',input:{...input,purchaseToken:token,productId:productId??discovery?.lineItems?.[0]?.productId}},deadline),50_000);
+      if(result.status==='paid' || ('reason'in result && ['expired','on_hold','paused','play_pending', ...(work.version===FINANCIAL_EVENT_VERSION?['revoked']:[])].includes(result.reason))) {
+        if (work.version===FINANCIAL_EVENT_VERSION) {
+          if (await deadline.run(()=>this.d.repository.finishFinancialObservation(work,deadline))) return;
+        } else { outcome='completed'; reason='none'; }
+      }
+      else if(work.version===FINANCIAL_EVENT_VERSION && 'reason'in result && result.reason==='no_known_purchase') { outcome='blocked';reason='unresolved'; }
       else if('reason'in result && ['unsafe_record','disclosure_required','recovery_required','account_conflict','invalid_request'].includes(result.reason)) {
         outcome='blocked'; reason=result.reason==='disclosure_required'?'consent':result.reason==='recovery_required'?'retired':'unsafe';
       }

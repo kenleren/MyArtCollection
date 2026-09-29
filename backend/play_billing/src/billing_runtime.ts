@@ -17,7 +17,7 @@ export interface BillingRuntimeOptions {
   database:BillingDatabase;identifiers:BillingIdentifiers;nonces:NonceSource;clock:Clock;deadline:BillingDeadline;
   providersNeeded:boolean;configuration?:string;publisherEnabled?:boolean;
   accountCustody?:{enabled:boolean;encryptionVersion:string;retainedVersions:readonly string[]};
-  events?:{limits:EventLimits;encryptionVersion:string;retainedVersions:readonly string[]};
+  events?:{fullVoidsEnabled?:boolean;limits:EventLimits;encryptionVersion:string;retainedVersions:readonly string[]};
   reconciliationPolicy?:ReconcilePolicy;
   /** Tests inject at this actual production construction seam; never a callable option. */
   providerFactories?:{
@@ -45,7 +45,7 @@ export async function createBillingRuntime(o:BillingRuntimeOptions):Promise<Bill
     }));
     o.deadline.check();if(!valid)return disabled();
   }catch{return disabled();}
-  const events=o.events?new EventWorkRepository(o.database,o.nonces,o.events.limits,()=>Math.random(),config):undefined;
+  const events=o.events?new EventWorkRepository(o.database,o.nonces,o.events.limits,()=>Math.random(),config,o.events.fullVoidsEnabled??false):undefined;
   const repository=new BillingRepository(o.database,o.nonces,o.identifiers,o.reconciliationPolicy,events,()=>o.clock.now());
   const gate=new DispatchGate(repository,config,o.identifiers,()=>+o.clock.now());
   const play=o.publisherEnabled?o.providerFactories?.play?.(gate)??createConfiguredPlaySubscriptionsAdapter({enabled:true,gate}):createConfiguredPlaySubscriptionsAdapter();

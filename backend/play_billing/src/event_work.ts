@@ -1,6 +1,7 @@
+import { FINANCIAL_EVENT_VERSION, financialAnchor, validFinancialReciprocal, validFinancialVoid, type FinancialVoid, type FinancialOrder } from './financial_void.js';
 import { DispatchError, LOCAL_DISPATCH_VERSION, digest, readLegacyDispatchHistory, proposeOpenCircuit, readDispatchControls, proposeDispatch, writeDispatchControls, type DispatchConfiguration, type DispatchAction } from './dispatch_budget.js';
 import { eventFence, type DispatchCapability, type DispatchDescriptor, type DispatchReservation } from './dispatch_gate.js';
-import { COLLECTIONS } from './constants.js';
+import { COLLECTIONS, PACKAGE_NAME } from './constants.js';
 import { counter, fingerprint } from './account_authority.js';
 import { BillingDeadline } from './deadline.js';
 import {validDisclosure, type BillingDatabase, type BillingTransaction} from './store.js';
@@ -20,8 +21,8 @@ const starts = (value: unknown, max: number): value is Date[] => Array.isArray(v
 function emptyBudget(): Budget { return { version:EVENT_CONTROL_VERSION, revision:0, starts:{discoveryGet:[],verificationGet:[],eventKms:[],accountKms:[],ack:[]}, totals:emptyCosts(), circuit:false }; }
 
 export class EventWorkRepository {
-  constructor(readonly database: BillingDatabase, private readonly nonces: NonceSource, readonly limits: EventLimits, private readonly jitter:()=>number=()=>Math.random(), private readonly commonConfig?:DispatchConfiguration) {
-    if (!shape(limits, Object.keys(BOUNDED_EVENT_LIMITS)) || Object.entries(limits).some(([k,v]) => !counter(v) || v > BOUNDED_EVENT_LIMITS[k as keyof EventLimits])) throw new EventWorkError('configuration');
+  constructor(readonly database: BillingDatabase, private readonly nonces: NonceSource, readonly limits: EventLimits, private readonly jitter:()=>number=()=>Math.random(), private readonly commonConfig?:DispatchConfiguration, readonly fullVoidsEnabled = false) {
+    if (typeof fullVoidsEnabled !== 'boolean' || !shape(limits, Object.keys(BOUNDED_EVENT_LIMITS)) || Object.entries(limits).some(([k,v]) => !counter(v) || v > BOUNDED_EVENT_LIMITS[k as keyof EventLimits])) throw new EventWorkError('configuration');
   }
   private nonce(): Uint8Array { const n = this.nonces.nextNonce(); if (!(n instanceof Uint8Array) || n.byteLength !==16) throw new EventWorkError('unsafe'); return new Uint8Array(n); }
   private async controls(tx: BillingTransaction): Promise<{ marker:Marker; capacity:Capacity; budget:Budget }> {
@@ -39,52 +40,103 @@ export class EventWorkRepository {
   private writeControls(tx: BillingTransaction, control: {marker:Marker; capacity:Capacity; budget:Budget}): void {
     tx.set(COLLECTIONS.eventControl,'marker',control.marker); tx.set(COLLECTIONS.eventControl,'capacity',control.capacity); tx.set(COLLECTIONS.eventControl,'budget',control.budget);
   }
-  async reserve(descriptor: EventDescriptor, now: Date, deadline: BillingDeadline): Promise<{ kind:'duplicate' } | {kind:'reserved'; work:EventWorkRecord}> {
+  async reserve(descriptor: EventDescriptor, now: Date, deadline: BillingDeadline, financial?: FinancialVoid): Promise<{kind:'duplicate'} | {kind:'reserved';work:EventWorkRecord}> {
     return this.database.runTransaction(async tx => {
       deadline.check();
       if (!shape(descriptor,['eventFingerprint','payloadDigest','category'],['tokenFingerprint']) || !fingerprint(descriptor.eventFingerprint) || !fingerprint(descriptor.payloadDigest) ||
           (descriptor.tokenFingerprint !== undefined && !fingerprint(descriptor.tokenFingerprint)) || !['subscription','unsupported','test','one_time','void','refund_review'].includes(descriptor.category) ||
           (['test','refund_review'].includes(descriptor.category) ? descriptor.tokenFingerprint!==undefined : descriptor.tokenFingerprint===undefined)) throw new EventWorkError('unsafe');
       const control = await this.controls(tx);
-      if(!this.commonConfig)throw new EventWorkError('configuration');
-      const common=await readDispatchControls(tx,this.commonConfig,now);
-      const history=await readLegacyDispatchHistory(tx,common,now);if(history.budget.circuit||common.budget.circuit.state!=='closed')throw new EventWorkError('configuration');
+      if (!this.commonConfig) throw new EventWorkError('configuration');
+      const common = await readDispatchControls(tx,this.commonConfig,now);
+      const history = await readLegacyDispatchHistory(tx,common,now);
+      if (history.budget.circuit || common.budget.circuit.state !== 'closed') throw new EventWorkError('configuration');
       const existing = await tx.get<EventWorkRecord>(COLLECTIONS.eventWork,descriptor.eventFingerprint);
+      // The baseline descriptor recognizes exact retained v1 deliveries BEFORE stricter v2 bounds.
       if (existing) {
         if (!validEventWork(existing,descriptor.eventFingerprint) || existing.payloadDigest !== descriptor.payloadDigest ||
             existing.tokenFingerprint !== descriptor.tokenFingerprint || existing.category !== descriptor.category) throw new EventWorkError('unsafe');
+        if (existing.version === FINANCIAL_EVENT_VERSION) {
+          if (!financial || !validFinancialVoid(financial,descriptor.tokenFingerprint) || financial.semanticDigest !== existing.financial?.semanticDigest ||
+              !await validFinancialReciprocal(tx,existing)) throw new EventWorkError('unsafe');
+          if (['completed','blocked'].includes(existing.state)) return {kind:'duplicate'};
+          if (!this.fullVoidsEnabled) {
+            deadline.check();
+            tx.set(COLLECTIONS.eventWork,existing.eventFingerprint,{...existing,state:'blocked',reason:'configuration',leaseExpiresAt:undefined,dueAt:now});
+            return {kind:'duplicate'};
+          }
+        }
         if (existing.state !== 'reserving') return {kind:'duplicate'};
         if (existing.leaseExpiresAt! > now) throw new EventWorkError('transient');
         if (existing.generation >= Number.MAX_SAFE_INTEGER) throw new EventWorkError('unsafe');
         const expires = new Date(now.getTime()+EVENT_LEASE_MS);
         const work: EventWorkRecord = {...existing,generation:existing.generation+1,nonce:this.nonce(),leaseExpiresAt:expires,dueAt:expires,dispatchVersion:LOCAL_DISPATCH_VERSION,dispatchBase:{...existing.dispatchTotals}};
-        deadline.check(); tx.set(COLLECTIONS.eventWork,work.eventFingerprint,work); return {kind:'reserved',work};
+        deadline.check(); tx.set(COLLECTIONS.eventWork,work.eventFingerprint,work);
+        return {kind:'reserved',work};
+      }
+
+      let anchor: FinancialOrder | undefined;
+      let role: EventWorkRecord['financialRole'];
+      let reason: EventReason = 'none';
+      if (this.fullVoidsEnabled && descriptor.category === 'void') {
+        if (!financial || !validFinancialVoid(financial,descriptor.tokenFingerprint)) throw new EventWorkError('unsafe');
+        anchor = await financialAnchor(tx,financial.orderFingerprint);
+        if (anchor && (anchor.tokenFingerprint !== descriptor.tokenFingerprint ||
+            ([1,2].includes(financial.productType) && financial.productType !== anchor.productType))) {
+          role = 'conflict'; reason = 'financial_conflict';
+        } else if (financial.disposition !== 'supported_full_subscription') {
+          role = 'quarantine'; reason = financial.disposition;
+        } else if (anchor) {
+          if (anchor.semanticDigest !== financial.semanticDigest) throw new EventWorkError('unsafe');
+          role = 'alias'; reason = 'duplicate_order';
+        } else {
+          if (!tx.findFinancialAnchorHistory || await tx.findFinancialAnchorHistory(financial.orderFingerprint) !== undefined) throw new EventWorkError('unsafe');
+          role = 'owner';
+        }
       }
       const admissionStarts = recent(control.capacity.admissionStarts,now);
       if (control.capacity.totalRows >= this.limits.rows || admissionStarts.length >= this.limits.admissions) throw new EventWorkError('budget');
       control.capacity = {...control.capacity,totalRows:control.capacity.totalRows+1,admissionStarts:[...admissionStarts,now]};
       control.marker = {...control.marker,totalRows:control.capacity.totalRows};
+      const terminal = role !== undefined && role !== 'owner';
       const expires = new Date(now.getTime()+EVENT_LEASE_MS);
-      const work: EventWorkRecord = {version:EVENT_WORK_VERSION,...descriptor,generation:1,nonce:this.nonce(),state:'reserving',receivedAt:now,dueAt:expires,leaseExpiresAt:expires,
-        reason:'none',attemptStarts:[],totalAttempts:0,dispatchTotals:emptyCosts(),dispatchVersion:LOCAL_DISPATCH_VERSION,dispatchBase:emptyCosts()};
-      deadline.check(); this.writeControls(tx,control); tx.set(COLLECTIONS.eventWork,work.eventFingerprint,work); return {kind:'reserved',work};
+      const work: EventWorkRecord = {version:role ? FINANCIAL_EVENT_VERSION : EVENT_WORK_VERSION,...descriptor,
+        generation:1,nonce:this.nonce(),state:terminal?'blocked':'reserving',receivedAt:now,dueAt:terminal?now:expires,
+        ...(terminal?{}:{leaseExpiresAt:expires}),reason,attemptStarts:[],totalAttempts:0,dispatchTotals:emptyCosts(),
+        dispatchVersion:LOCAL_DISPATCH_VERSION,dispatchBase:emptyCosts(),
+        ...(role?{financial,financialRole:role,...(role==='owner'||role==='alias'?{financialOwnerEventFingerprint:anchor?.ownerEventFingerprint??descriptor.eventFingerprint}:{})}:{})};
+      if (!validEventWork(work,work.eventFingerprint)) throw new EventWorkError('unsafe');
+      deadline.check();
+      if (role === 'owner') {
+        const created: FinancialOrder = {version:'play-financial-order-v1',packageName:PACKAGE_NAME,
+          orderFingerprint:financial!.orderFingerprint,tokenFingerprint:descriptor.tokenFingerprint!,productType:1,refundType:1,
+          semanticDigest:financial!.semanticDigest,ownerEventFingerprint:work.eventFingerprint,createdAt:now};
+        tx.set(COLLECTIONS.financialOrders,created.orderFingerprint,created);
+      }
+      this.writeControls(tx,control);
+      tx.set(COLLECTIONS.eventWork,work.eventFingerprint,work);
+      return terminal ? {kind:'duplicate'} : {kind:'reserved',work};
     });
   }
   async admitCiphertext(fence:EventWorkFence, envelope:EventEnvelope | undefined, now:Date, deadline:BillingDeadline): Promise<void> {
     await this.database.runTransaction(async tx => {
       deadline.check(); await this.controls(tx);
       const work = await tx.get<EventWorkRecord>(COLLECTIONS.eventWork,fence.eventFingerprint);
-      if (!ownsEvent(work,fence,now,'reserving') || (work.tokenFingerprint !== undefined ? !validEventEnvelope(envelope) : envelope !== undefined)) throw new EventWorkError('unsafe');
-      const state = work.category==='test' ? 'completed' : work.category==='subscription' ? 'ready' : 'blocked';
-      deadline.check(); tx.set(COLLECTIONS.eventWork,fence.eventFingerprint,{...work,envelope,state,reason:!['test','subscription'].includes(work.category) ? 'unsupported' : 'none',leaseExpiresAt:undefined,dueAt:now});
+      if (!ownsEvent(work,fence,now,'reserving') || !await validFinancialReciprocal(tx,work) || (work.tokenFingerprint !== undefined ? !validEventEnvelope(envelope) : envelope !== undefined)) throw new EventWorkError('unsafe');
+      const supported = work.category==='subscription' || (work.version===FINANCIAL_EVENT_VERSION && work.financialRole==='owner' && this.fullVoidsEnabled);
+      const state = work.category==='test' ? 'completed' : supported ? 'ready' : 'blocked';
+      deadline.check(); tx.set(COLLECTIONS.eventWork,fence.eventFingerprint,{...work,envelope,state,reason:state==='blocked' ? (work.version===FINANCIAL_EVENT_VERSION?'configuration':'unsupported') : 'none',leaseExpiresAt:undefined,dueAt:now});
     });
   }
   async claim(id:string, now:Date, deadline:BillingDeadline):Promise<EventWorkRecord | undefined> {
     return this.database.runTransaction(async tx => {
       deadline.check(); await this.controls(tx);
       const work = await tx.get<EventWorkRecord>(COLLECTIONS.eventWork,id);
-      if (!work || !validEventWork(work,id)) throw new EventWorkError('unsafe');
+      if (!work || !validEventWork(work,id) || !await validFinancialReciprocal(tx,work)) throw new EventWorkError('unsafe');
       if (!['ready','retry','working'].includes(work.state) || work.dueAt > now) return undefined;
+      if (work.version===FINANCIAL_EVENT_VERSION && !this.fullVoidsEnabled) {
+        deadline.check();tx.set(COLLECTIONS.eventWork,id,{...work,state:'blocked',reason:'configuration',leaseExpiresAt:undefined,dueAt:now});return undefined;
+      }
       const attempts = recent(work.attemptStarts,now,24*60*60_000);
       if (attempts.length >=12 || recent(attempts,now,60*60_000).length >=6 || work.totalAttempts >=Number.MAX_SAFE_INTEGER || work.generation >=Number.MAX_SAFE_INTEGER) {
         deadline.check(); tx.set(COLLECTIONS.eventWork,id,{...work,state:'blocked',reason:'budget',leaseExpiresAt:undefined}); return undefined;
@@ -98,7 +150,7 @@ export class EventWorkRepository {
   async bind(fence:EventWorkFence, resolved:ResolvedEventAccount, now:Date, deadline:BillingDeadline):Promise<void> {
     await this.database.runTransaction(async tx => {
       deadline.check(); await this.controls(tx); const work = await tx.get<EventWorkRecord>(COLLECTIONS.eventWork,fence.eventFingerprint);
-      if (!ownsEvent(work,fence,now) || !validResolved(resolved) || (work.resolved !==undefined &&
+      if (!ownsEvent(work,fence,now) || !await validFinancialReciprocal(tx,work) || !validResolved(resolved) || (work.resolved !==undefined &&
           (work.resolved.accountSubject !==resolved.accountSubject || !sameLifecycle(work.resolved,resolved)))) throw new EventWorkError('unsafe');
       deadline.check(); tx.set(COLLECTIONS.eventWork,fence.eventFingerprint,{...work,resolved});
     });
@@ -106,7 +158,8 @@ export class EventWorkRepository {
   /** Read/propose only; the owning transaction commits local, legacy and common writes together. */
   async prepareDispatch(tx:BillingTransaction,fence:EventWorkFence,kind:CostKind,now:Date,reserve:boolean,phase:'reserving'|'working'='working'):Promise<{expiresAt:number;write:()=>void;work:EventWorkRecord;legacyHead:{revision:number;digest:string}}> {
     const control=await this.controls(tx),work=await tx.get<EventWorkRecord>(COLLECTIONS.eventWork,fence.eventFingerprint);
-      if (!COST_KINDS.includes(kind) || !ownsEvent(work,fence,now,phase)) throw new EventWorkError('unsafe');
+      if (!COST_KINDS.includes(kind) || !ownsEvent(work,fence,now,phase) || !await validFinancialReciprocal(tx,work) ||
+          (work.version===FINANCIAL_EVENT_VERSION && (!this.fullVoidsEnabled || work.financialRole!=='owner'))) throw new EventWorkError('unsafe');
       let consentExpiry=Infinity;
       if (work.resolved) {
         const root=await tx.get<LifecycleRoot>(COLLECTIONS.lifecycles,work.resolved.accountSubject);
@@ -168,7 +221,7 @@ export class EventWorkRepository {
   async finish(fence:EventWorkFence, outcome:'completed'|'retry'|'blocked', reason:EventReason, now:Date, deadline:BillingDeadline):Promise<void> {
     await this.database.runTransaction(async tx => {
       deadline.check(); await this.controls(tx); const work = await tx.get<EventWorkRecord>(COLLECTIONS.eventWork,fence.eventFingerprint);
-      if (!ownsEvent(work,fence,now)) throw new EventWorkError('unsafe');
+      if (!ownsEvent(work,fence,now) || !await validFinancialReciprocal(tx,work) || (work.version===FINANCIAL_EVENT_VERSION && outcome==='completed')) throw new EventWorkError('unsafe');
       const random=this.jitter();
       if(!Number.isFinite(random)||random<0||random>=1) throw new EventWorkError('unsafe');
       const delay = Math.min(900_000,30_000 * 2 ** Math.min(5,work.totalAttempts-1)+Math.floor(random*5001));

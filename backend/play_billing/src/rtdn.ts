@@ -1,9 +1,10 @@
+import type { RawVoid } from './financial_void.js';
 import { createHash } from 'node:crypto';
 import { PACKAGE_NAME } from './constants.js';
 import { EVENT_SOURCE, EVENT_TYPE, EventWorkError, record, type EventWorkRecord } from './event_records.js';
 import { validBase64, validToken } from './token_custody.js';
 
-export interface ParsedNotification { messageId:string; payloadDigest:string; category:EventWorkRecord['category']; token?:string }
+export interface ParsedNotification { messageId:string; payloadDigest:string; category:EventWorkRecord['category']; token?:string; rawVoid?:RawVoid }
 /** The Functions SDK has already decoded the CloudEvent envelope. These bounds
  * cover our application parsing/allocation, not the platform's initial allocation. */
 export function parseRtdn(event:unknown):ParsedNotification {
@@ -57,5 +58,5 @@ export function parseRtdn(event:unknown):ParsedNotification {
   const category:EventWorkRecord['category']=kind==='subscriptionNotification'?(supported.includes(Number(body.notificationType))?'subscription':'unsupported'):
     kind==='testNotification'?'test':kind==='pendingRefundReviewNotification'?'refund_review':kind==='voidedPurchaseNotification'?'void':'one_time';
   return {messageId:message.messageId,payloadDigest:createHash('sha256').update(bytes).digest('hex'),
-    category,...(token===undefined?{}:{token})};
+    category,...(kind==='voidedPurchaseNotification'?{rawVoid:{orderId:body.orderId as string,productType:body.productType as number,refundType:body.refundType as number}}:{}),...(token===undefined?{}:{token})};
 }

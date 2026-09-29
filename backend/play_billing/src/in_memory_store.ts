@@ -61,6 +61,14 @@ export class InMemoryBillingDatabase implements BillingDatabase {
           }
           return undefined;
         },
+        findFinancialAnchorHistory: async (order) => {
+          for (const [path, value] of working) {
+            const row = value as {financial?: {orderFingerprint?: string}; financialRole?: string};
+            if (path.startsWith('playBillingEventWork/') && row?.financial?.orderFingerprint === order &&
+                ['owner', 'alias', 'conflict'].includes(row.financialRole ?? '')) return structuredClone(value);
+          }
+          return undefined;
+        },
         findAnyEventWork: async () => {
           for (const [path, value] of working) if (path.startsWith('playBillingEventWork/')) return structuredClone(value);
           return undefined;
