@@ -52,6 +52,52 @@ export function createBillingBridge(config: unknown, dependencies: () => Omit<Bi
         ...dependencies(), config: parsed
     });
 }
+/** Bridge-local child bounds retain the caller's cancellation and absolute expiry.
+ * A timer is only a wake-up mechanism: every deferred boundary checks the same
+ * captured wall-time cap even when the event loop has not delivered that timer.
+ */
+class BridgeDeadline {
+    private readonly expiresAt: number;
+    constructor(private readonly parent: BillingDeadline, maximumMs: number) {
+        this.expiresAt = Math.min(parent.expiresAt, Date.now() + maximumMs);
+    }
+    check(cap = this.expiresAt): void {
+        this.parent.check();
+        if (Date.now() >= Math.min(cap, this.expiresAt)) {
+            this.parent.cancel();
+            throw new Error('billing deadline elapsed');
+        }
+    }
+    async run<T>(operation: () => Promise<T>, maximumMs = 10000): Promise<T> {
+        const cap = Math.min(this.expiresAt, Date.now() + maximumMs);
+        this.check(cap);
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        let onAbort: (() => void) | undefined;
+        try {
+            const interrupted = new Promise<never>((_, reject) => {
+                onAbort = () => reject(new Error('billing deadline elapsed'));
+                this.parent.signal.addEventListener('abort', onAbort, { once: true });
+                timer = setTimeout(() => this.parent.cancel(), Math.max(0, cap - Date.now()));
+                if (this.parent.signal.aborted)
+                    onAbort();
+            });
+            const result = await Promise.race([
+                Promise.resolve().then(() => {
+                    this.check(cap);
+                    return operation();
+                }),
+                interrupted,
+            ]);
+            this.check(cap);
+            return result;
+        }
+        finally {
+            clearTimeout(timer);
+            if (onAbort)
+                this.parent.signal.removeEventListener('abort', onAbort);
+        }
+    }
+}
 export class BillingBrokerBridge {
     private readonly config: Readonly<CreditIdentityConfig>;
     private readonly now: () => Date;
@@ -61,20 +107,21 @@ export class BillingBrokerBridge {
         status: 'enrolled';
         enrollmentId: string;
     }> {
-        return deadline.run(async () => {
+        const invocation = new BridgeDeadline(deadline, 50000);
+        return invocation.run(async () => {
             if (!shape(input, ['version', 'requestId', 'lifecycleEpoch', 'lifecycleGeneration']) || input.version !== 'credit-billing-enrollment-v1' || !uuid(input.requestId) || !nonce(input.lifecycleEpoch) || !positive(input.lifecycleGeneration))
                 fail();
             const command = Object.freeze({
                 ...input
             });
-            const identity = await deadline.run(() => verifyCallableIdentity(context, this.options.auth, this.options.approvedAppId));
+            const identity = await invocation.run(() => verifyCallableIdentity(context, this.options.auth, this.options.approvedAppId));
             if (!identity)
                 fail();
             const subject = this.options.accountSubject(identity.uid), route = routeForUid(this.options.routingKey, identity.uid);
             if (!hex(subject))
                 fail();
             return this.options.database.runTransaction(async (tx) => {
-                deadline.check();
+                invocation.check();
                 const root = await this.options.repository.readLifecycleForBridge(tx, subject);
                 if (!root || root.status !== 'active' || root.lifecycleEpoch !== command.lifecycleEpoch || root.lifecycleGeneration !== command.lifecycleGeneration)
                     fail();
@@ -88,7 +135,7 @@ export class BillingBrokerBridge {
                     const m = root.brokerBridge;
                     if (!validMarker(m) || m.route !== route || m.lifecycleEpoch !== root.lifecycleEpoch || m.enrolledGeneration !== root.lifecycleGeneration || !matches(binding, m, subject) || !matches(reverse, m, subject) || +binding.createdAt !== +reverse.createdAt)
                         fail();
-                    deadline.check();
+                    invocation.check();
                     return {
                         status: 'enrolled', enrollmentId: m.enrollmentId
                     };
@@ -106,7 +153,11 @@ export class BillingBrokerBridge {
                     ...marker, version: 'play-broker-binding-v1', accountSubject: subject, createdAt: this.now()
                 };
                 const next = enrollControls(pair);
-                deadline.check();
+                invocation.check();
+                // The retained assertion is transactionally protected, but time
+                // can pass during the final orphan query without a conflict.
+                if (disclosure.retentionExpiresAt <= this.now())
+                    fail();
                 tx.set(COLLECTIONS.lifecycles, subject, {
                     ...root, brokerBridge: marker
                 });
@@ -122,14 +173,15 @@ export class BillingBrokerBridge {
     }
     /** Only an authenticated internal service transport may call this; never a client payload handler. */
     async read(input: unknown, deadline = new BillingDeadline(Date.now() + 50000)): Promise<AuthorityReply> {
-        return deadline.run(async () => {
+        const invocation = new BridgeDeadline(deadline, 10000);
+        return invocation.run(async () => {
             if (!validRead(input))
                 fail();
             const request = Object.freeze({
                 ...input
             });
             return this.options.database.runTransaction(async (tx) => {
-                deadline.check();
+                invocation.check();
                 const reverse = await tx.get<Binding>(COLLECTIONS.brokerRoutes, bridgeRouteId(request.route));
                 if (!reverse || !hex(reverse.accountSubject))
                     fail();
@@ -163,7 +215,7 @@ export class BillingBrokerBridge {
                     };
                 }
                 const digest = authorityDigest(snapshot);
-                deadline.check();
+                invocation.check();
                 return {
                     version: 'credit-authority-read-result-v1', challenge: request.challenge, snapshot, digest
                 };

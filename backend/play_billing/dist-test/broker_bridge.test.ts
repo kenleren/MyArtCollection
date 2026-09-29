@@ -4,6 +4,8 @@ import { randomUUID } from 'node:crypto';
 import { createHarness, acceptDisclosure, eligiblePurchase, purchaseToken, verifyRequest } from './test_helpers.js';
 import { BillingBrokerBridge, createBillingBridge, initialControls, routeForUid, bridgeRouteId, ROUTE_KEY, ACCOUNT_KEY, PROJECT, type CreditIdentityConfig } from '../src/broker_bridge.js';
 import { COLLECTIONS } from '../src/constants.js';
+import { BillingDeadline } from '../src/deadline.js';
+import type { DisclosureRecord } from '../src/store.js';
 import type { LifecycleRoot } from '../src/lifecycle.js';
 const key = 'synthetic-shared-route-key-000000000';
 const config: CreditIdentityConfig = { version: 'credit-identity-config-v1', projectId: PROJECT, enabled: true, routingKeyVersion: ROUTE_KEY, accountKeyVersion: ACCOUNT_KEY, cutoverId: 'a'.repeat(32), admissionPolicyId: 'b'.repeat(32), maxAccounts: 20, authorityMaxAgeMs: 60000 };
@@ -110,4 +112,141 @@ test('revoke/reaccept and terminal generation use existing authority publication
     assert.equal(retired.snapshot.reason, 'retired');
     assert.equal(retired.snapshot.lifecycleGeneration, root.lifecycleGeneration + 1);
     await assert.rejects(h.bridge.enroll(h.context, h.request()));
+});
+
+
+test('enrollment cannot commit when retained disclosure expires during its final orphan query', async () => {
+    const h = await setup();
+    const disclosure = h.database.snapshotForTest().get(COLLECTIONS.disclosures + '/' + h.subject) as DisclosureRecord;
+    disclosure.retentionExpiresAt = new Date(+h.clock.now() + 100);
+    h.database.setUnsafeRecordForTest(COLLECTIONS.disclosures, h.subject, disclosure);
+    const before = h.database.snapshotForTest();
+    const original = h.database.runTransaction.bind(h.database);
+    h.database.runTransaction = work => original(tx => work({
+        ...tx,
+        findSubjectBrokerRoute: async subject => {
+            const result = await tx.findSubjectBrokerRoute(subject);
+            h.clock.advance(101);
+            return result;
+        },
+    }));
+    await assert.rejects(h.bridge.enroll(h.context, h.request()));
+    // Includes root marker, both reciprocal records, and both control counters.
+    assert.deepEqual(h.database.snapshotForTest(), before);
+});
+
+for (const boundary of ['deferred_callback', 'final_read', 'committed_result'] as const)
+    test(`enrollment enforces its absolute 50-second child cap at ${boundary}`, async t => {
+        const h = await setup();
+        const before = h.database.snapshotForTest();
+        const start = Date.now();
+        let wallTime = start;
+        t.mock.method(Date, 'now', () => wallTime);
+        const parent = new BillingDeadline(start + 120000);
+        const original = h.database.runTransaction.bind(h.database);
+        h.database.runTransaction = async work => {
+            if (boundary === 'deferred_callback')
+                wallTime = start + 50001;
+            const result = await original(tx => work({
+                ...tx,
+                findSubjectBrokerRoute: async subject => {
+                    const value = await tx.findSubjectBrokerRoute(subject);
+                    if (boundary === 'final_read')
+                        wallTime = start + 50001;
+                    return value;
+                },
+            }));
+            if (boundary === 'committed_result')
+                wallTime = start + 50001;
+            return result;
+        };
+        await assert.rejects(h.bridge.enroll(h.context, h.request(), parent), /billing deadline elapsed/);
+        assert.ok(wallTime < parent.expiresAt, 'the child cap, not parent expiry, caused rejection');
+        assert.equal(parent.signal.aborted, true, 'late work inherits cancellation');
+        if (boundary !== 'committed_result') {
+            assert.deepEqual(h.database.snapshotForTest(), before);
+        }
+        else {
+            // A valid callback already committed. Response timeout cannot undo
+            // enrollment; a fresh invocation must replay without a second count.
+            assert.ok(h.root().brokerBridge);
+            const committed = h.database.snapshotForTest();
+            h.database.runTransaction = original;
+            await h.bridge.enroll(h.context, h.request());
+            assert.deepEqual(h.database.snapshotForTest(), committed);
+        }
+    });
+
+for (const boundary of ['deferred_callback', 'transaction_result'] as const)
+    test(`projection enforces its absolute 10-second child cap at ${boundary}`, async t => {
+        const h = await setup(true);
+        await h.bridge.enroll(h.context, h.request());
+        const before = h.database.snapshotForTest();
+        const start = Date.now();
+        let wallTime = start;
+        t.mock.method(Date, 'now', () => wallTime);
+        const parent = new BillingDeadline(start + 50000);
+        const original = h.database.runTransaction.bind(h.database);
+        h.database.runTransaction = async work => {
+            if (boundary === 'deferred_callback')
+                wallTime = start + 10001;
+            const result = await original(work);
+            if (boundary === 'transaction_result')
+                wallTime = start + 10001;
+            return result;
+        };
+        await assert.rejects(h.bridge.read({ version: 'credit-authority-read-v1', routingKeyVersion: ROUTE_KEY, route: h.route, challenge: 'd'.repeat(32) }, parent), /billing deadline elapsed/);
+        assert.ok(wallTime < parent.expiresAt);
+        assert.equal(parent.signal.aborted, true);
+        assert.deepEqual(h.database.snapshotForTest(), before);
+    });
+
+test('bridge checks child expiry before deferred work begins', async t => {
+    const h = await setup();
+    const before = h.database.snapshotForTest();
+    const start = Date.now();
+    let wallTime = start;
+    t.mock.method(Date, 'now', () => wallTime);
+    let transactions = 0;
+    const original = h.database.runTransaction.bind(h.database);
+    h.database.runTransaction = work => { transactions++; return original(work); };
+    const result = h.bridge.enroll(h.context, h.request(), new BillingDeadline(start + 120000));
+    wallTime = start + 50001;
+    await assert.rejects(result, /billing deadline elapsed/);
+    assert.equal(transactions, 0);
+    assert.deepEqual(h.database.snapshotForTest(), before);
+});
+
+test('bridge promptly inherits parent cancellation and fences a late final read', async () => {
+    const h = await setup();
+    const before = h.database.snapshotForTest();
+    const parent = new BillingDeadline(Date.now() + 120000);
+    let entered!: () => void;
+    const atRead = new Promise<void>(resolve => { entered = resolve; });
+    let release!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    let finished!: () => void;
+    const transactionFinished = new Promise<void>(resolve => { finished = resolve; });
+    const original = h.database.runTransaction.bind(h.database);
+    h.database.runTransaction = async work => {
+        try {
+            return await original(tx => work({
+                ...tx,
+                findSubjectBrokerRoute: async subject => {
+                    const result = await tx.findSubjectBrokerRoute(subject);
+                    entered();
+                    await held;
+                    return result;
+                },
+            }));
+        }
+        finally { finished(); }
+    };
+    const result = h.bridge.enroll(h.context, h.request(), parent);
+    await atRead;
+    parent.cancel();
+    try { await assert.rejects(result, /billing deadline elapsed/); }
+    finally { release(); }
+    await transactionFinished;
+    assert.deepEqual(h.database.snapshotForTest(), before);
 });
