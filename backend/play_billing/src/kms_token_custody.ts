@@ -50,7 +50,11 @@ export class GoogleKmsTransport implements KmsTransport {
           method: 'POST', headers, body: serializedBody, signal: controller.signal,
           redirect: 'error',
         }));
-        if(response.status===401 || response.status===403) {await response.body?.cancel();throw new KmsConfigurationError();}
+        if(response.status===401 || response.status===403) {
+          // Cleanup must not hide a permission failure or delay circuit poisoning.
+          try { void response.body?.cancel().catch(() => undefined); } catch { /* Discard errors are not authority. */ }
+          throw new KmsConfigurationError();
+        }
         if (!response.ok || response.body === null) {await response.body?.cancel();throw custodyUnavailable();}
         const reader = response.body.getReader();
         const chunks: Uint8Array[] = [];
