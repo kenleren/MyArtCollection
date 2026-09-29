@@ -125,3 +125,7 @@ selected-root authority, durable pointer/journal ordering, retained-handle and
 stale-operation fences, recovery precedence, and erasure control outside
 replaceable generations. No generation staging, custody changes, V3 writer,
 Google connection, encryption or new app flow is included here.
+
+The separate [schema10 history-only record component](BACKUP_RECORD_COMPONENT_V1.md)
+can preserve logical values omitted by V2. It has no payload, encryption or app
+activation path and does not change V2 inspection or complete-recovery claims.
