@@ -1,6 +1,7 @@
 /// Collection records only. None of these values authorize activation or work.
 library;
 
+import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -32,6 +33,17 @@ void backupLimit(bool exceeded) {
 }
 
 class BackupRecordCancellation extends ArchiveInspectionCancellation {
+  final Completer<void> _signal = Completer<void>();
+
+  /// Wakes blocked backup source reads. It does not abort a crypto primitive.
+  Future<void> get whenCancelled => _signal.future;
+
+  @override
+  void cancel() {
+    super.cancel();
+    if (!_signal.isCompleted) _signal.complete();
+  }
+
   @override
   void check() {
     try {

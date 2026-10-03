@@ -1,0 +1,6 @@
+{
+  "note": "Public synthetic test inputs, generated independently with Python hashlib and cryptography AESGCM; never use deterministic salt/nonce in runtime.",
+  "passphrase": "synthetic recovery passphrase 2026",
+  "plaintextBase64": "QXJjaGl2YWxlIHN5bnRoZXRpYyByZWNvdmVyeSBmaXh0dXJlCg==",
+  "ciphertextBase64": "QVJDQkswMDEACSfAAAECAwQFBgcICQoLDA0ODxAREhMUFRYXABAAAAAAAAAAAAAlAAAAJW+59tD3XlBzuFN/8qI04wOHy1WbBHIDRvLi8pyQ5puUHzb9xjLiRYo6gfBrnSlJ/hEChqduAAAAANcJQwwF2qWMpBbLjTJESfw="
+}
