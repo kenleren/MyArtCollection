@@ -1197,14 +1197,17 @@ class _PlanStatusPanel extends StatelessWidget {
       children: [
         _StatusPanel(
           icon: Icons.workspace_premium_outlined,
-          title: '${plan.name} plan',
-          body:
-              '${_planArtworkLimitCopy(plan)}, ${_planResearchDraftCopy(plan)}. Existing records remain editable and exportable. $billingCopy',
+          title: plan.isInternalTest
+              ? 'Internal test access'
+              : '${plan.name} plan',
+          body: plan.isInternalTest
+              ? 'Unlimited artwork records. No subscription is required during internal testing. On-device AI is included on supported devices.'
+              : '${_planArtworkLimitCopy(plan)}, ${_planResearchDraftCopy(plan)}. Existing records remain editable and exportable. $billingCopy',
         ),
         const SizedBox(height: 12),
         SecondaryActionButton(
           icon: Icons.workspace_premium_outlined,
-          label: 'Manage plan',
+          label: plan.isInternalTest ? 'Review test access' : 'Manage plan',
           routeName: AppRoutes.billing,
         ),
       ],
@@ -5569,9 +5572,12 @@ class _LimitHint extends StatelessWidget {
 
     return _StatusPanel(
       icon: Icons.workspace_premium_outlined,
-      title: '${plan.name} plan: $usage',
-      body:
-          '$remainingCopy ${_planResearchDraftCopy(plan)} included each month.',
+      title: plan.isInternalTest
+          ? 'Internal test: $usage'
+          : '${plan.name} plan: $usage',
+      body: plan.isInternalTest
+          ? 'Add your full collection without a subscription. On-device AI is included on supported devices.'
+          : '$remainingCopy ${_planResearchDraftCopy(plan)} included each month.',
     );
   }
 }

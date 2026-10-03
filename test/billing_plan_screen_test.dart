@@ -45,6 +45,31 @@ void main() {
   setUp(() async => fixture = await _BillingFixture.create());
   tearDown(() => fixture.dispose());
 
+  testWidgets('internal testers have full local access without purchase UI', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(360, 640);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(() {
+      tester.view.resetPhysicalSize();
+      tester.view.resetDevicePixelRatio();
+    });
+    fixture.internalTestAccess = true;
+    await _pump(tester, fixture);
+    expect(find.text('Internal test access'), findsOneWidget);
+    expect(find.text('Full local access'), findsOneWidget);
+    expect(find.textContaining('unlimited artwork records'), findsOneWidget);
+    expect(find.text('On-device AI included'), findsOneWidget);
+    expect(find.text('Restore purchases'), findsNothing);
+    expect(find.text('Plan changes unavailable'), findsNothing);
+    expect(find.textContaining('AI credits/month'), findsNothing);
+    expect(fixture.service.foregroundRefreshes, 0);
+    expect(fixture.service.productReads, 0);
+    expect(fixture.service.purchases, isEmpty);
+    expect(tester.takeException(), isNull);
+    await _capture(tester, fixture, 'internal-test-full-access-360.png');
+  });
+
   testWidgets('a restored paid plan cannot start a second subscription', (
     tester,
   ) async {
@@ -624,13 +649,18 @@ class _BillingFixture {
   final LocalArtworkRepository repository;
   final LocalAttachmentStore attachmentStore;
   final _FakeBillingService service = _FakeBillingService();
+  bool internalTestAccess = false;
 
   AppDependencies get dependencies => AppDependencies(
     artworkRepository: repository,
     attachmentStore: attachmentStore,
     imagePicker: _NoImagePicker(),
-    entitlementService: service,
-    billingManagementService: service,
+    entitlementService: internalTestAccess
+        ? const StaticEntitlementService(
+            state: EntitlementState(plan: EntitlementPlans.internalTest),
+          )
+        : service,
+    billingManagementService: internalTestAccess ? null : service,
     onDeviceAiDraftProvider: const DisabledOnDeviceAiDraftProvider(),
   );
 

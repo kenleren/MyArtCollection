@@ -58,7 +58,16 @@ class _BillingPlanScreenState extends State<BillingPlanScreen> {
 
   Future<void> _refresh() async {
     final service = _service;
-    if (service == null) return;
+    if (service == null) {
+      final loadGeneration = ++_loadGeneration;
+      final state = await AppDependencyScope.of(
+        context,
+      ).entitlementService.currentState();
+      if (mounted && _service == null && loadGeneration == _loadGeneration) {
+        setState(() => _state = state);
+      }
+      return;
+    }
     setState(() => _action = _BillingAction.refreshing);
     await service.refreshForForeground();
     await _load(service);
@@ -171,7 +180,9 @@ class _BillingPlanScreenState extends State<BillingPlanScreen> {
               child: Align(
                 alignment: Alignment.centerLeft,
                 child: Text(
-                  'Plan and billing',
+                  _state.plan.isInternalTest
+                      ? 'Internal test access'
+                      : 'Plan and billing',
                   style: Theme.of(context).textTheme.titleLarge,
                 ),
               ),
@@ -186,8 +197,12 @@ class _BillingPlanScreenState extends State<BillingPlanScreen> {
             children: [
               _BillingPanel(
                 icon: Icons.workspace_premium_outlined,
-                title: '${_state.plan.name} plan',
-                body: _lifecycleCopy(_state),
+                title: _state.plan.isInternalTest
+                    ? 'Full local access'
+                    : '${_state.plan.name} plan',
+                body: _state.plan.isInternalTest
+                    ? 'All local collection tools are included during internal testing. Add unlimited artwork records, organize groups, attach supporting files, and create reports and exports. No subscription is required.'
+                    : _lifecycleCopy(_state),
               ),
               const SizedBox(height: 12),
               if (displayedAction != _BillingAction.idle)
@@ -226,7 +241,14 @@ class _BillingPlanScreenState extends State<BillingPlanScreen> {
                 ),
                 const SizedBox(height: 12),
               ],
-              if (service == null)
+              if (_state.plan.isInternalTest)
+                const _BillingPanel(
+                  icon: Icons.auto_awesome_outlined,
+                  title: 'On-device AI included',
+                  body:
+                      'Drafts run on your device when it supports Gemini Nano. If a model download is needed, you can start it from the artwork draft. You confirm every suggested fact.',
+                )
+              else if (service == null)
                 const _BillingPanel(
                   icon: Icons.info_outline,
                   title: 'Plan changes unavailable',

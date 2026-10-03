@@ -15,6 +15,8 @@ class EntitlementPlan {
   final int monthlyAiCredits;
   final String? playProductId;
 
+  bool get isInternalTest => id == 'internal_test';
+
   bool canAddActiveArtworks({
     required int currentActiveArtworkCount,
     int additionalArtworkCount = 1,
@@ -47,6 +49,16 @@ class EntitlementPlan {
 
 class EntitlementPlans {
   const EntitlementPlans._();
+
+  /// Local feature access for the owner-approved internal distribution only.
+  /// Never offered as a Play product or used as server/provider authority.
+  static const internalTest = EntitlementPlan(
+    id: 'internal_test',
+    name: 'Internal test',
+    priceLabel: 'Included during testing',
+    activeArtworkLimit: null,
+    monthlyAiCredits: 0,
+  );
 
   static const free = EntitlementPlan(
     id: 'free',

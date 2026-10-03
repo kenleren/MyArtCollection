@@ -2363,6 +2363,63 @@ void main() {
     );
   });
 
+  testWidgets('internal access keeps artwork creation open past five records', (
+    WidgetTester tester,
+  ) async {
+    final fixture = (await tester.runAsync(_LiveDependencyFixture.create))!;
+    addTearDown(() async {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.runAsync(fixture.dispose);
+    });
+    await tester.runAsync(() async {
+      for (var index = 0; index < 6; index++) {
+        await fixture.repository.upsert(
+          _artworkRecord(
+            id: 'internal-test-$index',
+            title: 'Sample artwork $index',
+            state: ArtworkRecordState.verifiedByYou,
+            source: ArtworkFieldSource.userConfirmed,
+          ),
+        );
+      }
+    });
+    final dependencies = fixture.dependenciesWithFlags(
+      featureFlags: const AppFeatureFlags(groupingsEnabled: true),
+      entitlementService: const StaticEntitlementService(
+        state: EntitlementState(plan: EntitlementPlans.internalTest),
+      ),
+    );
+    await _configureMobileViewport(tester);
+    await tester.pumpWidget(
+      ArchivaleApp(
+        initialRoute: AppRoutes.collectionAdd,
+        dependencies: dependencies,
+      ),
+    );
+    await pumpLiveData(tester);
+    expect(find.text('Free plan is at capacity'), findsNothing);
+    expect(find.text('Photograph artwork'), findsOneWidget);
+    expect(find.text('Choose artwork photo'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pumpWidget(
+      ArchivaleApp(
+        initialRoute: AppRoutes.collectionSettings,
+        dependencies: dependencies,
+      ),
+    );
+    await pumpLiveData(tester);
+    expect(find.text('Internal test access'), findsOneWidget);
+    expect(find.text('Review test access'), findsOneWidget);
+    expect(find.textContaining('AI research draft'), findsNothing);
+    expect(
+      find.textContaining('Plan management is not configured'),
+      findsNothing,
+    );
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('settings plan status covers billing status variants', (
     WidgetTester tester,
   ) async {

@@ -7,6 +7,7 @@ import 'app/app.dart';
 import 'app/app_dependencies.dart';
 import 'app/ai/on_device_ai_draft_service.dart';
 import 'app/billing/play_billing_adapter.dart';
+import 'app/billing/entitlement_plan.dart';
 import 'app/config/app_feature_flags.dart';
 import 'app/intake/artwork_image_picker.dart';
 import 'app/research/firebase_research_runtime.dart';
@@ -60,16 +61,25 @@ Future<void> main() async {
             ),
           )
         : null;
-    final billingService = PlayBillingEntitlementService(
-      InAppPurchasePlayBillingStore(),
-      FirebasePlayBillingVerifier(FlutterFirebaseResearchRuntime()),
+    const internalTestFullAccess = bool.fromEnvironment(
+      'MY_ART_INTERNAL_TEST_FULL_ACCESS',
     );
+    final billingService = internalTestFullAccess
+        ? null
+        : PlayBillingEntitlementService(
+            InAppPurchasePlayBillingStore(),
+            FirebasePlayBillingVerifier(FlutterFirebaseResearchRuntime()),
+          );
     final dependencies = AppDependencies(
       artworkRepository: artworkRepository,
       attachmentStore: attachmentStore,
       imagePicker: SystemArtworkImagePicker(),
       featureFlags: featureFlags,
-      entitlementService: billingService,
+      entitlementService: internalTestFullAccess
+          ? const StaticEntitlementService(
+              state: EntitlementState(plan: EntitlementPlans.internalTest),
+            )
+          : billingService!,
       billingManagementService: billingService,
       onDeviceAiDraftProvider: MethodChannelOnDeviceAiDraftProvider(),
       onlineResearchClient: researchClient,
