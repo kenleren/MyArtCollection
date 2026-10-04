@@ -208,9 +208,15 @@ export async function handleResearchRequest<R extends LifecycleRecord = StoredRe
       trace,
     );
   }
-  if (dispatchStarted.kind === 'lease_expired') {
+  if (dispatchStarted.kind !== 'started') {
     await settlePendingBestEffort(dispatchStarted.record, dependencies, trace);
     return outcomeToResult(dispatchStarted.outcome);
+  }
+  // The transaction may have committed just before the test window closed.
+  // Keep its possible dispatch charge, but never begin a late provider fetch.
+  if (dispatchStarted.dispatchExpiresAtMs !== undefined &&
+      dependencies.now().getTime() >= dispatchStarted.dispatchExpiresAtMs) {
+    return terminalError(record, 'broker_breaker_open', 'refund', dependencies, trace);
   }
 
   trace?.push('provider_fetch');

@@ -10,7 +10,8 @@ import {
 } from '../src/openai_provider.js';
 import { authorizeProviderRequest } from '../src/provider_authorization.js';
 import { InMemoryRequestLifecycle } from '../src/request_lifecycle.js';
-import { FIXED_NOW, baseContext, request } from './test_helpers.js';
+import { FirestoreDurableBrokerStore } from '../src/durable_protection.js';
+import { FIXED_NOW, baseContext, request, seededFirestore } from './test_helpers.js';
 
 test('direct provider use without broker authorization cannot fetch', async () => {
   let fetchCalls = 0;
@@ -170,8 +171,64 @@ test('OpenAI request remains minimized, stateless, and allowlisted', () => {
   });
   const serialized = JSON.stringify(body);
   assert.equal(body.store, false);
+  assert.equal(body.prompt_cache_retention, 'in_memory');
+  assert.equal(body.max_output_tokens, 8192);
+  assert.equal(body.max_tool_calls, 4);
   assert.equal(serialized.includes('museum.example'), true);
   assert.equal(serialized.includes('previous_response_id'), false);
   assert.equal(serialized.includes('request_id'), false);
   assert.equal(serialized.includes('payload_hash'), false);
+});
+
+test('authorized dispatch refuses redirects and sends bounded retention settings without retries', async () => {
+  let calls = 0;
+  const current = request();
+  authorizeProviderRequest(current);
+  const provider = createOpenAiProvider({ apiKey: 'test-only-key', allowedDomains: ['museum.example'],
+    fetchImpl: (async (_url, init) => {
+      calls++;
+      assert.equal(init?.redirect, 'error');
+      const body = JSON.parse(init?.body as string);
+      assert.equal(body.store, false);
+      assert.equal(body.prompt_cache_retention, 'in_memory');
+      assert.equal(body.max_output_tokens, 8192);
+      assert.equal(body.max_tool_calls, 4);
+      return new Response('', { status: 302, headers: { location: 'https://unapproved.invalid' } });
+    }) as typeof fetch });
+  assert.deepEqual(await provider.research(current), { kind: 'failure' });
+  assert.deepEqual(await provider.research(current), { kind: 'failure' });
+  assert.equal(calls, 1);
+});
+
+test('only completed provider runs become completed research; truncated, failed and refused runs stay charged', async () => {
+  const structured = JSON.stringify({ sources: [], candidate_attributions: [], comparable_value_signals: [], warnings: [] });
+  const message = { type: 'message', status: 'completed', content: [{ type: 'output_text', text: structured }] };
+  const completed = { status: 'completed', output: [message] };
+  const cases = [
+    { name: 'completed', body: completed, success: true },
+    { name: 'token limit', body: { ...completed, status: 'incomplete', incomplete_details: { reason: 'max_output_tokens' } }, success: false },
+    { name: 'incomplete message', body: { ...completed, output: [{ ...message, status: 'incomplete' }] }, success: false },
+    { name: 'failed search', body: { ...completed, output: [{ type: 'web_search_call', status: 'failed' }, message] }, success: false },
+    { name: 'provider error', body: { ...completed, error: { message: 'synthetic-private-provider-detail' } }, success: false },
+    { name: 'missing completion status', body: { output: [message] }, success: false },
+    { name: 'refusal', body: { ...completed, output: [{ ...message, content: [{ type: 'refusal' }] }] }, success: false },
+  ];
+  for (const scenario of cases) {
+    const db = seededFirestore();
+    db.seed('brokerDurableControl/providerBudget', { record_version: 'broker-provider-budget-v1',
+      dispatchLimit: 1, dispatchCount: 0, expiresAt: '2026-07-10T12:00:00.000Z' });
+    const store = new FirestoreDurableBrokerStore(db, { requireProviderBudget: true });
+    let calls = 0;
+    const provider = createOpenAiProvider({ apiKey: 'test-only-key', allowedDomains: ['museum.example'],
+      fetchImpl: (async () => { calls++; return new Response(JSON.stringify(scenario.body), { status: 200 }); }) as typeof fetch });
+    const deps = createFakeBrokerDependencies({ requestLifecycle: store.createRequestLifecycle(),
+      providerProvisioner: { configure: () => ({}), construct: () => provider },
+      authorizeProvider: authorizeProviderRequest, now: () => FIXED_NOW });
+    const result = await handleResearchRequest(request(), baseContext, deps);
+    assert.equal(result.ok, scenario.success, scenario.name);
+    assert.equal(JSON.stringify(result).includes('synthetic-private-provider-detail'), false);
+    assert.equal(db.read('brokerDurableControl/providerBudget')?.dispatchCount, 1);
+    await handleResearchRequest(request(), baseContext, deps);
+    assert.equal(calls, 1, 'same request never repeats the paid dispatch');
+  }
 });

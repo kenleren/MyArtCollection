@@ -150,6 +150,8 @@ function settlementIntentForCondition(condition: string): 'refund' | 'finalize' 
     case 'provider_construction_failure':
     case 'provider_authorization_failure':
     case 'dispatch_persistence_failure':
+    case 'credits_exhausted':
+    case 'broker_breaker_open':
     case 'provider_rate_limited':
     case 'provider_timeout':
       return 'refund';

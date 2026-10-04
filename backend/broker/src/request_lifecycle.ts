@@ -47,8 +47,8 @@ export type AcquireRequestResult<R extends LifecycleRecord = StoredRequestRecord
   | { kind: 'migration_required' };
 
 export type DispatchStartResult<R extends LifecycleRecord = StoredRequestRecord> =
-  | { kind: 'started' }
-  | { kind: 'lease_expired'; record: R; outcome: BrokerTerminalOutcome };
+  | { kind: 'started'; dispatchExpiresAtMs?: number }
+  | { kind: 'lease_expired' | 'budget_denied'; record: R; outcome: BrokerTerminalOutcome };
 
 export interface RequestLifecycleStore<R extends LifecycleRecord = StoredRequestRecord> {
   acquire(input: AcquireRequestInput): Promise<AcquireRequestResult<R>>;

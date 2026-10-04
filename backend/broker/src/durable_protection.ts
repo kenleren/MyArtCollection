@@ -1,5 +1,7 @@
 import { M as MONTHLY_COLLECTIONS, validWitness, parseControlPair } from './monthly_credit_protocol.js';
 import { createHmac } from 'node:crypto';
+import { readResearchAdmissionPolicy } from './live_admission.js';
+import { parseProviderDispatchBudget } from './provider_budget.js';
 
 import type { BrokerAdapterIdentity } from './adapter.js';
 import {
@@ -303,6 +305,9 @@ export interface DurableFirestoreLike {
 
 export interface FirestoreDurableBrokerStoreOptions {
   collectionPrefix?: string;
+  requireProviderBudget?: boolean;
+  internalTestExpiresAt?: string;
+  nowMilliseconds?: () => number;
 }
 
 export class FirestoreDurableBrokerStore implements DurableGateStore {
@@ -310,20 +315,30 @@ export class FirestoreDurableBrokerStore implements DurableGateStore {
 
   constructor(
     readonly firestore: DurableFirestoreLike,
-    options: FirestoreDurableBrokerStoreOptions = {},
+    readonly options: FirestoreDurableBrokerStoreOptions = {},
   ) {
     this.collectionPrefix = options.collectionPrefix ?? 'brokerDurable';
   }
 
   async readAccess(input: DurableAccessInput): Promise<DurableAccessResult> {
-    const [control, entitlement] = await Promise.all([
+    const [control, entitlement, budgetSnapshot] = await Promise.all([
       this.controlRef().get(),
-      this.entitlementRef(input.uid).get(),
+      this.options.internalTestExpiresAt === undefined ? this.entitlementRef(input.uid).get() : undefined,
+      this.options.requireProviderBudget ? this.providerBudgetRef().get() : undefined,
     ]);
     const controlData = controlRecordFromSnapshot(control);
-    const entitlementData = entitlement.exists
-      ? entitlementRecordFromSnapshot(entitlement)
-      : { entitled: false };
+    const budget = budgetSnapshot === undefined ? undefined : parseProviderDispatchBudget(budgetSnapshot.data());
+    if (this.options.requireProviderBudget && budget === undefined) {
+      throw new Error('unsafe_provider_budget');
+    }
+    const nowMs = (this.options.nowMilliseconds ?? Date.now)();
+    if (this.options.internalTestExpiresAt !== undefined &&
+        (budget === undefined || budget.expiresAt !== this.options.internalTestExpiresAt)) {
+      throw new Error('internal_test_budget_mismatch');
+    }
+    const entitlementData = this.options.internalTestExpiresAt !== undefined
+      ? { entitled: Number.isFinite(nowMs) && nowMs < Date.parse(this.options.internalTestExpiresAt) }
+      : entitlement?.exists ? entitlementRecordFromSnapshot(entitlement) : { entitled: false };
     if (controlData === undefined) {
       throw new Error('unsafe_control_record');
     }
@@ -332,7 +347,8 @@ export class FirestoreDurableBrokerStore implements DurableGateStore {
     }
     return {
       entitled: entitlementData.entitled,
-      breakerOpen: controlData.breakerOpen,
+      breakerOpen: controlData.breakerOpen || (budget !== undefined &&
+        (!Number.isFinite(nowMs) || nowMs >= Date.parse(budget.expiresAt))),
     };
   }
 
@@ -358,6 +374,10 @@ export class FirestoreDurableBrokerStore implements DurableGateStore {
 
   controlRef(): DurableFirestoreDocumentRef {
     return this.firestore.doc(`${this.collectionPrefix}Control/live`);
+  }
+
+  providerBudgetRef(): DurableFirestoreDocumentRef {
+    return this.firestore.doc(`${this.collectionPrefix}Control/providerBudget`);
   }
 
   entitlementRef(uid: string): DurableFirestoreDocumentRef {
@@ -427,12 +447,20 @@ export class FirestoreRequestLifecycle implements RequestLifecycleStore {
       const controlRef = this.store.controlRef();
       const subjectRef = this.store.subjectRef(input.quota_subject);
       const globalRef = this.store.globalUsageRef();
-      const [controlSnapshot, subjectSnapshot, globalSnapshot] = await Promise.all([
+      const [controlSnapshot, subjectSnapshot, globalSnapshot, budgetSnapshot] = await Promise.all([
         transaction.get(controlRef),
         transaction.get(subjectRef),
         transaction.get(globalRef),
+        this.store.options.requireProviderBudget ? transaction.get(this.store.providerBudgetRef()) : undefined,
       ]);
       const control = controlRecordFromSnapshot(controlSnapshot);
+      if (this.store.options.requireProviderBudget) {
+        const budget = parseProviderDispatchBudget(budgetSnapshot?.data());
+        if (budget === undefined || (this.store.options.internalTestExpiresAt !== undefined &&
+            budget.expiresAt !== this.store.options.internalTestExpiresAt)) return { kind: 'unsafe_record' };
+        if (!Number.isFinite(input.now.getTime()) || input.now.getTime() >= Date.parse(budget.expiresAt) ||
+            budget.dispatchCount >= budget.dispatchLimit) return { kind: 'credits_exhausted' };
+      }
       const monthlyControl = await transaction.get(this.store.firestore.doc(`${MONTHLY_COLLECTIONS.control}/control`));
       const monthlyInitialization = await transaction.get(this.store.firestore.doc(`${MONTHLY_COLLECTIONS.control}/initialization`));
       if (control?.monthlyCutover !== undefined || monthlyControl.exists || monthlyInitialization.exists) {
@@ -538,8 +566,43 @@ export class FirestoreRequestLifecycle implements RequestLifecycleStore {
         transaction.set(ref, { ...terminal });
         return { kind: 'lease_expired', record: terminal, outcome };
       }
+      let dispatchExpiresAtMs: number | undefined;
+      if (this.store.options.requireProviderBudget) {
+        const budgetRef = this.store.providerBudgetRef();
+        const [budgetSnapshot, controlSnapshot] = await Promise.all([
+          transaction.get(budgetRef),
+          transaction.get(this.store.controlRef()),
+        ]);
+        const budget = parseProviderDispatchBudget(budgetSnapshot.data());
+        const control = controlRecordFromSnapshot(controlSnapshot);
+        if (budget === undefined || control === undefined ||
+            (this.store.options.internalTestExpiresAt !== undefined &&
+             budget.expiresAt !== this.store.options.internalTestExpiresAt)) {
+          throw new Error('unsafe_provider_budget');
+        }
+        dispatchExpiresAtMs = Date.parse(budget.expiresAt);
+        if (!Number.isFinite(now.getTime()) || now.getTime() >= dispatchExpiresAtMs ||
+            control.breakerOpen || budget.dispatchCount >= budget.dispatchLimit) {
+          const outcome: BrokerTerminalOutcome = {
+            kind: 'error',
+            failure: {
+              request_id: current.request_id,
+              condition: budget.dispatchCount >= budget.dispatchLimit ? 'credits_exhausted' : 'broker_breaker_open',
+            },
+          };
+          const terminal: StoredRequestRecord = {
+            ...current, state: 'terminal', settlement_state: 'pending_refund', terminal_outcome: outcome,
+          };
+          if (parseStoredRequest(terminal).kind !== 'valid') throw new Error('unsafe_budget_terminal');
+          transaction.set(ref, { ...terminal });
+          return { kind: 'budget_denied', record: terminal, outcome };
+        }
+        // This charge records dispatch intent, including uncertain commits and
+        // billed failures. Credit refunds never decrement it or recreate it.
+        transaction.set(budgetRef, { ...budget, dispatchCount: budget.dispatchCount + 1 });
+      }
       transaction.set(ref, { state: 'dispatch_started' }, { merge: true });
-      return { kind: 'started' };
+      return { kind: 'started', ...(dispatchExpiresAtMs === undefined ? {} : { dispatchExpiresAtMs }) };
     });
     if (result.kind === 'started') {
       record.state = 'dispatch_started';
@@ -755,11 +818,17 @@ export interface FirebaseDurableBrokerProtectionOptions {
 export function createFirebaseAdminDurableBrokerProtection(
   options: FirebaseDurableBrokerProtectionOptions,
 ): { ok: true; protection: DurableBrokerProtection } | { ok: false; code: string } {
-  const configured = durableConfigFromEnv(options.env ?? process.env);
+  const env = options.env ?? process.env;
+  const admission = readResearchAdmissionPolicy(env);
+  if (admission === undefined) return { ok: false, code: 'invalid_research_admission' };
+  const configured = durableConfigFromEnv(env);
   if (!configured.ok) {
     return configured;
   }
-  const store = new FirestoreDurableBrokerStore(options.firestore);
+  const store = new FirestoreDurableBrokerStore(options.firestore, {
+    requireProviderBudget: true,
+    ...(admission.mode === 'verified_internal_app' ? { internalTestExpiresAt: admission.expiresAt } : {}),
+  });
   const verifier = new FirebaseAdminBrokerTokenVerifier({
     auth: options.auth,
     appCheck: options.appCheck,

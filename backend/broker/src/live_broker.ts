@@ -3,6 +3,7 @@ import { handleBrokerAdapterRequest, parseBrokerRequest } from './adapter.js';
 import type { BrokerDependencies } from './broker.js';
 import { CURRENT_CONSENT_COPY_VERSION } from './contracts.js';
 import { authorizeProviderRequest } from './provider_authorization.js';
+import { readResearchAdmissionPolicy, researchAdmissionIsCurrent, type ResearchAdmissionPolicy } from './live_admission.js';
 import {
   durableConfigFromEnv,
   MISSING_DURABLE_CONFIG_CODE,
@@ -46,6 +47,7 @@ export type ConfiguredBrokerDependenciesResult =
       kind: 'ready';
       createDependencies: (providerDeadlineAtMs?: number) => BrokerDependencies;
       ownerUidAllowlist: ReadonlySet<string>;
+      admission: ResearchAdmissionPolicy;
       durableProtection: true;
       protection: DurableBrokerProtection;
     }
@@ -70,8 +72,12 @@ export function createConfiguredResearchBrokerDependencies(
   if (!isResearchBrokerLiveEnabled(env)) {
     return { kind: 'disabled' };
   }
+  const admission = readResearchAdmissionPolicy(env);
+  if (admission === undefined) {
+    return { kind: 'misconfigured', code: 'invalid_research_admission' };
+  }
   const ownerUidAllowlist = parseAllowlist(env[BROKER_OWNER_UID_ALLOWLIST_ENV]);
-  if (ownerUidAllowlist.size === 0) {
+  if (admission.mode === 'owner_only' && ownerUidAllowlist.size === 0) {
     return { kind: 'misconfigured', code: 'missing_owner_uid_allowlist' };
   }
   const durableConfig = durableConfigFromEnv(env);
@@ -85,6 +91,7 @@ export function createConfiguredResearchBrokerDependencies(
   return {
     kind: 'ready',
     ownerUidAllowlist,
+    admission,
     durableProtection: true,
     protection,
     createDependencies: (providerDeadlineAtMs) => ({
@@ -144,6 +151,10 @@ export function createResearchBrokerHttpHandler(options: ResearchBrokerHttpHandl
       sendError(response, 'broker_misconfigured');
       return;
     }
+    if (!researchAdmissionIsCurrent(configured.admission, nowMilliseconds())) {
+      sendError(response, 'broker_disabled');
+      return;
+    }
 
     let parsedBody: Awaited<ReturnType<typeof readJsonBody>>;
     try {
@@ -179,7 +190,8 @@ export function createResearchBrokerHttpHandler(options: ResearchBrokerHttpHandl
       );
       return;
     }
-    if (!admittedOwner(configured.ownerUidAllowlist, identityResult.identity.auth.uid ?? '')) {
+    if (configured.admission.mode === 'owner_only' &&
+        !admittedOwner(configured.ownerUidAllowlist, identityResult.identity.auth.uid ?? '')) {
       sendError(response, 'forbidden_uid');
       return;
     }

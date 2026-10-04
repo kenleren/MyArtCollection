@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
 
 import { getFirestore } from 'firebase-admin/firestore';
 import { deleteApp, initializeApp } from 'firebase-admin/app';
@@ -8,6 +9,8 @@ import {
   createFirebaseResearchBrokerDependencies,
 } from '../src/index.js';
 import type { FirebaseAdminAppCheckLike } from '../src/durable_protection.js';
+import { FirestoreDurableBrokerStore } from '../src/durable_protection.js';
+import { request } from './test_helpers.js';
 
 const projectId = 'demo-art-research-broker';
 const projectNumber = '123456789';
@@ -39,6 +42,7 @@ async function main(): Promise<void> {
     const marker = getFirestore(app).collection('issue188Harness').doc('marker');
     await marker.set({ expected: true });
     assert.deepEqual((await marker.get()).data(), { expected: true });
+    await assertDispatchBudgetIsAtomic(getFirestore(app));
 
     // The deployed export is a fixed onRequest handler, not the adapter-taking
     // factory used only by this local harness.
@@ -51,6 +55,38 @@ async function main(): Promise<void> {
   } finally {
     await deleteApp(app);
   }
+}
+
+async function assertDispatchBudgetIsAtomic(firestore: ReturnType<typeof getFirestore>): Promise<void> {
+  const store = new FirestoreDurableBrokerStore(firestore, {
+    collectionPrefix: 'internalResearchBudgetHarness', requireProviderBudget: true,
+  });
+  const now = new Date();
+  await store.controlRef().set({ record_version: 'broker-control-v1', breakerOpen: false,
+    perSubjectCreditCap: 3, brokerCreditCap: 6, oneInFlightPerSubject: true });
+  await store.providerBudgetRef().set({ record_version: 'broker-provider-budget-v1',
+    dispatchLimit: 1, dispatchCount: 0, expiresAt: new Date(now.getTime() + 60_000).toISOString() });
+  const lifecycle = store.createRequestLifecycle();
+  const reservations = await Promise.all(['a', 'b'].map(subject => lifecycle.acquire({
+    quota_subject: `quota_subject_v1_${subject.repeat(64)}`, request_id: randomUUID(),
+    payload_hash: request().payload_hash, credit_cost: 1, now,
+  })));
+  assert.ok(reservations.every(result => result.kind === 'reserved'));
+  const starts = await Promise.all(reservations.map(result => {
+    if (result.kind !== 'reserved') throw new Error('Synthetic reservation failed');
+    return lifecycle.markDispatchStarted(result.record, new Date());
+  }));
+  assert.deepEqual(starts.map(result => result.kind).sort(), ['budget_denied', 'started']);
+  assert.equal((await store.providerBudgetRef().get()).data()?.dispatchCount, 1);
+  for (const reservation of reservations) {
+    if (reservation.kind !== 'reserved') continue;
+    const replay = await lifecycle.acquire({ quota_subject: reservation.record.quota_subject,
+      request_id: reservation.record.request_id, payload_hash: reservation.record.payload_hash,
+      credit_cost: 1, now: new Date() });
+    assert.ok(replay.kind === 'in_flight' || replay.kind === 'replay');
+  }
+  assert.equal((await store.providerBudgetRef().get()).data()?.dispatchCount, 1);
+  console.log('Synthetic Firestore dispatch budget: concurrent reservation and replay passed.');
 }
 
 function emulatorEnv(ownerUid: string): NodeJS.ProcessEnv {

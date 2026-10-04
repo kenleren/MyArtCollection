@@ -59,6 +59,7 @@ function readyFactory(options: {
     kind: 'ready',
     durableProtection: true,
     ownerUidAllowlist: new Set(['owner-uid']),
+    admission: { mode: 'owner_only' },
     protection: options.protection,
     createDependencies: (providerDeadlineAtMs) => {
       options.onProviderDeadline?.(providerDeadlineAtMs);
