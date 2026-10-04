@@ -45,6 +45,11 @@ npm --prefix backend/play_billing run test:emulator:ci
 Run Firebase/emulator checks with isolated HOME/XDG and no inherited provider
 credentials, using the demo project only. Do not read generated debug logs.
 
+The pinned Firebase CLI and its scoped dependency overrides are validated for
+the Firestore-only demo emulator. Chokidar 4 watches the concrete rules file;
+its removed glob support makes this package's CLI unsuitable for Functions
+emulator/watch workflows. Broker deployment uses a separate reviewed tool path.
+
 The deterministic suite covers reciprocal routing/retirement, disclosure synchronization,
 epoch-bound custody, encrypted fresh-install recovery, exact-version
 KMS AAD/integrity, late deadline/disclosure/index fences, disclosure ordering, product/account/state

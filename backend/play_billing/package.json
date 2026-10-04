@@ -22,10 +22,17 @@
   "devDependencies": {
     "@types/node": "^22.15.3",
     "firebase": "^12.11.0",
-    "firebase-tools": "15.23.0",
+    "firebase-tools": "15.32.1",
     "typescript": "^5.8.3"
   },
   "overrides": {
+    "@grpc/grpc-js": "1.14.5",
+    "firebase-tools": {
+      "chokidar": "4.0.3"
+    },
+    "get-uri": {
+      "basic-ftp": "6.2.2"
+    },
     "qs": "6.16.0",
     "uuid@<11.1.1": "11.1.1"
   }
