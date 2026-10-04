@@ -8,6 +8,8 @@ class RunnerTests: XCTestCase {
   private var root: URL!
   private var documents: URL!
   private var temporary: URL!
+  private var publicationByteSize: Int64 = 0
+  private var publicationSha256 = ""
 
   override func setUpWithError() throws {
     root = FileManager.default.temporaryDirectory
@@ -35,6 +37,8 @@ class RunnerTests: XCTestCase {
       sourcePath: report.path,
       suggestedName: report.lastPathComponent,
       mimeType: "application/pdf",
+      expectedByteSize: publicationByteSize,
+      expectedSha256: publicationSha256,
       documentsDirectory: documents,
       temporaryRoot: temporary
     )
@@ -59,6 +63,8 @@ class RunnerTests: XCTestCase {
         sourcePath: report.path,
         suggestedName: "other.pdf",
         mimeType: "application/pdf",
+        expectedByteSize: publicationByteSize,
+        expectedSha256: publicationSha256,
         documentsDirectory: documents,
         temporaryRoot: temporary
       )
@@ -68,6 +74,8 @@ class RunnerTests: XCTestCase {
         sourcePath: report.path,
         suggestedName: report.lastPathComponent,
         mimeType: "application/zip",
+        expectedByteSize: publicationByteSize,
+        expectedSha256: publicationSha256,
         documentsDirectory: documents,
         temporaryRoot: temporary
       )
@@ -79,6 +87,8 @@ class RunnerTests: XCTestCase {
         sourcePath: report.path,
         suggestedName: report.lastPathComponent,
         mimeType: "application/pdf",
+        expectedByteSize: publicationByteSize,
+        expectedSha256: publicationSha256,
         documentsDirectory: documents,
         temporaryRoot: temporary
       )
@@ -99,6 +109,8 @@ class RunnerTests: XCTestCase {
         sourcePath: link.path,
         suggestedName: link.lastPathComponent,
         mimeType: "application/pdf",
+        expectedByteSize: publicationByteSize,
+        expectedSha256: publicationSha256,
         documentsDirectory: documents,
         temporaryRoot: temporary
       )
@@ -114,6 +126,8 @@ class RunnerTests: XCTestCase {
         sourcePath: report.path,
         suggestedName: report.lastPathComponent,
         mimeType: "application/pdf",
+        expectedByteSize: publicationByteSize,
+        expectedSha256: publicationSha256,
         documentsDirectory: documents,
         temporaryRoot: temporary
       )
@@ -127,6 +141,8 @@ class RunnerTests: XCTestCase {
         sourcePath: report.path,
         suggestedName: report.lastPathComponent,
         mimeType: "application/pdf",
+        expectedByteSize: publicationByteSize,
+        expectedSha256: publicationSha256,
         documentsDirectory: documents,
         temporaryRoot: temporary
       )
@@ -140,6 +156,8 @@ class RunnerTests: XCTestCase {
         sourcePath: report.path,
         suggestedName: report.lastPathComponent,
         mimeType: "application/pdf",
+        expectedByteSize: publicationByteSize,
+        expectedSha256: publicationSha256,
         documentsDirectory: documents,
         temporaryRoot: temporary
       )
@@ -167,6 +185,8 @@ class RunnerTests: XCTestCase {
         sourcePath: report.path,
         suggestedName: report.lastPathComponent,
         mimeType: "application/pdf",
+        expectedByteSize: publicationByteSize,
+        expectedSha256: publicationSha256,
         documentsDirectory: documents,
         temporaryRoot: temporary
       )
@@ -196,6 +216,8 @@ class RunnerTests: XCTestCase {
         sourcePath: report.path,
         suggestedName: report.lastPathComponent,
         mimeType: "application/pdf",
+        expectedByteSize: publicationByteSize,
+        expectedSha256: publicationSha256,
         documentsDirectory: documents,
         temporaryRoot: temporary
       )
@@ -228,6 +250,8 @@ class RunnerTests: XCTestCase {
           sourcePath: report.path,
           suggestedName: report.lastPathComponent,
           mimeType: "application/pdf",
+          expectedByteSize: publicationByteSize,
+          expectedSha256: publicationSha256,
           documentsDirectory: documents,
           temporaryRoot: temporary
         ),
@@ -242,13 +266,37 @@ class RunnerTests: XCTestCase {
         sourcePath: report.path,
         suggestedName: report.lastPathComponent,
         mimeType: "application/pdf",
+        expectedByteSize: publicationByteSize,
+        expectedSha256: publicationSha256,
         documentsDirectory: documents,
         temporaryRoot: temporary
       )
     )
   }
 
+  func testMutuallyConsistentReplacementCannotReplacePublicationExpectation() throws {
+    let report = try committedReport(bytes: Data([1, 2, 3]))
+    let replacement = Data([4, 5, 6])
+    try replacement.write(to: report)
+    let metadataURL = URL(fileURLWithPath: report.path + ".json")
+    var metadata = try JSONSerialization.jsonObject(with: Data(contentsOf: metadataURL))
+      as! [String: Any]
+    metadata["checksum_sha256"] = SHA256.hash(data: replacement).hex
+    try JSONSerialization.data(withJSONObject: metadata).write(to: metadataURL)
+    XCTAssertNil(ExportArtifactPolicy.makePickerCopy(
+      sourcePath: report.path,
+      suggestedName: report.lastPathComponent,
+      mimeType: "application/pdf",
+      expectedByteSize: publicationByteSize,
+      expectedSha256: publicationSha256,
+      documentsDirectory: documents,
+      temporaryRoot: temporary
+    ))
+  }
+
   private func committedReport(bytes: Data) throws -> URL {
+    publicationByteSize = Int64(bytes.count)
+    publicationSha256 = SHA256.hash(data: bytes).hex
     let subjectId = "artwork-1"
     let subjectHash = SHA256.hash(data: Data(subjectId.utf8)).hex
     let artifactId = "report-\(subjectHash.prefix(24))-1"

@@ -141,6 +141,13 @@ val brokerClientDartDefineEnabled = dartDefineEnabled("MY_ART_COLLECTION_BROKER_
 val crashlyticsDartDefineEnabled =
     dartDefineEnabled("MY_ART_COLLECTION_INTERNAL_BETA_CRASHLYTICS")
 val remoteConfigDartDefineEnabled = dartDefineEnabled("MY_ART_COLLECTION_REMOTE_CONFIG")
+if (dartDefineEnabled("MY_ART_INTERNAL_TEST_FULL_ACCESS") &&
+    (!dartDefineEnabled("MY_ART_ON_DEVICE_AI_ENABLED") ||
+        !dartDefineEnabled("MY_ART_GROUPINGS_ENABLED"))) {
+    throw GradleException(
+        "Internal test full access requires on-device AI and collection groups to be enabled.",
+    )
+}
 val googleServicesConfig = file("google-services.json")
 val attachmentCustodyRuntimeEvidence =
     providers.gradleProperty("attachmentCustodyRuntimeEvidence")

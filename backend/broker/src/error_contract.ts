@@ -39,6 +39,7 @@ export type BrokerErrorCondition =
   | 'idempotency_conflict'
   | 'quota_subject_in_flight'
   | 'credits_exhausted'
+  | 'monthly_migration_required'
   | 'reservation_lease_expired'
   | 'dispatch_outcome_unknown'
   | 'malformed_durable_record'
@@ -167,6 +168,7 @@ export const BROKER_ERROR_DEFINITIONS: Readonly<Record<BrokerErrorCondition, Bro
     true,
     MIN_RETRY_AFTER_SECONDS,
   ),
+  monthly_migration_required: BROKER_UNAVAILABLE,
   credits_exhausted: definition(
     402,
     'credits_exhausted',

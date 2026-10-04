@@ -6,6 +6,14 @@ import org.junit.Test
 
 class AttachmentCustodyNativeAccessTest {
     @Test
+    fun forwardsPublicationExpectationToNative() {
+        val bindings = RecordingBindings()
+        val access = AttachmentCustodyNativeAccess(loadLibrary = {}, bindings = bindings)
+        assertEquals("ready", attemptSave(access) {})
+        assertEquals(1, bindings.calls)
+    }
+
+    @Test
     fun noClassDefFoundErrorOnFirstLoadIsCachedUnavailable() {
         var loadAttempts = 0
         val bindings = RecordingBindings()
@@ -100,7 +108,7 @@ class AttachmentCustodyNativeAccessTest {
         access: AttachmentCustodyNativeAccess,
         destinationAction: () -> Unit,
     ): String {
-        val descriptors = access.openExportPair("private-root", "committed-export")
+        val descriptors = access.openExportPair("private-root", "committed-export", 3L, "a".repeat(64))
         if (descriptors.size != 2) return "unavailable"
         destinationAction()
         return "ready"
@@ -134,8 +142,12 @@ class AttachmentCustodyNativeAccessTest {
             return "{}"
         }
 
-        override fun openExportPair(flutterRoot: String, sourcePath: String): IntArray {
+        override fun openExportPair(
+            flutterRoot: String, sourcePath: String, expectedByteSize: Long, expectedSha256: String,
+        ): IntArray {
             calls += 1
+            assertEquals(3L, expectedByteSize)
+            assertEquals("a".repeat(64), expectedSha256)
             liveDescriptors += 2
             return intArrayOf(10, 11)
         }
@@ -158,7 +170,9 @@ class AttachmentCustodyNativeAccessTest {
             throw NoClassDefFoundError("injected poisoned custody binding")
         }
 
-        override fun openExportPair(flutterRoot: String, sourcePath: String): IntArray {
+        override fun openExportPair(
+            flutterRoot: String, sourcePath: String, expectedByteSize: Long, expectedSha256: String,
+        ): IntArray {
             openCalls += 1
             throw NoClassDefFoundError("injected poisoned export binding")
         }

@@ -1,3 +1,4 @@
+import { syntheticEnvelopeForRepositoryTests } from './fake_custody.js';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { describe, test } from 'node:test';
@@ -231,6 +232,7 @@ describe('billing request and token concurrency', () => {
 });
 
 async function stageDelivery(harness: Harness): Promise<AttemptHandle> {
+  await acceptDisclosure(harness);
   const accountSubject = harness.identifiers.accountSubject(harness.identity.uid);
   const tokenFingerprint = harness.identifiers.tokenFingerprint(purchaseToken());
   const requestFingerprint = harness.identifiers.requestFingerprint(
@@ -252,6 +254,7 @@ async function stageDelivery(harness: Harness): Promise<AttemptHandle> {
     harness.clock.now(),
   );
   const delivered = await harness.repository.commitDelivery(acquired.attempt, {
+    tokenEnvelope: syntheticEnvelopeForRepositoryTests,
     planId: 'starter',
     productId: 'archivale_starter_monthly',
     normalizedState: 'active',

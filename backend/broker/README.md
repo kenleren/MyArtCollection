@@ -88,7 +88,7 @@ owner:
 - `BROKER_PROVIDER_MODE=openai`
 - `BROKER_OPENAI_LIVE_TEST_ENABLED=true`
 
-It also requires owner UID and app ID allowlists, exact project ID/number,
+It also requires research admission and app ID allowlists, exact project ID/number,
 durable-store readiness, a server-only quota HMAC secret binding, approved
 provider configuration, and rights-reviewed source domains. Do not inspect or
 populate those values from repository work.
@@ -101,7 +101,7 @@ Anonymous Auth is shared identity infrastructure, not shared consent or
 authority. A UID created after the billing-verification disclosure does not
 create AI research consent, and research consent cannot create the required
 purpose-bound billing-disclosure assertion. This broker must still enforce the
-owner allowlist, current research consent, broker entitlement, breaker,
+admission policy, current research consent, broker entitlement, breaker,
 credits, and payload gates.
 
 The broker runtime must have no access to `archivale-play-billing` or any of its
@@ -112,6 +112,56 @@ IAM enforces the server boundary. This package must not call Android Publisher
 APIs or treat `brokerDurableEntitlements` as payment authority. A Play delivery
 record or plan lease cannot be minted, cached, restored, or extended by broker
 code.
+
+### Bounded internal research
+
+The live Firebase export binds only `OPENAI_API_KEY` and
+`BROKER_QUOTA_HMAC_SECRET`, and names the dedicated
+`archivale-research-broker@my-art-collections.iam.gserviceaccount.com` runtime.
+It starts at zero instances, with one maximum instance and one concurrent
+request. These source settings do not provision the account, secrets or IAM.
+Provider lookup remains after consent, verified identity and credit reservation.
+
+`BROKER_ADMISSION_MODE` defaults to `owner_only`, requiring the existing owner
+UID allowlist and server entitlement. The explicit `verified_internal_app`
+mode also requires `BROKER_INTERNAL_TEST_EXPIRES_AT` as a canonical UTC timestamp
+with milliseconds. During that window, verified Auth and a fresh consumed App
+Check token for the approved app can receive bounded test research access
+without a subscription or a client-created entitlement. App Check verifies the
+installation; it does not prove membership in a saved Play tester list.
+The HTTP window and durable budget expiry must agree. Unknown modes, stale
+windows, missing budget heads and mismatched expiries fail closed.
+
+Every live Firebase mode requires the operator-owned document
+`brokerDurableControl/providerBudget`:
+
+```json
+{
+  "record_version": "broker-provider-budget-v1",
+  "dispatchLimit": 30,
+  "dispatchCount": 0,
+  "expiresAt": "<approved canonical UTC expiry>"
+}
+```
+
+Provision this head once under the reviewed release gate. Its limit is at most
+30 dispatch attempts. Never delete, reset or auto-create it, including after
+its expiry; normal request retention does not apply to this budget. New requests
+check it before credit reservation. Dispatch intent consumes a slot atomically
+with `dispatch_started` and rechecks the breaker and expiry. Failed, timed-out
+or uncertain dispatches retain that charge even when collector credits refund.
+Terminal replay uses no additional slot. The broker also checks expiry after
+the dispatch transaction returns, before fetching. Anonymous UID churn cannot
+reset the shared attempt budget.
+
+Provider requests use `store=false`, `prompt_cache_retention=in_memory`, at most
+8192 generated tokens (including reasoning), four built-in tool calls, the
+existing 55-second absolute deadline and no redirect/retry. The attempt bound
+is not a guaranteed USD ceiling; the separate USD 25 policy, billing controls,
+alerts and operator review still apply. Exact project ZDR approval, source
+rights, deny-all client access to broker records, database-scoped runtime IAM,
+the deployed URL, mobile artifact and rollback/runtime evidence remain release
+requirements. Nothing in this source slice enables provider traffic.
 
 ## Local Checks
 

@@ -1,12 +1,15 @@
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
+import 'dart:ui' as ui;
 
 import 'package:archive/archive.dart';
 import 'package:archive/archive_io.dart';
 import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
+import 'package:flutter/services.dart' show FontLoader;
 import 'package:image_picker/image_picker.dart';
 import 'package:my_art_collection/app/app_dependencies.dart';
 import 'package:my_art_collection/app/export/archive_export_service.dart';
@@ -1003,6 +1006,93 @@ void main() {
       ),
       isNull,
     );
+  });
+
+  testWidgets('reopened export store offers generation without old destinations', (
+    tester,
+  ) async {
+    await tester.runAsync(() async {
+      final font = File(
+        '/opt/homebrew/share/flutter/bin/cache/artifacts/material_fonts/Roboto-Regular.ttf',
+      );
+      final loader = FontLoader('Roboto')
+        ..addFont(Future.value(ByteData.sublistView(await font.readAsBytes())));
+      await loader.load();
+      final icons = File(
+        '/opt/homebrew/share/flutter/bin/cache/artifacts/material_fonts/MaterialIcons-Regular.otf',
+      );
+      final iconLoader = FontLoader(
+        'MaterialIcons',
+      )..addFont(Future.value(ByteData.sublistView(await icons.readAsBytes())));
+      await iconLoader.load();
+    });
+    await tester.runAsync(
+      () => ArchiveExportService(
+        repository: repository,
+        attachmentStore: attachmentStore,
+        artifactStore: artifactStore,
+      ).generate(),
+    );
+    final reopened = (await tester.runAsync(
+      () => ExportArtifactStore.openAt(artifactStore.root),
+    ))!;
+    tester.view.physicalSize = const Size(360, 640);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final boundaryKey = GlobalKey();
+    await tester.pumpWidget(
+      RepaintBoundary(
+        key: boundaryKey,
+        child: AppDependencyScope(
+          dependencies: AppDependencies(
+            artworkRepository: repository,
+            attachmentStore: attachmentStore,
+            imagePicker: _NoImagePicker(),
+            exportArtifactStore: reopened,
+          ),
+          child: const MaterialApp(
+            debugShowCheckedModeBanner: false,
+            home: Scaffold(
+              body: SingleChildScrollView(
+                child: ExportWorkflowPanel(kind: ExportArtifactKind.archive),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(
+      find.textContaining('After reopening Archivale, generate it again'),
+      findsOneWidget,
+    );
+    expect(
+      find.textContaining('Some saved details and AI history are excluded.'),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('generate-export-action')),
+      findsOneWidget,
+    );
+    expect(find.byKey(const ValueKey('open-export-action')), findsNothing);
+    expect(find.byKey(const ValueKey('save-export-action')), findsNothing);
+    expect(find.byKey(const ValueKey('share-export-action')), findsNothing);
+    expect(tester.takeException(), isNull);
+    final boundary =
+        boundaryKey.currentContext!.findRenderObject()!
+            as RenderRepaintBoundary;
+    await tester.runAsync(() async {
+      final image = await boundary.toImage(pixelRatio: 1);
+      final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
+      image.dispose();
+      final screenshot = File(
+        'build/beta-validation/export-regenerate-mobile.png',
+      );
+      await screenshot.parent.create(recursive: true);
+      await screenshot.writeAsBytes(bytes!.buffer.asUint8List());
+    });
+    await tester.pumpWidget(const SizedBox.shrink());
   });
 
   testWidgets('archive destination requires just-in-time confirmation', (

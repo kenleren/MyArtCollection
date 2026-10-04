@@ -40,6 +40,8 @@ import UIKit
             let sourcePath = arguments["sourcePath"] as? String,
             let suggestedName = arguments["suggestedName"] as? String,
             let mimeType = arguments["mimeType"] as? String,
+            let expectedByteSize = arguments["expectedByteSize"] as? Int64,
+            let expectedSha256 = arguments["expectedSha256"] as? String,
             let self else {
         result("unavailable")
         return
@@ -48,6 +50,8 @@ import UIKit
         sourcePath: sourcePath,
         suggestedName: suggestedName,
         mimeType: mimeType,
+        expectedByteSize: expectedByteSize,
+        expectedSha256: expectedSha256,
         result: result
       )
     }
@@ -57,6 +61,8 @@ import UIKit
     sourcePath: String,
     suggestedName: String,
     mimeType: String,
+    expectedByteSize: Int64,
+    expectedSha256: String,
     result: @escaping FlutterResult
   ) {
     let safeName = !suggestedName.isEmpty &&
@@ -75,6 +81,8 @@ import UIKit
             sourcePath: sourcePath,
             suggestedName: suggestedName,
             mimeType: mimeType,
+            expectedByteSize: expectedByteSize,
+            expectedSha256: expectedSha256,
             documentsDirectory: documentsDirectory
           ),
           pickerCopy.isReadyForPicker() else {

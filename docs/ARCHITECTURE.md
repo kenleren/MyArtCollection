@@ -385,3 +385,12 @@ Before public beta:
 - Apple App Privacy: https://developer.apple.com/app-store/app-privacy-details/
 - Google Play Data safety: https://support.google.com/googleplay/android-developer/answer/10787469
 - Google Play billing: https://support.google.com/googleplay/android-developer/answer/1072599
+
+## Paid Android identity foundation
+
+For the #194 source-only identity slice, see
+[PUBLIC_BETA_IDENTITY_SPEC.md](PUBLIC_BETA_IDENTITY_SPEC.md). Google sign-in is
+required for purchase/restore, with anonymous UID preservation where possible;
+manual archive use remains account-optional. This supersedes anonymous-only
+billing identity descriptions above but does not extend the current short
+lease, implement backup, grant paid AI, or complete public restore/lifecycle.

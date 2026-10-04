@@ -1197,14 +1197,17 @@ class _PlanStatusPanel extends StatelessWidget {
       children: [
         _StatusPanel(
           icon: Icons.workspace_premium_outlined,
-          title: '${plan.name} plan',
-          body:
-              '${_planArtworkLimitCopy(plan)}, ${_planResearchDraftCopy(plan)}. Existing records remain editable and exportable. $billingCopy',
+          title: plan.isInternalTest
+              ? 'Internal test access'
+              : '${plan.name} plan',
+          body: plan.isInternalTest
+              ? 'Unlimited artwork records. No subscription is required during internal testing. On-device AI is included on supported devices.'
+              : '${_planArtworkLimitCopy(plan)}, ${_planResearchDraftCopy(plan)}. Existing records remain editable and exportable. $billingCopy',
         ),
         const SizedBox(height: 12),
         SecondaryActionButton(
           icon: Icons.workspace_premium_outlined,
-          label: 'Manage plan',
+          label: plan.isInternalTest ? 'Review test access' : 'Manage plan',
           routeName: AppRoutes.billing,
         ),
       ],
@@ -3481,7 +3484,7 @@ class _ExportWorkflowPanelState extends State<ExportWorkflowPanel> {
           Text(
             _isReport
                 ? 'Generated from user-confirmed fields and verified local supporting files.'
-                : 'Generated locally in app-private storage. This unencrypted ZIP contains the entire collection and available original supporting files.',
+                : 'Generated locally in app-private storage. This unencrypted ZIP includes artwork records and available original supporting files. Some saved details and AI history are excluded.',
           ),
           if (_isBusy && progress != null) ...[
             const SizedBox(height: 12),
@@ -3489,6 +3492,12 @@ class _ExportWorkflowPanelState extends State<ExportWorkflowPanel> {
             const SizedBox(height: 6),
             Text(
               'Preparing ${progress.completedItems} of ${progress.totalItems} items…',
+            ),
+          ],
+          if (artifact == null && !_isBusy) ...[
+            const SizedBox(height: 10),
+            const Text(
+              'Generate a fresh file to open, save, or share. After reopening Archivale, generate it again; copies you already saved are unchanged.',
             ),
           ],
           if (_message != null) ...[
@@ -5563,9 +5572,12 @@ class _LimitHint extends StatelessWidget {
 
     return _StatusPanel(
       icon: Icons.workspace_premium_outlined,
-      title: '${plan.name} plan: $usage',
-      body:
-          '$remainingCopy ${_planResearchDraftCopy(plan)} included each month.',
+      title: plan.isInternalTest
+          ? 'Internal test: $usage'
+          : '${plan.name} plan: $usage',
+      body: plan.isInternalTest
+          ? 'Add your full collection without a subscription. On-device AI is included on supported devices.'
+          : '$remainingCopy ${_planResearchDraftCopy(plan)} included each month.',
     );
   }
 }

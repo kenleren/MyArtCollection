@@ -12,6 +12,7 @@
     { "condition": "invalid_json", "http_status": 400, "code": "payload_invalid", "message": "The request payload is invalid.", "retryable": false },
     { "condition": "broker_disabled", "http_status": 503, "code": "temporarily_unavailable", "message": "Research is temporarily unavailable.", "retryable": true, "retry_after_seconds": 30 },
     { "condition": "broker_misconfigured", "http_status": 503, "code": "temporarily_unavailable", "message": "Research is temporarily unavailable.", "retryable": true, "retry_after_seconds": 30 },
+    { "condition": "monthly_migration_required", "http_status": 503, "code": "temporarily_unavailable", "message": "Research is temporarily unavailable.", "retryable": true, "retry_after_seconds": 30 },
     { "condition": "missing_auth_token", "http_status": 401, "code": "unauthorized", "message": "Authentication could not be verified.", "retryable": false },
     { "condition": "invalid_auth_token", "http_status": 401, "code": "unauthorized", "message": "Authentication could not be verified.", "retryable": false },
     { "condition": "wrong_project_auth", "http_status": 401, "code": "unauthorized", "message": "Authentication could not be verified.", "retryable": false },

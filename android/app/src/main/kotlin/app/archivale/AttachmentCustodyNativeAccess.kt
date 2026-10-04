@@ -16,6 +16,8 @@ internal interface AttachmentCustodyNativeBindings {
     fun openExportPair(
         flutterRoot: String,
         sourcePath: String,
+        expectedByteSize: Long,
+        expectedSha256: String,
     ): IntArray
 }
 
@@ -64,10 +66,12 @@ internal class AttachmentCustodyNativeAccess(
     fun openExportPair(
         flutterRoot: String,
         sourcePath: String,
+        expectedByteSize: Long,
+        expectedSha256: String,
     ): IntArray {
         if (linkageUnavailable.get() || !libraryAvailable) return IntArray(0)
         return try {
-            bindings.openExportPair(flutterRoot, sourcePath)
+            bindings.openExportPair(flutterRoot, sourcePath, expectedByteSize, expectedSha256)
         } catch (_: LinkageError) {
             linkageUnavailable.set(true)
             IntArray(0)
@@ -89,6 +93,8 @@ private object AttachmentCustodyJni : AttachmentCustodyNativeBindings {
     external override fun openExportPair(
         flutterRoot: String,
         sourcePath: String,
+        expectedByteSize: Long,
+        expectedSha256: String,
     ): IntArray
 }
 
@@ -119,5 +125,7 @@ internal object AttachmentCustodyNative {
     fun openExportPair(
         flutterRoot: String,
         sourcePath: String,
-    ): IntArray = access.openExportPair(flutterRoot, sourcePath)
+        expectedByteSize: Long,
+        expectedSha256: String,
+    ): IntArray = access.openExportPair(flutterRoot, sourcePath, expectedByteSize, expectedSha256)
 }

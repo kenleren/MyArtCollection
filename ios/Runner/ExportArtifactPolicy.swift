@@ -6,6 +6,8 @@ import Foundation
 private func attachmentCustodyOpenExportPair(
   _ flutterRoot: UnsafePointer<CChar>,
   _ sourcePath: UnsafePointer<CChar>,
+  _ expectedByteSize: Int64,
+  _ expectedSha256: UnsafePointer<CChar>,
   _ payloadDescriptor: UnsafeMutablePointer<Int32>,
   _ metadataDescriptor: UnsafeMutablePointer<Int32>
 ) -> Int32
@@ -118,14 +120,20 @@ enum ExportArtifactPolicy {
     sourcePath: String,
     suggestedName: String,
     mimeType: String,
+    expectedByteSize: Int64,
+    expectedSha256: String,
     documentsDirectory: URL,
     temporaryRoot: URL = FileManager.default.temporaryDirectory
   ) -> PickerExportCopy? {
     let source = URL(fileURLWithPath: sourcePath).standardizedFileURL
     guard source.path == sourcePath,
+          expectedByteSize > 0,
+          expectedSha256.range(of: "^[a-f0-9]{64}$", options: .regularExpression) != nil,
           let opened = openExportPair(
             documentsDirectory: documentsDirectory,
-            sourcePath: source.path
+            sourcePath: source.path,
+            expectedByteSize: expectedByteSize,
+            expectedSha256: expectedSha256
           ) else {
       return nil
     }
@@ -136,7 +144,9 @@ enum ExportArtifactPolicy {
     guard let metadataData = readAll(metadataHandle, maximumBytes: 64 * 1024),
           let metadata = parseMetadata(metadataData),
           metadata.fileName == suggestedName,
-          metadata.mimeType == mimeType else {
+          metadata.mimeType == mimeType,
+          metadata.byteSize == expectedByteSize,
+          metadata.checksum == expectedSha256 else {
       try? payload.close()
       return nil
     }
@@ -349,18 +359,24 @@ enum ExportArtifactPolicy {
 
   private static func openExportPair(
     documentsDirectory: URL,
-    sourcePath: String
+    sourcePath: String,
+    expectedByteSize: Int64,
+    expectedSha256: String
   ) -> (payload: FileHandle, metadata: FileHandle)? {
     var payloadDescriptor: Int32 = -1
     var metadataDescriptor: Int32 = -1
     let opened = documentsDirectory.path.withCString { root in
       sourcePath.withCString { source in
-        attachmentCustodyOpenExportPair(
-          root,
-          source,
-          &payloadDescriptor,
-          &metadataDescriptor
-        )
+        expectedSha256.withCString { checksum in
+          attachmentCustodyOpenExportPair(
+            root,
+            source,
+            expectedByteSize,
+            checksum,
+            &payloadDescriptor,
+            &metadataDescriptor
+          )
+        }
       }
     }
     guard opened == 1, payloadDescriptor >= 0, metadataDescriptor >= 0 else {

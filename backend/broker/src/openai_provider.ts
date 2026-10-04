@@ -38,6 +38,8 @@ export const DEFAULT_OPENAI_MODEL = 'gpt-5.4';
 export const DEFAULT_SEARCH_CONTEXT_SIZE = 'medium';
 export const DEFAULT_REASONING_EFFORT = 'high';
 export const DEFAULT_PROVIDER_TIMEOUT_MILLISECONDS = 55_000;
+export const MAX_PROVIDER_OUTPUT_TOKENS = 8192;
+export const MAX_PROVIDER_TOOL_CALLS = 4;
 
 type FetchLike = typeof fetch;
 
@@ -76,6 +78,7 @@ interface OpenAiResponseOutputText {
 
 interface OpenAiResponseOutputItem {
   type?: string;
+  status?: string;
   content?: OpenAiResponseOutputText[];
   action?: {
     sources?: unknown[];
@@ -83,6 +86,9 @@ interface OpenAiResponseOutputItem {
 }
 
 interface OpenAiResponseBody {
+  status?: string;
+  error?: unknown;
+  incomplete_details?: unknown;
   output?: OpenAiResponseOutputItem[];
 }
 
@@ -230,6 +236,7 @@ class OpenAiResearchProvider implements ProviderClient {
     try {
       const response = await this.fetchImpl(this.endpointUrl, {
         method: 'POST',
+        redirect: 'error',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${this.apiKey}`,
@@ -293,6 +300,9 @@ export function buildOpenAiResponsesRequest(
   return {
     model: config.modelName,
     store: false,
+    prompt_cache_retention: 'in_memory',
+    max_output_tokens: MAX_PROVIDER_OUTPUT_TOKENS,
+    max_tool_calls: MAX_PROVIDER_TOOL_CALLS,
     reasoning: {
       effort: config.reasoningEffort,
     },
@@ -367,6 +377,17 @@ function normalizeOpenAiResponse(
   body: OpenAiResponseBody,
   allowedDomains: readonly string[],
 ): ProviderResearchResult {
+  // A 200 response can still be incomplete (including token exhaustion).
+  // Valid-looking JSON is not evidence that the research run completed.
+  if (body.status !== 'completed' || body.error != null || body.incomplete_details != null ||
+      (body.output ?? []).some(item =>
+        (item.type === 'message' || item.type === 'web_search_call') && item.status !== 'completed')) {
+    return { kind: 'failure' };
+  }
+  if ((body.output ?? []).some(item =>
+      item.type === 'message' && item.content?.some(content => content.type === 'refusal'))) {
+    return { kind: 'refusal' };
+  }
   const textOutput = extractStructuredOutputText(body);
   if (textOutput === undefined) {
     return outputError('Provider response did not include structured output text.');

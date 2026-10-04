@@ -1,10 +1,12 @@
 {
-  "version": "play-billing-v1",
+  "version": "play-billing-v3",
   "codebase": "play-billing",
   "callables": [
+    "preparePlayPurchase",
     "acceptPlayBillingDisclosure",
     "revokePlayBillingDisclosure",
-    "verifyPlaySubscription"
+    "verifyPlaySubscription",
+    "restorePlayEntitlement"
   ],
   "database": "archivale-play-billing",
   "rules": "firestore.play-billing.rules",
@@ -17,6 +19,10 @@
     "delete_billing_database",
     "write_default_database",
     "write_broker_entitlements",
-    "project_wide_billing_disable"
+    "project_wide_billing_disable",
+    "delete_token_custody",
+    "run_v1_writers_against_v2_records",
+    "delete_lifecycle_high_water",
+    "run_v1_or_v2_writers_against_v3_records"
   ]
 }

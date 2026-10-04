@@ -1,14 +1,18 @@
-import { createHash, createHmac, randomBytes } from 'node:crypto';
+import { createHmac, randomBytes } from 'node:crypto';
 
-import { ACTIVE_KEY_VERSION } from './constants.js';
+import { ACTIVE_KEY_VERSION, PACKAGE_NAME } from './constants.js';
 import type { NonceSource } from './contracts.js';
 
 export interface BillingIdentifiers {
   keyVersion: typeof ACTIVE_KEY_VERSION;
   accountSubject(uid: string): string;
+  financialOrderFingerprint(orderId: string): string;
   requestFingerprint(uid: string, requestId: string): string;
   tokenFingerprint(purchaseToken: string): string;
-  obfuscatedAccountId(uid: string): string;
+  routeFingerprint(obfuscatedAccountId: string): string;
+  eventFingerprint(topic: string, messageId: string): string;
+  reconciliationFingerprint(subject: string, epoch: string, owner: number, nonce: Uint8Array, selection: string): string;
+  eventOperationFingerprint(eventFingerprint: string, generation: number): string;
 }
 
 export function createBillingIdentifiers(key: Uint8Array): BillingIdentifiers {
@@ -19,14 +23,15 @@ export function createBillingIdentifiers(key: Uint8Array): BillingIdentifiers {
     createHmac('sha256', key).update(`${domain}\n${value}`, 'utf8').digest('hex');
   return {
     keyVersion: ACTIVE_KEY_VERSION,
+    financialOrderFingerprint: (order) => hmac('archivale-play-financial-order-v1', JSON.stringify([PACKAGE_NAME, order])),
     accountSubject: (uid) => hmac('archivale-play-subject-v1', uid),
     requestFingerprint: (uid, requestId) =>
       hmac('archivale-play-request-v1', `${uid}\n${requestId}`),
     tokenFingerprint: (token) => hmac('archivale-play-token-v1', token),
-    obfuscatedAccountId: (uid) =>
-      createHash('sha256')
-        .update(`archivale-play-account-v1\n${uid}`, 'utf8')
-        .digest('base64url'),
+    routeFingerprint: (route) => hmac('archivale-play-route-v1', route),
+    eventFingerprint: (topic, id) => hmac('archivale-play-event-v1', `${topic}\n${id}`),
+    reconciliationFingerprint: (subject, epoch, owner, nonce, selection) => hmac('archivale-play-reconciliation-v1', `${subject}\n${epoch}\n${owner}\n${Buffer.from(nonce).toString('hex')}\n${selection}`),
+    eventOperationFingerprint: (event, generation) => hmac('archivale-play-event-operation-v1', `${event}\n${generation}`),
   };
 }
 
